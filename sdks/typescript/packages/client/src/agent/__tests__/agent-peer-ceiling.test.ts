@@ -4,13 +4,19 @@
  * Constructor version gates run before subclass instance fields exist.
  */
 import { AbstractAgent } from "@/agent";
-import { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
-import { Observable } from "rxjs";
+import { BaseEvent, EventType, Message, RunAgentInput } from "@ag-ui/core";
+import { Observable, of } from "rxjs";
 import packageJson from "../../../package.json";
 
+// Emits nothing but the run's lifecycle: a stream must still start and
+// terminate the run (#2300), even when the test only cares about the input.
 abstract class SilentAgent extends AbstractAgent {
-  run(_input: RunAgentInput): Observable<BaseEvent> {
-    return new Observable<BaseEvent>((subscriber) => subscriber.complete());
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    const { threadId, runId } = input;
+    return of(
+      { type: EventType.RUN_STARTED, threadId, runId } as BaseEvent,
+      { type: EventType.RUN_FINISHED, threadId, runId } as BaseEvent,
+    );
   }
 }
 

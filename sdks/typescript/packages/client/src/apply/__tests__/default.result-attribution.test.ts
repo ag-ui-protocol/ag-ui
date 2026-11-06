@@ -37,9 +37,21 @@ it.each([undefined, "child", "other-child"])(
         ...(subagentRunId !== undefined && { subagentRunId }),
       },
     ];
+    // #2300: verification requires every run to reach a terminal event, so each
+    // stream below ends with RUN_FINISHED (after closing anything it opened).
+    const finished: BaseEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId: input.threadId,
+      runId: input.runId,
+    } as BaseEvent;
     const agent = new HttpAgent({ url: "https://example.com", initialMessages: original });
     const updates = await firstValueFrom(
-      defaultApplyEvents(input, from(events).pipe(verifyEvents(false)), agent, []).pipe(toArray()),
+      defaultApplyEvents(
+        input,
+        from([...events, finished]).pipe(verifyEvents(false)),
+        agent,
+        [],
+      ).pipe(toArray()),
     );
     const messages = updates.filter((update) => update.messages).at(-1)!.messages!;
     expect(messages.map((message) => message.id)).toEqual(["before", "result", "after"]);
@@ -67,9 +79,14 @@ it.each([undefined, "child", "other-child"])(
     for (const history of [events, [events[0]!, { type: EventType.MESSAGES_SNAPSHOT, messages }]]) {
       await expect(
         firstValueFrom(
-          from([...history, reopen(subagentRunId)]).pipe(verifyEvents(false), toArray()),
+          from([
+            ...history,
+            reopen(subagentRunId),
+            { type: EventType.TEXT_MESSAGE_END, messageId: "result" } as BaseEvent,
+            finished,
+          ]).pipe(verifyEvents(false), toArray()),
         ),
-      ).resolves.toHaveLength(history.length + 1);
+      ).resolves.toHaveLength(history.length + 3);
       await expect(
         firstValueFrom(
           from([...history, reopen(subagentRunId === "child" ? "other-child" : "child")]).pipe(

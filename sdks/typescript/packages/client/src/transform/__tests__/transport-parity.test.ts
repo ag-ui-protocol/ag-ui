@@ -24,6 +24,10 @@ vi.unmock("@ag-ui/proto");
  * one in isolation.
  */
 const RUN_STARTED = { type: "RUN_STARTED", threadId: "t1", runId: "r1" };
+// Every run has to reach a terminal event (#2300), so each stream below closes
+// its run. That also keeps the fatal cases honest: a stream that ended early
+// would now reject on its own, whether or not the reader got the case right.
+const RUN_FINISHED = { type: "RUN_FINISHED", threadId: "t1", runId: "r1" };
 
 const pipeline = (chunk$: Subject<HttpEvent>) =>
   firstValueFrom(
@@ -238,10 +242,12 @@ describe("transport parity", () => {
         type: "MESSAGES_SNAPSHOT",
         messages: [{ id: "m", role: "user", content: [{ type: "future_part" }] }],
       },
+      RUN_FINISHED,
     ]);
     const binary = await readOverProto([
       ...encodeAll([RUN_STARTED]),
       HAND_BUILT.futureContentPart,
+      ...encodeAll([RUN_FINISHED]),
     ]);
 
     expect(binary).toEqual(sse);
@@ -265,10 +271,12 @@ describe("transport parity", () => {
           },
         ],
       },
+      RUN_FINISHED,
     ]);
     const binary = await readOverProto([
       ...encodeAll([RUN_STARTED]),
       HAND_BUILT.futureContentSource,
+      ...encodeAll([RUN_FINISHED]),
     ]);
 
     expect(binary).toEqual(sse);
@@ -287,11 +295,16 @@ describe("transport parity", () => {
           type: "MESSAGES_SNAPSHOT",
           messages: [{ id: "m", role: "user", content: [{ type: "image" }] }],
         },
+        RUN_FINISHED,
       ]),
     ).rejects.toThrow();
 
     await expect(
-      readOverProto([...encodeAll([RUN_STARTED]), HAND_BUILT.contentPartWithoutSource]),
+      readOverProto([
+        ...encodeAll([RUN_STARTED]),
+        HAND_BUILT.contentPartWithoutSource,
+        ...encodeAll([RUN_FINISHED]),
+      ]),
     ).rejects.toThrow();
   });
 
@@ -302,11 +315,13 @@ describe("transport parity", () => {
     const sse = await readOverSSE([
       RUN_STARTED,
       { type: "STATE_DELTA", delta: [{ op: "increment", path: "/x" }] },
+      RUN_FINISHED,
     ]);
     // STATE_DELTA carrying one operation whose enum value is 99.
     const binary = await readOverProto([
       ...encodeAll([RUN_STARTED]),
       new Uint8Array([0x42, 0x0c, 0x0a, 0x02, 0x08, 0x07, 0x12, 0x06, 0x08, 0x63, 0x12, 0x02, 0x2f, 0x78]),
+      ...encodeAll([RUN_FINISHED]),
     ]);
 
     expect(binary).toEqual(sse);
@@ -322,7 +337,7 @@ describe("transport parity", () => {
       type: "MESSAGES_SNAPSHOT",
       messages: [{ id: "m", role: "future", content: [{ type: "text", text: "hi" }] }],
     };
-    const { sse, binary } = await bothTransports([RUN_STARTED, event]);
+    const { sse, binary } = await bothTransports([RUN_STARTED, event, RUN_FINISHED]);
 
     expect(binary).toEqual(sse);
     expect(sse[1]).toHaveProperty("messages", []);
@@ -334,17 +349,23 @@ describe("transport parity", () => {
     const sse = await readOverSSE([
       RUN_STARTED,
       { type: "SOMETHING_NEW", detail: "from a later protocol" },
+      RUN_FINISHED,
     ]);
     const binary = await readOverProto([
       ...encodeAll([RUN_STARTED]),
       HAND_BUILT.futureEvent,
+      ...encodeAll([RUN_FINISHED]),
     ]);
 
     expect(binary).toEqual(sse);
-    expect(sse).toHaveLength(1);
+    expect(sse).toHaveLength(2);
 
     expect(
-      await readOverProto([...encodeAll([RUN_STARTED]), HAND_BUILT.futureEventEmpty]),
+      await readOverProto([
+        ...encodeAll([RUN_STARTED]),
+        HAND_BUILT.futureEventEmpty,
+        ...encodeAll([RUN_FINISHED]),
+      ]),
     ).toEqual(binary);
   });
 
@@ -353,7 +374,7 @@ describe("transport parity", () => {
   // would simply throw earlier; the point is that the verdict comes from
   // enforcement, so the binary failure must not be a decode failure.
   it("agrees that a missing required field is fatal, at enforcement", async () => {
-    const malformed = [RUN_STARTED, { type: "CUSTOM", name: "heartbeat" }];
+    const malformed = [RUN_STARTED, { type: "CUSTOM", name: "heartbeat" }, RUN_FINISHED];
 
     await expect(readOverSSE(malformed)).rejects.toThrow();
     await expect(readOverProto(encodeAll(malformed))).rejects.toThrow();
@@ -405,8 +426,14 @@ describe("transport parity", () => {
     };
 
     for (const [name, bytes] of Object.entries(fatal)) {
+      // Inside a run that is otherwise complete, so the only thing that can
+      // make it reject is the frame itself.
       await expect(
-        readOverProto([new Uint8Array(bytes)]),
+        readOverProto([
+          ...encodeAll([RUN_STARTED]),
+          new Uint8Array(bytes),
+          ...encodeAll([RUN_FINISHED]),
+        ]),
         `expected ${name} to stay fatal`,
       ).rejects.toThrow();
     }
@@ -423,7 +450,10 @@ describe("transport parity", () => {
     mixed.set(known);
     mixed.set(HAND_BUILT.futureEvent, known.length);
 
-    expect(await readOverProto([mixed])).toEqual([RUN_STARTED]);
+    expect(await readOverProto([mixed, ...encodeAll([RUN_FINISHED])])).toEqual([
+      RUN_STARTED,
+      RUN_FINISHED,
+    ]);
   });
 
   // Dropping a frame must advance past it, or the reader re-reads it forever.
@@ -442,9 +472,10 @@ describe("transport parity", () => {
     together.set(dropped);
     together.set(valid, dropped.length);
     chunk$.next({ type: HttpEventType.DATA, data: together });
+    chunk$.next({ type: HttpEventType.DATA, data: frame(proto.encode(RUN_FINISHED as BaseEvent)) });
     chunk$.complete();
 
-    expect(await done).toEqual([RUN_STARTED]);
+    expect(await done).toEqual([RUN_STARTED, RUN_FINISHED]);
   });
 
   // The line the reader holds is well-formed protobuf, never conformance to a
@@ -455,7 +486,9 @@ describe("transport parity", () => {
   it("drops a future arm on a field number protobuf reserves", async () => {
     const reserved = new Uint8Array([0xc2, 0xa3, 0x09, 0x00]);
 
-    expect(await readOverProto([...encodeAll([RUN_STARTED]), reserved])).toEqual([RUN_STARTED]);
+    expect(
+      await readOverProto([...encodeAll([RUN_STARTED]), reserved, ...encodeAll([RUN_FINISHED])]),
+    ).toEqual([RUN_STARTED, RUN_FINISHED]);
   });
 
   // A divergence the binary encoding cannot close, pinned so it cannot widen
@@ -469,6 +502,7 @@ describe("transport parity", () => {
       RUN_STARTED,
       { type: "TEXT_MESSAGE_START", role: "assistant" },
       { type: "TEXT_MESSAGE_END" },
+      RUN_FINISHED,
     ];
 
     await expect(readOverSSE(omitted)).rejects.toThrow(/messageId/);
@@ -480,13 +514,14 @@ describe("transport parity", () => {
   // The same gap, and the reason the spec names presence rather than scalars:
   // a required list has none either, so an omitted one arrives empty.
   it("cannot agree about an omitted required list", async () => {
-    await expect(readOverSSE([RUN_STARTED, { type: "MESSAGES_SNAPSHOT" }])).rejects.toThrow(
-      /messages/,
-    );
+    await expect(
+      readOverSSE([RUN_STARTED, { type: "MESSAGES_SNAPSHOT" }, RUN_FINISHED]),
+    ).rejects.toThrow(/messages/);
 
     const binary = await readOverProto([
       ...encodeAll([RUN_STARTED]),
       HAND_BUILT.snapshotWithoutMessages,
+      ...encodeAll([RUN_FINISHED]),
     ]);
     expect(binary[1]).toHaveProperty("messages", []);
   });
@@ -521,6 +556,7 @@ describe("transport parity: what each transport says it dropped", () => {
           { id: "m1", role: "oracle", content: [{ type: "text", text: "hi" }] },
         ],
       },
+      RUN_FINISHED,
     ]);
 
     expect(binary).toEqual(sse);
@@ -531,10 +567,11 @@ describe("transport parity: what each transport says it dropped", () => {
   it("names the same dropped operation for a patch op neither build recognises", async () => {
     // STATE_DELTA carrying one operation whose enum value is 99.
     const { sse, binary, sseStripped, binaryStripped } = await bothTransportsWatched(
-      [RUN_STARTED, { type: "STATE_DELTA", delta: [{ op: "increment", path: "/x" }] }],
+      [RUN_STARTED, { type: "STATE_DELTA", delta: [{ op: "increment", path: "/x" }] }, RUN_FINISHED],
       [
         ...encodeAll([RUN_STARTED]),
         new Uint8Array([0x42, 0x0c, 0x0a, 0x02, 0x08, 0x07, 0x12, 0x06, 0x08, 0x63, 0x12, 0x02, 0x2f, 0x78]),
+        ...encodeAll([RUN_FINISHED]),
       ],
     );
 
@@ -563,8 +600,9 @@ describe("transport parity: what each transport says it dropped", () => {
             type: "MESSAGES_SNAPSHOT",
             messages: [{ id: "m", role: "user", content: [{ type: "future_part" }] }],
           },
+          RUN_FINISHED,
         ],
-        [...encodeAll([RUN_STARTED]), HAND_BUILT.futureContentPart],
+        [...encodeAll([RUN_STARTED]), HAND_BUILT.futureContentPart, ...encodeAll([RUN_FINISHED])],
       );
 
     expect(binary).toEqual(sse);
@@ -584,8 +622,9 @@ describe("transport parity: what each transport says it dropped", () => {
             { id: "m", role: "user", content: [{ type: "image", source: { type: "future_source" } }] },
           ],
         },
+        RUN_FINISHED,
       ],
-      [...encodeAll([RUN_STARTED]), HAND_BUILT.futureContentSource],
+      [...encodeAll([RUN_STARTED]), HAND_BUILT.futureContentSource, ...encodeAll([RUN_FINISHED])],
     );
 
     expect(binary).toEqual(sse);
