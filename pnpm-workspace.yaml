@@ -1,5 +1,7 @@
 packages:
   - apps/*
+  # Standalone: installs the published @assistant-ui/* packages on its own.
+  - "!apps/assistant-ui-example"
   - spec
   - middlewares/*
   - sdks/typescript/packages/*
