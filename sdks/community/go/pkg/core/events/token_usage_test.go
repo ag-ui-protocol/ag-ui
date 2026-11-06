@@ -108,3 +108,26 @@ func TestUsageRejectsNegativeCounts(t *testing.T) {
 	errored := NewRunErrorEvent("boom", WithErrorUsage([]TokenUsage{{TotalTokens: TokenCount(-5)}}))
 	assert.Error(t, errored.Validate())
 }
+
+// TestUsageCacheWriteTokensSurviveRelay guards cacheWriteInputTokens, the
+// spec's count of prompt tokens written to the cache. TokenUsage had no field
+// for it, so a Go service decoding and re-emitting RUN_FINISHED (or RUN_ERROR)
+// silently dropped the figure.
+func TestUsageCacheWriteTokensSurviveRelay(t *testing.T) {
+	payload := `{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","usage":[{"provider":"anthropic","model":"claude-x","inputTokens":100,"outputTokens":50,"totalTokens":150,"cachedInputTokens":60,"cacheWriteInputTokens":20}]}`
+
+	event, err := EventFromJSON([]byte(payload))
+	require.NoError(t, err)
+	require.NoError(t, event.Validate())
+
+	encoded, err := event.ToJSON()
+	require.NoError(t, err)
+	assert.JSONEq(t, payload, string(encoded))
+
+	// A negative count is rejected like every other count.
+	var negative TokenUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"cacheWriteInputTokens":-1}`), &negative))
+	err = negative.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cacheWriteInputTokens must not be negative")
+}
