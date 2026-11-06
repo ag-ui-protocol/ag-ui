@@ -244,6 +244,22 @@ export class MCPMiddleware extends Middleware {
       // Number of MCP tool-execution rounds performed so far in this run.
       let toolRounds = 0;
 
+      // Tool calls already open when the run starts belong to an earlier run:
+      // a frontend call still awaiting its result, or MCP calls a previous run
+      // left unexecuted at maxIterations. This run neither executes them nor
+      // waits on them, and they stay open in the history. A call counts as
+      // earlier if either list has it open: the apply chain seeds from
+      // `next.messages` (see below), while `input.messages` is what the caller
+      // sent, and the two can disagree. A provider that reuses a leftover's
+      // tool-call id in this run would have that call skipped too.
+      const openBeforeRun = new Set(
+        [...getOpenToolCalls(input.messages), ...getOpenToolCalls(next.messages)].map(
+          (tc) => tc.id,
+        ),
+      );
+      const openInThisRun = (messages: Message[]): ToolCall[] =>
+        getOpenToolCalls(messages).filter((tc) => !openBeforeRun.has(tc.id));
+
       // Run the agent once; on completion decide whether to execute MCP tool
       // calls and loop. `toolMap` (exposed name -> origin) is built once and
       // reused across iterations.
@@ -327,7 +343,7 @@ export class MCPMiddleware extends Middleware {
           return;
         }
 
-        const openCalls = getOpenToolCalls(messages);
+        const openCalls = openInThisRun(messages);
         const ourCalls = openCalls.filter((tc) => toolMap.has(tc.function.name));
 
         // Nothing for us — flush the buffered RUN_FINISHED untouched and stop.
@@ -381,7 +397,7 @@ export class MCPMiddleware extends Middleware {
         }
 
         const updatedMessages = [...messages, ...resultMessages];
-        const stillOpen = getOpenToolCalls(updatedMessages);
+        const stillOpen = openInThisRun(updatedMessages);
 
         // Scenario 2: other (e.g. frontend) tool calls are still open — we
         // don't trigger another run. Flush the buffered RUN_FINISHED and
