@@ -197,6 +197,7 @@ class WatsonxAgent:
         accumulated_tool_calls: list[dict] = []
 
         step_name = "watsonx_chat"
+        step_started = False
 
         try:
             token = await self._get_token()
@@ -221,6 +222,7 @@ class WatsonxAgent:
 
             # STEP_STARTED wraps the watsonx API call
             yield StepStartedEvent(type=EventType.STEP_STARTED, step_name=step_name)
+            step_started = True
 
             async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30, read=120, write=30, pool=30)) as client:
                 async with client.stream(
@@ -337,6 +339,7 @@ class WatsonxAgent:
 
             # STEP_FINISHED after the API call completes
             yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name)
+            step_started = False
 
             # Build MESSAGES_SNAPSHOT with input messages + assistant response
             snapshot_messages: List = list(input_data.messages)
@@ -374,11 +377,15 @@ class WatsonxAgent:
             # Clean up open text message
             if msg_started and msg_id:
                 yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=msg_id)
-            # Close the step if it was started
-            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name)
+            # Close the step if it was started. A failure before it (e.g. the
+            # IAM token exchange) has no step to close, and STEP_FINISHED for a
+            # step that never started is rejected by the client.
+            if step_started:
+                yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name)
+            # RUN_ERROR is terminal: the client rejects any event after it, so
+            # it is not followed by RUN_FINISHED.
             yield RunErrorEvent(
                 type=EventType.RUN_ERROR,
                 message=f"watsonx request failed: {type(e).__name__}: {str(e)[:200]}",
                 code="WATSONX_ERROR",
             )
-            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)

@@ -469,6 +469,38 @@ class TestErrorHandling:
         types = [e.type for e in events]
         assert EventType.STEP_FINISHED in types
 
+    @pytest.mark.asyncio
+    async def test_run_error_is_the_terminal_event(self):
+        """Guards against RUN_FINISHED after RUN_ERROR: the client's verifier
+        rejects any event after RUN_ERROR, so the run failed with a protocol
+        error instead of the watsonx one."""
+        agent = _make_agent()
+        response = _mock_stream_response([], status_code=500)
+
+        with patch("ag_ui_watsonx.agent.httpx.AsyncClient", return_value=_mock_httpx_client(response)):
+            events = await _collect_events(agent, _make_input())
+
+        types = [e.type for e in events]
+        assert types[-1] == EventType.RUN_ERROR
+        assert EventType.RUN_FINISHED not in types
+
+    @pytest.mark.asyncio
+    async def test_failure_before_the_step_does_not_finish_it(self):
+        """Guards against STEP_FINISHED for a step that never started: a failed
+        IAM token exchange (e.g. a bad API key) happens before STEP_STARTED,
+        and the verifier rejects the unmatched STEP_FINISHED before the
+        RUN_ERROR that explains the failure reaches the client."""
+        agent = _make_agent()
+        agent._get_token = AsyncMock(
+            side_effect=RuntimeError("IAM token exchange failed: HTTP 400")
+        )
+
+        events = await _collect_events(agent, _make_input())
+
+        types = [e.type for e in events]
+        assert types == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+        assert "IAM token exchange failed" in events[-1].message
+
 
 # ---------------------------------------------------------------------------
 # Request construction
