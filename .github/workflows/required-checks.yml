@@ -1,0 +1,234 @@
+name: required-checks
+
+# The one check main's branch protection requires. It runs on EVERY pull
+# request to main, with no path filter, so it always reports.
+#
+# A path-filtered workflow that does not start never reports, so requiring its
+# check directly would leave docs-only and other unrelated PRs pending forever.
+# Instead this workflow decides which areas the PR touches (same path lists as
+# each workflow's push trigger, kept in step by required-checks-areas.test.mjs),
+# calls the matching workflows through workflow_call, and the final
+# `required-checks` job passes only when each called workflow succeeded, or was
+# skipped because the PR did not touch its paths.
+#
+# A called workflow fails only when a job without continue-on-error fails. The
+# lanes that install the newest upstream release set it, so they show their own
+# result without blocking merges; required-checks-gating.test.mjs pins which
+# lanes those are.
+#
+# The called workflows keep their own push triggers for main. Their PR path
+# lists live in .github/scripts/required-checks-areas.mjs: change a list in
+# both places. The classify step runs the base branch's copy of that file.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: required-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lint: ${{ steps.areas.outputs.lint }}
+      typecheck: ${{ steps.areas.outputs.typecheck }}
+      unit_typescript: ${{ steps.areas.outputs.unit_typescript }}
+      unit_python: ${{ steps.areas.outputs.unit_python }}
+      release_scripts: ${{ steps.areas.outputs.release_scripts }}
+      lint_release: ${{ steps.areas.outputs.lint_release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The default ref is the PR's merge commit (parents: base tip, PR
+          # head). Full history, so the classifier can find the merge base
+          # and list GitHub's three-dot diff for the PR.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+
+      - name: Classify changed files
+        id: areas
+        run: |
+          set -euo pipefail
+          PARENTS=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')
+          if [ "$PARENTS" -ne 3 ]; then
+            echo "::error::Expected the PR merge commit (2 parents), got ${PARENTS} words from rev-list."
+            exit 1
+          fi
+          # Three-dot diff of base tip and PR head, as GitHub's pull_request
+          # paths filter uses; every area is selected if the merge base is
+          # missing or more than 3000 files changed. The classifier lists the
+          # files NUL-delimited and unquoted (git diff -z, core.quotePath=false).
+          # Run the base branch's classifier (HEAD^1), not the PR's, so a PR
+          # that changes only the classifier's path lists cannot shrink its
+          # own checks. This step runs before any PR code in this job. The
+          # workflow file, the called workflows and the code the tests import
+          # still come from the PR; CODEOWNERS `*` with code-owner review
+          # (setting 0.7) is the control for those. A classifier change takes
+          # effect after merge; its tests in the next step still run on the PR.
+          # If the base has no classifier yet, select every area.
+          #
+          # AREAS is this PR's area list (the keys of `outputs:` above). An
+          # area the base classifier does not print (the PR adds or renames
+          # it) is selected with a warning, so such a PR can pass. Output that
+          # is empty, malformed or repeats an area fails this step.
+          AREAS=(lint typecheck unit_typescript unit_python release_scripts lint_release)
+          CLASSIFIER=.github/scripts/required-checks-areas.mjs
+          RAW="$RUNNER_TEMP/classifier.txt"
+          if git cat-file -e "HEAD^1:${CLASSIFIER}" 2>/dev/null; then
+            git show "HEAD^1:${CLASSIFIER}" > "$RUNNER_TEMP/areas.mjs"
+            node "$RUNNER_TEMP/areas.mjs" HEAD^1 HEAD^2 > "$RAW"
+          else
+            echo "::warning::${CLASSIFIER} is not on the base branch; selecting every area."
+            printf '%s=true\n' "${AREAS[@]}" > "$RAW"
+          fi
+          if [ ! -s "$RAW" ]; then
+            echo "::error::The base branch's classifier printed no areas."
+            exit 1
+          fi
+          while IFS= read -r line || [ -n "$line" ]; do
+            if [[ ! "$line" =~ ^[a-z_]+=(true|false)$ ]]; then
+              echo "::error::The base branch's classifier printed '${line}', expected <area>=true or <area>=false."
+              exit 1
+            fi
+            case " ${AREAS[*]} " in
+              *" ${line%%=*} "*) ;;
+              *) echo "::warning::The base branch's classifier printed area '${line%%=*}', which this PR does not have; ignoring it." ;;
+            esac
+          done < "$RAW"
+          DUPLICATES=$(cut -d= -f1 "$RAW" | sort | uniq -d | tr '\n' ' ')
+          if [ -n "$DUPLICATES" ]; then
+            echo "::error::The base branch's classifier printed these areas more than once: ${DUPLICATES}"
+            exit 1
+          fi
+          : > "$RUNNER_TEMP/areas.txt"
+          for area in "${AREAS[@]}"; do
+            value=$(sed -n "s/^${area}=//p" "$RAW")
+            if [ -z "$value" ]; then
+              echo "::warning::The base branch's classifier has no '${area}' area (this PR adds or renames it); selecting it."
+              value=true
+            fi
+            echo "${area}=${value}" >> "$RUNNER_TEMP/areas.txt"
+          done
+          tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/areas.txt"
+
+      # After Classify: these tests import PR code from outside .github/
+      # (scripts/release/lib/workflow-model.mjs), which could otherwise
+      # rewrite HEAD before the areas are computed. A later step cannot change
+      # steps.areas.outputs.
+      - name: Test the area classifier and the gating lanes
+        run: >-
+          node --test .github/scripts/required-checks-areas.test.mjs
+          .github/scripts/required-checks-gating.test.mjs
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    uses: ./.github/workflows/lint-typescript.yml
+
+  typecheck:
+    needs: changes
+    if: needs.changes.outputs.typecheck == 'true'
+    uses: ./.github/workflows/typecheck-typescript.yml
+
+  unit-typescript:
+    needs: changes
+    if: needs.changes.outputs.unit_typescript == 'true'
+    uses: ./.github/workflows/unit-typescript-sdk.yml
+
+  unit-python:
+    needs: changes
+    if: needs.changes.outputs.unit_python == 'true'
+    uses: ./.github/workflows/unit-python-sdk.yml
+
+  test-release-scripts:
+    needs: changes
+    if: needs.changes.outputs.release_scripts == 'true'
+    uses: ./.github/workflows/test-release-scripts.yml
+
+  lint-release-workflows:
+    needs: changes
+    if: needs.changes.outputs.lint_release == 'true'
+    # A called workflow gets no more than its caller job grants: the actionlint
+    # job's reviewdog reporter creates a check run.
+    permissions:
+      contents: read
+      checks: write  # create the check run reviewdog reports annotations through
+    uses: ./.github/workflows/lint-release-workflows.yml
+
+  required-checks:
+    name: required-checks
+    needs:
+      - changes
+      - lint
+      - typecheck
+      - unit-typescript
+      - unit-python
+      - test-release-scripts
+      - lint-release-workflows
+    # Runs after skipped or failed needs, but not after a cancelled run, which
+    # would otherwise show a false red.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check every selected area passed
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LINT: ${{ needs.lint.result }}
+          LINT_WANTED: ${{ needs.changes.outputs.lint }}
+          TYPECHECK: ${{ needs.typecheck.result }}
+          TYPECHECK_WANTED: ${{ needs.changes.outputs.typecheck }}
+          UNIT_TYPESCRIPT: ${{ needs.unit-typescript.result }}
+          UNIT_TYPESCRIPT_WANTED: ${{ needs.changes.outputs.unit_typescript }}
+          UNIT_PYTHON: ${{ needs.unit-python.result }}
+          UNIT_PYTHON_WANTED: ${{ needs.changes.outputs.unit_python }}
+          RELEASE_SCRIPTS: ${{ needs.test-release-scripts.result }}
+          RELEASE_SCRIPTS_WANTED: ${{ needs.changes.outputs.release_scripts }}
+          LINT_RELEASE: ${{ needs.lint-release-workflows.result }}
+          LINT_RELEASE_WANTED: ${{ needs.changes.outputs.lint_release }}
+        run: |
+          set -euo pipefail
+          if [ "${CHANGES:-}" != "success" ]; then
+            echo "::error::changes: ${CHANGES:-}"
+            exit 1
+          fi
+          FAIL=0
+          check() {
+            # A selected area must succeed; an unselected one must be skipped.
+            # An area output that is not exactly true or false (empty, missing,
+            # renamed) means the classifier did not decide it: fail, never skip.
+            local name=$1 result=$2 wanted=$3 expect
+            case "$wanted" in
+              true) expect=success ;;
+              false) expect=skipped ;;
+              *)
+                echo "::error::${name}: area output is '${wanted}', expected true or false"
+                FAIL=1
+                return
+                ;;
+            esac
+            if [ "$result" = "$expect" ]; then
+              echo "${name}: ${result}"
+            else
+              echo "::error::${name}: expected ${expect}, got ${result}"
+              FAIL=1
+            fi
+          }
+          check lint "${LINT:-}" "${LINT_WANTED:-}"
+          check typecheck "${TYPECHECK:-}" "${TYPECHECK_WANTED:-}"
+          check unit-typescript "${UNIT_TYPESCRIPT:-}" "${UNIT_TYPESCRIPT_WANTED:-}"
+          check unit-python "${UNIT_PYTHON:-}" "${UNIT_PYTHON_WANTED:-}"
+          check test-release-scripts "${RELEASE_SCRIPTS:-}" "${RELEASE_SCRIPTS_WANTED:-}"
+          check lint-release-workflows "${LINT_RELEASE:-}" "${LINT_RELEASE_WANTED:-}"
+          exit "$FAIL"

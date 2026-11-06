@@ -25,26 +25,15 @@ on:
       - "nx.json"
       - ".node-version"
       - ".github/workflows/typecheck-typescript.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "sdks/**"
-      - "integrations/**"
-      - "middlewares/**"
-      # check-types is `nx run-many -t typecheck`, so @ag-ui/spec is already in
-      # its selection — but only once this workflow is triggered, and a spec-only
-      # change would not trigger it.
-      - "spec/**"
-      - "scripts/check-types.mjs"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "package.json"
-      - "nx.json"
-      - ".node-version"
-      - ".github/workflows/typecheck-typescript.yml"
+  # Pull requests run this through required-checks.yml (workflow_call), so
+  # the PR path list lives in .github/scripts/required-checks-areas.mjs.
+  workflow_call:
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
+  # Literal name, not github.workflow: under workflow_call that is the
+  # caller's name, so every workflow that required-checks.yml calls and
+  # that declares a group would share one group.
+  group: ${{ github.repository }}-typecheck-typescript-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

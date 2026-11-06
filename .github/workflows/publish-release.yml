@@ -142,7 +142,7 @@ on:
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
       suffix:
-        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp. Allowed: [a-zA-Z0-9._-]+. Ignored when mode=stable."
+        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp plus run id and attempt. Allowed: [a-zA-Z0-9._-]+. Ignored when mode=stable."
         required: false
         type: string
       dry_run:
@@ -152,7 +152,20 @@ on:
         type: boolean
 
 concurrency:
-  group: release-publish
+  # Two groups, and nothing is ever cancelled in progress:
+  #   - `release-publish`: every stable publish (push to main, or mode=stable),
+  #     plus any prerelease dispatched on main. A main prerelease therefore never
+  #     runs at the same time as a stable publish from main.
+  #   - `release-publish-prerelease`: every prerelease from any other ref (the
+  #     canary/* refs canary.yml dispatches on). One group for all branches, so
+  #     two canaries never publish at the same time and race on the shared
+  #     registry dist-tags.
+  # A canary that waits for a deployment approval holds only the prerelease
+  # group, so it can never block or cancel a stable publish. While it holds that
+  # group, GitHub keeps at most one more prerelease pending and cancels an older
+  # pending one when a newer one arrives. canary.yml waits on its own run id (not
+  # on this group), so a cancelled run fails that canary job visibly.
+  group: ${{ inputs.mode == 'prerelease' && github.ref != 'refs/heads/main' && 'release-publish-prerelease' || 'release-publish' }}
   cancel-in-progress: false
 
 env:
@@ -639,7 +652,12 @@ jobs:
 
       # ===== Prerelease mode: validate suffix, bump in place, build/test, upload =====
       # Validate user-supplied suffix against npm-safe charset BEFORE invoking
-      # prepare-release.ts. Empty suffix → fall back to unix timestamp.
+      # prepare-release.ts. Empty suffix → fall back to unix timestamp plus the
+      # run id and attempt, so two runs in the same second (or a re-run) get
+      # distinct npm versions. The PEP 440 form is weaker: prepare-release.ts
+      # joins those digits with no separator, and a shared-version scope writes
+      # Python packages as .devN from the trailing number only (.dev0 for a new
+      # canary), so PyPI canaries can still collide.
       # Mirrors CPK's bump-prerelease.ts gating; prevents shell-injection and
       # registry-name-validation failures downstream.
       - name: Compute prerelease version and bump
@@ -657,7 +675,7 @@ jobs:
               exit 1
             fi
           else
-            SUFFIX=$(date +%s)
+            SUFFIX="$(date +%s).${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           fi
           if [ -z "$INPUT_SCOPE" ]; then
             echo "::error::mode=prerelease requires a scope input"
@@ -1402,32 +1420,6 @@ jobs:
           PY_PACKAGES: ${{ needs.build.outputs.py_packages }}
         run: bash scripts/release/reconcile-release.sh python "$PY_PACKAGES"
 
-      # On push-to-main we no longer have the merged PR's head ref on the event
-      # payload, so we can't tell whether release/next is what merged. Instead,
-      # clean up release/next whenever it still exists on origin after a stable
-      # publish — the delete is idempotent (no-op if the branch is already
-      # gone). Skipped on prerelease (canary) runs, which never touch
-      # release/next.
-      #
-      # Only the LAST registry lane of a run cleans up, so a mixed release does
-      # not delete the branch out from under a lane still to come. Order is
-      # publish → publish-dotnet → publish-maven, so this runs only when neither
-      # of the later lanes has anything to do.
-      - name: Delete release/next if present
-        if: >
-          needs.build.outputs.mode != 'prerelease' &&
-          needs.build.outputs.dotnet_count == '0' &&
-          needs.build.outputs.java_count == '0' &&
-          (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
-          if [ -n "$BRANCH" ]; then
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
-          fi
-
       - name: Release summary (stable)
         if: needs.build.outputs.mode == 'stable'
         env:
@@ -1800,20 +1792,6 @@ jobs:
           DOTNET_PACKAGES: ${{ needs.build.outputs.dotnet_packages }}
         run: bash scripts/release/reconcile-release.sh dotnet "$DOTNET_PACKAGES"
 
-      # Only if the Maven lane (which runs after this one) has nothing to do —
-      # see the same step in the `publish` job.
-      - name: Delete release/next if present
-        if: needs.build.outputs.mode != 'prerelease' && needs.build.outputs.java_count == '0' && (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
-          if [ -n "$BRANCH" ]; then
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
-          fi
-
       - name: Release summary (.NET stable)
         if: needs.build.outputs.mode == 'stable'
         shell: bash
@@ -1841,10 +1819,10 @@ jobs:
 
   publish-maven:
     needs: [build, build-kotlin, publish, publish-dotnet]
-    # Last registry lane. Sequenced after npm/PyPI and NuGet for the same reason
-    # publish-dotnet is sequenced after publish: it avoids racing over tags and
-    # the shared daily GitHub Release, and it stops a Maven publish from going
-    # out after an earlier lane already failed.
+    # Third registry lane; publish-kotlin runs after it. Sequenced after npm/PyPI
+    # and NuGet for the same reason publish-dotnet is sequenced after publish: it
+    # avoids racing over tags and the shared daily GitHub Release, and it stops a
+    # Maven publish from going out after an earlier lane already failed.
     #
     # STABLE ONLY — see the workflow header. There is no prerelease arm because
     # Maven Central has no canary channel; the build job rejects a prerelease
@@ -2024,19 +2002,6 @@ jobs:
           JAVA_PACKAGES: ${{ needs.build.outputs.java_packages }}
         run: bash scripts/release/reconcile-release.sh maven "$JAVA_PACKAGES"
 
-      # Last lane in the run, so cleanup is unconditional here — see the same
-      # step in the `publish` and `publish-dotnet` jobs.
-      - name: Delete release/next if present
-        if: (needs['build-kotlin'].result == 'skipped' || (needs['build-kotlin'].result == 'success' && needs.build.outputs.kotlin_count == '0'))
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
-          if [ -n "$BRANCH" ]; then
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
-          fi
-
       - name: Release summary (Maven stable)
         env:
           JAVA_PACKAGES: ${{ needs.build.outputs.java_packages }}
@@ -2192,16 +2157,6 @@ jobs:
           bash scripts/release/reconcile-release.sh maven "$KOTLIN_PACKAGES"
           echo "published_packages=$KOTLIN_PACKAGES" >> "$GITHUB_OUTPUT"
 
-      - name: Delete release/next if present
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          BRANCH=$(git ls-remote --heads origin refs/heads/release/next)
-          if [ -n "$BRANCH" ]; then
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" push origin --delete release/next
-          fi
-
       - name: Kotlin release summary
         env:
           KOTLIN_PACKAGES: ${{ steps.records.outputs.published_packages }}
@@ -2210,6 +2165,78 @@ jobs:
             echo "## release / publish — Kotlin (Maven Central)"
             echo "$KOTLIN_PACKAGES" | jq -r '.[] | "- `\(.groupId):\(.name):\(.version)`"'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deletes release/next after a stable release. On push-to-main we no longer
+  # have the merged PR's head ref, so we can't tell whether release/next is what
+  # merged; instead it is deleted whenever it still exists after a stable
+  # publish. The delete is idempotent. Prerelease (canary) runs never touch it.
+  #
+  # This is its own job so the devops-bot key is read where no repo code runs:
+  # no checkout, no build, no git (a planted hook or a rewritten action in a
+  # publish job could otherwise take the key or its token). The ref is deleted
+  # through the API, as canary.yml does.
+  #
+  # It runs once every lane is done, only when at least one lane published and
+  # none failed or was cancelled. A failed lane skips the lanes after it, so
+  # this matches the earlier rule that only the last lane with work cleaned up.
+  # kotlin-workflow.test.ts checks that over every lane outcome.
+  cleanup-release-next:
+    name: Delete release/next
+    needs: [build, build-kotlin, publish, publish-dotnet, publish-maven, publish-kotlin]
+    if: >
+      always() &&
+      needs.build.result == 'success' &&
+      needs.build.outputs.mode == 'stable' &&
+      (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) &&
+      (needs['build-kotlin'].result == 'success' || needs['build-kotlin'].result == 'skipped') &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped') &&
+      (needs['publish-dotnet'].result == 'success' || needs['publish-dotnet'].result == 'skipped') &&
+      (needs['publish-maven'].result == 'success' || needs['publish-maven'].result == 'skipped') &&
+      (needs['publish-kotlin'].result == 'success' || needs['publish-kotlin'].result == 'skipped') &&
+      (needs.publish.result == 'success' || needs['publish-dotnet'].result == 'success' ||
+       needs['publish-maven'].result == 'success' || needs['publish-kotlin'].result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The job token is not used: the delete runs as the devops-bot app.
+    permissions: {}
+    steps:
+      - name: Mint devops-bot token for release/next cleanup
+        # The ref is deleted as the devops-bot app, the only actor allowed to
+        # manage release-shaped branches.
+        id: release-next-token
+        # Packages are already out; a mint failure warns below, never fails.
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: "Iv23liBNyieHVFKABrJ3"
+          # secrets-outside-env: a repo-level key, read in a job that runs no
+          # repo code. Phase 2 of the security remediation plan moves it into a
+          # protected, main-only environment.
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env] see comment above
+          # contents:write deletes release/next. Nothing else.
+          permission-contents: write
+
+      - name: Delete release/next if present
+        id: release-next-delete
+        continue-on-error: true
+        if: steps.release-next-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.release-next-token.outputs.token }}
+        run: |
+          set -uo pipefail
+          ERR=$(mktemp)
+          if gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/release/next" 2>"$ERR"; then
+            echo "Deleted release/next"
+          elif grep -qiE "not found|does not exist" "$ERR"; then
+            echo "release/next already gone"
+          else
+            cat "$ERR" >&2
+            exit 1
+          fi
+
+      - name: Warn if release/next was left behind
+        if: steps.release-next-token.outcome == 'failure' || steps.release-next-delete.outcome == 'failure'
+        run: echo "::warning title=release/next left behind::The packages published, but release/next cleanup failed (token mint or branch delete). Delete release/next by hand; do not re-run this release."
 
   notify:
     name: Notify release results
