@@ -654,6 +654,56 @@ describe("transformHttpEventStream", () => {
     // This checks the guard's behavior, not throughput.
   }, 15_000);
 
+  it("frames a long event without rescanning what it has already seen", () => {
+    // Counted in characters examined rather than elapsed time, so the result
+    // does not move with how loaded the machine is. Splitting the whole
+    // accumulated buffer on every read examines everything already held again,
+    // which is quadratic in the size of a single event.
+    let examined = 0;
+    const realSplit = String.prototype.split;
+    const realIndexOf = String.prototype.indexOf;
+    const splitSpy = vi
+      .spyOn(String.prototype, "split")
+      .mockImplementation(function (this: string, separator: any, limit?: number) {
+        const framing =
+          separator instanceof RegExp ? separator.source === "\\n\\n" : separator === "\n\n";
+        if (framing) {
+          examined += this.length;
+        }
+        return realSplit.call(this, separator, limit);
+      } as any);
+    const indexOfSpy = vi
+      .spyOn(String.prototype, "indexOf")
+      .mockImplementation(function (this: string, search: string, from?: number) {
+        if (search === "\n\n") {
+          examined += this.length - (from ?? 0);
+        }
+        return realIndexOf.call(this, search, from);
+      } as any);
+
+    try {
+      const payload = "D".repeat(4 * 1024 * 1024);
+      const stream = sseFrame(payload);
+      const { chunk$, received, errors } = openSseStream();
+
+      const read = 64 * 1024;
+      for (let offset = 0; offset < stream.length; offset += read) {
+        feed(chunk$, stream.slice(offset, offset + read));
+      }
+      chunk$.complete();
+
+      expect(errors).toHaveLength(0);
+      expect(received).toHaveLength(1);
+      expect(received[0].delta).toBe(payload);
+      // One pass over the stream, plus the single character of overlap each
+      // read needs so a boundary landing between two of them is still found.
+      expect(examined).toBeLessThan(stream.length * 3);
+    } finally {
+      splitSpy.mockRestore();
+      indexOfSpy.mockRestore();
+    }
+  });
+
   it("delivers a long healthy stream once and in order without retaining it", () => {
     // The replay buffer lives inside transformHttpEventStream. Spying on
     // ReplaySubject.next is the only handle on the instance it builds; a late
