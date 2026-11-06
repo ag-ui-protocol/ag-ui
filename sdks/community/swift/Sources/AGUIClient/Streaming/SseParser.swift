@@ -82,6 +82,8 @@ public struct SseParser {
             bomBytesMatched = matched + 1 == Self.byteOrderMark.count ? nil : matched + 1
             return nil
         }
+        // Per WHATWG, only a stream-start BOM is stripped. A later U+FEFF stays in
+        // the field name, so that line is ignored as an unknown field (intended).
         bomBytesMatched = nil
         // Replay a partial BOM match; these bytes are never line terminators.
         for pending in Self.byteOrderMark.prefix(matched) { _ = try process(pending) }
