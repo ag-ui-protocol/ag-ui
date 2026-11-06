@@ -31,3 +31,19 @@ static AGUI.Server.RunAgentInputExtensions.ToChatRequestContext(this AGUI.Abstra
 static AGUI.Server.RunAgentInputExtensions.TryGetRunAgentInput(this Microsoft.Extensions.AI.ChatOptions! options, out AGUI.Abstractions.RunAgentInput? input) -> bool
 static AGUI.Server.RunAgentInputExtensions.TryGetRunAgentState<T>(this Microsoft.Extensions.AI.ChatOptions! options, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, out T? state) -> bool
 AGUI.Server.AGUIStreamOptions.WithUsageProvider(string? provider) -> AGUI.Server.AGUIStreamOptions!
+AGUI.Server.AGUIMiddleware
+AGUI.Server.AGUIMiddleware.AGUIMiddleware() -> void
+abstract AGUI.Server.AGUIMiddleware.RunAsync(AGUI.Abstractions.RunAgentInput! input, AGUI.Server.AGUIRunDelegate! next, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<AGUI.Abstractions.BaseEvent!>!
+AGUI.Server.AGUIMiddlewarePipeline
+AGUI.Server.AGUIMiddlewarePipeline.AGUIMiddlewarePipeline() -> void
+AGUI.Server.AGUIMiddlewarePipeline.Build(AGUI.Server.AGUIRunDelegate! terminal) -> AGUI.Server.AGUIRunDelegate!
+AGUI.Server.AGUIMiddlewarePipeline.Middlewares.get -> System.Collections.Generic.IReadOnlyList<AGUI.Server.AGUIMiddleware!>!
+AGUI.Server.AGUIMiddlewarePipeline.Use(AGUI.Server.AGUIMiddleware! middleware) -> AGUI.Server.AGUIMiddlewarePipeline!
+AGUI.Server.AGUIMiddlewarePipeline.Use(System.Func<AGUI.Abstractions.RunAgentInput!, AGUI.Server.AGUIRunDelegate!, System.Threading.CancellationToken, System.Collections.Generic.IAsyncEnumerable<AGUI.Abstractions.BaseEvent!>!>! middleware) -> AGUI.Server.AGUIMiddlewarePipeline!
+AGUI.Server.AGUIRunDelegate
+AGUI.Server.ChatClientAGUIExtensions
+static AGUI.Server.ChatClientAGUIExtensions.AsAGUIRunDelegate(this Microsoft.Extensions.AI.IChatClient! chatClient, System.Text.Json.JsonSerializerOptions! jsonSerializerOptions, AGUI.Server.AGUIStreamOptions? streamOptions = null) -> AGUI.Server.AGUIRunDelegate!
+AGUI.Server.FilterToolCallsMiddleware
+override AGUI.Server.FilterToolCallsMiddleware.RunAsync(AGUI.Abstractions.RunAgentInput! input, AGUI.Server.AGUIRunDelegate! next, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<AGUI.Abstractions.BaseEvent!>!
+static AGUI.Server.FilterToolCallsMiddleware.Allow(System.Collections.Generic.IEnumerable<string!>! toolNames) -> AGUI.Server.FilterToolCallsMiddleware!
+static AGUI.Server.FilterToolCallsMiddleware.Disallow(System.Collections.Generic.IEnumerable<string!>! toolNames) -> AGUI.Server.FilterToolCallsMiddleware!
