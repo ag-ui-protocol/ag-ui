@@ -398,6 +398,45 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
     }
 
     [Fact]
+    public async Task ReasoningTailAndAnswerHead_InOneUpdate_StayOneReasoningBlock()
+    {
+        // Microsoft.Extensions.AI materialises a provider delta that carries both `content` and
+        // `reasoning_content` as text first and reasoning second, so the tail of the thinking arrives in
+        // the same update as the head of the answer. It belongs to the reasoning block already open.
+        var updates = ToAsyncEnumerable(
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                MessageId = "msg-1",
+                Contents = [new TextReasoningContent("Let me think. final")]
+            },
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                MessageId = "msg-1",
+                Contents = [new TextContent("一步一步"), new TextReasoningContent(" only.")]
+            },
+            new ChatResponseUpdate(ChatRole.Assistant, "说明")
+            {
+                MessageId = "msg-1"
+            });
+
+        var events = await CollectEvents(updates);
+
+        var reasoningMessageId = Assert.Single(events.OfType<ReasoningMessageStartEvent>()).MessageId;
+        Assert.Single(events.OfType<ReasoningStartEvent>());
+        Assert.Single(events.OfType<ReasoningMessageEndEvent>());
+        Assert.Single(events.OfType<ReasoningEndEvent>());
+        var reasoningDeltas = events.OfType<ReasoningMessageContentEvent>().ToList();
+        Assert.Equal(["Let me think. final", " only."], reasoningDeltas.Select(e => e.Delta));
+        Assert.All(reasoningDeltas, e => Assert.Equal(reasoningMessageId, e.MessageId));
+        // The tail of the thinking is emitted before the answer, never after it.
+        Assert.True(
+            events.FindLastIndex(e => e is ReasoningMessageContentEvent) <
+            events.FindIndex(e => e is TextMessageContentEvent));
+    }
+
+    [Fact]
     public async Task ProtectedData_ArrivingWhileReasoningMessageOpen_BindsEntityIdToReasoningMessage()
     {
         var updates = ToAsyncEnumerable(
