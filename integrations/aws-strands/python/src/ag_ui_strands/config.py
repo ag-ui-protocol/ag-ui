@@ -339,6 +339,9 @@ class StrandsAgentConfig:
     - ``recovery`` — recovery loop config. NOTE: keys are camelCase per the
       shared toolkit contract — e.g. ``{"maxAttempts": 5}`` (a snake_case
       ``max_attempts`` is silently ignored).
+    - ``force_tool_choice`` — defaults to True. Set False for models that
+      reject forced choice to omit ``tool_choice`` from the inner render
+      request. The render tool and bounded recovery remain active.
     """
     url_fetch_policy: Optional[UrlFetchPolicy] = None
     """Policy applied to every server-side fetch of a URL content source.

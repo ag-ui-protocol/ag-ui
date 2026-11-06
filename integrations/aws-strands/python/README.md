@@ -98,6 +98,30 @@ The integration has three main layers:
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
 
+## A2UI models without forced tool choice
+
+By default, `generate_a2ui` forces its inner model to call `render_a2ui`.
+For a model that rejects forced tool choice, set `force_tool_choice=False`:
+
+```python
+from ag_ui_strands import StrandsAgentConfig, get_a2ui_tools
+
+# Auto-injection configuration for StrandsAgent(config=...).
+config = StrandsAgentConfig(
+    a2ui={"inject_a2ui_tool": True, "force_tool_choice": False}
+)
+
+# Or explicitly add the generated tool to your Strands agent's tools.
+generate_ui = get_a2ui_tools({"model": model, "force_tool_choice": False})
+```
+
+This omits the `tool_choice` keyword from the inner model request, leaving the
+choice behavior to the model implementation. The render tool specification and
+prompt remain present. Generation still uses one model turn per attempt;
+text-only responses and invalid render arguments use the existing bounded
+recovery loop (three total attempts by default). Exhaustion returns
+`a2ui_recovery_exhausted`. There is no automatic compatibility fallback.
+
 ## Per-thread agents: hooks and plugins
 
 The wrapper does not run the agent you hand it. That one is a template: the
