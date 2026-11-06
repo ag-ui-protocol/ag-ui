@@ -3299,13 +3299,16 @@ class ADKAgent:
                 protocol_version=PROTOCOL_VERSION,
             )
             
-            # Check concurrent execution limit
+            # Check concurrent execution limit. A run that finished while
+            # waiting on a client tool result stays tracked (so a later
+            # resume on the same thread can find it) but no longer occupies
+            # a slot: only runs still executing count (issue #3077).
             async with self._execution_lock:
-                if len(self._active_executions) >= self._max_concurrent:
+                if self._running_execution_count() >= self._max_concurrent:
                     # Clean up stale executions
                     await self._cleanup_stale_executions()
-                    
-                    if len(self._active_executions) >= self._max_concurrent:
+
+                    if self._running_execution_count() >= self._max_concurrent:
                         raise RuntimeError(
                             f"Maximum concurrent executions ({self._max_concurrent}) reached"
                         )
@@ -4753,6 +4756,20 @@ class ADKAgent:
                     session_id=backend_session_id,
                 )
     
+    def _running_execution_count(self) -> int:
+        """Count executions that still occupy a concurrency slot.
+
+        Completed runs waiting on a client tool result stay in
+        ``_active_executions`` so a resume can find them, but they have
+        finished executing and must not block unrelated threads
+        (issue #3077). Callers hold ``_execution_lock``.
+        """
+        return sum(
+            1
+            for execution in self._active_executions.values()
+            if not execution.is_complete
+        )
+
     async def _cleanup_stale_executions(self):
         """Clean up stale executions."""
         stale_keys: List[Tuple[str, str, str]] = []
