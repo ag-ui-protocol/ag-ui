@@ -521,7 +521,7 @@ describe("generate_a2ui explicit tool-choice opt-out", () => {
   }
 
   describe.each(["factory", "injection"])("%s", (entryPath) => {
-    it.each([undefined, true, false])(
+    it.each([undefined, true, false, null])(
       "honors forceToolChoice=%s in the actual request",
       async (forceToolChoice) => {
         const calls: Array<Record<string, unknown>> = [];
@@ -535,7 +535,10 @@ describe("generate_a2ui explicit tool-choice opt-out", () => {
         };
         const { events, text } = await driveTool(
           configuredTool(model, entryPath, {
-            ...(forceToolChoice === undefined ? {} : { forceToolChoice }),
+            // Runtime configuration can contain null despite the boolean API.
+            ...(forceToolChoice === undefined
+              ? {}
+              : { forceToolChoice: forceToolChoice as boolean }),
             defaultCatalogId: "host-catalog",
           }),
         );

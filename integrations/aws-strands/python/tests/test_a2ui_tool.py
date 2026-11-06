@@ -742,8 +742,12 @@ def _configured_a2ui_tool(model, entry_path, config):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entry_path", ["factory", "injection"])
-@pytest.mark.parametrize("force", [None, True, False], ids=["default", "forced", "unforced"])
-async def test_tool_choice_request_option(entry_path, force):
+@pytest.mark.parametrize(
+    "force_config",
+    [{}, {"force_tool_choice": True}, {"force_tool_choice": False}, {"force_tool_choice": None}],
+    ids=["default", "forced", "unforced", "null"],
+)
+async def test_tool_choice_request_option(entry_path, force_config):
     calls = []
 
     class FakeModel:
@@ -755,13 +759,11 @@ async def test_tool_choice_request_option(entry_path, force):
             )
             yield _BLOCK_STOP
 
-    config = {"default_catalog_id": "host-catalog"}
-    if force is not None:
-        config["force_tool_choice"] = force
+    config = {"default_catalog_id": "host-catalog", **force_config}
     events = await _drive_stream(_configured_a2ui_tool(FakeModel(), entry_path, config))
 
     assert len(calls) == 1
-    if force is False:
+    if force_config.get("force_tool_choice") is False:
         assert "tool_choice" not in calls[0]
     else:
         assert calls[0]["tool_choice"] == {"tool": {"name": RENDER_A2UI_TOOL_NAME}}

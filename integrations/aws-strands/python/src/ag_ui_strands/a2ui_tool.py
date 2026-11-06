@@ -421,7 +421,7 @@ class _GenerateA2UITool(AgentTool):
         super().__init__()
         cfg = resolve_a2ui_tool_params(params)
         self._cfg = cfg
-        self._force_tool_choice = params.get("force_tool_choice", True)
+        self._force_tool_choice = params.get("force_tool_choice") is not False
         self._glue = glue or {}
         self._spec: ToolSpec = {
             "name": cfg["tool_name"],
