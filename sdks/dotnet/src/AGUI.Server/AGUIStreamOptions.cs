@@ -9,8 +9,9 @@ namespace AGUI.Server;
 /// </summary>
 /// <remarks>
 /// Configuration is entirely method-based and fluent — there are no public setters. Construct an
-/// instance and call the <c>Map*</c> helpers to register mappings for tool calls, tool results,
-/// custom interrupts, and otherwise-unmapped <see cref="AIContent"/> instances.
+/// instance and call the mapping and diagnostics helpers to register mappings for tool calls,
+/// tool results, custom interrupts, otherwise-unmapped <see cref="AIContent"/> instances, and
+/// an observer for streaming exceptions.
 /// </remarks>
 public sealed class AGUIStreamOptions
 {
@@ -19,6 +20,7 @@ public sealed class AGUIStreamOptions
     private List<Func<AIContent, AGUIInterrupt?>>? _interruptMappers;
     private List<Func<AIContent, IEnumerable<BaseEvent>?>>? _contentMappers;
     private Func<ChatResponseUpdate, IEnumerable<AGUIToolCallArgumentFragment>?>? _toolCallArgumentExtractor;
+    private Action<Exception, ChatRequestContext>? _streamingErrorObserver;
 
     internal string? UsageProvider { get; private set; }
 
@@ -38,6 +40,30 @@ public sealed class AGUIStreamOptions
     public AGUIStreamOptions WithUsageProvider(string? provider)
     {
         UsageProvider = provider;
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a server-side observer for exceptions converted into a sanitized
+    /// <see cref="RunErrorEvent"/> with code <c>StreamingError</c>.
+    /// </summary>
+    /// <remarks>
+    /// The observer receives the original exception and request context synchronously before
+    /// the error event is yielded, regardless of whether tracing is enabled or sampled.
+    /// Caller-requested cancellation and explicitly supplied error events do not invoke it.
+    /// Only one observer is used; the last registration wins. Keep the observer brief and
+    /// safe for concurrent calls if these options are shared between requests.
+    /// Exceptions thrown by the observer are ignored so diagnostics cannot prevent the
+    /// sanitized error event or stream cleanup. Handle reporting failures within the observer
+    /// if they need a fallback. Exception details are never added to the wire event.
+    /// </remarks>
+    /// <param name="observer">A callback receiving the original exception and its request context.</param>
+    /// <returns>This instance for fluent chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="observer"/> is <see langword="null"/>.</exception>
+    public AGUIStreamOptions OnStreamingError(Action<Exception, ChatRequestContext> observer)
+    {
+        ArgumentNullThrowHelper.ThrowIfNull(observer);
+        _streamingErrorObserver = observer;
         return this;
     }
 
@@ -211,6 +237,18 @@ public sealed class AGUIStreamOptions
 
     internal bool TryGetCallMapping(string toolName, out Func<FunctionCallContent, IEnumerable<BaseEvent>> mapper) =>
         _callMappings.TryGetValue(toolName, out mapper!);
+
+    internal void NotifyStreamingError(Exception exception, ChatRequestContext context)
+    {
+        try
+        {
+            _streamingErrorObserver?.Invoke(exception, context);
+        }
+        catch (Exception)
+        {
+            // A reporting failure must not replace the agent's error or interrupt cleanup.
+        }
+    }
 
     private static JsonElement CastToJsonElement(object? result) =>
         result is JsonElement jsonElement
