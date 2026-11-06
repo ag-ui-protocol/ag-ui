@@ -45,6 +45,7 @@ After a tool returns, including a UI tool, the middleware continues the agent wi
 interface MCPAppsMiddlewareConfig {
   mcpServers?: MCPClientConfig[];
   discoveryFailureMode?: "continue" | "throw"; // Default: "continue"
+  continuationInput?: "full-history" | "tool-results"; // Default: "full-history"
 }
 
 type MCPClientConfig =
@@ -61,6 +62,14 @@ type MCPClientConfig =
       serverId?: string;
     };
 ```
+
+### Append-only native agents
+
+Set `continuationInput: "tool-results"` in trusted server configuration when the downstream agent retains its own input and generated calls. Each internal continuation then receives only the results executed in that round, with the same message IDs, call IDs, and content emitted to the outer stream. Full history remains available to middleware bookkeeping. The initial request is unchanged; its caller must apply the native agent's input-history policy.
+
+Both modes wait when tool calls owned by another executor, such as frontend tools, remain pending. MCP results are emitted to the outer stream, but no internal continuation submits them to the native agent in that round. Mixed-tool recovery requires checkpoint-aware delivery on a later request; `"tool-results"` alone does not provide it.
+
+The default `"full-history"` mode preserves stateless-agent behavior. Neither mode establishes durable native acknowledgment: storing a result in an outer event log is not proof that the native session consumed it. If submission fails or is cancelled, this middleware does not retry delivery or re-execute the tool within that run. Recovery across requests requires a native checkpoint or idempotent acknowledgment contract; do not blindly replay results from platform history.
 
 ### Server ID
 
