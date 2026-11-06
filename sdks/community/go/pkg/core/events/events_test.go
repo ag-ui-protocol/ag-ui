@@ -397,8 +397,10 @@ func TestStateEvents(t *testing.T) {
 		assert.Equal(t, delta, event.Delta)
 		assert.NoError(t, event.Validate())
 
-		// Test validation errors
+		// An empty patch is a valid no-op; a missing one is not
 		event.Delta = []JSONPatchOperation{}
+		assert.NoError(t, event.Validate())
+		event.Delta = nil
 		assert.Error(t, event.Validate())
 
 		// Invalid operation
@@ -407,11 +409,11 @@ func TestStateEvents(t *testing.T) {
 		}
 		assert.Error(t, event.Validate())
 
-		// Missing path
+		// The empty path points at the whole document (RFC 6901)
 		event.Delta = []JSONPatchOperation{
-			{Op: "add", Value: 42},
+			{Op: "replace", Path: "", Value: map[string]any{}},
 		}
-		assert.Error(t, event.Validate())
+		assert.NoError(t, event.Validate())
 
 		// Missing value for add operation
 		event.Delta = []JSONPatchOperation{
@@ -554,10 +556,10 @@ func TestActivityEvents(t *testing.T) {
 		assert.Len(t, event.Patch, 1)
 		assert.NoError(t, event.Validate())
 
-		event.Patch = []JSONPatchOperation{}
+		event.Patch = nil
 		assert.Error(t, event.Validate())
 
-		event.Patch = []JSONPatchOperation{{Op: "replace", Path: ""}}
+		event.Patch = []JSONPatchOperation{{Op: "move", Path: "/a"}}
 		assert.Error(t, event.Validate())
 	})
 }
