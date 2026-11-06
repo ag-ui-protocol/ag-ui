@@ -50,6 +50,7 @@ from ag_ui.core.events import (
 )
 
 from ag_ui.core.types import (
+    GeneratedBaseModel as BaseModel,
     AGUI_METADATA_KEY,
     Metadata,
     FunctionCall,
@@ -126,6 +127,7 @@ from ag_ui.core.capabilities import (
 )
 
 __all__ = [
+    "BaseModel",
     "AGUI_METADATA_KEY",
     "Metadata",
     # Protocol version
