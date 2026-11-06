@@ -177,6 +177,51 @@ function extractTextContent(mcpResult: unknown): string {
 }
 
 /**
+ * One token-usage entry, as RUN_FINISHED / RUN_ERROR carry them. Declared here
+ * rather than imported because the `@ag-ui/client` peer floor (0.0.40)
+ * predates the type, and importing the client's `aggregateTokenUsage` would
+ * fail to link against those versions.
+ */
+type UsageEntry = {
+  provider?: string;
+  model?: string;
+} & Partial<Record<(typeof USAGE_COUNT_KEYS)[number], number>>;
+
+const USAGE_COUNT_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "reasoningTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+] as const;
+
+/**
+ * Sum usage entries into one per `(provider, model)`, in order of first
+ * appearance. A count no entry in a group reported stays absent, so "not
+ * reported" never turns into a measured zero.
+ */
+function sumUsage(entries: UsageEntry[]): UsageEntry[] {
+  const groups = new Map<string, UsageEntry>();
+  for (const entry of entries) {
+    const key = JSON.stringify([entry.provider ?? null, entry.model ?? null]);
+    let target = groups.get(key);
+    if (!target) {
+      target = {};
+      if (entry.provider !== undefined) target.provider = entry.provider;
+      if (entry.model !== undefined) target.model = entry.model;
+      groups.set(key, target);
+    }
+    for (const field of USAGE_COUNT_KEYS) {
+      const value = entry[field];
+      if (typeof value !== "number") continue;
+      target[field] = (target[field] ?? 0) + value;
+    }
+  }
+  return [...groups.values()];
+}
+
+/**
  * One MCP tool as returned by `listTools`, paired with the server it came
  * from. Cached on the middleware instance so we only hit the network once.
  */
@@ -243,6 +288,17 @@ export class MCPMiddleware extends Middleware {
       let activeSub: Subscription | undefined;
       // Number of MCP tool-execution rounds performed so far in this run.
       let toolRounds = 0;
+      // Usage reported by the iterations already finished. Each iteration is
+      // its own downstream run with its own terminal usage, but the consumer
+      // sees one run and reads usage from its one terminal event, so that
+      // event has to carry the whole loop's usage rather than the last
+      // iteration's.
+      const priorUsage: UsageEntry[] = [];
+      const withLoopUsage = (terminal: BaseEvent): BaseEvent => {
+        if (priorUsage.length === 0) return terminal;
+        const own = (terminal as { usage?: UsageEntry[] }).usage ?? [];
+        return { ...terminal, usage: sumUsage([...priorUsage, ...own]) } as BaseEvent;
+      };
 
       // Run the agent once; on completion decide whether to execute MCP tool
       // calls and loop. `toolMap` (exposed name -> origin) is built once and
@@ -281,7 +337,7 @@ export class MCPMiddleware extends Middleware {
             latestMessages = messages;
             if (event.type === EventType.RUN_ERROR) {
               errored = true;
-              subscriber.next(event);
+              subscriber.next(withLoopUsage(event));
               return;
             }
             if (event.type === EventType.RUN_FINISHED) {
@@ -332,7 +388,7 @@ export class MCPMiddleware extends Middleware {
 
         // Nothing for us — flush the buffered RUN_FINISHED untouched and stop.
         if (ourCalls.length === 0) {
-          if (bufferedRunFinished) subscriber.next(bufferedRunFinished);
+          if (bufferedRunFinished) subscriber.next(withLoopUsage(bufferedRunFinished));
           subscriber.complete();
           return;
         }
@@ -343,7 +399,7 @@ export class MCPMiddleware extends Middleware {
             `[MCPMiddleware] Reached maxIterations (${this.maxIterations}); ` +
               `leaving ${ourCalls.length} MCP tool call(s) unexecuted.`,
           );
-          if (bufferedRunFinished) subscriber.next(bufferedRunFinished);
+          if (bufferedRunFinished) subscriber.next(withLoopUsage(bufferedRunFinished));
           subscriber.complete();
           return;
         }
@@ -387,7 +443,7 @@ export class MCPMiddleware extends Middleware {
         // don't trigger another run. Flush the buffered RUN_FINISHED and
         // hand off to the frontend.
         if (stillOpen.length > 0) {
-          if (bufferedRunFinished) subscriber.next(bufferedRunFinished);
+          if (bufferedRunFinished) subscriber.next(withLoopUsage(bufferedRunFinished));
           subscriber.complete();
           return;
         }
@@ -397,6 +453,12 @@ export class MCPMiddleware extends Middleware {
         // seeds from `agent.messages`, not `input.messages`) sees the tool
         // calls as resolved instead of re-emitting them.
         next.messages.push(...resultMessages);
+
+        // This iteration's RUN_FINISHED is being swallowed, so its usage is
+        // kept for the terminal event the loop does emit.
+        priorUsage.push(
+          ...((bufferedRunFinished as { usage?: UsageEntry[] } | null)?.usage ?? []),
+        );
 
         // Scenario 1: everything is resolved — start a continuation run
         // WITHOUT flushing RUN_FINISHED. The continuation's own RUN_STARTED
