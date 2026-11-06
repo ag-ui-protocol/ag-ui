@@ -1,69 +1,47 @@
 ---
 title: Integrations
+sidebarTitle: Overview
 description: "A list of AG-UI integrations"
 ---
+
+import FrontendIntegrations from "/snippets/integrations/frontend.mdx"
+import AgentFrameworks from "/snippets/integrations/agent-frameworks.mdx"
+import Infrastructure from "/snippets/integrations/infrastructure.mdx"
+import Specification from "/snippets/integrations/specification.mdx"
+import GenerativeUI from "/snippets/integrations/generative-ui.mdx"
+import SDKs from "/snippets/integrations/sdks.mdx"
+import Clients from "/snippets/integrations/clients.mdx"
 
 This page showcases various Agent User Interaction Protocol (AG-UI) integrations
 that demonstrate the protocol's capabilities and versatility.
 
-## Frontend Integrations
+## [Frontend Integrations](/integrations/frontend)
 
-- **[CopilotKit](https://copilotkit.ai)** - AI Copilots for your product.
+<FrontendIntegrations />
 
-## Agent Frameworks
+## [Agent Frameworks](/integrations/agent-frameworks)
 
-- **[LangChain](https://www.langchain.com/langgraph)** - Balance agent control with agency
-- **[Microsoft Agent Framework](https://github.com/microsoft/agent-framework)** - A framework for building, orchestrating, and deploying AI agents and multi-agent workflows with support for Python and .NET.
-- **[Google ADK](https://google.github.io/adk-docs/)** - Google's Agent Development Kit for building AI agents with Gemini models. AG-UI supports both the [Python middleware](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/adk-middleware/python) and the [JavaScript runtime integration](/integrations/google-adk-js), with a [live ADK JavaScript demo](https://dojo.ag-ui.com/adk-js/feature/agentic_chat?openCopilot=true).
-- **[Google Antigravity](https://github.com/google-antigravity/antigravity-sdk-python)** - Google's agent harness SDK, which runs the model, its tools and its sessions in a bundled local process
-- **[AWS Strands Agents](https://github.com/strands-agents/sdk-python)** - A model-driven approach to building AI agents
-- **[Mastra](https://mastra.ai)** - The TypeScript Agent Framework
-- **[Pydantic AI](https://github.com/pydantic/pydantic-ai)** - Production-ready AI agents in Python
-- **[Agno](https://agno.com)** - A full-stack framework for building Multi-Agent Systems
-- **[LlamaIndex](https://www.llamaindex.ai)** - Data framework for LLM applications with RAG capabilities and workflow orchestration
-- **[CrewAI](https://crewai.com)** - Streamline workflows across industries with
-  powerful AI agents.
-- **[AG2](https://ag2.ai)** - The Open-Source AgentOS
-- **[Claude Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview)** - Anthropic's hosted agent sessions, bridged to AG-UI in TypeScript, Python, and .NET
-- **[Claude Agent SDK](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/claude-agent-sdk)** - Anthropic's local agent SDK, served over AG-UI
-- **[Langroid](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/langroid)** - Lightweight Python framework for building multi-agent LLM applications
-- **[Cloudflare Agents](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/community/cloudflare-agents)** - Agents on Cloudflare Workers and Durable Objects, served over AG-UI
-- **[Omnara](https://omnara.com)** - Open-source control plane for durable, hosted agents, bridged to AG-UI in TypeScript ([quickstart](/integrations/omnara))
+<AgentFrameworks />
 
-## Infrastructure / Deployment
+## [Infrastructure / Deployment](/integrations/infrastructure)
 
-- **[Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/)** - Fully managed infrastructure for deploying AG-UI agents to production with native protocol support, managed authentication, session isolation, and auto-scaling. See the [deployment guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html) and the [announcement](https://aws.amazon.com/about-aws/whats-new/2026/03/amazon-bedrock-agentcore-runtime-ag-ui-protocol/).
+<Infrastructure />
 
-## Specification (standard)
-- **[Oracle Open Agent Spec](http://oracle.github.io/agent-spec/)** - A portable language for defining agentic systems
-- **[A2A Middleware](https://a2a-protocol.org/)** - Provides the definitive common language for agent interoperability
+## [Specification (standard)](/integrations/specification)
 
-## Generative UI
-- **[A2UI](https://github.com/google/A2UI)** - Declarative generative UI for generating rich, interactive interfaces
-- **[MCP Apps](https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/)** - Render interactive UI components from MCP servers directly in your chat interface
+<Specification />
 
-## SDKs
+## [Generative UI](/integrations/generative-ui)
 
-| [Kotlin](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/kotlin/overview.mdx)
-| [Golang](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/go/overview.mdx)
-| [Dart](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/dart)
-| [Java](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sdk/java/overview.mdx)
-| [Rust](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/rust/crates/ag-ui-client)
-| [Ruby](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/ruby)
-| [C++](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/community/c%2B%2B)
-| [.NET](https://github.com/ag-ui-protocol/ag-ui/tree/main/sdks/dotnet/samples/GettingStarted)
+<GenerativeUI />
 
-#### (coming soon)
- | [Nim](https://github.com/ag-ui-protocol/ag-ui/pull/29)
- | [Flowise](https://github.com/ag-ui-protocol/ag-ui/issues/367)
- | [Langflow](https://github.com/ag-ui-protocol/ag-ui/issues/366)
+## [SDKs](/integrations/sdks)
 
-### Clients
+<SDKs />
 
-| [CopilotKit](https://docs.copilotkit.ai/direct-to-llm/guides/quickstart)
-| [Terminal + Agent](https://docs.ag-ui.com/quickstart/clients)
-| [Chat platforms — Slack, Microsoft Teams](https://github.com/CopilotKit/channels-sdk)
-| [React Native](https://github.com/CopilotKit/CopilotKit/tree/main/examples/v2/react-native/demo)
+## [Clients](/integrations/clients)
 
+<Clients />
 
-Join [Discord](https://discord.gg/Jd3FzfdJa8) to engage with the AG-UI community.
+Join [Discord](https://discord.gg/Jd3FzfdJa8) to engage with the AG-UI
+community.
