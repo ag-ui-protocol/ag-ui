@@ -102,6 +102,12 @@
     "notice": "integrations/mastra/typescript/LICENSE"
   },
   {
+    "directory": "integrations/opencode/typescript",
+    "names": ["@ag-ui/opencode"],
+    "license": "MIT",
+    "notice": "integrations/opencode/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/pydantic-ai/typescript",
     "names": ["@ag-ui/pydantic-ai"],
     "license": "MIT",

@@ -380,7 +380,10 @@ const ALL_SERVICES = {
   "claude-managed-agents-typescript": [
     {
       // See claude-managed-agents-dotnet above.
-      command: managedAgentsCommand("npx tsx examples/setup.ts", "npx tsx examples/server.ts"),
+      command: managedAgentsCommand(
+        "npx tsx examples/setup.ts",
+        "npx tsx examples/server.ts",
+      ),
       name: "Claude Managed Agents (TypeScript)",
       cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
       env: {
@@ -476,6 +479,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
+        OPENCODE_URL_FOR_DOJO: "http://localhost:8031",
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
@@ -520,6 +524,7 @@ const ALL_SERVICES = {
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
+        OPENCODE_URL_FOR_DOJO: "http://localhost:8031",
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
@@ -528,6 +533,17 @@ const ALL_SERVICES = {
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
           "cpkdojo.local___CopilotKit Feature Viewer",
       },
+    },
+  ],
+  opencode: [
+    {
+      name: "OpenCode",
+      command: "pnpm exec tsx server.ts",
+      cwd: path.join(
+        integrationsRoot,
+        "opencode/typescript/examples/agentic-chat",
+      ),
+      env: { PORT: 8031, HOST: "127.0.0.1" },
     },
   ],
 };
@@ -553,6 +569,10 @@ function printDryRunServices(procs) {
 async function main() {
   // determine selection
   let selectedKeys = Object.keys(ALL_SERVICES);
+  const autoOpenCodeFixture =
+    !onlyList?.length &&
+    process.env.OPENCODE_FIXTURE === undefined &&
+    (!process.env.AG_UI_TOKEN || !process.env.OPENCODE_URL);
   if (onlyList && onlyList.length) {
     selectedKeys = onlyList;
   }
@@ -595,6 +615,8 @@ async function main() {
     }
     for (const svc of svcs) {
       svc.env = { ...openaiEnvDefaults, ...geminiEnvDefaults, ...svc.env };
+      if (key === "opencode" && autoOpenCodeFixture)
+        svc.env.OPENCODE_FIXTURE = "1";
     }
     procs.push(...svcs);
   }

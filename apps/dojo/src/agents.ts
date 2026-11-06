@@ -45,6 +45,7 @@ import { Ag2Agent } from "@ag-ui/ag2";
 import { LangroidHttpAgent } from "@ag-ui/langroid";
 import { WatsonxAgent } from "@ag-ui/watsonx";
 import { OmnaraAgent, type BackendTool } from "@ag-ui/omnara";
+import { OpenCodeAgent } from "@ag-ui/opencode";
 import { A2UIMiddleware } from "@ag-ui/a2ui-middleware";
 import { DOJO_A2UI_MIDDLEWARE_CONFIG } from "./a2ui-config";
 import {
@@ -163,7 +164,8 @@ export const agentsIntegrations = {
 
   antigravity: async () =>
     mapAgents(
-      (path) => new AntigravityAgent({ url: `${envVars.antigravityUrl}/${path}` }),
+      (path) =>
+        new AntigravityAgent({ url: `${envVars.antigravityUrl}/${path}` }),
       {
         agentic_chat: "agentic_chat",
         human_in_the_loop: "human_in_the_loop",
@@ -957,4 +959,18 @@ export const agentsIntegrations = {
       ),
     };
   },
+  opencode: async () => ({
+    agentic_chat: new OpenCodeAgent({
+      url: `${envVars.opencodeUrl}/agentic_chat`,
+      headers: process.env.OPENCODE_AG_UI_TOKEN
+        ? { Authorization: `Bearer ${process.env.OPENCODE_AG_UI_TOKEN}` }
+        : {},
+    }),
+    interrupt: new OpenCodeAgent({
+      url: `${envVars.opencodeUrl}/agentic_chat`,
+      headers: process.env.OPENCODE_AG_UI_TOKEN
+        ? { Authorization: `Bearer ${process.env.OPENCODE_AG_UI_TOKEN}` }
+        : {},
+    }),
+  }),
 } satisfies AgentsMap;
