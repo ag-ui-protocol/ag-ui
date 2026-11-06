@@ -75,6 +75,33 @@ describe("Encoder Tests", () => {
     });
   });
 
+  describe("content negotiation", () => {
+    // A wildcard is not a request for protobuf. `Accept: */*` is what curl,
+    // fetch() and most HTTP clients send by default, and before this the
+    // wildcard matched the protobuf media type, so those clients were handed
+    // binary frames they never asked for. Only a request that names the
+    // protobuf type selects it.
+    it.each(["*/*", "application/*", "text/event-stream, */*;q=0.8", "*/*;q=1, text/html"])(
+      "chooses SSE for the wildcard Accept %s",
+      (accept) => {
+        expect(new EventEncoder({ accept }).getContentType()).toBe("text/event-stream");
+      },
+    );
+
+    it.each([
+      proto.AGUI_MEDIA_TYPE,
+      `${proto.AGUI_MEDIA_TYPE}, */*;q=0.1`,
+      proto.AGUI_MEDIA_TYPE.toUpperCase(),
+    ])("chooses protobuf when the Accept names it: %s", (accept) => {
+      expect(new EventEncoder({ accept }).getContentType()).toBe(proto.AGUI_MEDIA_TYPE);
+    });
+
+    it("does not choose protobuf when the Accept refuses it with q=0", () => {
+      const encoder = new EventEncoder({ accept: `${proto.AGUI_MEDIA_TYPE};q=0, */*` });
+      expect(encoder.getContentType()).toBe("text/event-stream");
+    });
+  });
+
   describe("encodeProtobuf method", () => {
     it("should encode event as protobuf with length prefix", () => {
       const encoder = new EventEncoder();

@@ -60,10 +60,12 @@ export class EventEncoder {
   }
 
   private isProtobufAccepted(acceptHeader: string): boolean {
-    // Pass the Accept header and an array with your media type
-    const preferred = preferredMediaTypes(acceptHeader, [proto.AGUI_MEDIA_TYPE]);
-
-    // If the returned array includes your media type, it's acceptable
-    return preferred.includes(proto.AGUI_MEDIA_TYPE);
+    // Protobuf only when the header names it with q > 0. A wildcard (`*/*`,
+    // `application/*`) also matches the protobuf type, but it is what curl,
+    // fetch() and most HTTP clients send by default, and SSE is the transport
+    // every client reads. Listing the types the header itself names, rather
+    // than asking whether protobuf matches, keeps a wildcard on SSE.
+    const named = preferredMediaTypes(acceptHeader).map((type) => type.toLowerCase());
+    return named.includes(proto.AGUI_MEDIA_TYPE);
   }
 }
