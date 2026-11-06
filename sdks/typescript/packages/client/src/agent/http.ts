@@ -6,6 +6,7 @@ import { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
 import { Observable } from "rxjs";
+import { v4 as uuidv4 } from "uuid";
 import { AgentSubscriber } from "./subscriber";
 
 interface RunHttpAgentConfig extends RunAgentParameters {
@@ -43,6 +44,9 @@ export class HttpAgent extends AbstractAgent {
   public headers: Record<string, string>;
   public fetch: HttpAgentFetchFn;
   public abortController: AbortController = new AbortController();
+  // The request is built after onInitialize awaits, by which time a later run
+  // may have replaced abortController, so each run's controller is kept by runId.
+  private runAbortControllers = new Map<string, AbortController>();
 
   /**
    * Returns the fetch config for the http request.
@@ -59,7 +63,7 @@ export class HttpAgent extends AbstractAgent {
         Accept: "text/event-stream",
       },
       body: JSON.stringify(sanitizeOutgoingInput(input)),
-      signal: this.abortController.signal,
+      signal: (this.runAbortControllers.get(input.runId) ?? this.abortController).signal,
     };
   }
 
@@ -67,8 +71,13 @@ export class HttpAgent extends AbstractAgent {
     parameters?: RunHttpAgentConfig,
     subscriber?: AgentSubscriber,
   ): Promise<RunAgentResult> {
-    this.abortController = parameters?.abortController ?? new AbortController();
-    return super.runAgent(parameters, subscriber);
+    const controller = parameters?.abortController ?? new AbortController();
+    const runId = parameters?.runId || uuidv4();
+    this.abortController = controller;
+    this.runAbortControllers.set(runId, controller);
+    return super.runAgent({ ...parameters, runId }, subscriber).finally(() => {
+      this.runAbortControllers.delete(runId);
+    });
   }
 
   abortRun() {
@@ -110,6 +119,7 @@ export class HttpAgent extends AbstractAgent {
     cloned.url = this.url;
     cloned.headers = structuredClone_(this.headers ?? {});
     cloned.fetch = this.fetch;
+    cloned.runAbortControllers = new Map();
 
     const newController = new AbortController();
     const originalSignal = this.abortController.signal as AbortSignal & { reason?: unknown };
