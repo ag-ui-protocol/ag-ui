@@ -178,10 +178,23 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
                 utf8Buffer.append(byte)
 
                 // Try to decode accumulated bytes as UTF-8
+                var decoded: String?
+
                 if let string = String(bytes: utf8Buffer, encoding: .utf8) {
                     // Successful decode - process the chunk
                     utf8Buffer.removeAll()
+                    decoded = string
+                } else if utf8Buffer.count > 4 {
+                    // No UTF-8 character is longer than four bytes, so the
+                    // leading byte cannot begin one. It is replaced rather than
+                    // discarded: a delta that arrives shortened reads as the
+                    // text the producer meant to send, with no sign anything
+                    // was lost.
+                    utf8Buffer.removeFirst()
+                    decoded = "\u{FFFD}"
+                }
 
+                if let string = decoded {
                     // Parse SSE events from the string chunk.
                     // Throws SseParserError.bufferOverflow if the buffer exceeds
                     // maxBufferByteCount — treat as a fatal stream error.
@@ -225,10 +238,6 @@ public struct EventStream<Bytes: AsyncSequence>: AsyncSequence where Bytes.Eleme
                     guard eventQueue.isEmpty else {
                         return eventQueue.removeFirst()
                     }
-                } else if utf8Buffer.count > 4 {
-                    // Invalid UTF-8 sequence (UTF-8 characters are max 4 bytes)
-                    // Skip the first byte and try to resynchronize
-                    utf8Buffer.removeFirst()
                 }
             }
 
