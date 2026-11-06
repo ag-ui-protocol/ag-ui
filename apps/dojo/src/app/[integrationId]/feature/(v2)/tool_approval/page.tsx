@@ -19,6 +19,15 @@ interface ToolApprovalProps {
 interface ApprovalRequest {
   toolName?: string;
   args?: { amount?: number; description?: string };
+  cao?: CaoApproval;
+}
+
+// A CLI Agent Orchestrator interrupt is a real CLI's prompt in a tmux
+// terminal. CAO puts only metadata on the wire, never the prompt text, so the
+// card names the terminal to look at rather than what it asks.
+interface CaoApproval {
+  provider: string;
+  terminalId: string;
 }
 
 // Approval details as the bridge sends them, before the type check.
@@ -34,8 +43,34 @@ function readApprovalRequest(value: unknown): ApprovalRequest | null {
   if (!value || typeof value !== "object") return null;
   const request = (value as { metadata?: { mastra?: ApprovalPayload } })
     .metadata?.mastra;
-  if (request?.type !== "mastra_tool_approval") return null;
-  return { toolName: request.toolName, args: request.args };
+  if (request?.type === "mastra_tool_approval")
+    return { toolName: request.toolName, args: request.args };
+  return readCaoApproval(value);
+}
+
+// A CAO interrupt carries `metadata.provider` and `metadata.terminalId`; those
+// keys are what identify it (Mastra's interrupts carry `metadata.mastra`
+// instead, and are handled above). The regex only rejects a malformed reason;
+// CAO's are `namespace:name`, e.g. `claude-code:permission_request`. CAO
+// resumes with `{ approved }`, the same payload Mastra takes.
+const CAO_REASON = /^[a-z0-9-]+:[a-z0-9_]+$/;
+
+function readCaoApproval(value: object): ApprovalRequest | null {
+  const { reason, metadata } = value as {
+    reason?: unknown;
+    metadata?: { provider?: unknown; terminalId?: unknown };
+  };
+  if (
+    typeof reason !== "string" ||
+    !CAO_REASON.test(reason) ||
+    typeof metadata?.provider !== "string" ||
+    typeof metadata.terminalId !== "string"
+  )
+    return null;
+  return {
+    toolName: reason,
+    cao: { provider: metadata.provider, terminalId: metadata.terminalId },
+  };
 }
 
 // Shape of the `record_expense` tool result once the approved call has run.
@@ -91,6 +126,7 @@ const ChatContent = () => {
           toolName={request.toolName ?? "tool"}
           amount={request.args?.amount}
           description={request.args?.description}
+          cao={request.cao}
           onApprove={() => resolve({ approved: true })}
           onReject={() => resolve({ approved: false })}
         />
@@ -165,9 +201,10 @@ const ApprovalCard: React.FC<{
   toolName: string;
   amount?: number;
   description?: string;
+  cao?: CaoApproval;
   onApprove: () => void;
   onReject: () => void;
-}> = ({ toolName, amount, description, onApprove, onReject }) => {
+}> = ({ toolName, amount, description, cao, onApprove, onReject }) => {
   const { theme } = useTheme();
   const [decided, setDecided] = useState(false);
   const dark = theme === "dark";
@@ -197,8 +234,16 @@ const ApprovalCard: React.FC<{
         <code>{toolName}</code>
       </h2>
       <p className="text-sm mb-4" data-testid="approval-args">
-        {amount !== undefined ? `$${amount}` : "An expense"}
-        {description ? ` for ${description}` : ""}
+        {cao ? (
+          <>
+            {cao.provider} in terminal <code>{cao.terminalId}</code>
+          </>
+        ) : (
+          <>
+            {amount !== undefined ? `$${amount}` : "An expense"}
+            {description ? ` for ${description}` : ""}
+          </>
+        )}
       </p>
       <div className="flex gap-2">
         <button
