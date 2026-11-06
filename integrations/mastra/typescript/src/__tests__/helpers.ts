@@ -85,6 +85,19 @@ export class FakeLocalAgent {
   lastStreamOpts: any = null;
   /** Options passed to the most recent resumeStream() call. */
   lastResumeOpts: any = null;
+  /**
+   * Mirrors `@mastra/core` `Agent#hasOwnMemory`: own memory only. Inherited
+   * request-context memory is reported by `getMemory` and does not flip this.
+   * Defaults to true — the fake always holds a `FakeMemory` — so existing
+   * tests keep receiving a memory scope.
+   */
+  ownsMemory: boolean;
+  /**
+   * Returned by `getMemory` when `ownsMemory` is false. Models memory a
+   * supervisor handed this run (newer cores resolve it from the request
+   * context; this fake returns it directly).
+   */
+  inheritedMemory: FakeMemory | undefined;
 
   constructor(
     opts: {
@@ -95,6 +108,8 @@ export class FakeLocalAgent {
       usage?: any;
       finishReason?: Promise<string | undefined>;
       model?: any;
+      ownsMemory?: boolean;
+      inheritedMemory?: FakeMemory;
     } = {},
   ) {
     this.memory = opts.memory ?? new FakeMemory();
@@ -104,9 +119,16 @@ export class FakeLocalAgent {
     this.usage = opts.usage;
     this.finishReason = opts.finishReason;
     this.model = opts.model;
+    this.ownsMemory = opts.ownsMemory ?? true;
+    this.inheritedMemory = opts.inheritedMemory;
+  }
+
+  hasOwnMemory() {
+    return this.ownsMemory;
   }
 
   async getMemory(_opts?: any) {
+    if (!this.ownsMemory) return this.inheritedMemory;
     return this.memory;
   }
 
