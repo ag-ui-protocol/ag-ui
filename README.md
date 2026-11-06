@@ -122,6 +122,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 | [Claude Managed Agents SDK](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/claude-managed-agents) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/claude-managed-agents-python/feature/tool_based_generative_ui) |
 | [Langroid](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/langroid) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/langroid/feature/shared_state) |
 | [Omnara](https://omnara.com) | ✅ Supported | ➡️ [Docs](https://docs.ag-ui.com/integrations/omnara) 🎮 [Demos](https://dojo.ag-ui.com/omnara/feature/tool_based_generative_ui) |
+| [Neuron AI](https://neuron-ai.dev/) | ✅ Supported | ➡️ [Docs](https://docs.neuron-ai.dev/agent/streaming#ag-ui-adapter) 🎮 [Example](https://github.com/neuron-core/generative-ui-demo) |
 | [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | ✅ Supported | ➡️ [Integration](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/community/cloudflare-agents) |
 
