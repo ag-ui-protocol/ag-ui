@@ -413,11 +413,11 @@ func TestStateEvents(t *testing.T) {
 		}
 		assert.Error(t, event.Validate())
 
-		// Missing value for add operation
+		// A nil value on add is the JSON null RFC 6902 allows, not a missing one
 		event.Delta = []JSONPatchOperation{
 			{Op: "add", Path: "/counter"},
 		}
-		assert.Error(t, event.Validate())
+		assert.NoError(t, event.Validate())
 
 		// Missing from for move operation
 		event.Delta = []JSONPatchOperation{
