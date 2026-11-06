@@ -79,12 +79,14 @@ ThinkingProcess = TypedDict("ThinkingProcess", {
     "message_id": NotRequired[str],
     "type": NotRequired[Optional[str]],
     "signature": NotRequired[Optional[str]],
+    "parent_ids": NotRequired[List[str]],
 })
 
 MessageInProgress = TypedDict("MessageInProgress", {
     "id": str,
     "tool_call_id": NotRequired[Optional[str]],
-    "tool_call_name": NotRequired[Optional[str]]
+    "tool_call_name": NotRequired[Optional[str]],
+    "parent_ids": NotRequired[List[str]],
 })
 
 RunMetadata = TypedDict("RunMetadata", {
