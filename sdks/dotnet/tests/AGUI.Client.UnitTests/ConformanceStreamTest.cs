@@ -579,6 +579,19 @@ public sealed class ConformanceStreamTest
                 + $"\nactual {result.Messages.ToJsonString()}" + context);
         }
 
+        if (expectation["messageAbsentPaths"] is JsonArray messageAbsentPaths)
+        {
+            foreach (var absent in messageAbsentPaths)
+            {
+                var path = (string?)absent ?? string.Empty;
+                Assert.False(
+                    PathExists(result.Messages, path),
+                    $"[{name}] {path} must NOT exist in the final messages — "
+                    + "an explicit null is still the member being kept: "
+                    + result.Messages.ToJsonString() + context);
+            }
+        }
+
         // `state` is deliberately not asserted: the .NET client carries no state
         // store. STATE_SNAPSHOT and STATE_DELTA reach a consumer only as
         // RawRepresentation on a pass-through update, and nothing in the SDK

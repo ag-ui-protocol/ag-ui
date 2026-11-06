@@ -884,6 +884,8 @@ export abstract class AbstractAgent {
     cloned.subscribers = [...this.subscribers];
     cloned.middlewares = [...this.middlewares];
     cloned.pendingInterrupts = structuredClone_(this.pendingInterrupts);
+    // A fresh guard, not the source's: the clone is not mid-resolution.
+    cloned.resolvingPeerCeiling = false;
     cloned.trackRunAborts();
 
     return cloned;

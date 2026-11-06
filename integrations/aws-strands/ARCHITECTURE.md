@@ -85,6 +85,9 @@ This document explains how the AWS Strands integration inside `integrations/aws-
   - Every site sits after a `RunStartedEvent` and before the run's terminal event, so a report never falls outside the run envelope the AG-UI client verifier enforces. That holds because of where the sites are, not because anything enforces it, so the test suite asserts it at every site.
   - The name is `hook_error` rather than the `PascalCase` the adapter's other custom events use, because it has to match the string TypeScript already emits.
   - The orchestrator path (`_run_orchestrator`) invokes none of these hooks, `state_context_builder` included, so no site is reachable there. A hook configured on a `Graph` or `Swarm` run is silently inert and produces no `hook_error` either.
+- **Sub-agents (agents as tools)**
+  - Python only. `subagent_visibility="attributed"` maps each agent-as-tool invocation to an AG-UI subagent run (`subagents.py`); the TypeScript bridge has no agent-as-tool forwarding at all, so it has neither the inline forwarding nor the attribution, and the option has no counterpart there yet.
+  - A sub-agent's token usage is still not counted in the run's usage on either mode, which the AG-UI spec asks for; widening usage stays a change for both bridges at once (see the token-usage notes below).
 - **Messages snapshot emission**
   - Emits `MessagesSnapshotEvent` at four lifecycle boundaries so frontends (notably CopilotKit v2) can rebuild canonical message history rather than reconstructing it from streaming `TOOL_CALL_*` events alone:
     1. After the initial `StateSnapshotEvent`, seeded from `RunAgentInput.messages`.
