@@ -41,17 +41,16 @@ pnpm build:clean
 
 ### Python SDK
 ```bash
-# Navigate to python-sdk directory
-cd python-sdk
+cd sdks/python
 
-# Install dependencies (using poetry)
-poetry install
+# Install dependencies (using uv)
+uv sync --locked
 
 # Run tests
-python -m unittest discover tests
+uv run --locked python -m unittest discover tests -v
 
 # Build distribution
-poetry build
+uv build
 ```
 
 ### Running Specific Integration Tests
