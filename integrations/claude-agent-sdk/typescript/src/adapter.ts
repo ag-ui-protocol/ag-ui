@@ -850,6 +850,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       id: string;
       type: "function";
       function: { name: string; arguments: string };
+      metadata?: Record<string, unknown>;
     };
     let pendingMsg: {
       id: string;
@@ -995,6 +996,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                   runId,
                   toolCallId: currentToolCallId,
                   toolCallName: currentToolDisplayName, // Use unprefixed name for frontend matching!
+                  metadata: { rawName: currentToolCallName }, // Original name including any mcp__ prefix
                   parentMessageId: currentMessageId ?? undefined, // Link to parent message
                 });
               }
@@ -1074,6 +1076,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                     name: currentToolDisplayName,
                     arguments: accumulatedToolJson,
                   },
+                  metadata: { rawName: currentToolCallName },
                 });
               }
 
