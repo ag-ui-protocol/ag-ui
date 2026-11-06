@@ -127,6 +127,45 @@ describe("reasoning message compaction", () => {
     expect((compacted[1] as ReasoningMessageContentEvent).delta).toBe("ab");
   });
 
+  it.each([
+    {
+      label: "reasoning and an answer",
+      outer: [
+        { type: EventType.REASONING_MESSAGE_START, messageId: "r1", role: "reasoning" },
+        { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "r1", delta: "a" },
+      ],
+      outerEnd: { type: EventType.REASONING_MESSAGE_END, messageId: "r1" },
+    },
+    {
+      label: "a tool call and an answer",
+      outer: [
+        { type: EventType.TOOL_CALL_START, toolCallId: "c1", toolCallName: "lookup" },
+        { type: EventType.TOOL_CALL_ARGS, toolCallId: "c1", delta: "{}" },
+      ],
+      outerEnd: { type: EventType.TOOL_CALL_END, toolCallId: "c1" },
+    },
+  ])("keeps step events in order when $label overlap and end in reverse", async ({ outer, outerEnd }) => {
+    const events = [
+      { type: EventType.RUN_STARTED, threadId: "t", runId: "run" },
+      ...outer,
+      { type: EventType.STEP_STARTED, stepName: "model" },
+      { type: EventType.TEXT_MESSAGE_START, messageId: "m1", role: "assistant" },
+      { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "answer" },
+      { type: EventType.STEP_FINISHED, stepName: "model" },
+      { type: EventType.TEXT_MESSAGE_END, messageId: "m1" },
+      outerEnd,
+      { type: EventType.RUN_FINISHED, threadId: "t", runId: "run" },
+    ] as BaseEvent[];
+
+    const compacted = compactEvents(events);
+    const steps = compacted
+      .filter((event) => event.type === EventType.STEP_STARTED || event.type === EventType.STEP_FINISHED)
+      .map((event) => event.type);
+
+    expect(steps).toEqual([EventType.STEP_STARTED, EventType.STEP_FINISHED]);
+    await expect(verify(compacted)).resolves.toHaveLength(compacted.length);
+  });
+
   it("folds content metadata into the collapsed event and leaves start and end metadata alone", async () => {
     const events = [
       {

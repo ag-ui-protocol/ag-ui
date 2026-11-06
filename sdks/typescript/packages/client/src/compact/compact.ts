@@ -140,7 +140,13 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
     }
   };
 
+  // The open stream that holds the latest event that arrived between stream
+  // events. Later such events join it, so they keep their arrival order even
+  // when the open streams end in a different order than they started.
+  let otherEventsHolder: { otherEvents: BaseEvent[] } | undefined;
+
   const flushPendingStreams = () => {
+    otherEventsHolder = undefined;
     for (const entry of pendingStreamOrder) {
       if (entry.kind === "text") {
         const pending = pendingTextMessages.get(entry.id);
@@ -222,6 +228,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       pending.end = endEvent;
 
       // Flush this message's events
+      if (otherEventsHolder === pending) otherEventsHolder = undefined;
       flushTextMessage(messageId, pending, compacted);
       pendingTextMessages.delete(messageId);
       forgetPendingStream("text", messageId);
@@ -278,6 +285,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       const pending = pendingReasoningMessages.get(messageId)!;
       pending.end = endEvent;
 
+      if (otherEventsHolder === pending) otherEventsHolder = undefined;
       flushReasoningMessage(messageId, pending, compacted);
       pendingReasoningMessages.delete(messageId);
       forgetPendingStream("reasoning", messageId);
@@ -332,6 +340,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       pending.end = endEvent;
 
       // Flush this tool call's events
+      if (otherEventsHolder === pending) otherEventsHolder = undefined;
       flushToolCall(toolCallId, pending, compacted);
       pendingToolCalls.delete(toolCallId);
       forgetPendingStream("tool", toolCallId);
@@ -354,44 +363,48 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       // Collect state events for compaction
       stateEvents.push(event as StateSnapshotEvent | StateDeltaEvent);
     } else {
-      // For non-streaming events, check if we're in the middle of any streaming sequences
-      let addedToBuffer = false;
+      // For non-streaming events, check if we're in the middle of any streaming
+      // sequences. An earlier in-between event that is still held keeps the
+      // later ones with it, so none of them overtakes it.
+      let holder = otherEventsHolder;
 
       // Check text messages
-      for (const [, pending] of pendingTextMessages) {
-        // If we have a start but no end yet, this event is "in between"
-        if (pending.start && !pending.end) {
-          pending.otherEvents.push(event);
-          addedToBuffer = true;
-          break;
+      if (!holder) {
+        for (const [, pending] of pendingTextMessages) {
+          // If we have a start but no end yet, this event is "in between"
+          if (pending.start && !pending.end) {
+            holder = pending;
+            break;
+          }
         }
       }
 
       // Check reasoning messages if not already buffered
-      if (!addedToBuffer) {
+      if (!holder) {
         for (const [, pending] of pendingReasoningMessages) {
           if (pending.start && !pending.end) {
-            pending.otherEvents.push(event);
-            addedToBuffer = true;
+            holder = pending;
             break;
           }
         }
       }
 
       // Check tool calls if not already buffered
-      if (!addedToBuffer) {
+      if (!holder) {
         for (const [, pending] of pendingToolCalls) {
           // If we have a start but no end yet, this event is "in between"
           if (pending.start && !pending.end) {
-            pending.otherEvents.push(event);
-            addedToBuffer = true;
+            holder = pending;
             break;
           }
         }
       }
 
-      // If not in the middle of any streaming sequence, add directly to compacted
-      if (!addedToBuffer) {
+      if (holder) {
+        holder.otherEvents.push(event);
+        otherEventsHolder = holder;
+      } else {
+        // If not in the middle of any streaming sequence, add directly to compacted
         compacted.push(event);
       }
     }
