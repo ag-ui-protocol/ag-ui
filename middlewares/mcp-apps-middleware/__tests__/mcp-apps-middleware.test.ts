@@ -413,6 +413,7 @@ describe("MCPAppsMiddleware", () => {
         mockCallTool.mockResolvedValue({
           content: [{ type: "text", text: "diagram ready" }],
           isError,
+          _meta: { sessionToken: "app-private-token" },
         });
         const agent = new SequenceAgent((input, turn) =>
           turn === 0
@@ -433,9 +434,21 @@ describe("MCPAppsMiddleware", () => {
           expect.objectContaining({
             role: "tool",
             toolCallId: "native-original",
-            content: "diagram ready",
+            content: expect.any(String),
             ...(isError ? { error: "" } : {}),
           }),
+        );
+        const savedResult = agent.runCalls[1].messages.find(
+          (message) => message.role === "tool",
+        )!;
+        expect(
+          JSON.parse(savedResult.content as string).activity.content.result,
+        ).toEqual({
+          content: [{ type: "text", text: "diagram ready" }],
+          isError,
+        });
+        expect(JSON.stringify(agent.runCalls[1].messages)).not.toContain(
+          "app-private-token",
         );
         expect(mockCallTool).toHaveBeenCalledTimes(1);
         expect(
@@ -473,10 +486,19 @@ describe("MCPAppsMiddleware", () => {
         expect.objectContaining({
           role: "tool",
           toolCallId: "native-original",
-          content: "original failure",
+          content: expect.any(String),
           metadata: { "ag-ui:tool-result": { error: "" } },
         }),
       );
+      const savedResult = agent.messages.find(
+        (message) => message.role === "tool",
+      )!;
+      expect(
+        JSON.parse(savedResult.content as string).activity.content.result,
+      ).toEqual({
+        content: [{ type: "text", text: "original failure" }],
+        isError: true,
+      });
     });
 
     it("continues from a prerequisite to the UI tool in one run", async () => {
@@ -1742,7 +1764,7 @@ describe("MCPAppsMiddleware", () => {
       expect((toolResultEvent as any).toolCallId).toBe("specific-tc-id");
     });
 
-    it("extracts text content from MCP result", async () => {
+    it("preserves all text content in the replayable MCP app result", async () => {
       const uiTool = createMCPToolWithUI("ui-tool", "ui://server/tool");
       mockListTools.mockResolvedValue({ tools: [uiTool] });
       mockCallTool.mockResolvedValue(
@@ -1771,7 +1793,13 @@ describe("MCPAppsMiddleware", () => {
       const toolResultEvent = events.find(
         (e) => e.type === EventType.TOOL_CALL_RESULT,
       );
-      expect((toolResultEvent as any).content).toBe("Line 1\nLine 2");
+      expect(
+        JSON.parse((toolResultEvent as any).content).activity.content.result
+          .content,
+      ).toEqual([
+        { type: "text", text: "Line 1" },
+        { type: "text", text: "Line 2" },
+      ]);
     });
 
     it("falls back to JSON.stringify for non-text content", async () => {
@@ -1802,6 +1830,81 @@ describe("MCPAppsMiddleware", () => {
       );
       expect((toolResultEvent as any).content).toContain("image");
       expect((toolResultEvent as any).content).toContain("base64data");
+    });
+
+    it("persists the public app activity through native string-only history", async () => {
+      const server: MCPClientConfig = {
+        ...httpServerConfig,
+        serverId: "pni707-local",
+        headers: { Authorization: "Bearer private-authority" },
+      };
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("counter", "ui://pni707/counter.html")],
+      });
+      const result = {
+        _meta: {
+          "ui/resourceUri": "ui://pni707/counter.html",
+          sessionToken: "private-app-authority",
+        },
+        content: [
+          {
+            type: "text",
+            text: '{"fixture":"pni707-counter-v1","label":"pni707-unrecorded-mcp-v2","initialCount":0}',
+          },
+        ],
+        structuredContent: { fixture: "pni707-counter-v1", initialCount: 0 },
+      };
+      mockCallTool.mockResolvedValue(result);
+      const middleware = new MCPAppsMiddleware({ mcpServers: [server] });
+      const assistant = createAssistantMessageWithToolCalls([
+        {
+          name: "counter",
+          args: { label: "pni707-unrecorded-mcp-v2" },
+          id: "call_dNEUedj1qk3VWiW9ItiFNMsN",
+        },
+      ]);
+      const events = await collectEvents(
+        middleware.run(
+          createRunAgentInput({ messages: [assistant] }),
+          new MockAgent([createRunStartedEvent(), createRunFinishedEvent()]),
+        ),
+      );
+      const results = events.filter(
+        (event) => event.type === EventType.TOOL_CALL_RESULT,
+      ) as any[];
+      expect(results).toHaveLength(1);
+      expect(results[0].toolCallId).toBe("call_dNEUedj1qk3VWiW9ItiFNMsN");
+      const saved = JSON.parse(JSON.stringify({ content: results[0].content }));
+      const envelope = JSON.parse(saved.content);
+      const activity = events.find(
+        (event) => event.type === EventType.ACTIVITY_SNAPSHOT,
+      ) as any;
+      expect(envelope).toEqual({
+        type: "ag-ui:mcp-app-result",
+        version: 1,
+        activity: {
+          messageId: activity.messageId,
+          content: {
+            ...activity.content,
+            result: {
+              content: result.content,
+              structuredContent: result.structuredContent,
+            },
+          },
+        },
+      });
+      expect(envelope.activity.content.result).toEqual({
+        content: result.content,
+        structuredContent: result.structuredContent,
+      });
+      expect(activity.content.result).toEqual(result);
+      expect(saved.content).not.toContain("private-app-authority");
+      expect(saved.content).not.toContain("_meta");
+      expect(envelope.activity.content.serverId).toBe("pni707-local");
+      expect(saved.content).not.toContain("private-authority");
+      expect(saved.content).not.toContain(httpServerConfig.url);
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(mockReadResource).not.toHaveBeenCalled();
     });
 
     it("emits ACTIVITY_SNAPSHOT with MCP result and resourceUri", async () => {
