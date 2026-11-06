@@ -1638,8 +1638,9 @@ export class MastraAgent extends AbstractAgent {
             },
             input.runId,
             pendingInterrupts,
-            [],
+            input.messages,
             suspensionOrigin,
+            true,
           );
 
           await this.streamMastraAgent(
@@ -2234,6 +2235,7 @@ export class MastraAgent extends AbstractAgent {
     pendingInterrupts: Interrupt[],
     historyMessages: Message[] = [],
     suspensionOrigin?: (toolCallId: string) => string | undefined,
+    adoptToolResultOwner = false,
   ): Omit<MastraAgentStreamOptions, "onError" | "onRunFinished" | "onAbort"> {
     let reasoningMessageId: string | null = null;
     let isReasoning = false;
@@ -2338,6 +2340,42 @@ export class MastraAgent extends AbstractAgent {
       textSinceLastToolCall.delete(baseId);
     };
 
+    // --- Frontend tool result continuation (#3207) -------------------------
+    // A frontend tool round trip spans two runs: the earlier run ended on
+    // the tool call, and this run's input ends with the call's result. The
+    // trailing tool results name their owner — the assistant message that
+    // holds the calls. Mastra merges this run's whole response into that
+    // stored message, but announces a fresh id for it, one it never stores,
+    // so anything that looks the streamed text up by id fails until the
+    // client reloads the thread. Adopt the owner's base id for the run
+    // instead, and open a continuation boundary on it up front: the answer
+    // streams as the owner's next continuation segment — never the bare
+    // owner, whose text would render above the tool call (#2074) — which is
+    // the id the stored-message conversion produces for the same text.
+    // Only the fresh-run path opts in: a resume replays its suspended call
+    // under that call's own owner through the chunk processor instead.
+    const toolResultOwnerBaseId = ((): string | undefined => {
+      if (!adoptToolResultOwner) return undefined;
+      const owners = new Set<string>();
+      for (let i = historyMessages.length - 1; i >= 0; i--) {
+        const message = historyMessages[i];
+        if (message.role !== "tool") break;
+        const toolCallId = (message as { toolCallId?: string }).toolCallId;
+        if (!toolCallId) return undefined;
+        const owner = historyMessages.find(
+          (m) =>
+            m.role === "assistant" &&
+            (m.toolCalls ?? []).some((tc) => tc.id === toolCallId),
+        );
+        if (!owner?.id) return undefined;
+        owners.add(MastraAgent.continuationBaseId(owner.id) ?? owner.id);
+      }
+      return owners.size === 1 ? [...owners][0] : undefined;
+    })();
+    if (toolResultOwnerBaseId) {
+      openToolCallBoundary(toolResultOwnerBaseId);
+    }
+
     const closeReasoning = () => {
       if (isReasoning && reasoningMessageId) {
         subscriber.next({
@@ -2399,7 +2437,9 @@ export class MastraAgent extends AbstractAgent {
 
     return {
       onMessageId: (id) => {
-        setMessageId(id);
+        // #3207: this run's response is stored merged into the tool call's
+        // owner, so the announced id is never stored. Keep the owner's id.
+        setMessageId(toolResultOwnerBaseId ?? id);
       },
       onReasoningStart: (spanId) => {
         openReasoning(spanId);
