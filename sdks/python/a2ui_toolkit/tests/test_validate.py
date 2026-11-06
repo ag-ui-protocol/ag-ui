@@ -267,5 +267,39 @@ class TestBindings(unittest.TestCase):
         self.assertTrue(r["valid"])
 
 
+
+class TestAllOfRequired(unittest.TestCase):
+    # Mirrors "frontend allOf catalog constraints" in the TypeScript suite. A v0.9
+    # catalog declares a component as ``allOf: [ComponentCommon, {required: [...]}]``,
+    # so its required props live under ``allOf``. Reading only the top-level
+    # ``required`` passed a tree the TypeScript validator rejects, and the two
+    # toolkits disagreed on whether the same surface was valid.
+    def test_enforces_required_nested_in_allof_without_requiring_alternatives(self):
+        r = validate_a2ui_components(
+            components=[{"id": "root", "component": "Metric", "value": "42"}],
+            catalog={"components": {"Metric": {
+                "allOf": [{"$ref": "common_types.json#/$defs/ComponentCommon"}, {"required": ["label", "value"]}],
+                "anyOf": [{"required": ["optionalAlternative"]}],
+            }}},
+        )
+        self.assertEqual(r["errors"], [{
+            "code": "missing_required_prop",
+            "path": "components[0].label",
+            "message": "Component 'Metric' (index 0) is missing required prop 'label'",
+        }])
+
+    def test_reports_a_prop_required_at_both_levels_once(self):
+        r = validate_a2ui_components(
+            components=[{"id": "root", "component": "Metric"}],
+            catalog={"components": {"Metric": {
+                "required": ["value"],
+                "allOf": [{"required": ["value", "label"]}, {"allOf": [{"required": ["unit"]}]}],
+            }}},
+        )
+        self.assertEqual(
+            [e["path"] for e in r["errors"]],
+            ["components[0].value", "components[0].label", "components[0].unit"],
+        )
+
 if __name__ == "__main__":
     unittest.main()
