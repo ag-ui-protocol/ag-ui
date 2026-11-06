@@ -1,0 +1,34 @@
+---
+title: Human in the Loop Approval
+description: Pause a backend tool call until a person approves or rejects it.
+---
+
+# 🤝 Human in the Loop Approval
+
+## What This Demo Shows
+
+A backend-owned refund tool pauses before execution and asks the user for an
+explicit decision. Approving runs the tool; rejecting resumes the agent
+without issuing the refund.
+
+## How to Interact
+
+- Ask: "Refund order ORD-1001."
+- Select **Approve** to execute the refund, or **Reject** to continue without
+  executing it.
+- Ask about the order afterward to see how the agent handled the decision.
+
+## Technical Details
+
+- `issue_refund` uses the OpenAI Agents SDK's `needs_approval=True` option, so
+  the SDK pauses the run before the tool body executes.
+- The adapter ends the run with `RUN_FINISHED.outcome = { type: "interrupt" }`:
+  one interrupt per paused call, whose id is the tool call id, with the call
+  under `metadata.tool_name` / `metadata.tool_input` and an
+  `{ approved: boolean }` response schema.
+- CopilotKit's `useInterrupt` renders **Approve** / **Reject** and resolves the
+  interrupt, which sends the decision as the next run's `resume` entry.
+- The backend answers the paused call from the conversation history before
+  the model runs: approved, the refund runs and its result goes to the model;
+  rejected, it does not run. Nothing is stored on the server between the two
+  runs.
