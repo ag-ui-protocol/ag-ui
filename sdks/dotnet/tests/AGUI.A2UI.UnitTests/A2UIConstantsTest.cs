@@ -19,10 +19,10 @@ public sealed class A2UIConstantsTest
     }
 
     [Fact]
-    public void BasicCatalogId_MatchesCrossLanguageContract()
+    public void BasicCatalogId_MatchesPublishedCatalog()
     {
         // Assert
-        Assert.Equal("https://a2ui.org/specification/v0_9/basic_catalog.json", A2UIConstants.BasicCatalogId);
+        Assert.Equal("https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json", A2UIConstants.BasicCatalogId);
     }
 
     [Fact]
