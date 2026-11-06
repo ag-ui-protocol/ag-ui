@@ -259,19 +259,120 @@ def test_a_cancelled_interrupt_does_not_run_the_tool():
     assert refunds == []
 
 
-def test_a_call_left_open_is_closed_when_the_user_moves_on():
+def approve(call_id: str) -> ResumeEntry:
+    return ResumeEntry(interrupt_id=call_id, status="resolved", payload={"approved": True})
+
+
+def test_an_undecided_approval_stays_open_when_the_user_moves_on():
+    # AG-UI 1.0: an approval nobody decided is neither run nor dropped, and
+    # the run does not end as success while it stands open.
     history = paused_history()
     history.append(UserMessage(id="u2", role="user", content="never mind"))
     agent, model = refund_agent([text("Sure.")])
     events = run(agent, request(history))
+    kinds = [e.type for e in events]
 
-    assert next(e for e in events if e.type == EventType.TOOL_CALL_RESULT).content == ABANDONED
-    assert refunds == []
+    assert refunds == [] and model.inputs == []  # nothing ran, no model call
+    assert EventType.RUN_ERROR not in kinds and EventType.TOOL_CALL_RESULT not in kinds
+    outcome = finished(events).outcome
+    assert outcome.type == "interrupt"
+    [interrupt] = outcome.interrupts
+    assert interrupt.id == interrupt.tool_call_id == "c1"
+    assert interrupt.reason == "tool_approval"
+    assert interrupt.metadata == {"tool_name": "issue_refund", "tool_input": {"order_id": "ORD-1"}}
+    # The call stays open in the history, with the new message after it.
+    messages = snapshot(events)
+    assert not any(isinstance(m, ToolMessage) for m in messages)
+    assert messages[-1].id == "u2"
+
+
+def test_deciding_later_answers_the_call_before_the_new_message():
+    history = paused_history()
+    history.append(UserMessage(id="u2", role="user", content="and check ORD-2 too"))
+    asked_again = snapshot(run(refund_agent()[0], request(history)))
+    agent, model = refund_agent([text("Refunded ORD-1; checking ORD-2.")])
+    events = run(agent, request(asked_again, resume=[approve("c1")]))
+
+    assert refunds == ["ORD-1"]
+    assert finished(events).outcome.type == "success"
     sent = model.inputs[0]
     kinds = [item.get("type") or item.get("role") for item in sent]
     # The output sits right after its call, before the new user message.
     assert kinds.index("function_call_output") == kinds.index("function_call") + 1
     assert sent[-1]["role"] == "user"
+
+
+def test_a_partial_resume_answers_what_it_covers_and_asks_again_for_the_rest():
+    agent, _ = refund_agent(
+        [
+            call("issue_refund", {"order_id": "ORD-1"}, "c1"),
+            call("issue_refund", {"order_id": "ORD-2"}, "c2"),
+        ]
+    )
+    paused = run(agent, request([UserMessage(id="u1", role="user", content="refund both")]))
+    assert [i.id for i in finished(paused).outcome.interrupts] == ["c1", "c2"]
+
+    agent, model = refund_agent([text("Both refunded.")])
+    events = run(agent, request(snapshot(paused), resume=[approve("c1")]))
+    assert refunds == ["ORD-1"] and model.inputs == []
+    assert [e.tool_call_id for e in events if e.type == EventType.TOOL_CALL_RESULT] == ["c1"]
+    outcome = finished(events).outcome
+    assert outcome.type == "interrupt" and [i.id for i in outcome.interrupts] == ["c2"]
+
+    # The snapshot carries the first answer; deciding the second one finishes.
+    events = run(agent, request(snapshot(events), resume=[approve("c2")]))
+    assert refunds == ["ORD-1", "ORD-2"]
+    assert [e.tool_call_id for e in events if e.type == EventType.TOOL_CALL_RESULT] == ["c2"]
+    assert finished(events).outcome.type == "success"
+    assert len(model.inputs) == 1
+
+
+policy_calls: list[int] = []
+
+
+async def _large_refunds(_context: Any, params: dict[str, Any], _call_id: str) -> bool:
+    policy_calls.append(params.get("amount", 0))
+    return params.get("amount", 0) > 100
+
+
+@function_tool(needs_approval=_large_refunds)
+def refund_amount(amount: int) -> str:
+    """Refund an amount."""
+    refunds.append(str(amount))
+    return f"Refunded {amount}."
+
+
+@function_tool
+def lookup_order(order_id: str) -> str:
+    """Look an order up."""
+    return f"{order_id}: shipped"
+
+
+def test_an_undecided_call_stays_open_unless_its_tool_never_needs_approval():
+    # A callable policy's answer at the pause depended on that run's context,
+    # so the call stays open without asking it again (even an amount it would
+    # have waved through). A tool that never needs approval only stopped
+    # before it ran (a client tool in the same turn ended the run).
+    policy_calls.clear()
+    history = [
+        UserMessage(id="u1", role="user", content="refund 5 and look up ORD-1"),
+        AssistantMessage(
+            id="a1",
+            role="assistant",
+            tool_calls=[
+                ToolCall(id="refund", type="function", function=FunctionCall(name="refund_amount", arguments='{"amount": 5}')),
+                ToolCall(id="lookup", type="function", function=FunctionCall(name="lookup_order", arguments='{"order_id": "ORD-1"}')),
+            ],
+        ),
+    ]
+    resumed = asyncio.run(
+        resume_tool_calls(
+            Agent(name="support", instructions="Help.", tools=[refund_amount, lookup_order]), request(history)
+        )
+    )
+    assert [i.id for i in resumed.open_interrupts] == ["refund"]
+    assert [(e.tool_call_id, e.content) for e in resumed.tool_results] == [("lookup", ABANDONED)]
+    assert refunds == [] and policy_calls == []
 
 
 def test_client_tool_calls_are_left_for_the_client():
@@ -399,6 +500,27 @@ def test_an_approved_call_does_not_run_when_two_agents_share_the_tool_name():
     assert [e.content for e in resumed.tool_results] == [AMBIGUOUS]
     assert ran == []
 
+
+
+def test_an_undecided_call_stays_open_when_any_tool_of_its_name_needs_approval():
+    # The specialist's update needs approval and the root agent's does not.
+    # The history cannot say which one was called, so the approval must not
+    # be dropped as abandoned on the strength of the root agent's policy.
+    @function_tool(name_override="update_account")
+    def root_update(change: str) -> str:
+        """Root agent's update."""
+        return "root"
+
+    @function_tool(name_override="update_account", needs_approval=True)
+    def specialist_update(change: str) -> str:
+        """Specialist's update."""
+        return "specialist"
+
+    specialist = Agent(name="accounts", instructions="Accounts.", tools=[specialist_update])
+    root = Agent(name="root", instructions="Route.", tools=[root_update], handoffs=[handoff(specialist)])
+    resumed = asyncio.run(resume_tool_calls(root, request(_paused_call("update_account", '{"change": "x"}'))))
+    assert [i.id for i in resumed.open_interrupts] == ["c3"]
+    assert resumed.tool_results == []
 
 def test_an_approval_inside_an_agent_tool_fails_instead_of_waiting_forever():
     # The inner call runs in the sub-agent's own run, so the conversation holds
@@ -645,18 +767,15 @@ def test_a_resumed_tool_sees_its_call_and_the_conversation():
     assert [e.content for e in resumed.tool_results] == ["c3 inspect_call ['message', 'function_call']"]
 
 
-def test_an_mcp_tool_shared_by_an_agent_and_its_handoff_target_is_not_ambiguous():
-    # Each agent lists the shared server itself and gets its own wrapper for
-    # the same operation.
+def _docs_server(calls: list[str], require_approval: Any = "always") -> Any:
+    """An MCP server offering one ``lookup`` operation."""
     from agents.mcp import MCPServer
     from mcp.types import CallToolResult, TextContent
     from mcp.types import Tool as MCPTool
 
-    calls: list[str] = []
-
-    class Shared(MCPServer):
+    class Docs(MCPServer):
         def __init__(self) -> None:
-            super().__init__(require_approval="always")
+            super().__init__(require_approval=require_approval)
 
         @property
         def name(self) -> str:
@@ -681,7 +800,14 @@ def test_an_mcp_tool_shared_by_an_agent_and_its_handoff_target_is_not_ambiguous(
         async def get_prompt(self, name, arguments=None):
             raise NotImplementedError
 
-    server = Shared()
+    return Docs()
+
+
+def test_an_mcp_tool_shared_by_an_agent_and_its_handoff_target_is_not_ambiguous():
+    # Each agent lists the shared server itself and gets its own wrapper for
+    # the same operation.
+    calls: list[str] = []
+    server = _docs_server(calls)
     specialist = Agent(name="docs", instructions="Docs.", mcp_servers=[server])
     triage = Agent(name="triage", instructions="Route.", mcp_servers=[server], handoffs=[specialist])
     resumed = asyncio.run(
@@ -695,6 +821,18 @@ def test_an_mcp_tool_shared_by_an_agent_and_its_handoff_target_is_not_ambiguous(
     )
     assert calls == ["lookup"]
     assert ["found" in e.content for e in resumed.tool_results] == [True]
+
+
+def test_an_undecided_call_stays_open_when_the_mcp_policy_differs_by_agent():
+    # The shared server asks for approval only when the specialist calls it.
+    # The history cannot say which agent called, so the triage agent's policy
+    # alone must not close the specialist's approval as abandoned.
+    server = _docs_server([], require_approval=lambda _context, agent, _tool: agent.name == "docs")
+    specialist = Agent(name="docs", instructions="Docs.", mcp_servers=[server])
+    triage = Agent(name="triage", instructions="Route.", mcp_servers=[server], handoffs=[specialist])
+    resumed = asyncio.run(resume_tool_calls(triage, request(_paused_call("lookup", "{}"))))
+    assert [i.id for i in resumed.open_interrupts] == ["c3"]
+    assert resumed.tool_results == []
 
 
 def test_a_reused_call_id_only_resumes_the_paused_call():

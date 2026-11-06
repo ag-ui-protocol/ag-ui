@@ -93,7 +93,7 @@ class AGUITranslator:
 
     async def to_agui(
         self,
-        events: RunResultStreaming | AsyncIterator[StreamEvent],
+        events: RunResultStreaming | AsyncIterator[StreamEvent] | None,
         run_input: RunAgentInput,
         *,
         start_custom_event: CustomEvent | None = None,
@@ -125,8 +125,9 @@ class AGUITranslator:
 
         RUN_FINISHED carries the run's outcome and token usage. The outcome is
         ``cancelled`` when the SDK run was cancelled (``result.cancel()``);
-        ``interrupt`` when it paused on tools marked ``needs_approval``, with
-        one interrupt per paused call (see ``interrupts``); and otherwise
+        ``interrupt`` when it paused on tools marked ``needs_approval``, or
+        ``resumed`` left approvals open, with one interrupt per open call
+        (see ``interrupts``); and otherwise
         ``success``, naming in ``pending_tool_call_ids`` the client tool calls
         the run left for the application to answer. Cancellation and
         interrupts are read from ``events`` when it is the
@@ -139,7 +140,8 @@ class AGUITranslator:
         default, and re-raise. Cancellation only stops an owned SDK run.
 
         Args:
-            events: A ``RunResultStreaming`` or its ``stream_events()`` iterator.
+            events: A ``RunResultStreaming`` or its ``stream_events()``
+                iterator; None when no SDK run was started.
             run_input: The request supplying lifecycle IDs and message history.
             start_custom_event: ``CustomEvent`` emitted after ``RUN_STARTED``.
                 Its value may be static or a zero-argument sync/async factory.
@@ -157,7 +159,10 @@ class AGUITranslator:
             run_error_message: Safe fixed ``RUN_ERROR`` message; defaults to ``str(exc)``.
             resumed: What ``resume_tool_calls`` returned for this request. Its
                 TOOL_CALL_RESULT events are emitted ahead of the streamed
-                events, and the usage of the tools it ran is counted.
+                events, the usage of the tools it ran is counted, and the
+                approvals it left open end the run as interrupts. When there
+                are open approvals, pass ``events=None`` rather than running
+                the agent.
             shared_state: The run's ``SharedState``. Each change a tool makes is
                 streamed as a STATE_SNAPSHOT before the next translated event,
                 so it precedes the tool's result. Start the SDK run inside
@@ -199,11 +204,12 @@ class AGUITranslator:
             for event in resumed.tool_results if resumed is not None else ():
                 yield event
 
-            # Accept either the SDK result or an iterator already obtained from it.
+            # Accept the SDK result, an iterator already obtained from it, or
+            # None when no SDK run was started (an approval is still open).
             stream_events = (
                 events.stream_events()
                 if isinstance(events, RunResultStreaming)
-                else events
+                else events if events is not None else _no_events()
             )
             try:
                 # Streamed STEP / TEXT / TOOL / REASONING events.
@@ -241,7 +247,7 @@ class AGUITranslator:
                 type=EventType.RUN_FINISHED,
                 thread_id=run_input.thread_id,
                 run_id=run_input.run_id,
-                outcome=_outcome(events, outbound, run_input),
+                outcome=_outcome(events, outbound, run_input, resumed),
                 usage=_run_usage(events, outbound, resumed),
             )
             # Set before yield because a consumer may close at the terminal event.
@@ -290,12 +296,20 @@ class AGUITranslator:
         return value
 
 
+async def _no_events() -> AsyncIterator[StreamEvent]:
+    return
+    yield  # pragma: no cover — makes this an async generator
+
+
 def _outcome(
-    events: RunResultStreaming | AsyncIterator[StreamEvent],
+    events: RunResultStreaming | AsyncIterator[StreamEvent] | None,
     outbound: OpenAIToAGUITranslator,
     run_input: RunAgentInput,
+    resumed: ResumedInput | None,
 ) -> RunFinishedCancelledOutcome | RunFinishedInterruptOutcome | RunFinishedSuccessOutcome:
     """Why the run ended, for RUN_FINISHED."""
+    # Approvals the request left undecided are still open.
+    interrupts = list(resumed.open_interrupts) if resumed is not None else []
     if isinstance(events, RunResultStreaming):
         if _was_cancelled(events):
             return RunFinishedCancelledOutcome(type="cancelled")
@@ -311,16 +325,16 @@ def _outcome(
                 "as_tool(..., needs_approval=True)) and built-in tools such as shell or "
                 "apply_patch cannot."
             )
-        interrupts = approval_interrupts(items)
-        if interrupts:
-            return RunFinishedInterruptOutcome(type="interrupt", interrupts=interrupts)
+        interrupts += approval_interrupts(items)
+    if interrupts:
+        return RunFinishedInterruptOutcome(type="interrupt", interrupts=interrupts)
     client_tools = {tool.name for tool in run_input.tools or []}
     pending = outbound.unanswered_tool_calls(client_tools)
     return RunFinishedSuccessOutcome(type="success", pending_tool_call_ids=pending or None)
 
 
 def _run_usage(
-    events: RunResultStreaming | AsyncIterator[StreamEvent],
+    events: RunResultStreaming | AsyncIterator[StreamEvent] | None,
     outbound: OpenAIToAGUITranslator,
     resumed: ResumedInput | None = None,
 ) -> list[TokenUsage] | None:

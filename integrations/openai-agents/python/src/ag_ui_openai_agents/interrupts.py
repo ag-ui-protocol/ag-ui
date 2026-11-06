@@ -11,9 +11,11 @@ paused call in its history. That history is all a resume needs:
   RUN_FINISHED's ``interrupt`` outcome.
 * Resume: the next request carries the same history plus ``resume`` entries.
   ``resume_tool_calls`` answers every unanswered call of the agent's own
-  tools before the model runs. An approved call runs its tool; a rejected,
-  cancelled or abandoned one (the user sent a new message instead) gets a
-  result saying it did not run.
+  tools before the model runs. An approved call runs its tool; a rejected or
+  cancelled one gets a result saying it did not run. A call that still needs
+  approval and has no entry (the user sent a new message instead) stays
+  open: the run answers what the entries cover and ends with its interrupt
+  again, without calling the model.
 
 The SDK's own resume (``RunState``) is not used, because it would mean
 keeping the paused run on the server, or shipping it to the client and
@@ -66,7 +68,9 @@ CANCELLED = "The user cancelled this tool call. It did not run."
 """Result of a call whose interrupt was cancelled."""
 
 ABANDONED = "The user moved on without answering this tool call. It did not run."
-"""Result of a call left unanswered when the next request has no entry for it."""
+"""Result of an unfinished call that needs no approval when the next request
+has no entry for it (it stopped before its tool ran, such as a backend call
+cancelled by a client tool in the same turn)."""
 
 AMBIGUOUS = (
     "This tool call could not be resumed: more than one agent has a tool with this "
@@ -105,20 +109,19 @@ def approval_interrupts(items: Iterable[ToolApprovalItem]) -> list[Interrupt]:
             or read_attr(raw, "id")
         )
         name = item.tool_name or read_attr(raw, "name") or ""
-        interrupts.append(
-            Interrupt(
-                id=call_id,
-                reason="tool_approval",
-                message=f"Approve call to {name}?",
-                tool_call_id=call_id,
-                response_schema=APPROVAL_SCHEMA,
-                metadata={
-                    "tool_name": name,
-                    "tool_input": _parse_arguments(read_attr(raw, "arguments")),
-                },
-            )
-        )
+        interrupts.append(_approval_interrupt(call_id, name, read_attr(raw, "arguments")))
     return interrupts
+
+
+def _approval_interrupt(call_id: str, name: str, arguments: Any) -> Interrupt:
+    return Interrupt(
+        id=call_id,
+        reason="tool_approval",
+        message=f"Approve call to {name}?",
+        tool_call_id=call_id,
+        response_schema=APPROVAL_SCHEMA,
+        metadata={"tool_name": name, "tool_input": _parse_arguments(arguments)},
+    )
 
 
 class UnresumableApprovalError(RuntimeError):
@@ -175,11 +178,17 @@ class ResumedInput:
         tool_results: One TOOL_CALL_RESULT per answered call.
         usage: Model usage of the tools that ran (an approved agent tool runs
             its sub-agent), or None when they made no model calls.
+        open_interrupts: The approvals the request left undecided, one
+            interrupt per call. They stay open, so do not run the model when
+            there are any (its input would hold a call without an output):
+            pass this to ``to_agui`` with no events, which ends the run with
+            these interrupts again.
     """
 
     run_input: RunAgentInput
     tool_results: list[ToolCallResultEvent] = field(default_factory=list)
     usage: Usage | None = None
+    open_interrupts: list[Interrupt] = field(default_factory=list)
 
 
 async def resume_tool_calls(
@@ -203,7 +212,11 @@ async def resume_tool_calls(
       the SDK would check before offering it;
     * resolved with anything else: ``REJECTED``;
     * cancelled: ``CANCELLED``;
-    * no entry (the user moved on): ``ABANDONED``.
+    * no entry, for a call the SDK would pause for approval: no answer. The
+      approval stays open and is listed in ``open_interrupts``, as AG-UI
+      requires for an approval nobody decided;
+    * no entry, for any other call (it stopped before its tool ran):
+      ``ABANDONED``.
 
     Calls of tools the agent does not own (client tools) are left alone: the
     client answers those itself. Tools of agents reachable through
@@ -220,10 +233,11 @@ async def resume_tool_calls(
             would (an agent used as a tool takes its model provider from it).
 
     Returns:
-        The request with the answers in place, and their TOOL_CALL_RESULT
-        events. Returned unchanged when no call was open.
+        The request with the answers in place, their TOOL_CALL_RESULT events,
+        and the approvals still open. Returned unchanged when no call was
+        open.
     """
-    tools, ambiguous = await _function_tools(agent, context)
+    tools, ambiguous, named = await _function_tools(agent, context)
     client_tools = {tool.name for tool in run_input.tools or []}
     entries = {entry.interrupt_id: entry for entry in run_input.resume or []}
     history = list(run_input.messages)
@@ -259,6 +273,7 @@ async def resume_tool_calls(
     taken_ids = {message.id for message in history}
     messages: list[Message] = []
     results: list[ToolCallResultEvent] = []
+    still_open: list[Interrupt] = []
     usage = Usage()  # what the tools that run here spend, for RUN_FINISHED
     for index, message in enumerate(history):
         if index in dropped:
@@ -277,40 +292,51 @@ async def resume_tool_calls(
                     _close(messages, results, taken_ids, call.id, UNAVAILABLE)
                 continue
             tool, owner = owned
+            # Only the latest call with this id is the paused one.
+            paused = latest[call.id] is occurrence
+            entry = entries.get(call.id) if paused else None
+            tool_context = ToolContext(
+                context=context,
+                usage=usage,
+                tool_name=tool.name,
+                tool_call_id=call.id,
+                tool_arguments=call.function.arguments,
+                # What a live call sees: the call itself, and the
+                # conversation up to it as model input.
+                tool_call=ResponseFunctionToolCall(
+                    type="function_call",
+                    call_id=call.id,
+                    name=call.function.name,
+                    arguments=call.function.arguments or "",
+                ),
+                turn_input=AGUIToOpenAITranslator().translate_messages(messages),
+                agent=owner,
+                run_config=run_config,
+            )
+            # The call may mean any tool of that name (see _function_tools).
+            if entry is None and paused and _may_need_approval(named[tool.name]):
+                # Nobody decided: the approval stays open and is asked again.
+                still_open.append(
+                    _approval_interrupt(call.id, call.function.name, call.function.arguments)
+                )
+                continue
             content = await _answer(
                 tool,
                 call.id,
                 call.function.arguments,
-                # Only the latest call with this id is the paused one.
-                entries.get(call.id) if latest[call.id] is occurrence else None,
-                ToolContext(
-                    context=context,
-                    usage=usage,
-                    tool_name=tool.name,
-                    tool_call_id=call.id,
-                    tool_arguments=call.function.arguments,
-                    # What a live call sees: the call itself, and the
-                    # conversation up to it as model input.
-                    tool_call=ResponseFunctionToolCall(
-                        type="function_call",
-                        call_id=call.id,
-                        name=call.function.name,
-                        arguments=call.function.arguments or "",
-                    ),
-                    turn_input=AGUIToOpenAITranslator().translate_messages(messages),
-                    agent=owner,
-                    run_config=run_config,
-                ),
+                entry,
+                tool_context,
                 owner=owner,
                 ambiguous=tool.name in ambiguous,
             )
             _close(messages, results, taken_ids, call.id, content)
     if not results and not dropped:
-        return ResumedInput(run_input=run_input)
+        return ResumedInput(run_input=run_input, open_interrupts=still_open)
     return ResumedInput(
         run_input=run_input.model_copy(update={"messages": messages}),
         tool_results=results,
         usage=usage if usage.requests or usage.total_tokens else None,
+        open_interrupts=still_open,
     )
 
 
@@ -372,6 +398,19 @@ async def _answer(
     return to_string(output)
 
 
+def _may_need_approval(tools: list[FunctionTool]) -> bool:
+    """Whether a call of one of ``tools`` may have paused for approval.
+
+    ``tools`` are all the tools the call's name may mean, one per agent that
+    has one (an MCP server's approval policy can depend on the agent): the
+    history cannot tell which agent made the call. A callable policy counts as
+    needing approval: its answer at the pause depended on that run's context,
+    which a stateless resume no longer has, so asking it again could drop an
+    approval nobody decided.
+    """
+    return any(tool.needs_approval is not False for tool in tools)
+
+
 async def _enabled(tool: FunctionTool, tool_context: ToolContext[Any], owner: Agent[Any]) -> bool:
     """``tool.is_enabled`` for this run, evaluated as the SDK does."""
     enabled = tool.is_enabled
@@ -390,7 +429,7 @@ def _approved(payload: Any) -> bool:
 
 async def _function_tools(
     agent: Agent[Any], context: Any
-) -> tuple[dict[str, tuple[FunctionTool, Agent[Any]]], set[str]]:
+) -> tuple[dict[str, tuple[FunctionTool, Agent[Any]]], set[str], dict[str, list[FunctionTool]]]:
     """The function tools of ``agent`` and of the agents it can hand off to.
 
     Includes the tools of an agent's ``mcp_servers``, which the SDK lists
@@ -398,11 +437,12 @@ async def _function_tools(
     connected, as for a run).
 
     Returns:
-        Each tool and the agent that owns it, by name, and the names that
-        belong to more than one tool.
+        Each tool and the agent that owns it, by name; the names that belong
+        to more than one tool; and every tool object of each name, one per
+        agent that lists it (MCP wrappers of one server operation included).
     """
     tools: dict[str, tuple[FunctionTool, Agent[Any]]] = {}
-    ambiguous: set[str] = set()
+    named: dict[str, list[FunctionTool]] = {}
     seen: set[int] = set()
     pending = [agent]
     while pending:
@@ -413,14 +453,18 @@ async def _function_tools(
         for tool in [*current.tools, *await _mcp_tools(current, context)]:
             if not isinstance(tool, FunctionTool):
                 continue
-            known = tools.setdefault(tool.name, (tool, current))[0]
-            if known is not tool and _identity(known) != _identity(tool):
-                ambiguous.add(tool.name)
+            tools.setdefault(tool.name, (tool, current))
+            named.setdefault(tool.name, []).append(tool)
         for target in current.handoffs:
             handed_to = target if isinstance(target, Agent) else _handoff_agent(target)
             if handed_to is not None:
                 pending.append(handed_to)
-    return tools, ambiguous
+    ambiguous = {
+        name
+        for name, same in named.items()
+        if any(_identity(tool) != _identity(same[0]) for tool in same[1:])
+    }
+    return tools, ambiguous, named
 
 
 def _identity(tool: FunctionTool) -> Any:

@@ -676,9 +676,22 @@ keeps nothing on the server between the pause and the resume:
 2. **Resume.** The next request carries that history and a `resume` entry per
    interrupt. `resume_tool_calls` answers every open call of the agent's own
    tools before the model runs: `{"approved": true}` runs the tool, any other
-   answer gives the model the SDK's rejection text, a cancelled interrupt
-   gives `CANCELLED`, and a call with no entry (the user sent a new message
-   instead) gives `ABANDONED`. Tools of agents reachable through `handoffs`
+   answer gives the model the SDK's rejection text, and a cancelled
+   interrupt gives `CANCELLED`.
+3. **Undecided.** A paused call with no entry (the user sent a new message
+   instead, or a partial `resume` answered only some calls) stays open. The
+   run answers what the entries cover, does not call the model, and ends
+   with that call's interrupt again, as AG-UI requires for an approval
+   nobody decided. The new message stays in the history and reaches the
+   model once the approval is decided. An unfinished call that needed no
+   approval (for example one stopped by a client tool in the same turn)
+   gets `ABANDONED`. A call whose tool has a callable `needs_approval`
+   policy stays open too: the policy's answer depended on the context of the
+   run that paused, which a stateless resume no longer has. When several
+   agents have tools of the call's name, the call stays open if any of them
+   may need approval.
+
+   Tools of agents reachable through `handoffs`
    (plain agents or `handoff(...)` objects) are found too. The history does
    not record which agent made a call, so when two of those agents have
    different tools with the same name, an approved call is answered with
@@ -699,7 +712,8 @@ approval cannot, and `to_agui` ends such a run with `RUN_ERROR`
 - a built-in tool with its own executor (`ShellTool`, `ApplyPatchTool` and
   the like).
 
-`OpenAIAgentsAgent` does both steps for you. With the translator:
+`OpenAIAgentsAgent` does all of this for you. With the translator, skip the
+model run while an approval is still open:
 
 ```python
 from ag_ui_openai_agents import resume_tool_calls
@@ -707,16 +721,19 @@ from ag_ui_openai_agents import resume_tool_calls
 resumed = await resume_tool_calls(
     agent, run_input, context=context, run_config=run_config
 )
-translated = translator.to_openai(resumed.run_input)
-result = Runner.run_streamed(
-    agent, input=translated.messages, context=context, run_config=run_config
-)
-async for event in translator.to_agui(result, resumed.run_input, resumed=resumed):
+if resumed.open_interrupts:
+    events = None  # to_agui ends the run with the undecided approvals
+else:
+    translated = translator.to_openai(resumed.run_input)
+    events = Runner.run_streamed(
+        agent, input=translated.messages, context=context, run_config=run_config
+    )
+async for event in translator.to_agui(events, resumed.run_input, resumed=resumed):
     ...
 ```
 
-Because nothing is kept on the server, two rules of the AG-UI interrupt
-contract are handled differently:
+Because nothing is kept on the server, one rule of the AG-UI interrupt
+contract is handled differently:
 
 - *Idempotency.* Replaying the same resume request runs an approved tool
   again; the server has no record that it already ran. Key side effects on
@@ -724,10 +741,6 @@ contract are handled differently:
   repeat them. The same holds when one of several approved tools raises
   (`failure_error_function=None`): the request fails, and the calls that
   already ran in it are not reported.
-- *Pending interrupts block new input.* A request that leaves a paused call
-  unanswered closes it as `ABANDONED` instead of failing with `RUN_ERROR`.
-  CopilotKit clears pending interrupts when a new run starts, so failing
-  would leave the thread unusable for good.
 
 A resumed call runs outside the SDK's run loop, so tool guardrails and run
 hooks do not see it, and the agent's `tool_use_behavior` (`StopAtTools`,

@@ -117,9 +117,12 @@ class OpenAIAgentsAgent:
 
         Client tools are added to a per-request agent clone. The translator
         handles input and output mapping, lifecycle events, and snapshots.
-        Tool calls the history left open (a paused approval, answered by a
-        ``resume`` entry or abandoned) are answered before the model runs.
-        The request's state is the run's ``SharedState`` (see ``state``).
+        Tool calls the history left open (a paused approval answered by a
+        ``resume`` entry, or an unfinished call) are answered before the model
+        runs. An approval the request did not decide stays open: the run
+        answers the rest and ends with its interrupt again, without calling
+        the model. The request's state is the run's ``SharedState`` (see
+        ``state``).
 
         Args:
             input: The incoming AG-UI RunAgentInput.
@@ -164,6 +167,15 @@ class OpenAIAgentsAgent:
                     yield event
             return
         input = resumed.run_input
+        if resumed.open_interrupts:
+            # An approval nobody decided stays open: answer what the request
+            # did decide and ask again, without calling the model.
+            async with aclosing(
+                self._translator.to_agui(None, input, resumed=resumed, **lifecycle)
+            ) as events:
+                async for event in events:
+                    yield event
+            return
         translated = self._translator.to_openai(input)
 
         run_agent = self.agent
