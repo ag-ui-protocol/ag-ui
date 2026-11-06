@@ -1,7 +1,9 @@
 {
   "name": "@ag-ui/openai-agents",
-  "//": "private: @ag-ui/openai-agents is currently an empty HttpAgent subclass with no added behavior — intentionally NOT published. Mirrors integrations/langroid/typescript's precedent. See src/index.ts.",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "0.0.1",
   "description": "AG-UI integration for the OpenAI Agents SDK — thin TypeScript client for the companion Python integration (ag-ui-openai-agents)",
   "main": "./dist/index.js",

@@ -6,13 +6,14 @@ the companion Python integration
 [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) and the
 AG-UI protocol.
 
-## Status
+`OpenAIAgentsHttpAgent` is an `HttpAgent` with no added behavior: the Python
+server speaks plain AG-UI over HTTP and has no extra endpoints to call.
 
-`OpenAIAgentsHttpAgent` is currently an empty subclass of `HttpAgent` — it
-adds no behavior beyond what `@ag-ui/client`'s `HttpAgent` already provides,
-since the Python side exposes no extra endpoints (e.g. no capability
-discovery) for a client to call. It is marked `"private": true` and is not
-published to npm.
+## Installation
+
+```bash
+npm install @ag-ui/openai-agents
+```
 
 ## Usage
 
