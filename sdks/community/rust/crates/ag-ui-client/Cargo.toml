@@ -1,29 +1,38 @@
 [package]
 name = "ag-ui-client"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Client library for the AG-UI protocol."
 license = "MIT"
+repository = "https://github.com/ag-ui-protocol/ag-ui"
+homepage = "https://docs.ag-ui.com"
+documentation = "https://docs.rs/ag-ui-client"
+keywords = ["ag-ui", "agents", "ai", "protocol"]
+categories = ["api-bindings"]
+exclude = ["tests/**"]
 readme = "README.md"
 
 [dependencies]
-ag-ui-core = { version = "0.1.0" }
+ag-ui-core = { path = "../ag-ui-core", version = "0.2.0" }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-async-trait = "0.1.88"
+async-trait = "0.1.92"
 uuid = { version = "1.17.0", features = ["v4"] }
 futures = "0.3.31"
 json-patch = "4.0.0"
 log = "0.4.27"
 reqwest = { version = "0.12.22" , features = ["json", "stream"]}
 bytes = "1.5.0"
-tokio = "1.36.0"
+tokio = { version = "1.36.0", features = ["time"] }
+mime = "0.3"
 
 [dev-dependencies]
+ag-ui-encoder = { path = "../ag-ui-encoder", version = "0.2.0" }
 env_logger = "0.11.8"
 tokio = { version = "1.36.0", features = ["full"] }
 
 [[example]]
-name = "http-agent"
+name = "basic_agent"
 path = "examples/basic_agent.rs"
