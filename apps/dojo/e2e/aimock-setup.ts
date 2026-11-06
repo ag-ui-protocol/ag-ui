@@ -51,6 +51,7 @@ import {
   registerA2AMiddlewareFixtures,
 } from "./a2a-middleware-fixtures";
 import { registerManagedAgentsFake } from "./managed-agents-fake";
+import { registerCopilotSdkSubgraphsFixtures } from "./copilot-sdk-subgraphs-fixtures";
 
 // Configurable so parallel worktrees / runs don't collide on one aimock port.
 const configuredPort = process.env.AIMOCK_PORT;
@@ -824,8 +825,11 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   const isWeatherAgentCall = (req: { messages: ChatMessage[] }) =>
     sysIncludes(req.messages, "Weather Assistant") &&
     sysIncludes(req.messages, "look up the weather before you answer");
+  const weatherResultSinceUser = (req: { messages: ChatMessage[] }) =>
+    req.messages.slice(req.messages.findLastIndex((m) => m.role === "user") + 1)
+      .some((m) => m.role === "tool");
   const isWeatherAgentToolResultTurn = (req: { messages: ChatMessage[] }) =>
-    isWeatherAgentCall(req) && hasToolResult(req);
+    isWeatherAgentCall(req) && weatherResultSinceUser(req);
   const weatherToolCall = (location: string, id: string) => ({
     toolCalls: [
       { name: "get_weather", arguments: JSON.stringify({ location }), id },
@@ -839,7 +843,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         return (
           isWeatherAgentCall(req) &&
-          !hasToolResult(req) &&
+          !weatherResultSinceUser(req) &&
           textOf(lastUser?.content).includes("San Francisco")
         );
       },
@@ -854,7 +858,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         const lastUser = req.messages.filter((m) => m.role === "user").pop();
         return (
           isWeatherAgentCall(req) &&
-          !hasToolResult(req) &&
+          !weatherResultSinceUser(req) &&
           textOf(lastUser?.content).includes("New York")
         );
       },
@@ -1703,15 +1707,16 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
                 !!(p as { image_url?: { url?: string } }).image_url?.url,
             ),
         );
-        // "llamaindex-mm-check" scopes this fixture to the LlamaIndex suite:
-        // other integrations' multimodal specs send similar prompts with
-        // image_url parts, and without a unique token this fixture would
-        // intercept them (first match wins).
+        // The "*-mm-check" tokens scope this fixture to the LlamaIndex and
+        // GitHub Copilot SDK suites: other integrations' multimodal specs send
+        // similar prompts with image_url parts, and without a unique token this
+        // fixture would intercept them (first match wins).
+        const text = textOf(lastUser?.content).toLowerCase();
         return (
           hasImagePart &&
-          textOf(lastUser?.content)
-            .toLowerCase()
-            .includes("llamaindex-mm-check")
+          ["llamaindex-mm-check", "copilot-sdk-mm-check"].some((t) =>
+            text.includes(t),
+          )
         );
       },
     },
@@ -1825,6 +1830,8 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
       return { content: "I understand. How can I help you with that?" };
     },
   });
+
+  registerCopilotSdkSubgraphsFixtures(mockServer);
 
   // Log fixture counts for debugging
   const allFixtures = mockServer.getFixtures();
