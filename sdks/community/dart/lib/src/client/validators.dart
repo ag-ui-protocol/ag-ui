@@ -15,6 +15,13 @@ class Validators {
   static final RegExp _kUrlControlChars =
       RegExp('[\x00-\x1f\x7f\u0085\u2028\u2029]');
 
+  // Match encoded controls without decoding unrelated bytes: legacy URLs
+  // can contain non-UTF-8 percent escapes, which Uri.parse accepts.
+  static final RegExp _kEncodedUrlControlChars = RegExp(
+    '%(?:0[0-9a-f]|1[0-9a-f]|7f)|%c2%85|%e2%80%a[89]',
+    caseSensitive: false,
+  );
+
   /// Validates that a string is not empty
   static void requireNonEmpty(String? value, String fieldName) {
     if (value == null || value.isEmpty) {
@@ -46,27 +53,23 @@ class Validators {
   /// (C0 + Unicode line-terminators), non-http/https schemes, and
   /// credential-bearing URLs (`http://user:pass@host/`).
   ///
-  /// **Defense-in-depth note.** The credentials block
-  /// (`uri.userInfo.isNotEmpty`) ALSO defends against percent-encoded
-  /// control-char injection (e.g. `http://%0a:@host/` → newline in
-  /// `userInfo` after `Uri.parse` decodes it). If the no-credentials rule
-  /// is ever relaxed, ALSO run `_kUrlControlChars` against
-  /// `uri.userInfo`, `uri.path`, `uri.query`, and `uri.fragment` — those
-  /// fields are percent-decoded at access time, so the top-of-function
-  /// string check on the raw URL string is not sufficient on its own.
-  static void validateUrl(String? url, String fieldName) {
+  /// [allowRelative] also permits path references without a scheme or authority.
+  /// These must be resolved and validated again before making a request.
+  ///
+  /// **Defense-in-depth note.** Credentials and control characters are
+  /// checked independently. Both raw controls and their percent-encoded
+  /// byte sequences are rejected before URI resolution can normalize paths.
+  /// Unrelated percent escapes are preserved, including non-UTF-8 bytes.
+  static void validateUrl(
+    String? url,
+    String fieldName, {
+    bool allowRelative = false,
+  }) {
     requireNonEmpty(url, fieldName);
 
-    // Reject embedded control characters and DEL before delegating to
-    // `Uri.parse`. `Uri.parse('http://example.com/\nfoo')` returns a
-    // valid Uri with `\n` in the path, which then flows into HTTP
-    // request lines as a header-injection vector. The check covers:
-    //   • C0 controls (`\x00`–`\x1f`) and DEL (`\x7f`) — including `\t`,
-    //     `\n`, `\r`.
-    //   • U+0085 (NEL), U+2028 (LS), U+2029 (PS) — Unicode logical-line
-    //     terminators that Dart's `Uri.parse` accepts verbatim and a naive
-    //     custom transport re-emitting the URL into an HTTP header line
-    //     would interpret as a line break.
+    // Reject raw C0 controls, DEL, and Unicode line terminators before
+    // parsing can encode or normalize them. These checks also protect
+    // transports that might reflect URL components into request lines.
     if (_kUrlControlChars.hasMatch(url!)) {
       throw ValidationError(
         'URL contains control characters for "$fieldName"',
@@ -77,12 +80,24 @@ class Validators {
     }
 
     try {
+      // URI component getters retain percent escapes. Check the original
+      // reference before parsing/resolution can normalize away path segments.
+      if (_kEncodedUrlControlChars.hasMatch(url)) {
+        throw ValidationError(
+          'URL contains percent-encoded control characters for "$fieldName"',
+          field: fieldName,
+          constraint: 'no-control-chars',
+          value: url,
+        );
+      }
       final uri = Uri.parse(url);
       // `uri.hasAuthority` is true for `http://` (authority = empty string,
       // host = ""). Add the explicit `uri.host.isEmpty` guard so bare-scheme
       // URLs like `http://` are rejected as invalid rather than passing
       // through to the scheme / credentials checks.
-      if (!uri.hasScheme || !uri.hasAuthority || uri.host.isEmpty) {
+      final isRelative = !uri.hasScheme && !uri.hasAuthority;
+      if (!(allowRelative && isRelative) &&
+          (!uri.hasScheme || !uri.hasAuthority || uri.host.isEmpty)) {
         throw ValidationError(
           'Invalid URL format or empty host for "$fieldName"',
           field: fieldName,
@@ -90,7 +105,7 @@ class Validators {
           value: url,
         );
       }
-      if (uri.scheme != 'http' && uri.scheme != 'https') {
+      if (uri.hasScheme && uri.scheme != 'http' && uri.scheme != 'https') {
         throw ValidationError(
           'URL scheme must be http or https for "$fieldName"',
           field: fieldName,
@@ -109,14 +124,8 @@ class Validators {
           value: url,
         );
       }
-      // Defense-in-depth: also check percent-DECODED host / path / query /
-      // fragment. `Uri.parse` decodes percent-escapes at access time, so a
-      // raw URL like `http://host/%0a/foo` passes the top-of-function string
-      // check but `uri.path` returns a newline — a header-injection vector
-      // for any consumer that reflects these fields into HTTP request lines.
-      // `uri.host` is included because Dart allows percent-encoded IDNA host
-      // labels, and the decoded host can carry control characters that a
-      // custom transport places into `Host:` headers.
+      // Defense-in-depth for components exposed by Uri. Percent-encoded
+      // controls have already been checked in the original reference above.
       for (final part in [uri.host, uri.path, uri.query, uri.fragment]) {
         if (_kUrlControlChars.hasMatch(part)) {
           throw ValidationError(
