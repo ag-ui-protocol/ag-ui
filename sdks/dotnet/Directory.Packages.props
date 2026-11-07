@@ -3,6 +3,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.26.0" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.1.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.9.0" />
@@ -32,5 +33,9 @@
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'AGUI.MicrosoftAgentFramework' Or '$(MSBuildProjectName)' == 'AGUI.MicrosoftAgentFramework.UnitTests'">
+    <PackageVersion Update="Microsoft.Extensions.AI" Version="10.11.0" />
+    <PackageVersion Update="Microsoft.Extensions.AI.Abstractions" Version="10.11.0" />
   </ItemGroup>
 </Project>
