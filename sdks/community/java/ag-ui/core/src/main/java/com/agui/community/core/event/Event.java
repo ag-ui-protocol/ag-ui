@@ -12,6 +12,7 @@ package com.agui.community.core.event;
  */
 public sealed interface Event permits
         RunStartedEvent, RunFinishedEvent, RunErrorEvent, StepStartedEvent, StepFinishedEvent,
+        SubagentStartedEvent, SubagentFinishedEvent, SubagentErrorEvent,
         TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageChunkEvent,
         ToolCallStartEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallChunkEvent, ToolCallResultEvent,
         ReasoningStartEvent, ReasoningEndEvent, ReasoningMessageStartEvent, ReasoningMessageContentEvent,
