@@ -324,6 +324,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 | [Terminal + Agent]() | Supported | [Getting Started](https://docs.ag-ui.com/quickstart/clients) | Community |
 | Chat platforms (Slack, Microsoft Teams) | Supported | [Channels SDK](https://github.com/CopilotKit/channels-sdk), [OpenTag example](https://github.com/CopilotKit/OpenTag) | 1st Party |
 | [React Native](https://reactnative.dev/) | Supported | [Example](https://github.com/CopilotKit/CopilotKit/tree/main/examples/v2/react-native/demo) | 1st Party |
+| [OpenBot](https://open.bot) | Supported | [Getting Started](https://open.bot/builders), [Source](https://github.com/CopilotKit/OpenBot) | 1st Party |
 
 An AG-UI client does not have to be a web application. The protocol describes an
 event stream rather than a rendering target, so a terminal, a mobile app, or a
@@ -336,6 +337,15 @@ is a complete application built on it: a Python LangGraph agent served over AG-U
 into Slack and Microsoft Teams. In that application the agent and its runtime are
 self-hosted, while platform credentials and message delivery are handled by
 CopilotKit Intelligence — a hosted service, not part of the protocol.
+
+[OpenBot](https://open.bot) is a complete application on the client side of
+the protocol: an open-source workspace for AI coworkers that connects to any
+AG-UI agent endpoint. Each coworker can get a computer of its own, with a
+browser, files and tools, and every action it takes is checked against the
+deployment's policy before it runs. You host the application yourself. It
+keeps threads and memory in CopilotKit Intelligence, a separate service that
+is not part of the protocol, which CopilotKit can host for you or you can run
+yourself.
 
 ---
 
