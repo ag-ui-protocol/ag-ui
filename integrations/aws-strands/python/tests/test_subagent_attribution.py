@@ -1329,6 +1329,152 @@ async def test_a_failing_invocation_closes_its_open_inner_tool_call():
     assert _of(events, EventType.RUN_FINISHED)
 
 
+# ---------------------------------------------------------------------------
+# Issue #3311 — the same failure in default inline mode.
+#
+# Inline creates no _Run, so close_all() has nothing to settle and the inner
+# call the failing wrapper left open used to reach RUN_FINISHED still open,
+# which the published client verifier rejects.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("visibility", [None, "inline"])
+async def test_failing_wrapper_closes_open_inner_tool_call_inline(visibility):
+    events = await _collect(
+        _wrap(_wrapper_failing_on_the_inner_tool_use(), visibility)
+    )
+
+    _assert_tool_calls_closed_once(events)
+    (end,) = [
+        e
+        for e in _of(events, EventType.TOOL_CALL_END)
+        if e.tool_call_id == "root::inner_call"
+    ]
+    # Inline has no subagent surface at all: no SUBAGENT_* events, and the
+    # closing END carries no subagent_run_id.
+    assert not [e for e in events if e.type in SUBAGENT_LIFECYCLE]
+    assert not getattr(end, "subagent_run_id", None)
+    # The parent handled the wrapper error and finished normally.
+    (finished,) = _of(events, EventType.RUN_FINISHED)
+    assert finished.outcome.type == "success"
+
+
+def _parallel_parent_with_failing_wrapper() -> StrandsAgentCore:
+    """Two agent-as-tool calls in one batch; only the first wrapper fails.
+
+    Sub-agent A raises after re-yielding its inner call's first payload, so
+    its inner call never sees a contentBlockStop. Sub-agent B completes its
+    inner call normally, so its END already happened before the run closes.
+    """
+
+    @tool
+    def lookup_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f"sunny in {city}"
+
+    inner_a = StrandsAgentCore(
+        model=ScriptedModel(
+            [_tool_turn("inner_call", "lookup_weather", '{"city": "P"}')]
+        ),
+        tools=[lookup_weather],
+        callback_handler=None,
+    )
+    inner_b = StrandsAgentCore(
+        model=ScriptedModel(
+            [
+                _tool_turn("inner_call", "lookup_weather", '{"city": "Paris"}'),
+                _text_turn("Paris is sunny."),
+            ]
+        ),
+        tools=[lookup_weather],
+        callback_handler=None,
+    )
+
+    @tool
+    async def weather_agent(q: str):
+        """Delegate, then fail."""
+        async for event in inner_a.stream_async(q):
+            yield event
+            if isinstance(event, dict) and "current_tool_use" in event:
+                raise RuntimeError("wrapper failed")
+
+    @tool
+    async def finance_agent(q: str):
+        """Delegate and complete."""
+        async for event in inner_b.stream_async(q):
+            yield event
+
+    parent_turn = [
+        {"messageStart": {"role": "assistant"}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "parent_a", "name": "weather_agent"}}
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"q": "weather"}'}}}},
+        {"contentBlockStop": {}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "parent_b", "name": "finance_agent"}}
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"q": "stocks"}'}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+    return StrandsAgentCore(
+        model=ScriptedModel([parent_turn, _text_turn("Recovered.")]),
+        tools=[weather_agent, finance_agent],
+        callback_handler=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_failing_wrapper_closes_only_its_own_call_among_siblings_inline():
+    events = await _collect(
+        _wrap(_parallel_parent_with_failing_wrapper(), "inline")
+    )
+
+    _assert_tool_calls_closed_once(events)
+    assert not [e for e in events if e.type in SUBAGENT_LIFECYCLE]
+    ends = [
+        e.tool_call_id
+        for e in _of(events, EventType.TOOL_CALL_END)
+        if "::" in e.tool_call_id
+    ]
+    # Each inner call ends exactly once: B's by its own contentBlockStop, A's
+    # by the run-end close. A second close of B would duplicate its END.
+    assert sorted(ends) == ["parent_a::inner_call", "parent_b::inner_call"]
+    (finished,) = _of(events, EventType.RUN_FINISHED)
+    assert finished.outcome.type == "success"
+
+
+@pytest.mark.asyncio
+async def test_close_inline_tool_calls_ends_open_calls_once_and_ignores_late_stops():
+    runs = SubagentRuns("inline", _forward_inner_agent_events)
+    seen: dict = {}
+    tool_use = {"toolUseId": "a", "name": "a"}
+
+    # An inner call that already ended normally gets no second END.
+    _ = [e async for e in runs.forward(_inner_tool_use("x"), tool_use, seen)]
+    _ = [e async for e in runs.forward({"event": {"contentBlockStop": {}}}, tool_use, seen)]
+    assert seen["a::x"]["ended"] is True
+    assert runs.close_inline_tool_calls(seen) == []
+    # A late stop from the closed stream ends nothing twice.
+    assert not [e async for e in runs.forward({"event": {"contentBlockStop": {}}}, tool_use, seen)]
+
+    # An inner call left open is ended exactly once, then stays ended.
+    _ = [e async for e in runs.forward(_inner_tool_use("y"), tool_use, seen)]
+    (closing,) = runs.close_inline_tool_calls(seen)
+    assert closing.type == EventType.TOOL_CALL_END
+    assert closing.tool_call_id == "a::y"
+    assert not getattr(closing, "subagent_run_id", None)
+    assert runs.close_inline_tool_calls(seen) == []
+    assert not [e async for e in runs.forward({"event": {"contentBlockStop": {}}}, tool_use, seen)]
+
+
 def _inner_tool_use(call_id: str) -> dict:
     return {"current_tool_use": {"toolUseId": call_id, "name": "search", "input": '{"q'}}
 
