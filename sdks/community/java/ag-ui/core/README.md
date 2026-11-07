@@ -41,6 +41,47 @@ fields. See [`EventType`](src/main/java/com/agui/community/core/event/EventType.
 for the full set of variants (lifecycle, text messages, tool calls, reasoning,
 state, activity, and the `RAW` / `CUSTOM` / `META_EVENT` specials).
 
+## Token usage on terminal events
+
+`RunFinishedEvent` and `RunErrorEvent` accept an optional `List<TokenUsage>`,
+matching the protocol's `usage` array. Previously these records had no usage
+component, so a typed consumer could not retain counts received with a terminal
+event. Each entry describes one provider and model; a failed run can report the
+usage accrued before its failure.
+
+```java
+TokenUsage usage = new TokenUsage(
+        "example-provider", "example-model",
+        120L, 30L, 150L, 10L, 40L, 20L);
+
+RunFinishedEvent finished = new RunFinishedEvent(
+        "thread-1", "run-1", null, null, List.of(usage), null, null);
+RunErrorEvent failed = new RunErrorEvent(
+        "Model request failed", "ModelError", List.of(usage), null, null);
+```
+
+All eight `TokenUsage` fields are optional: `provider`, `model`, `inputTokens`,
+`outputTokens`, `totalTokens`, `reasoningTokens`, `cachedInputTokens` and
+`cacheWriteInputTokens`. Counts use nullable `Long` values, preserving unknown
+counts separately from explicit zero and supporting values above 32 bits.
+Constructors reject counts outside `0..9_007_199_254_740_991`, the protocol's
+JSON safe-integer range. Reasoning is included in output; cache reads and writes
+are disjoint parts of input. Producers supply normalized counts and totals;
+these records do not meter model calls or calculate usage.
+
+The original constructors and accessors remain available. Original constructors
+leave usage `null`; an explicit empty list remains empty. Supplied lists are
+copied and cannot be mutated through an event. The added record component is
+part of equality, hashing and the record shape, so code using record patterns
+or reflecting over components must account for it.
+
+Core still has no JSON runtime dependency. Its Jackson dependency is test-only:
+record-binding tests cover both terminal events, multiple models, partial and
+empty usage, omitted usage, zero and large counts. Serializers remain pluggable;
+use their optional-field policy to omit `null` values, as the Spring serializer
+does. These tests exercise record binding, not provider usage collection or a
+complete JSON Schema validator.
+
 ## The `Agent` abstraction
 
 ```java
