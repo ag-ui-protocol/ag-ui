@@ -347,6 +347,21 @@ Triggered when a new tool call is added to a message.
 onNewToolCall?(params: { toolCall: ToolCall } & Omit<AgentSubscriberParams, "input"> & { input?: RunAgentInput }): MaybePromise<void>
 ```
 
+### Messages and state are read-only
+
+Treat the messages and state that handlers receive, and `agent.messages`, as
+read-only. Copy a value before you change it.
+
+- A message that did not change keeps the same object from one update to the
+  next, so it can be compared by identity. Editing one in place also changes
+  every earlier update that holds it.
+- A changed message shares its unchanged nested values, such as metadata and
+  multimodal content, with the reducer's working copy. Editing those in place
+  can change what later updates contain.
+- `agent.state` and activity message `content` are copied when emitted, so an
+  edit to them does not reach later updates. An earlier update that holds the
+  same object still sees the edit.
+
 ## Async Support
 
 All subscriber methods support both synchronous and asynchronous execution:

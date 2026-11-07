@@ -58,7 +58,7 @@ actor SequencedHTTPClient: HTTPClient {
             url: url,
             statusCode: 200,
             httpVersion: "HTTP/1.1",
-            headerFields: nil
+            headerFields: ["Content-Type": "text/event-stream"]
         )!
         return HTTPResponse(bytes: stream, httpResponse: httpResponse)
     }
