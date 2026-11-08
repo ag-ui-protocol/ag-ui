@@ -11,6 +11,7 @@ import {
 import { CopilotKit } from "@copilotkit/react-core";
 import { useTheme } from "next-themes";
 import { z } from "zod";
+import { CaoApprovalChat } from "@/components/cao-approval-chat";
 
 interface ToolApprovalProps {
   params: Promise<{ integrationId: string }>;
@@ -56,7 +57,11 @@ const ToolApproval: React.FC<ToolApprovalProps> = ({ params }) => {
       agent="tool_approval"
     >
       <CopilotChatConfigurationProvider agentId="tool_approval">
-        <ChatContent />
+        {integrationId === "cli-agent-orchestrator" ? (
+          <CaoApprovalChat />
+        ) : (
+          <ChatContent />
+        )}
       </CopilotChatConfigurationProvider>
     </CopilotKit>
   );
