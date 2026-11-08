@@ -287,6 +287,7 @@ ToolCallEndEvent.tool_call_id = 2
 ToolCallResultEvent.base_event = 1
 ToolCallResultEvent.content = 5
 ToolCallResultEvent.content_parts = 7
+ToolCallResultEvent.error = 8
 ToolCallResultEvent.message_id = 3
 ToolCallResultEvent.role = 6
 ToolCallResultEvent.subagent_run_id = 2

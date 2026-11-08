@@ -20,6 +20,7 @@ from ag_ui.core import RunAgentInput
 
 from strands.session import SessionManager
 
+from .subagents import SUBAGENT_VISIBILITIES, SubagentVisibility
 from .utils import UrlFetchPolicy
 
 
@@ -280,6 +281,37 @@ class StrandsAgentConfig:
     ``TOOL_CALL_*`` events alone. Set to False for raw AG-UI consumers
     that do their own message reconstruction.
     """
+    subagent_visibility: SubagentVisibility = "inline"
+    """What the client sees of a sub-agent run through a tool.
+
+    Applies to agents-as-tools: ``Agent.as_tool()``, or a generator tool that
+    re-yields another agent's ``stream_async``. A plain ``@tool`` that calls
+    ``sub_agent(...)`` and returns its result exposes nothing to stream, so
+    it stays an ordinary tool call under every setting.
+
+    - ``"inline"`` (default): unchanged from earlier releases. The
+      sub-agent's tool calls stream untagged beside the parent's; its text
+      does not stream.
+    - ``"attributed"``: each invocation is an AG-UI subagent run.
+      ``SUBAGENT_STARTED`` names the spawning tool call as
+      ``parentToolCallId``; the sub-agent's text, reasoning and tool calls
+      stream tagged with its ``subagentRunId`` (the spawning call's id);
+      ``SUBAGENT_FINISHED``, or ``SUBAGENT_ERROR`` for an error result,
+      lands right before that call's ``TOOL_CALL_RESULT``. A sub-agent that
+      itself delegates is announced with ``parentSubagentRunId``. Its
+      messages enter ``MESSAGES_SNAPSHOT`` attributed, between the spawning
+      call and its result, so a client that keeps the snapshot keeps them.
+    - ``"hidden"``: the client sees only the spawning call and its result.
+
+    ``"attributed"`` is opt-in because clients older than AG-UI 1.0 fail on
+    the subagent event types while decoding. Turn it on once every consumer
+    understands them.
+
+    Whatever the setting, sub-agent messages a client sends back are not
+    handed to the parent model: Strands persists only the parent
+    conversation, and a parent shown a sub-agent's calls would take them for
+    its own. They are still echoed in the snapshot.
+    """
     replay_history_into_strands: bool = True
     """When True (and the cached Strands agent has no ``session_manager``),
     reconcile the per-thread ``StrandsAgentCore.messages`` list with
@@ -307,6 +339,9 @@ class StrandsAgentConfig:
     - ``recovery`` — recovery loop config. NOTE: keys are camelCase per the
       shared toolkit contract — e.g. ``{"maxAttempts": 5}`` (a snake_case
       ``max_attempts`` is silently ignored).
+    - ``force_tool_choice`` — defaults to True. Set False for models that
+      reject forced choice to omit ``tool_choice`` from the inner render
+      request. The render tool and bounded recovery remain active.
     """
     url_fetch_policy: Optional[UrlFetchPolicy] = None
     """Policy applied to every server-side fetch of a URL content source.
@@ -335,6 +370,14 @@ class StrandsAgentConfig:
     history never holds audio its model would reject on every later turn.
     Audio also needs strands-agents 1.53.0+, whatever this says.
     """
+
+    def __post_init__(self) -> None:
+        if self.subagent_visibility not in SUBAGENT_VISIBILITIES:
+            raise ValueError(
+                "subagent_visibility must be one of "
+                f"{', '.join(SUBAGENT_VISIBILITIES)}; "
+                f"got {self.subagent_visibility!r}"
+            )
 
 
 async def maybe_await(value: Any) -> Any:

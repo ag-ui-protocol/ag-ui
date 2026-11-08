@@ -315,6 +315,14 @@ function assertExpectation(
       )}\nactual ${JSON.stringify(result.messages)}`,
     ).toBe(true);
   }
+  for (const path of expectation.messageAbsentPaths ?? []) {
+    expect(
+      pathExists(result.messages, path),
+      `${path} must NOT exist in the final messages: ${JSON.stringify(
+        result.messages,
+      )}`,
+    ).toBe(false);
+  }
   if (expectation.state !== undefined) {
     expect(
       matchesSubset(result.state, expectation.state),
