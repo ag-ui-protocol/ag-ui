@@ -12,6 +12,10 @@ import {
   RunFinishedEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
+  MessagesSnapshotEvent,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
   Tool,
   contentToText,
 } from "@ag-ui/client";
@@ -38,6 +42,23 @@ import {
   MAX_A2UI_ATTEMPTS,
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
+
+// A canonical user-message field survives provider/SDK history round trips,
+// including CrewAI's snapshot serializer (which intentionally drops metadata).
+const USER_ACTION_CONTEXT_NAME = "a2ui_user_action_context";
+const USER_ACTION_CONTEXT_PREFIX = "A2UI user action:\n";
+const USER_ACTION_CONTEXT_ID = /^a2ui-action-user-[a-f0-9]{64}$/;
+
+function isUserActionContext(message: Message): boolean {
+  return (
+    message.role === "user" &&
+    message.name === USER_ACTION_CONTEXT_NAME &&
+    USER_ACTION_CONTEXT_ID.test(message.id) &&
+    typeof message.content === "string" &&
+    message.content.startsWith(USER_ACTION_CONTEXT_PREFIX) &&
+    message.encryptedValue === undefined
+  );
+}
 
 /**
  * Detect a structured hard-failure envelope produced by the toolkit's recovery
@@ -258,10 +279,75 @@ export class A2UIMiddleware extends Middleware {
       this.getValidationCatalog(finalInput),
       { input: finalInput, next, rounds: 0 },
     );
+    // Keep the model's complete context inside the private stream bookkeeping;
+    // only the outward projection hides our internal action representation.
+    const ownedContextIds = new Set<string>();
+    const visibleMessageIds = new Set<string>();
+    const rememberMessages = (messages: Message[]) => {
+      for (const message of messages) {
+        if (
+          "encryptedValue" in message &&
+          message.encryptedValue !== undefined
+        ) {
+          visibleMessageIds.add(message.id);
+          ownedContextIds.delete(message.id);
+        } else if (isUserActionContext(message)) {
+          ownedContextIds.add(message.id);
+          visibleMessageIds.delete(message.id);
+        } else if (!ownedContextIds.has(message.id)) {
+          visibleMessageIds.add(message.id);
+        }
+      }
+    };
+    rememberMessages(finalInput.messages);
+
     return new Observable((subscriber) =>
       stream.subscribe({
         next: (event) => {
-          subscriber.next(event);
+          let outwardEvent = event;
+          if (event.type === EventType.MESSAGES_SNAPSHOT) {
+            const snapshot = event as MessagesSnapshotEvent;
+            rememberMessages(snapshot.messages);
+            outwardEvent = {
+              ...snapshot,
+              messages: snapshot.messages.filter(
+                (message) =>
+                  !(
+                    message.role === "user" &&
+                    ownedContextIds.has(message.id) &&
+                    !visibleMessageIds.has(message.id) &&
+                    typeof message.content === "string" &&
+                    message.content.startsWith(USER_ACTION_CONTEXT_PREFIX)
+                  ),
+              ),
+            } as MessagesSnapshotEvent;
+          } else if (
+            event.type === EventType.TEXT_MESSAGE_START ||
+            event.type === EventType.TEXT_MESSAGE_CONTENT ||
+            event.type === EventType.TEXT_MESSAGE_END
+          ) {
+            const text = event as
+              | TextMessageStartEvent
+              | TextMessageContentEvent
+              | TextMessageEndEvent;
+            if (
+              event.type === EventType.TEXT_MESSAGE_START &&
+              (text as TextMessageStartEvent).role === "user" &&
+              (text as TextMessageStartEvent).name ===
+                USER_ACTION_CONTEXT_NAME &&
+              USER_ACTION_CONTEXT_ID.test(text.messageId) &&
+              !visibleMessageIds.has(text.messageId)
+            ) {
+              ownedContextIds.add(text.messageId);
+            }
+            if (
+              ownedContextIds.has(text.messageId) &&
+              !visibleMessageIds.has(text.messageId)
+            ) {
+              return;
+            }
+          }
+          subscriber.next(outwardEvent);
           if (event.type === EventType.RUN_STARTED) {
             for (const result of recovery.results) {
               subscriber.next(result);
@@ -346,7 +432,8 @@ export class A2UIMiddleware extends Middleware {
         {
           id: messageId,
           role: "user",
-          content: `A2UI user action:\n${JSON.stringify(userAction)}`,
+          name: USER_ACTION_CONTEXT_NAME,
+          content: `${USER_ACTION_CONTEXT_PREFIX}${JSON.stringify(userAction)}`,
         },
       ],
     };

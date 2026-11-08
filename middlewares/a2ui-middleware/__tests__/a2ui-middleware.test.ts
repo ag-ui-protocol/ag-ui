@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   BaseEvent,
+  AbstractAgent,
+  Message,
+  defaultApplyEvents,
   EventType,
   RunAgentInput,
   Tool,
@@ -19,6 +22,7 @@ import {
 } from "../src/index";
 
 import { MockAgent, createRunAgentInput, collectEvents } from "./test-utils";
+import { from, firstValueFrom, toArray } from "rxjs";
 
 // OSS-162: the a2ui-surface activity now also carries pre-paint lifecycle
 // snapshots (`content.status` = "building" | "retrying" | "failed", no
@@ -130,6 +134,7 @@ describe("A2UIMiddleware", () => {
       const messages = agent.runCalls[0].messages;
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("user");
+      expect(messages[0]).toMatchObject({ name: "a2ui_user_action_context" });
       const content = messages[0].content as string;
       expect(content).toMatch(/^A2UI user action:\n/);
       expect(JSON.parse(content.slice(content.indexOf("\n") + 1))).toEqual(
@@ -224,6 +229,280 @@ describe("A2UIMiddleware", () => {
         expect(agent.runCalls[0].messages).toEqual(input.messages);
       },
     );
+  });
+
+  describe("private user action context", () => {
+    const action = {
+      name: "book_hotel",
+      surfaceId: "hotels",
+      sourceComponentId: "book",
+      context: { hotelName: "Holiday Inn" },
+    };
+    const user: Message = {
+      id: "original-user",
+      role: "user",
+      content: "Compare hotels",
+    };
+    const signed: Message = {
+      id: "signed-model",
+      role: "assistant",
+      toolCalls: [
+        {
+          id: "render",
+          type: "function",
+          function: { name: "render_a2ui", arguments: "{}" },
+          encryptedValue: "test-genuine-signature",
+        },
+      ],
+    };
+    const tool: Message = {
+      id: "render-result",
+      role: "tool",
+      toolCallId: "render",
+      content: "Rendered",
+    };
+    const reply: Message = {
+      id: "booking-reply",
+      role: "assistant",
+      content: "Booked at Holiday Inn.",
+    };
+    const ownedId = `a2ui-action-user-${"a".repeat(64)}`;
+    const retained: Message = {
+      id: ownedId,
+      role: "user",
+      content: `A2UI user action:\n${JSON.stringify(action)}`,
+      name: "a2ui_user_action_context",
+    };
+
+    class EchoAgent extends AbstractAgent {
+      inputs: RunAgentInput[] = [];
+      emitted: BaseEvent[] = [];
+      constructor(private eventsFor: (input: RunAgentInput) => BaseEvent[]) {
+        super();
+      }
+      run(input: RunAgentInput) {
+        this.inputs.push(input);
+        this.emitted = this.eventsFor(input);
+        return from(this.emitted);
+      }
+    }
+    const lifecycle = (
+      input: RunAgentInput,
+      events: BaseEvent[],
+    ): BaseEvent[] =>
+      [
+        {
+          type: EventType.RUN_STARTED,
+          runId: input.runId,
+          threadId: input.threadId,
+        },
+        ...events,
+        {
+          type: EventType.RUN_FINISHED,
+          runId: input.runId,
+          threadId: input.threadId,
+        },
+      ] as BaseEvent[];
+    const snapshot = (messages: Message[]): BaseEvent =>
+      ({ type: EventType.MESSAGES_SNAPSHOT, messages }) as BaseEvent;
+    const text = (message: Message, includeName = true): BaseEvent[] =>
+      [
+        {
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: message.id,
+          role: message.role,
+          name: includeName && "name" in message ? message.name : undefined,
+        },
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: message.id,
+          delta: message.content,
+        },
+        { type: EventType.TEXT_MESSAGE_END, messageId: message.id },
+      ] as BaseEvent[];
+    async function clientMessages(input: RunAgentInput, events: BaseEvent[]) {
+      const client = new MockAgent();
+      client.messages = structuredClone(input.messages);
+      const mutations = await firstValueFrom(
+        defaultApplyEvents(input, from(events), client, []).pipe(toArray()),
+      );
+      return mutations.reduce(
+        (messages, mutation) => mutation.messages ?? messages,
+        input.messages,
+      );
+    }
+
+    it("keeps the complete action private while preserving signed history and the visible answer", async () => {
+      const input = createRunAgentInput({
+        messages: [user, signed, tool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const original = structuredClone(input);
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          ...text(reply),
+          snapshot([...nextInput.messages, reply]),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      const modelContext = agent.inputs[0].messages.at(-1)!;
+      expect(modelContext).toMatchObject({ name: "a2ui_user_action_context" });
+      expect(modelContext.content).toBe(
+        `A2UI user action:\n${JSON.stringify(action)}`,
+      );
+      expect(agent.inputs[0].messages.slice(0, -1)).toEqual([
+        user,
+        signed,
+        tool,
+      ]);
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        signed,
+        tool,
+        reply,
+      ]);
+      expect(
+        events.filter((e) => e.type === EventType.RUN_FINISHED),
+      ).toHaveLength(1);
+      expect(input).toEqual(original);
+      const originalSnapshot = agent.emitted.find(
+        (e) => e.type === EventType.MESSAGES_SNAPSHOT,
+      ) as BaseEvent & { messages: Message[] };
+      expect(originalSnapshot.messages).toContainEqual(modelContext);
+    });
+
+    it.each(["triplet", "chunk"])(
+      "suppresses a producer's echoed private user %s without orphan text events",
+      async (kind) => {
+        const input = createRunAgentInput({
+          messages: [user],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const echo =
+            kind === "triplet"
+              ? text(context, false)
+              : ([
+                  {
+                    type: EventType.TEXT_MESSAGE_CHUNK,
+                    messageId: context.id,
+                    role: "user",
+                    delta: context.content,
+                  },
+                ] as BaseEvent[]);
+          return lifecycle(nextInput, [...echo, ...text(reply)]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        const contextId = agent.inputs[0].messages.at(-1)!.id;
+        expect(
+          events.some((e) => "messageId" in e && e.messageId === contextId),
+        ).toBe(false);
+        expect(await clientMessages(input, events)).toEqual([user, reply]);
+      },
+    );
+
+    it("recognizes owned context retained by a server on a later ordinary run", async () => {
+      const input = createRunAgentInput({ messages: [user] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          ...text(retained),
+          snapshot([user, retained, reply]),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(agent.inputs[0].messages).toEqual([user]);
+      expect(
+        events.some((e) => "messageId" in e && e.messageId === retained.id),
+      ).toBe(false);
+      expect(await clientMessages(input, events)).toEqual([user, reply]);
+    });
+
+    it("uses a server snapshot's explicit ownership for later unnamed echoes", async () => {
+      const input = createRunAgentInput({ messages: [user] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          snapshot([user, retained]),
+          ...text(retained, false),
+          ...text(reply),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(
+        events.some((e) => "messageId" in e && e.messageId === retained.id),
+      ).toBe(false);
+      expect(await clientMessages(input, events)).toEqual([user, reply]);
+    });
+
+    it("preserves unmarked lookalikes and genuine encrypted messages even with an ownership marker", async () => {
+      const lookalike: Message = { ...retained, name: undefined };
+      const encrypted: Message = {
+        ...retained,
+        id: `a2ui-action-user-${"b".repeat(64)}`,
+        encryptedValue: "test-real-encrypted-value",
+      };
+      const differentId: Message = { ...retained, id: "ordinary-user-id" };
+      const ordinary: Message = {
+        ...retained,
+        id: `a2ui-action-user-${"c".repeat(64)}`,
+        content: "Ordinary user text",
+      };
+      const messages = [
+        user,
+        lookalike,
+        encrypted,
+        differentId,
+        ordinary,
+        signed,
+        tool,
+      ];
+      const input = createRunAgentInput({ messages });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          snapshot(messages),
+          ...text(lookalike),
+          ...text(encrypted),
+          ...text(differentId),
+          ...text(ordinary),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(events).toEqual(agent.emitted);
+      expect(
+        (await clientMessages(input, events)).map((message) => message.id),
+      ).toEqual(messages.map((message) => message.id));
+    });
+
+    it("passes ordinary runs and their output through unchanged", async () => {
+      const input = createRunAgentInput({ messages: [user, signed, tool] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          ...text(reply),
+          snapshot([...nextInput.messages, reply]),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(events).toEqual(agent.emitted);
+      expect(agent.inputs[0].messages).toEqual(input.messages);
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        signed,
+        tool,
+        reply,
+      ]);
+    });
   });
 
   describe("tool call interception", () => {
