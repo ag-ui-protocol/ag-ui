@@ -44,18 +44,22 @@ import {
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
 
-// A canonical user-message field survives provider/SDK history round trips,
-// including CrewAI's snapshot serializer (which intentionally drops metadata).
+// This user-message name + ID namespace is reserved for internal action context.
+// Ownership is independent of content encoding and optional provider artifacts.
+// The canonical name survives SDK serializers that intentionally drop metadata.
 const USER_ACTION_CONTEXT_NAME = "a2ui_user_action_context";
 const USER_ACTION_CONTEXT_PREFIX = "A2UI user action:\n";
 const USER_ACTION_CONTEXT_ID = /^a2ui-action-user-[a-f0-9]{64}$/;
 
-function isUserActionContext(message: Message): boolean {
+function isUserActionContext(message: {
+  id: string;
+  role?: string;
+  name?: string;
+}): boolean {
   return (
     message.role === "user" &&
     message.name === USER_ACTION_CONTEXT_NAME &&
-    USER_ACTION_CONTEXT_ID.test(message.id) &&
-    message.encryptedValue === undefined
+    USER_ACTION_CONTEXT_ID.test(message.id)
   );
 }
 
@@ -272,30 +276,20 @@ export class A2UIMiddleware extends Middleware {
       : withSchema;
 
     return new Observable((subscriber) => {
-      // Classification belongs to this subscription. Keep known genuine input
-      // visible even if a later adapter snapshot drops its encryption or name.
-      const ownedContextIds = new Set<string>();
-      const visibleMessageIds = new Set<string>();
+      // First observation fixes ownership for this subscription. Later optional
+      // fields cannot publish private context or hide a proven public message.
+      const visibility = new Map<string, "public" | "private">();
       const projectMessages = (messages: Message[]): Message[] => {
         for (const message of messages) {
-          if (
-            "encryptedValue" in message &&
-            message.encryptedValue !== undefined
-          ) {
-            visibleMessageIds.add(message.id);
-          } else if (isUserActionContext(message)) {
-            if (!visibleMessageIds.has(message.id)) {
-              ownedContextIds.add(message.id);
-            }
-          } else if (!ownedContextIds.has(message.id)) {
-            visibleMessageIds.add(message.id);
+          if (!visibility.has(message.id)) {
+            visibility.set(
+              message.id,
+              isUserActionContext(message) ? "private" : "public",
+            );
           }
         }
         return messages.filter(
-          (message) =>
-            message.role !== "user" ||
-            !ownedContextIds.has(message.id) ||
-            visibleMessageIds.has(message.id),
+          (message) => visibility.get(message.id) !== "private",
         );
       };
       projectMessages(finalInput.messages);
@@ -339,18 +333,21 @@ export class A2UIMiddleware extends Middleware {
               | TextMessageEndEvent;
             if (
               event.type === EventType.TEXT_MESSAGE_START &&
-              (text as TextMessageStartEvent).role === "user" &&
-              (text as TextMessageStartEvent).name ===
-                USER_ACTION_CONTEXT_NAME &&
-              USER_ACTION_CONTEXT_ID.test(text.messageId) &&
-              !visibleMessageIds.has(text.messageId)
+              !visibility.has(text.messageId)
             ) {
-              ownedContextIds.add(text.messageId);
+              const start = text as TextMessageStartEvent;
+              visibility.set(
+                start.messageId,
+                isUserActionContext({
+                  id: start.messageId,
+                  role: start.role,
+                  name: start.name,
+                })
+                  ? "private"
+                  : "public",
+              );
             }
-            if (
-              ownedContextIds.has(text.messageId) &&
-              !visibleMessageIds.has(text.messageId)
-            ) {
+            if (visibility.get(text.messageId) === "private") {
               return;
             }
           }
