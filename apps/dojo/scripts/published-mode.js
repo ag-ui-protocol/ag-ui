@@ -216,6 +216,15 @@ const LANES = {
     // so only the @ag-ui/* npm packages are published releases.
     note: "Java server builds from this checkout's Spring SDK; only @ag-ui/* npm deps are published",
   },
+  "openai-agents-python": {
+    // ag-ui-openai-agents is not on PyPI yet, so there is no release to switch
+    // the server to: it runs the adapter and its lockfile from this checkout.
+    // Once published, this becomes a `python` entry with that producer.
+    note: "ag-ui-openai-agents is not on PyPI yet; the server runs it from this checkout",
+  },
+  opencode: {
+    npm: ["@ag-ui/opencode"],
+  },
   "claude-managed-agents-dotnet": {
     dotnet: {
       csproj: "integrations/claude-managed-agents/dotnet/examples/AGUIDojoServer/AGUIDojoServer.csproj",

@@ -102,6 +102,12 @@
     "notice": "integrations/mastra/typescript/LICENSE"
   },
   {
+    "directory": "integrations/openai-agents/typescript",
+    "names": ["@ag-ui/openai-agents"],
+    "license": "MIT",
+    "notice": "integrations/openai-agents/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/opencode/typescript",
     "names": ["@ag-ui/opencode"],
     "license": "MIT",

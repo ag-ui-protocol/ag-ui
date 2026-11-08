@@ -267,6 +267,20 @@
         { "name": "@ag-ui/omnara", "path": "integrations/community/omnara/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-openai-agents-py": {
+      "description": "OpenAI Agents SDK integration (Python)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "ag-ui-openai-agents", "path": "integrations/openai-agents/python", "ecosystem": "python", "buildSystem": "uv" }
+      ]
+    },
+    "integration-openai-agents-ts": {
+      "description": "OpenAI Agents SDK integration (TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/openai-agents", "path": "integrations/openai-agents/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-opencode-ts": {
       "description": "OpenCode integration (TypeScript)",
       "sharedVersion": false,

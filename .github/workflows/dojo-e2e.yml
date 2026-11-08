@@ -376,6 +376,10 @@ jobs:
             test_path: tests/agUiDotnetTests
             services: ["dojo", "ag-ui-dotnet"]
             wait_on: http://localhost:9999,tcp:localhost:8023
+          - suite: openai-agents-python
+            test_path: tests/openaiAgentsPythonTests
+            services: ["dojo", "openai-agents-python"]
+            wait_on: http://localhost:9999,tcp:localhost:8031
           # In-process with the Dojo; keyless runs point the agent at aimock
           # (WATSONX_BASE_URL in scripts/run-dojo-everything.js).
           - suite: watsonx
@@ -627,8 +631,9 @@ jobs:
         env:
           BASE_URL: http://localhost:9999
           PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          TEST_PATH: ${{ matrix.test_path }}
         run: |
-          pnpm test -- ${{ matrix.test_path }}
+          pnpm test "$TEST_PATH"
 
       - name: Upload traces – ${{ matrix.suite }}
         if: always() # Uploads artifacts even if tests fail

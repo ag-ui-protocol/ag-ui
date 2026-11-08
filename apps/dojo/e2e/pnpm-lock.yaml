@@ -16,8 +16,8 @@ importers:
         version: 2.0.3
     devDependencies:
       '@playwright/test':
-        specifier: ^1.43.1
-        version: 1.52.0
+        specifier: 1.61.1
+        version: 1.61.1
       '@slack/types':
         specifier: ^2.14.0
         version: 2.14.0
@@ -360,8 +360,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@playwright/test@1.52.0':
-    resolution: {integrity: sha512-uh6W7sb55hl7D6vsAeA+V2p5JnlAqzhqFyF0VcJkKZXkgnFcVG9PziERRHQfPLfNGx1C292a4JqbWzhR8L4R1g==}
+  '@playwright/test@1.61.1':
+    resolution: {integrity: sha512-8nKv6+0RJSL9FE4jYOEGXnPeM/Hg12qZpmqzZjRh3qM0Y7c3z1mrOTfFLids72RDQYVh9WpLEfR5WdpNX4fkig==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -807,8 +807,8 @@ packages:
     resolution: {integrity: sha512-rhIwUycgwwKcP9yTOOFK/AKsAopjjCakVqLHePO3CC6Mir1Z99xT+R63jZxAT5lFZLa2inS5h+ZS2GvR99/FBg==}
     engines: {node: '>=8'}
 
-  playwright-core@1.52.0:
-    resolution: {integrity: sha512-l2osTgLXSMeuLZOML9qYODUQoPPnUsKsb5/P6LJ2e6uPKXUdPK5WYhN4z03G+YNbWmGDY4YENauNu4ZKczreHg==}
+  playwright-core@1.61.1:
+    resolution: {integrity: sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -816,8 +816,8 @@ packages:
     resolution: {integrity: sha512-KuCHFyFx7rWOJ5mnpISqtWuB6S8NOOtkkcyUEwxkKTvPVjp5QndB+6fX0w8fTggqZ79x/bM0XO/QU5POOtIGZg==}
     hasBin: true
 
-  playwright@1.52.0:
-    resolution: {integrity: sha512-JAwMNMBlxJ2oD1kce4KPtMkDeKGHQstdpFPcPH3maElAXon/QZeTvtsfXmTMRyO9TslfoYOXkSsvao2nE1ilTw==}
+  playwright@1.61.1:
+    resolution: {integrity: sha512-DWnY5o3YbLWK4GovuAVwpqL+1VwGNdUGrRr++8j8PtQQzvAVZUIMjKQ90fY689sEJZJBbZVw1rXaOKSTitkzPQ==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -1439,9 +1439,9 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.0
 
-  '@playwright/test@1.52.0':
+  '@playwright/test@1.61.1':
     dependencies:
-      playwright: 1.52.0
+      playwright: 1.61.1
 
   '@slack/logger@4.0.0':
     dependencies:
@@ -2016,7 +2016,7 @@ snapshots:
     dependencies:
       p-finally: 1.0.0
 
-  playwright-core@1.52.0: {}
+  playwright-core@1.61.1: {}
 
   playwright-slack-report@1.1.93(@types/node@22.15.28)(typescript@5.8.3):
     dependencies:
@@ -2034,9 +2034,9 @@ snapshots:
       - supports-color
       - typescript
 
-  playwright@1.52.0:
+  playwright@1.61.1:
     dependencies:
-      playwright-core: 1.52.0
+      playwright-core: 1.61.1
     optionalDependencies:
       fsevents: 2.3.2
 

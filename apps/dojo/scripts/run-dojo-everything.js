@@ -316,6 +316,14 @@ const ALL_SERVICES = {
       env: { PORT: 8014 },
     },
   ],
+  "openai-agents-python": [
+    {
+      command: "uv run dev",
+      name: "OpenAI Agents SDK (Python)",
+      cwd: path.join(integrationsRoot, "openai-agents/python/examples"),
+      env: { PORT: 8031 },
+    },
+  ],
   "claude-agent-sdk-python": [
     {
       command: "uv run dev",
@@ -483,6 +491,7 @@ const ALL_SERVICES = {
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
+        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8031",
         ...adkJsEnv,
         ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
@@ -528,6 +537,7 @@ const ALL_SERVICES = {
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
+        OPENAI_AGENTS_PYTHON_URL: "http://localhost:8031",
         ...adkJsEnv,
         ...watsonxEnv,
         NEXT_PUBLIC_CUSTOM_DOMAIN_TITLE:
