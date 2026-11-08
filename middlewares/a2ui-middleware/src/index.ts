@@ -10,6 +10,7 @@ import {
   ActivitySnapshotEvent,
   ToolCallResultEvent,
   RunFinishedEvent,
+  RunStartedEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
   MessagesSnapshotEvent,
@@ -54,8 +55,6 @@ function isUserActionContext(message: Message): boolean {
     message.role === "user" &&
     message.name === USER_ACTION_CONTEXT_NAME &&
     USER_ACTION_CONTEXT_ID.test(message.id) &&
-    typeof message.content === "string" &&
-    message.content.startsWith(USER_ACTION_CONTEXT_PREFIX) &&
     message.encryptedValue === undefined
   );
 }
@@ -272,55 +271,63 @@ export class A2UIMiddleware extends Middleware {
       ? this.injectToolGuidelines(this.injectToolAndFlag(withSchema))
       : withSchema;
 
-    // Process the event stream using runNextWithState for automatic message tracking
-    const stream = this.processStream(
-      this.runNextWithState(finalInput, next),
-      frontendCatalogId,
-      this.getValidationCatalog(finalInput),
-      { input: finalInput, next, rounds: 0 },
-    );
-    // Keep the model's complete context inside the private stream bookkeeping;
-    // only the outward projection hides our internal action representation.
-    const ownedContextIds = new Set<string>();
-    const visibleMessageIds = new Set<string>();
-    const rememberMessages = (messages: Message[]) => {
-      for (const message of messages) {
-        if (
-          "encryptedValue" in message &&
-          message.encryptedValue !== undefined
-        ) {
-          visibleMessageIds.add(message.id);
-          ownedContextIds.delete(message.id);
-        } else if (isUserActionContext(message)) {
-          ownedContextIds.add(message.id);
-          visibleMessageIds.delete(message.id);
-        } else if (!ownedContextIds.has(message.id)) {
-          visibleMessageIds.add(message.id);
+    return new Observable((subscriber) => {
+      // Classification belongs to this subscription. Keep known genuine input
+      // visible even if a later adapter snapshot drops its encryption or name.
+      const ownedContextIds = new Set<string>();
+      const visibleMessageIds = new Set<string>();
+      const projectMessages = (messages: Message[]): Message[] => {
+        for (const message of messages) {
+          if (
+            "encryptedValue" in message &&
+            message.encryptedValue !== undefined
+          ) {
+            visibleMessageIds.add(message.id);
+          } else if (isUserActionContext(message)) {
+            if (!visibleMessageIds.has(message.id)) {
+              ownedContextIds.add(message.id);
+            }
+          } else if (!ownedContextIds.has(message.id)) {
+            visibleMessageIds.add(message.id);
+          }
         }
-      }
-    };
-    rememberMessages(finalInput.messages);
+        return messages.filter(
+          (message) =>
+            message.role !== "user" ||
+            !ownedContextIds.has(message.id) ||
+            visibleMessageIds.has(message.id),
+        );
+      };
+      projectMessages(finalInput.messages);
 
-    return new Observable((subscriber) =>
-      stream.subscribe({
+      // Keep the model's complete context inside private stream bookkeeping.
+      // Project only the two canonical history-bearing events the SDK applies.
+      const stream = this.processStream(
+        this.runNextWithState(finalInput, next),
+        frontendCatalogId,
+        this.getValidationCatalog(finalInput),
+        { input: finalInput, next, rounds: 0 },
+      );
+      return stream.subscribe({
         next: (event) => {
           let outwardEvent = event;
           if (event.type === EventType.MESSAGES_SNAPSHOT) {
             const snapshot = event as MessagesSnapshotEvent;
-            rememberMessages(snapshot.messages);
             outwardEvent = {
               ...snapshot,
-              messages: snapshot.messages.filter(
-                (message) =>
-                  !(
-                    message.role === "user" &&
-                    ownedContextIds.has(message.id) &&
-                    !visibleMessageIds.has(message.id) &&
-                    typeof message.content === "string" &&
-                    message.content.startsWith(USER_ACTION_CONTEXT_PREFIX)
-                  ),
-              ),
+              messages: projectMessages(snapshot.messages),
             } as MessagesSnapshotEvent;
+          } else if (event.type === EventType.RUN_STARTED) {
+            const started = event as RunStartedEvent;
+            if (started.input?.messages) {
+              outwardEvent = {
+                ...started,
+                input: {
+                  ...started.input,
+                  messages: projectMessages(started.input.messages),
+                },
+              } as RunStartedEvent;
+            }
           } else if (
             event.type === EventType.TEXT_MESSAGE_START ||
             event.type === EventType.TEXT_MESSAGE_CONTENT ||
@@ -363,8 +370,8 @@ export class A2UIMiddleware extends Middleware {
         },
         error: (error) => subscriber.error(error),
         complete: () => subscriber.complete(),
-      }),
-    );
+      });
+    });
   }
 
   /**
