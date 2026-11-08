@@ -101,42 +101,77 @@ describe("A2UIMiddleware", () => {
   });
 
   describe("user action processing", () => {
-    it("should prepend synthetic messages for user action", async () => {
-      const middleware = new A2UIMiddleware();
-      const mockAgent = new MockAgent([
+    const userAction = {
+      name: "book_restaurant",
+      surfaceId: "restaurant-card",
+      sourceComponentId: "book-btn",
+      context: {
+        restaurantName: "Xi'an Famous Foods",
+        guests: 0,
+        confirmed: false,
+      },
+      timestamp: "2026-11-07T12:00:00Z",
+      data: { dietary: ["vegetarian"], notes: null },
+    };
+
+    const createAgent = () =>
+      new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
+    it("appends the complete UI action as user input without fabricating tool calls", async () => {
+      const agent = createAgent();
       const input = createRunAgentInput({
-        forwardedProps: {
-          a2uiAction: {
-            userAction: {
-              name: "book_restaurant",
-              surfaceId: "restaurant-card",
-              sourceComponentId: "book-btn",
-              context: { restaurantName: "Xi'an Famous Foods" },
-            },
-          },
-        },
+        forwardedProps: { a2uiAction: { userAction } },
       });
+      await collectEvents(new A2UIMiddleware().run(input, agent));
 
-      await collectEvents(middleware.run(input, mockAgent));
+      const messages = agent.runCalls[0].messages;
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      const content = messages[0].content as string;
+      expect(content).toMatch(/^A2UI user action:\n/);
+      expect(JSON.parse(content.slice(content.indexOf("\n") + 1))).toEqual(
+        userAction,
+      );
+      expect(input.messages).toEqual([]);
+      expect(input.forwardedProps).toEqual({ a2uiAction: { userAction } });
+    });
 
-      const messages = mockAgent.runCalls[0].messages;
-      expect(messages.length).toBe(2);
-
-      // First message should be assistant with tool call
-      const assistantMsg = messages[0] as AssistantMessage;
-      expect(assistantMsg.role).toBe("assistant");
-      expect(assistantMsg.toolCalls).toHaveLength(1);
-      expect(assistantMsg.toolCalls![0].function.name).toBe(LOG_A2UI_EVENT_TOOL_NAME);
-
-      // Second message should be tool result
-      const toolMsg = messages[1] as ToolMessage;
-      expect(toolMsg.role).toBe("tool");
-      expect(toolMsg.content).toContain("book_restaurant");
-      expect(toolMsg.content).toContain("restaurant-card");
+    it("preserves genuine signed model history and its tool results", async () => {
+      const agent = createAgent();
+      const assistant: AssistantMessage = {
+        id: "model-message",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "render-call",
+            type: "function",
+            function: { name: "render_a2ui", arguments: "{}" },
+            encryptedValue: "test-provider-signature",
+          },
+        ],
+      };
+      const result: ToolMessage = {
+        id: "render-result",
+        role: "tool",
+        toolCallId: "render-call",
+        content: "Rendered",
+      };
+      const input = createRunAgentInput({
+        messages: [assistant, result],
+        forwardedProps: { a2uiAction: { userAction } },
+      });
+      const original = structuredClone(input);
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      expect(agent.runCalls[0].messages).toEqual([
+        assistant,
+        result,
+        expect.objectContaining({ role: "user" }),
+      ]);
+      expect(input).toEqual(original);
     });
 
     it.each([
@@ -144,64 +179,51 @@ describe("A2UIMiddleware", () => {
       { name: "256-byte ASCII", runId: "a".repeat(256) },
       { name: "256-byte Unicode", runId: "😀".repeat(64) },
     ])(
-      "keeps bounded action identities on retry of a $name run ID",
+      "deduplicates retries but retains separate clicks with a $name run ID",
       async ({ runId }) => {
-        const agent = new MockAgent([
-          { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-          { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
-        ]);
+        const agent = createAgent();
         const input = createRunAgentInput({
           runId,
-          forwardedProps: {
-            a2uiAction: {
-              userAction: {
-                name: "approve",
-                surfaceId: "form",
-                sourceComponentId: "submit",
-                context: {},
-              },
-            },
-          },
+          forwardedProps: { a2uiAction: { userAction } },
         });
         await collectEvents(new A2UIMiddleware().run(input, agent));
         await collectEvents(new A2UIMiddleware().run(input, agent));
+        const messages = agent.runCalls[0].messages;
         await collectEvents(
-          new A2UIMiddleware().run({ ...input, runId: "click-2" }, agent),
+          new A2UIMiddleware().run({ ...input, messages }, agent),
         );
-        expect(agent.runCalls[1].messages).toEqual(agent.runCalls[0].messages);
-        const firstIds = agent.runCalls[0].messages.map((message) => message.id);
-        expect(
-          agent.runCalls[2].messages.every(
-            (message) => !firstIds.includes(message.id),
+        await collectEvents(
+          new A2UIMiddleware().run(
+            { ...input, messages, runId: "click-2" },
+            agent,
           ),
-        ).toBe(true);
-        const first = agent.runCalls[0].messages[0] as AssistantMessage;
-        const next = agent.runCalls[2].messages[0] as AssistantMessage;
-        expect(next.toolCalls![0].id).not.toBe(first.toolCalls![0].id);
-        // Bedrock toolUseId is limited to 64 characters, unlike message IDs.
-        expect(first.toolCalls![0].id.length).toBeLessThanOrEqual(64);
-        expect(first.toolCalls![0].id).toMatch(/^[a-zA-Z0-9_.:-]+$/);
-        const identities = [...firstIds, first.toolCalls![0].id];
-        expect(new Set(identities).size).toBe(3);
-        for (const identity of identities) {
-          expect(Buffer.byteLength(identity, "utf8")).toBeLessThan(128);
-        }
+        );
+
+        expect(messages).toHaveLength(1);
+        expect(agent.runCalls[1].messages).toEqual(messages);
+        expect(agent.runCalls[2].messages).toEqual(messages);
+        expect(agent.runCalls[3].messages).toHaveLength(2);
+        const first = messages[0],
+          next = agent.runCalls[3].messages[1];
+        expect(next.id).not.toBe(first.id);
+        expect(next.content).toBe(first.content);
+        expect(Buffer.byteLength(first.id, "utf8")).toBeLessThan(128);
         expect(input.messages).toEqual([]);
       },
     );
 
-    it("should not modify messages when no user action present", async () => {
-      const middleware = new A2UIMiddleware();
-      const mockAgent = new MockAgent([
-        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
-      ]);
-
-      const input = createRunAgentInput();
-      await collectEvents(middleware.run(input, mockAgent));
-
-      expect(mockAgent.runCalls[0].messages).toHaveLength(0);
-    });
+    it.each([undefined, {}, { a2uiAction: {} }])(
+      "leaves existing messages unchanged without a user action (%j)",
+      async (forwardedProps) => {
+        const agent = createAgent();
+        const input = createRunAgentInput({
+          messages: [{ id: "user-message", role: "user", content: "Hello" }],
+          forwardedProps,
+        });
+        await collectEvents(new A2UIMiddleware().run(input, agent));
+        expect(agent.runCalls[0].messages).toEqual(input.messages);
+      },
+    );
   });
 
   describe("tool call interception", () => {

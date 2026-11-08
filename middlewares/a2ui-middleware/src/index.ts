@@ -6,8 +6,6 @@ import {
   BaseEvent,
   EventType,
   Message,
-  AssistantMessage,
-  ToolMessage,
   ToolCall,
   ActivitySnapshotEvent,
   ToolCallResultEvent,
@@ -19,11 +17,7 @@ import {
 } from "@ag-ui/client";
 import { Observable, Subscription } from "rxjs";
 
-import {
-  A2UIMiddlewareConfig,
-  A2UIForwardedProps,
-  A2UIUserAction,
-} from "./types";
+import { A2UIMiddlewareConfig, A2UIForwardedProps } from "./types";
 import {
   RENDER_A2UI_TOOL,
   RENDER_A2UI_TOOL_NAME,
@@ -245,7 +239,7 @@ export class A2UIMiddleware extends Middleware {
     // extractFrontendCatalogId and the catalogId resolution in processStream).
     const frontendCatalogId = extractFrontendCatalogId(input);
 
-    // Process user action from forwardedProps (append synthetic messages)
+    // Process user action from forwardedProps as user input
     const recovery = this.recoverUnansweredCalls(input);
     const enhancedInput = this.processUserAction(recovery.input);
 
@@ -324,7 +318,7 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Check forwardedProps for a2uiAction and append synthetic tool call messages
+   * Append UI actions as user input, preserving the model's original tool history.
    */
   private processUserAction(input: RunAgentInput): RunAgentInput {
     const forwardedProps = input.forwardedProps as
@@ -336,67 +330,26 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Hash the run identity to keep retries stable and synthetic IDs bounded.
-    // A new click starts a new run, even when its payload is unchanged.
+    // A retry keeps its identity; a separate click gets a new run ID even when
+    // its payload is identical. Hashing also bounds the resulting message ID.
     const actionId = createHash("sha256").update(input.runId).digest("hex");
-    const assistantMessageId = `a2ui-action-assistant-${actionId}`;
-    const toolCallId = actionId;
-    const toolMessageId = `a2ui-action-result-${actionId}`;
-
-    // Create synthetic assistant message with tool call
-    const syntheticAssistantMessage: AssistantMessage = {
-      id: assistantMessageId,
-      role: "assistant",
-      content: "",
-      toolCalls: [
-        {
-          id: toolCallId,
-          type: "function",
-          function: {
-            name: LOG_A2UI_EVENT_TOOL_NAME,
-            arguments: JSON.stringify(userAction),
-          },
-        },
-      ],
-    };
-
-    // Create synthetic tool result message
-    const resultContent = this.formatUserActionResult(userAction);
-    const syntheticToolMessage: ToolMessage = {
-      id: toolMessageId,
-      role: "tool",
-      toolCallId: toolCallId,
-      content: resultContent,
-    };
-
-    // Append synthetic messages to existing messages (so they appear as the latest action)
-    const messages: Message[] = [
-      ...(input.messages || []),
-      syntheticAssistantMessage,
-      syntheticToolMessage,
-    ];
+    const messageId = `a2ui-action-user-${actionId}`;
+    const messages = input.messages || [];
+    if (messages.some((message) => message.id === messageId)) {
+      return input;
+    }
 
     return {
       ...input,
-      messages,
+      messages: [
+        ...messages,
+        {
+          id: messageId,
+          role: "user",
+          content: `A2UI user action:\n${JSON.stringify(userAction)}`,
+        },
+      ],
     };
-  }
-
-  /**
-   * Format the user action result message for the agent
-   */
-  private formatUserActionResult(action: A2UIUserAction): string {
-    const actionName = action.name ?? "unknown_action";
-    const surfaceId = action.surfaceId ?? "unknown_surface";
-    const componentId = action.sourceComponentId;
-    const contextStr = action.context ? JSON.stringify(action.context) : "{}";
-
-    let message = `User performed action "${actionName}" on surface "${surfaceId}"`;
-    if (componentId) {
-      message += ` (component: ${componentId})`;
-    }
-    message += `. Context: ${contextStr}`;
-    return message;
   }
 
   /**
