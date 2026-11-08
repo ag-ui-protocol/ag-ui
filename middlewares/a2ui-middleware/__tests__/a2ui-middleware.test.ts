@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import {
   BaseEvent,
   AbstractAgent,
   Message,
+  UserMessage,
   defaultApplyEvents,
   EventType,
   RunAgentInput,
@@ -28,6 +29,8 @@ import { from, firstValueFrom, toArray } from "rxjs";
 // snapshots (`content.status` = "building" | "retrying" | "failed", no
 // a2ui_operations). Tests that assert PAINT behaviour filter to snapshots that
 // actually carry operations.
+const privateContextName = /^a2ui_action_context_[A-Za-z0-9_-]{43}$/;
+
 const isPaint = (e: BaseEvent): boolean =>
   e.type === EventType.ACTIVITY_SNAPSHOT && Array.isArray((e as any).content?.a2ui_operations);
 
@@ -134,7 +137,9 @@ describe("A2UIMiddleware", () => {
       const messages = agent.runCalls[0].messages;
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("user");
-      expect(messages[0]).toMatchObject({ name: "a2ui_user_action_context" });
+      expect(messages[0]).toMatchObject({
+        name: expect.stringMatching(privateContextName),
+      });
       const content = messages[0].content as string;
       expect(content).toMatch(/^A2UI user action:\n/);
       expect(JSON.parse(content.slice(content.indexOf("\n") + 1))).toEqual(
@@ -213,6 +218,12 @@ describe("A2UIMiddleware", () => {
         expect(next.id).not.toBe(first.id);
         expect(next.content).toBe(first.content);
         expect(Buffer.byteLength(first.id, "utf8")).toBeLessThan(128);
+        if (first.role !== "user" || next.role !== "user")
+          throw new Error("Expected user action context");
+        expect(first.name).toMatch(privateContextName);
+        expect(Buffer.byteLength(first.name!, "utf8")).toBe(63);
+        expect(first.name).toMatch(/^[A-Za-z0-9_-]+$/);
+        expect(next.name).not.toBe(first.name);
         expect(input.messages).toEqual([]);
       },
     );
@@ -266,13 +277,7 @@ describe("A2UIMiddleware", () => {
       role: "assistant",
       content: "Booked at Holiday Inn.",
     };
-    const ownedId = `a2ui-action-user-${"a".repeat(64)}`;
-    const retained: Message = {
-      id: ownedId,
-      role: "user",
-      content: `A2UI user action:\n${JSON.stringify(action)}`,
-      name: "a2ui_user_action_context",
-    };
+    let retained: UserMessage;
 
     class EchoAgent extends AbstractAgent {
       inputs: RunAgentInput[] = [];
@@ -332,6 +337,22 @@ describe("A2UIMiddleware", () => {
       );
     }
 
+    beforeAll(async () => {
+      const capture = new EchoAgent((input) => lifecycle(input, []));
+      await collectEvents(
+        new A2UIMiddleware().run(
+          createRunAgentInput({
+            forwardedProps: { a2uiAction: { userAction: action } },
+          }),
+          capture,
+        ),
+      );
+      const context = capture.inputs[0].messages.at(-1)!;
+      if (context.role !== "user")
+        throw new Error("Expected an actual middleware user context");
+      retained = context;
+    });
+
     it("keeps the complete action private while preserving signed history and the visible answer", async () => {
       const input = createRunAgentInput({
         messages: [user, signed, tool],
@@ -348,7 +369,9 @@ describe("A2UIMiddleware", () => {
         new A2UIMiddleware().run(input, agent),
       );
       const modelContext = agent.inputs[0].messages.at(-1)!;
-      expect(modelContext).toMatchObject({ name: "a2ui_user_action_context" });
+      expect(modelContext).toMatchObject({
+        name: expect.stringMatching(privateContextName),
+      });
       expect(modelContext.content).toBe(
         `A2UI user action:\n${JSON.stringify(action)}`,
       );
@@ -450,7 +473,11 @@ describe("A2UIMiddleware", () => {
         name: "actual_user",
         encryptedValue: "test-real-encrypted-value",
       };
-      const differentId: Message = { ...retained, id: "ordinary-user-id" };
+      const differentId: Message = {
+        ...retained,
+        id: "ordinary-user-id",
+        name: "ordinary_named_user",
+      };
       const ordinary: Message = {
         ...retained,
         id: `a2ui-action-user-${"c".repeat(64)}`,
@@ -536,7 +563,7 @@ describe("A2UIMiddleware", () => {
         const modelContext = agent.inputs[0].messages.at(-1)!;
         expect(modelContext).toMatchObject({
           role: "user",
-          name: "a2ui_user_action_context",
+          name: expect.stringMatching(privateContextName),
         });
         const source = agent.emitted.find(
           (e) =>
@@ -749,7 +776,7 @@ describe("A2UIMiddleware", () => {
                       type: EventType.TEXT_MESSAGE_CHUNK,
                       messageId: retained.id,
                       role: "user",
-                      name: "a2ui_user_action_context",
+                      name: retained.name,
                       delta: retained.content,
                     },
                   ] as BaseEvent[]);
@@ -795,7 +822,7 @@ describe("A2UIMiddleware", () => {
         };
         const marked: Message = {
           ...publicMessage,
-          name: "a2ui_user_action_context",
+          name: retained.name,
         };
         const agent = new EchoAgent((nextInput) => {
           const announcement =
@@ -1025,6 +1052,178 @@ describe("A2UIMiddleware", () => {
       ]);
       expect(agent.inputs[2].messages.at(-1)!.id).not.toBe(privateContext.id);
       expect(input).toEqual(original);
+    });
+
+    it.each([
+      ["snapshot", "user"],
+      ["snapshot", "assistant"],
+      ["run-start", "user"],
+      ["run-start", "assistant"],
+    ])(
+      "hides re-identified private records from %s as %s and retains complete model context",
+      async (channel, role) => {
+        const input = createRunAgentInput({
+          messages: [user, signed, tool],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const canonicalized = {
+            ...context,
+            id: "adapter-canonical-user",
+            role,
+          } as Message;
+          const messages = [...nextInput.messages.slice(0, -1), canonicalized];
+          const rest = [
+            ...text(canonicalized),
+            ...text(reply),
+            snapshot([...messages, reply]),
+          ];
+          return channel === "snapshot"
+            ? lifecycle(nextInput, [snapshot(messages), ...rest])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages },
+                },
+                ...rest,
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        expect(await clientMessages(input, events)).toEqual([
+          user,
+          signed,
+          tool,
+          reply,
+        ]);
+        expect(
+          events.some(
+            (event) =>
+              "messageId" in event &&
+              event.messageId === "adapter-canonical-user",
+          ),
+        ).toBe(false);
+        expect(agent.inputs[0].messages.at(-1)).toMatchObject({
+          role: "user",
+          content: `A2UI user action:\n${JSON.stringify(action)}`,
+        });
+      },
+    );
+
+    it("hides a retained named chunk when normalization defaults its role to assistant", async () => {
+      const input = createRunAgentInput({ messages: [user, signed, tool] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          {
+            type: EventType.TEXT_MESSAGE_CHUNK,
+            messageId: "adapter-retained-action",
+            name: retained.name,
+            delta: retained.content,
+          } as BaseEvent,
+          ...text(reply),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        signed,
+        tool,
+        reply,
+      ]);
+      expect(
+        events.some(
+          (event) =>
+            "messageId" in event &&
+            event.messageId === "adapter-retained-action",
+        ),
+      ).toBe(false);
+      expect(agent.inputs[0].messages).toEqual(input.messages);
+    });
+
+    it("preserves initially genuine signed assistant and tool history sharing the private transport tag", async () => {
+      const taggedSigned: Message = {
+        ...signed,
+        name: retained.name,
+      } as Message;
+      const taggedTool: Message = { ...tool, name: retained.name } as Message;
+      const input = createRunAgentInput({
+        messages: [user, taggedSigned, taggedTool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const original = structuredClone(input);
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [snapshot([...nextInput.messages, reply])]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(agent.inputs[0].messages).toHaveLength(4);
+      expect(agent.inputs[0].messages.slice(0, -1)).toEqual([
+        user,
+        taggedSigned,
+        taggedTool,
+      ]);
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        taggedSigned,
+        taggedTool,
+        reply,
+      ]);
+      expect(input).toEqual(original);
+    });
+
+    it("deduplicates retries by the emitted user transport tag after ID canonicalization", async () => {
+      const input = createRunAgentInput({
+        messages: [user, signed, tool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const agent = new EchoAgent((nextInput) => lifecycle(nextInput, []));
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      const first = agent.inputs[0].messages;
+      const context = first.at(-1)!;
+      if (context.role !== "user")
+        throw new Error("Expected actual user context");
+      const canonicalized: Message = {
+        ...context,
+        id: "adapter-stable-action-id",
+      };
+      const retryMessages = [...first.slice(0, -1), canonicalized];
+      await collectEvents(
+        new A2UIMiddleware().run({ ...input, messages: retryMessages }, agent),
+      );
+      expect(agent.inputs[1].messages).toEqual(retryMessages);
+      await collectEvents(
+        new A2UIMiddleware().run(
+          { ...input, messages: retryMessages, runId: "another-click" },
+          agent,
+        ),
+      );
+      expect(agent.inputs[2].messages).toHaveLength(5);
+      const nextContext = agent.inputs[2].messages.at(-1)!;
+      expect(nextContext.content).toBe(context.content);
+      expect(nextContext).toMatchObject({
+        role: "user",
+        name: expect.stringMatching(privateContextName),
+      });
+      if (nextContext.role !== "user")
+        throw new Error("Expected second user context");
+      expect(nextContext.name).not.toBe(context.name);
+      expect(agent.inputs[2].messages.slice(0, 3)).toEqual([
+        user,
+        signed,
+        tool,
+      ]);
     });
 
     it("keeps visibility classification local to each subscription", async () => {

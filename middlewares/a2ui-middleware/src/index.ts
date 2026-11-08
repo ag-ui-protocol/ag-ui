@@ -44,23 +44,16 @@ import {
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
 
-// This user-message name + ID namespace is reserved for internal action context.
-// Ownership is independent of content encoding and optional provider artifacts.
-// The canonical name survives SDK serializers that intentionally drop metadata.
-const USER_ACTION_CONTEXT_NAME = "a2ui_user_action_context";
+// The run-correlated name is a reserved transport marker, independent of IDs,
+// roles rewritten by adapters, content encoding, and optional provider artifacts.
+// Initial caller assistant/tool history stays public; adapters must clear this
+// name when constructing independent public outputs rather than echoing context.
+const USER_ACTION_CONTEXT_NAME_PREFIX = "a2ui_action_context_";
+const USER_ACTION_CONTEXT_NAME = /^a2ui_action_context_[A-Za-z0-9_-]{43}$/;
 const USER_ACTION_CONTEXT_PREFIX = "A2UI user action:\n";
-const USER_ACTION_CONTEXT_ID = /^a2ui-action-user-[a-f0-9]{64}$/;
 
-function isUserActionContext(message: {
-  id: string;
-  role?: string;
-  name?: string;
-}): boolean {
-  return (
-    message.role === "user" &&
-    message.name === USER_ACTION_CONTEXT_NAME &&
-    USER_ACTION_CONTEXT_ID.test(message.id)
-  );
+function isUserActionContextName(name: unknown): boolean {
+  return typeof name === "string" && USER_ACTION_CONTEXT_NAME.test(name);
 }
 
 /**
@@ -279,12 +272,20 @@ export class A2UIMiddleware extends Middleware {
       // First observation fixes ownership for this subscription. Later optional
       // fields cannot publish private context or hide a proven public message.
       const visibility = new Map<string, "public" | "private">();
-      const projectMessages = (messages: Message[]): Message[] => {
+      const projectMessages = (
+        messages: Message[],
+        initialInput = false,
+      ): Message[] => {
         for (const message of messages) {
           if (!visibility.has(message.id)) {
             visibility.set(
               message.id,
-              isUserActionContext(message) ? "private" : "public",
+              isUserActionContextName(
+                "name" in message ? message.name : undefined,
+              ) &&
+                (!initialInput || message.role === "user")
+                ? "private"
+                : "public",
             );
           }
         }
@@ -292,7 +293,7 @@ export class A2UIMiddleware extends Middleware {
           (message) => visibility.get(message.id) !== "private",
         );
       };
-      projectMessages(finalInput.messages);
+      projectMessages(finalInput.messages, true);
 
       // Keep the model's complete context inside private stream bookkeeping.
       // Project only the two canonical history-bearing events the SDK applies.
@@ -338,13 +339,7 @@ export class A2UIMiddleware extends Middleware {
               const start = text as TextMessageStartEvent;
               visibility.set(
                 start.messageId,
-                isUserActionContext({
-                  id: start.messageId,
-                  role: start.role,
-                  name: start.name,
-                })
-                  ? "private"
-                  : "public",
+                isUserActionContextName(start.name) ? "private" : "public",
               );
             }
             if (visibility.get(text.messageId) === "private") {
@@ -422,10 +417,18 @@ export class A2UIMiddleware extends Middleware {
 
     // A retry keeps its identity; a separate click gets a new run ID even when
     // its payload is identical. Hashing also bounds the resulting message ID.
-    const actionId = createHash("sha256").update(input.runId).digest("hex");
-    const messageId = `a2ui-action-user-${actionId}`;
+    const actionHash = createHash("sha256").update(input.runId).digest();
+    const messageId = `a2ui-action-user-${actionHash.toString("hex")}`;
+    // 20-character prefix + 43-character unpadded digest fits provider names.
+    const contextName = `${USER_ACTION_CONTEXT_NAME_PREFIX}${actionHash.toString("base64url")}`;
     const messages = input.messages || [];
-    if (messages.some((message) => message.id === messageId)) {
+    if (
+      messages.some(
+        (message) =>
+          message.role === "user" &&
+          (message.id === messageId || message.name === contextName),
+      )
+    ) {
       return input;
     }
 
@@ -436,7 +439,7 @@ export class A2UIMiddleware extends Middleware {
         {
           id: messageId,
           role: "user",
-          name: USER_ACTION_CONTEXT_NAME,
+          name: contextName,
           content: `${USER_ACTION_CONTEXT_PREFIX}${JSON.stringify(userAction)}`,
         },
       ],
