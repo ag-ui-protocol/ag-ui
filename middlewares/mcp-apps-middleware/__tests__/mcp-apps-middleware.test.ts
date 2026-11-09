@@ -453,31 +453,256 @@ describe("MCPAppsMiddleware", () => {
       },
     );
 
-    it("retains native error status in client history while another frontend tool is pending", async () => {
+    it("checkpoints the actual UI result before a user-only native followup", async () => {
       mockListTools.mockResolvedValue({
         tools: [createMCPToolWithUI("create_view", "ui://diagram")],
       });
-      mockCallTool.mockResolvedValue({
-        content: [{ type: "text", text: "original failure" }],
-        isError: true,
-      });
-      const agent = new SequenceAgent((input) => [
-        ...toolTurn(input, "create_view", "native-original").slice(0, -1),
-        ...toolTurn(input, "ask_user", "other").slice(1),
+      const result = createMCPToolCallResult([
+        { type: "text", text: "actual server result" },
       ]);
-      agent.use(new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }));
-      await agent.runAgent();
-      expect(agent.runCalls).toHaveLength(1);
-      expect(mockCallTool).toHaveBeenCalledTimes(1);
-      expect(agent.messages).toContainEqual(
-        expect.objectContaining({
-          role: "tool",
-          toolCallId: "native-original",
-          content: "original failure",
-          metadata: { "ag-ui:tool-result": { error: "" } },
-        }),
+      mockCallTool.mockResolvedValue(result);
+      // Keep native pending state separate from the outer AG-UI history.
+      // A native call reappears until the adapter actually receives its result.
+      let pending = true;
+      let checkpoint:
+        | { id: string; toolCallId: string; content: unknown }
+        | undefined;
+      const agent = new SequenceAgent((input) => {
+        const reply = input.messages.find(
+          (message) =>
+            message.role === "tool" && message.toolCallId === "native-original",
+        );
+        if (reply?.role === "tool") {
+          checkpoint = {
+            id: reply.id,
+            toolCallId: reply.toolCallId,
+            content: reply.content,
+          };
+          pending = false;
+        }
+        return pending
+          ? toolTurn(input, "create_view", "native-original")
+          : [
+              createRunStartedEvent(input.runId, input.threadId),
+              createRunFinishedEvent(input.runId, input.threadId),
+            ];
+      });
+      const middleware = new MCPAppsMiddleware({
+        mcpServers: [httpServerConfig],
+      });
+      const first = await collectEvents(
+        middleware.run(createRunAgentInput(), agent),
       );
+      const emittedResult = first.find(
+        (event) => event.type === EventType.TOOL_CALL_RESULT,
+      );
+      expect(emittedResult).toBeDefined();
+      expect(checkpoint).toEqual({
+        id: emittedResult!.messageId,
+        toolCallId: "native-original",
+        content: "actual server result",
+      });
+      expect(pending).toBe(false);
+      expect(agent.runCalls).toHaveLength(2);
+      expect(agent.runCalls[1].messages.map((message) => message.role)).toEqual(
+        ["assistant", "tool"],
+      );
+      expect(
+        first.filter((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+      ).toEqual([
+        expect.objectContaining({
+          content: expect.objectContaining({ result }),
+        }),
+      ]);
+      expect(first.at(-1)).toMatchObject({
+        type: EventType.RUN_FINISHED,
+        runId: "test-run",
+      });
+
+      // The runtime can send only the new user occurrence after acceptance.
+      // A fresh per-request middleware must not execute the old call again.
+      const followup = await collectEvents(
+        new MCPAppsMiddleware({
+          mcpServers: [httpServerConfig],
+        }).run(
+          createRunAgentInput({
+            runId: "followup",
+            messages: [
+              {
+                id: "followup-user",
+                role: "user",
+                content: "No tools; acknowledge.",
+              },
+            ],
+          }),
+          agent,
+        ),
+      );
+      expect(agent.runCalls).toHaveLength(3);
+      expect(agent.runCalls[2].messages.map((message) => message.role)).toEqual(
+        ["user"],
+      );
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(followup.map((event) => event.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_FINISHED,
+      ]);
     });
+
+    it("sends only each new result batch to an append-only native continuation", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+      });
+      mockCallTool.mockImplementation(async () =>
+        createMCPToolCallResult([
+          { type: "text", text: `result-${mockCallTool.mock.calls.length}` },
+        ]),
+      );
+      const nativeInputs: string[] = [];
+      const agent = new SequenceAgent((input, turn) => {
+        // An append-only adapter rejects replayed users, assistant requests,
+        // activities, and already consumed results instead of deduplicating them.
+        for (const message of input.messages) {
+          expect(nativeInputs).not.toContain(message.id);
+          nativeInputs.push(message.id);
+          expect(message.role).toBe(turn === 0 ? "user" : "tool");
+        }
+        if (turn > 0) {
+          expect(input.messages).toHaveLength(1);
+          expect(input.messages[0]).toMatchObject({
+            role: "tool",
+            toolCallId: `native-${turn - 1}`,
+            content: `result-${turn}`,
+          });
+          expect(input.resume).toBeUndefined();
+        }
+        return turn < 2
+          ? toolTurn(input, "create_view", `native-${turn}`)
+          : [
+              createRunStartedEvent(input.runId, input.threadId),
+              createRunFinishedEvent(input.runId, input.threadId),
+            ];
+      });
+      const user = {
+        id: "new-user",
+        role: "user" as const,
+        content: "Show two views",
+      };
+      agent.messages = [user];
+      const events = await collectEvents(
+        new MCPAppsMiddleware({
+          mcpServers: [httpServerConfig],
+          continuationInput: "tool-results",
+        }).run(createRunAgentInput({ messages: [user] }), agent),
+      );
+      expect(agent.runCalls).toHaveLength(3);
+      expect(mockCallTool).toHaveBeenCalledTimes(2);
+      const results = events.filter(
+        (event) => event.type === EventType.TOOL_CALL_RESULT,
+      );
+      expect(results).toHaveLength(2);
+      expect(nativeInputs).toEqual([
+        user.id,
+        ...results.map((event) => event.messageId),
+      ]);
+      expect(agent.messages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+      ]);
+      expect(
+        events.filter((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+      ).toHaveLength(2);
+      expect(
+        events.filter((event) => event.type === EventType.RUN_STARTED),
+      ).toHaveLength(1);
+      expect(
+        events.filter((event) => event.type === EventType.RUN_FINISHED),
+      ).toEqual([expect.objectContaining({ runId: "test-run" })]);
+    });
+
+    it("propagates an uncertain native delivery without executing the MCP call again", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+      });
+      mockCallTool.mockResolvedValue(
+        createMCPToolCallResult([{ type: "text", text: "executed once" }]),
+      );
+      const agent = new SequenceAgent((input, turn) => {
+        if (turn > 0) {
+          expect(input.messages).toEqual([
+            expect.objectContaining({
+              role: "tool",
+              toolCallId: "native-original",
+              content: "executed once",
+            }),
+          ]);
+          throw new Error("Native delivery outcome unknown");
+        }
+        return toolTurn(input, "create_view", "native-original");
+      });
+      const events: BaseEvent[] = [];
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          new MCPAppsMiddleware({
+            mcpServers: [httpServerConfig],
+            continuationInput: "tool-results",
+          })
+            .run(createRunAgentInput(), agent)
+            .subscribe({
+              next: (event) => events.push(event),
+              error: reject,
+              complete: resolve,
+            });
+        }),
+      ).rejects.toThrow("Native delivery outcome unknown");
+      expect(mockCallTool).toHaveBeenCalledTimes(1);
+      expect(
+        events.filter((event) => event.type === EventType.TOOL_CALL_RESULT),
+      ).toHaveLength(1);
+      expect(
+        events.filter((event) => event.type === EventType.ACTIVITY_SNAPSHOT),
+      ).toHaveLength(1);
+      expect(
+        events.filter((event) => event.type === EventType.RUN_FINISHED),
+      ).toHaveLength(0);
+    });
+
+    it.each(["full-history", "tool-results"] as const)(
+      "retains native error status without continuing while another frontend tool is pending (%s)",
+      async (continuationInput) => {
+        mockListTools.mockResolvedValue({
+          tools: [createMCPToolWithUI("create_view", "ui://diagram")],
+        });
+        mockCallTool.mockResolvedValue({
+          content: [{ type: "text", text: "original failure" }],
+          isError: true,
+        });
+        const agent = new SequenceAgent((input) => [
+          ...toolTurn(input, "create_view", "native-original").slice(0, -1),
+          ...toolTurn(input, "ask_user", "other").slice(1),
+        ]);
+        agent.use(
+          new MCPAppsMiddleware({
+            mcpServers: [httpServerConfig],
+            continuationInput,
+          }),
+        );
+        await agent.runAgent();
+        expect(agent.runCalls).toHaveLength(1);
+        expect(mockCallTool).toHaveBeenCalledTimes(1);
+        expect(agent.messages).toContainEqual(
+          expect.objectContaining({
+            role: "tool",
+            toolCallId: "native-original",
+            content: "original failure",
+            metadata: { "ag-ui:tool-result": { error: "" } },
+          }),
+        );
+      },
+    );
 
     it("continues from a prerequisite to the UI tool in one run", async () => {
       mockListTools.mockResolvedValue({
