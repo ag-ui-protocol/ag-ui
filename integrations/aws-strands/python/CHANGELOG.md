@@ -8,6 +8,19 @@
 - Count delivered audio in `MediaDropped.delivered`.
 - Keep the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"]["attachments"]`, which Strands stores with the message and keeps out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.3 — 2026-11-09
+
+- Add `StrandsAgentConfig.subagent_visibility` (`inline` default, `attributed`, `hidden`) controlling AG-UI subagent events for agents-as-tools.
+- With `attributed`, sub-agents emit `SUBAGENT_STARTED`/`SUBAGENT_FINISHED`/`SUBAGENT_ERROR` and carry `subagentRunId` on text, reasoning, and tool calls.
+- Allow opting out of forced A2UI tool choice; preserve forced choice for null config.
+- Fix closing of nested subagents and open inner tool calls at every depth.
+- Tighten subagent snapshot ownership so parallel sub-agents each follow their own snapshot and a sibling interrupt no longer loses finished history.
+- Pin openai below 3 in Python examples to keep the citations demo working.
+
+### Breaking changes
+
+None.
+
 ## 1.0.2 — 2026-10-15
 
 - Preserve resume hooks and replace existing client results during resume.
