@@ -22,6 +22,7 @@ import {
   RunErrorEvent,
   contentHasMedia,
   contentToText,
+  isAbortedToolCall,
 } from "@ag-ui/core";
 import { Observable } from "rxjs";
 import {
@@ -535,6 +536,10 @@ export function convertMessagesToLegacyFormat(messages: Message[]): LegacyMessag
       }
       if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
         for (const toolCall of message.toolCalls) {
+          // The legacy format has no way to say "aborted", and an action
+          // execution message with no result reads as work to run. The raw
+          // partial arguments stay on the AG-UI message for diagnostics.
+          if (isAbortedToolCall(toolCall.metadata)) continue;
           let parsedArguments: unknown;
           try {
             parsedArguments = JSON.parse(toolCall.function.arguments);

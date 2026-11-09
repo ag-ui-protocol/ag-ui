@@ -11,6 +11,7 @@ from typing import Any, AsyncIterable, Optional
 
 import pytest
 from ag_ui.core import (
+    AGUI_METADATA_KEY,
     AssistantMessage,
     EventType,
     FunctionCall,
@@ -1327,6 +1328,54 @@ async def test_a_failing_invocation_closes_its_open_inner_tool_call():
     (error,) = _of(events, EventType.SUBAGENT_ERROR)
     assert events.index(end) < events.index(error)
     assert _of(events, EventType.RUN_FINISHED)
+
+
+@pytest.mark.asyncio
+async def test_a_cut_off_inner_call_is_marked_aborted_on_its_end():
+    events = await _collect(
+        _wrap(_wrapper_failing_on_the_inner_tool_use(), "attributed")
+    )
+
+    (end,) = [
+        e
+        for e in _of(events, EventType.TOOL_CALL_END)
+        if e.tool_call_id == "root::inner_call"
+    ]
+    assert end.metadata == {AGUI_METADATA_KEY: {"aborted": True}}
+    # Only the cut-off call carries the marker; the spawning call ended normally.
+    marked = [
+        e.tool_call_id
+        for e in _of(events, EventType.TOOL_CALL_END)
+        if e.metadata and e.metadata.get(AGUI_METADATA_KEY, {}).get("aborted")
+    ]
+    assert marked == ["root::inner_call"]
+
+
+@pytest.mark.asyncio
+async def test_the_snapshot_keeps_the_aborted_marker_and_the_raw_arguments():
+    events = await _collect(
+        _wrap(_wrapper_failing_on_the_inner_tool_use(), "attributed")
+    )
+
+    messages = _of(events, EventType.MESSAGES_SNAPSHOT)[-1].messages
+    calls = {
+        tc.id: tc
+        for m in messages
+        if getattr(m, "role", None) == "assistant"
+        for tc in (m.tool_calls or [])
+    }
+    inner = calls["root::inner_call"]
+    assert inner.metadata == {AGUI_METADATA_KEY: {"aborted": True}}
+    # The arguments are exactly what was streamed, not repaired or replaced.
+    streamed = "".join(
+        e.delta
+        for e in _of(events, EventType.TOOL_CALL_ARGS)
+        if e.tool_call_id == "root::inner_call"
+    )
+    assert streamed
+    assert inner.function.arguments == streamed
+    # No other call is marked.
+    assert all(tc.metadata is None for cid, tc in calls.items() if cid != inner.id)
 
 
 def _inner_tool_use(call_id: str) -> dict:

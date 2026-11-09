@@ -44,10 +44,12 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
 from ag_ui.core import (
+    AGUI_METADATA_KEY,
     AssistantMessage,
     EventType,
     FunctionCall,
@@ -68,6 +70,10 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolMessage,
 )
+
+#: Metadata for the ``TOOL_CALL_END`` (and the snapshot tool call) of a call cut
+#: off before its arguments were complete. Always copy it before attaching.
+ABORTED_METADATA: Dict[str, Any] = {AGUI_METADATA_KEY: {"aborted": True}}
 
 SubagentVisibility = Literal["inline", "attributed", "hidden"]
 SUBAGENT_VISIBILITIES: Tuple[str, ...] = ("inline", "attributed", "hidden")
@@ -171,6 +177,8 @@ class _Run:
     tool_calls_seen: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # Inner call id -> result status, filled when its result arrives.
     result_status: Dict[str, str] = field(default_factory=dict)
+    # Inner calls this run closed because they were cut off mid-arguments.
+    aborted_calls: Set[str] = field(default_factory=set)
     # The sub-agent's loop ended: a model turn asked for no tool, or the
     # wrapping generator re-yielded the agent's final result.
     ended: bool = False
@@ -530,16 +538,25 @@ class SubagentRuns:
         return events
 
     def _close_tool_calls(self, run: _Run) -> List[Any]:
-        """End this run's calls cut off mid-arguments; ``RUN_FINISHED`` refuses them."""
+        """End this run's calls cut off mid-arguments; ``RUN_FINISHED`` refuses them.
+
+        The ``TOOL_CALL_END`` is marked aborted (``metadata["ag-ui"]["aborted"]``).
+        The call keeps the arguments that arrived, but they are truncated and the
+        call never gets a result, so a client must not run it or list it as
+        pending. The marker rides on the END itself because a later
+        ``SUBAGENT_ERROR`` cannot undo what an END callback already triggered.
+        """
         events: List[Any] = []
         for call_id, entry in reversed(list(run.tool_calls_seen.items())):
             if entry.get("parent_id") == run.run_id and not entry["ended"]:
                 entry["ended"] = True
+                run.aborted_calls.add(call_id)
                 events.append(
                     ToolCallEndEvent(
                         type=EventType.TOOL_CALL_END,
                         tool_call_id=call_id,
                         subagent_run_id=run.run_id,
+                        metadata=dict(ABORTED_METADATA),
                     )
                 )
         return events
@@ -582,6 +599,11 @@ class SubagentRuns:
                     function=FunctionCall(
                         name=run.tool_names.get(call_id, "unknown"),
                         arguments=run.tool_args.get(call_id) or "{}",
+                    ),
+                    # Carried into the snapshot so a replay still tells an
+                    # aborted call from a legitimate empty-argument one.
+                    metadata=(
+                        dict(ABORTED_METADATA) if call_id in run.aborted_calls else None
                     ),
                 )
                 for call_id in segment.tool_calls

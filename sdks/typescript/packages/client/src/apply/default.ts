@@ -13,6 +13,7 @@ import {
   type BaseEvent,
   type CustomEvent,
   EventType,
+  isAbortedToolCall,
   type Message,
   type MessagesSnapshotEvent,
   type Metadata,
@@ -964,6 +965,12 @@ export const defaultApplyEvents = (
             return emitUpdates();
           }
 
+          // A producer closes a call cut off by a backend or subagent failure
+          // with an aborted marker on this END. Its arguments are truncated
+          // diagnostics and it has no result: it is not an action for the
+          // client to run, and it is not pending.
+          const aborted = isAbortedToolCall(mergeMetadata(targetToolCall.metadata, event.metadata));
+
           const mutation = await runSubscribersWithMutation(
             subscribers,
             messages,
@@ -976,7 +983,8 @@ export const defaultApplyEvents = (
                 toolCallArgs = JSON.parse(toolCallArgsString);
               } catch (_error) {
                 // A malformed final payload must not abort the run; downstream
-                // sees the empty object.
+                // sees the empty object. `toolCallAborted` and `toolCallArgsRaw`
+                // let a subscriber tell that from a legitimate `{}`.
               }
               return subscriber.onToolCallEndEvent?.({
                 event: event as ToolCallEndEvent,
@@ -986,6 +994,8 @@ export const defaultApplyEvents = (
                 input,
                 toolCallName,
                 toolCallArgs,
+                toolCallArgsRaw: toolCallArgsString,
+                toolCallAborted: aborted,
               });
             },
           );
@@ -994,6 +1004,9 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             activeToolCallIds.delete(toolCallId);
             replaceToolCallArgs.delete(toolCallId);
+            // An aborted call is never answered, so without this the run's
+            // success would list it as pending.
+            if (aborted) runToolCallIds = runToolCallIds.filter((id) => id !== toolCallId);
           }
 
           // Merge before onNewToolCall, for the same reason as TEXT_MESSAGE_END:
@@ -1002,17 +1015,22 @@ export const defaultApplyEvents = (
             applyMutation({ messages });
           }
 
-          await Promise.all(
-            subscribers.map((subscriber) => {
-              return subscriber.onNewToolCall?.({
-                toolCall: targetToolCall,
-                messages,
-                state,
-                agent,
-                input,
-              });
-            }),
-          );
+          // `onNewToolCall` is the hook where an application starts executing a
+          // call. An aborted call is never announced there: a later error or
+          // result could not undo an action it had already triggered.
+          if (!aborted) {
+            await Promise.all(
+              subscribers.map((subscriber) => {
+                return subscriber.onNewToolCall?.({
+                  toolCall: targetToolCall,
+                  messages,
+                  state,
+                  agent,
+                  input,
+                });
+              }),
+            );
+          }
 
           return emitUpdates();
         }

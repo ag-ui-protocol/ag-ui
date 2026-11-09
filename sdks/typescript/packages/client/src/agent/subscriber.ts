@@ -151,6 +151,18 @@ export interface AgentSubscriber {
       // DEFERRED (PNI-272): see `partialToolCallArgs` above.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolCallArgs: Record<string, any>;
+      /**
+       * The arguments exactly as streamed. When they do not parse, `toolCallArgs`
+       * is `{}` and this is the only record of what arrived.
+       */
+      toolCallArgsRaw: string;
+      /**
+       * True when the producer marked the call aborted (`metadata["ag-ui"].aborted`
+       * on this event): cut off before its arguments were complete, never to be
+       * run. Treat `toolCallArgs` as meaningless and do not execute the call.
+       * `onNewToolCall` is not invoked for it.
+       */
+      toolCallAborted: boolean;
     } & AgentSubscriberParams,
   ): MaybePromise<AgentStateMutation | void>;
 

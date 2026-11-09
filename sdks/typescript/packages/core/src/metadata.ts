@@ -35,6 +35,30 @@ export const AGUI_METADATA_KEY = "ag-ui";
  */
 
 /**
+ * Whether `metadata` marks a tool call as aborted: cut off by a backend or
+ * subagent failure before its arguments were complete, and never to be run.
+ *
+ * A producer that closes such a call with `TOOL_CALL_END` sets
+ * `metadata["ag-ui"].aborted` to `true` on that event. It merges into the tool
+ * call like any other tool-call metadata, so the marker survives into
+ * `MESSAGES_SNAPSHOT` and replay. Pass it either the `TOOL_CALL_END` event's
+ * metadata or the tool call's merged metadata.
+ *
+ * An aborted call keeps whatever raw arguments arrived. They are diagnostics,
+ * not a valid payload, and an aborted call is not an action awaiting client
+ * execution. A call that is merely waiting (suspended on an interrupt) is not
+ * aborted and must not carry the marker.
+ */
+export function isAbortedToolCall(metadata: Metadata | undefined): boolean {
+  const namespace = metadata?.[AGUI_METADATA_KEY];
+  return (
+    typeof namespace === "object" &&
+    namespace !== null &&
+    (namespace as Record<string, unknown>).aborted === true
+  );
+}
+
+/**
  * Folds `incoming` metadata into `existing`, key by key, with the last write
  * winning.
  *

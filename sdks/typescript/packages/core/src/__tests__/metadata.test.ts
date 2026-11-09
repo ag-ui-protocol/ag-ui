@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AGUI_METADATA_KEY, EventType, mergeMetadata } from "../index";
+import { AGUI_METADATA_KEY, EventType, isAbortedToolCall, mergeMetadata } from "../index";
 import {
   ActivityMessageSchema,
   AssistantMessageSchema,
@@ -195,5 +195,26 @@ describe("mergeMetadata", () => {
     // Explicitly: the old sub-keys are gone, not blended in.
     expect(merged![AGUI_METADATA_KEY]).not.toHaveProperty("keep");
     expect(merged![AGUI_METADATA_KEY].usage).not.toHaveProperty("input");
+  });
+});
+
+describe("isAbortedToolCall", () => {
+  it("is true only for aborted: true under the reserved key", () => {
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: { aborted: true } })).toBe(true);
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: { aborted: true, usage: {} } })).toBe(true);
+  });
+
+  it("is false when the metadata is absent, empty or says something else", () => {
+    expect(isAbortedToolCall(undefined)).toBe(false);
+    expect(isAbortedToolCall({})).toBe(false);
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: {} })).toBe(false);
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: { aborted: false } })).toBe(false);
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: { aborted: "true" } })).toBe(false);
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: null })).toBe(false);
+    expect(isAbortedToolCall({ [AGUI_METADATA_KEY]: "aborted" })).toBe(false);
+  });
+
+  it("ignores an aborted key outside the reserved namespace", () => {
+    expect(isAbortedToolCall({ aborted: true })).toBe(false);
   });
 });

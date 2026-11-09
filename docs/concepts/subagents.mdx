@@ -145,6 +145,51 @@ Marks a subagent invocation as failed.
 | `message`       | Human-readable error message. Required         |
 | `code`          | Optional error code                            |
 
+### Aborted tool calls
+
+A subagent can fail while one of its tool calls is still streaming arguments.
+A producer must still close that call with `TOOL_CALL_END` before it sends
+`SubagentError`, or the stream is invalid. But the call is now different from an
+ordinary one: its arguments are truncated and it never gets a
+`TOOL_CALL_RESULT`. Without a signal, a client cannot tell it from an action
+that is waiting for the client to run.
+
+The producer marks such a call by putting `aborted: true` under the reserved
+`ag-ui` key of that `TOOL_CALL_END`'s `metadata`:
+
+```typescript
+{
+  type: EventType.TOOL_CALL_END,
+  toolCallId: "root::inner_call",
+  subagentRunId: "root",
+  metadata: { "ag-ui": { aborted: true } }
+}
+```
+
+Tool-call metadata merges into the tool call, so the marker is also on the call
+inside any `MESSAGES_SNAPSHOT` and survives replay. `isAbortedToolCall(metadata)`
+in `@ag-ui/core` reads it from either place.
+
+An aborted call is a permanent failure, not a pause: a call waiting on an
+interrupt is not aborted and must not carry the marker. For a marked call,
+clients:
+
+- **Do not run it.** The TypeScript client does not invoke `onNewToolCall`. A
+  later `SubagentError` or result cannot undo an action an earlier callback
+  already started, which is why the marker rides on the `TOOL_CALL_END` itself.
+- **Do not list it as pending.** It is left out of the `pendingToolCallIds` the
+  client derives for `RUN_FINISHED`.
+- **Keep the raw arguments as diagnostics.** They are not repaired into valid
+  JSON. `onToolCallEndEvent` still fires, with `toolCallAborted: true` and the
+  streamed text in `toolCallArgsRaw`; `toolCallArgs` is `{}` and means nothing.
+  A legitimate empty call has `toolCallAborted: false` and `toolCallArgsRaw: "{}"`.
+- **Skip it in the legacy format.** `convertMessagesToLegacyFormat` leaves it
+  out, since the legacy messages cannot say "aborted".
+
+The AWS Strands bridge sets the marker in `"attributed"` mode, on the `END` and
+on the snapshot's tool call. A producer that names its own
+`pendingToolCallIds` on `RUN_FINISHED` should leave aborted calls out.
+
 ## Attribution
 
 Beyond the lifecycle events, most events can carry an optional `subagentRunId`
