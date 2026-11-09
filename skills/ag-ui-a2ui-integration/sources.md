@@ -6,10 +6,12 @@ runtime docs.
 ## AG-UI Repository Sources
 
 - `middlewares/a2ui-middleware/src/index.ts` - `A2UIMiddleware`, schema
-  context, `a2ui-surface` activity snapshots, action forwarding, and runtime
-  tool interception.
+  context, `a2ui-surface` activity snapshots, private user-action context,
+  preserved model history, public-history projection, and runtime tool interception.
 - `middlewares/a2ui-middleware/src/tools.ts` - `render_a2ui` and
-  `log_a2ui_event` tool contracts.
+  its injected usage guidelines.
+- `middlewares/a2ui-middleware/src/schema.ts` - A2UI schema and user-action
+  JSON handling instructions.
 - `middlewares/a2ui-middleware/src/types.ts` - middleware config, inline
   catalog schema, `injectA2UITool`, recognized A2UI tool names, and
   `defaultCatalogId`.
