@@ -144,6 +144,7 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
 
   /// Conversation history sent on every run (grows across the round-trip).
   final List<Message> _history = [];
+  Set<String> _priorRunMessageIds = const {};
 
   List<ToolCall> _pendingCalls = const [];
   AssistantMessage? _pendingAssistant;
@@ -197,7 +198,7 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
   }
 
   void sendMessage(String text) async {
-    if (text.trim().isEmpty || _busy) return;
+    if (disposed || text.trim().isEmpty || _busy) return;
 
     // A new turn: drop any pending calls left stale by a prior stream that closed
     // without RUN_FINISHED (network drop), so they can't replay against this turn.
@@ -233,32 +234,61 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     }
   }
 
-  Stream<BaseEvent> _run() => _service.run(
-        endpoint.path,
-        threadId: _threadId,
-        messages: _history,
-        tools: endpoint.tools,
-        extraQuery: isApproval && !_approvalGate ? {'approval': 'off'} : const {},
-      );
+  Stream<BaseEvent> _run() {
+    _priorRunMessageIds = messages.map((message) => message.id).toSet();
+    // Reset the display-only stream between requests, including an interrupted
+    // stream. Otherwise the next chunk-only reply could append to its fragment.
+    final streaming = messages
+        .where((m) => m.type == ChatMessageType.assistant && m.isStreaming)
+        .lastOrNull;
+    if (streaming != null) {
+      handleCommonEvent(TextMessageEndEvent(messageId: streaming.id));
+    }
+    return _service.run(
+      endpoint.path,
+      threadId: _threadId,
+      messages: _history,
+      tools: endpoint.tools,
+      extraQuery: isApproval && !_approvalGate ? {'approval': 'off'} : const {},
+    );
+  }
 
   void _handleEvent(BaseEvent event) {
     if (handleCommonEvent(event)) {
+      if (event is TextMessageEndEvent) {
+        _rememberCompletedReplies(messageId: event.messageId);
+      }
       _notify();
       return;
     }
 
     if (event is MessagesSnapshotEvent) {
+      final resolvedCalls = _history
+          .whereType<ToolMessage>()
+          .map((m) => m.toolCallId)
+          .toSet();
+      for (final assistant in event.messages.whereType<AssistantMessage>()) {
+        // A snapshot can carry prose without text events, or replace a streamed
+        // reply. Keep one protocol message per ID. Unresolved proposals still go
+        // into history only when execution starts below, so an interrupted run
+        // does not leave a new, unanswered tool call in the next user turn.
+        if ((assistant.toolCalls ?? const <ToolCall>[]).every(
+          (call) => resolvedCalls.contains(call.id),
+        )) {
+          _upsertAssistant(assistant);
+        }
+      }
       // LOAD-BEARING SERVER CONTRACT: the round-trip fires only because the dojo server
       // emits MESSAGES_SNAPSHOT (carrying the assistant's toolCalls) before RUN_FINISHED
       // (loop.go:229-249). We read the authoritative tool-call list from the snapshot,
       // NOT from the streamed TOOL_CALL_* events. .messages is non-nullable.
       final assistant = event.messages.whereType<AssistantMessage>().lastOrNull;
-      final calls = assistant?.toolCalls ?? const [];
-      if (calls.isNotEmpty) {
-        // Overwrite (not append) — a cumulative snapshot carries the latest call list.
-        _pendingAssistant = assistant;
-        _pendingCalls = calls;
-      }
+      // Cumulative snapshots may end in a proposal we have already answered.
+      // Replacing the pending list also clears stale work on a text-only snapshot.
+      _pendingCalls = (assistant?.toolCalls ?? const <ToolCall>[])
+          .where((call) => !resolvedCalls.contains(call.id))
+          .toList();
+      _pendingAssistant = _pendingCalls.isEmpty ? null : assistant;
       // Reasoning messages: a snapshot is the FULL history, so dedup by id or each
       // round would re-render earlier reasoning blocks.
       for (final m in event.messages.whereType<ReasoningMessage>()) {
@@ -266,8 +296,11 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
         if (rid != null && !_seenReasoningIds.add(rid)) continue;
         addReasoningMessage(m.content ?? '');
       }
-    } else if (event is RunFinishedEvent && !_resolving) {
-      if (_pendingCalls.isNotEmpty) {
+    } else if (event is RunFinishedEvent) {
+      // Chunk-only peers may omit TEXT_MESSAGE_END. A successful run completes
+      // only this run's replies, never fragments from an earlier interrupted run.
+      _rememberCompletedReplies();
+      if (!_resolving && _pendingCalls.isNotEmpty) {
         // Launch the round-trip ONCE; the while-loop inside drives subsequent rounds.
         _resolveToolCalls();
       } else {
@@ -284,6 +317,29 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     _notify();
   }
 
+  void _rememberCompletedReplies({String? messageId}) {
+    for (final reply in messages) {
+      if (reply.type != ChatMessageType.assistant ||
+          _priorRunMessageIds.contains(reply.id) ||
+          (messageId != null && reply.id != messageId)) {
+        continue;
+      }
+      // A snapshot is authoritative, and a reply already completed by END must
+      // not be appended again at RUN_FINISHED or lose its tool-call metadata.
+      if (_history.any((message) => message.id == reply.id)) continue;
+      _history.add(AssistantMessage(id: reply.id, content: reply.content));
+    }
+  }
+
+  void _upsertAssistant(AssistantMessage message) {
+    final index = _history.indexWhere((previous) => previous.id == message.id);
+    if (index < 0) {
+      _history.add(message);
+    } else {
+      _history[index] = message;
+    }
+  }
+
   Future<void> _resolveToolCalls() async {
     _resolving = true;
     try {
@@ -291,7 +347,7 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
         // The assistant message that requested the calls must precede the tool
         // results in history (the model provider enforces this ordering, not the
         // Go server).
-        _history.add(_pendingAssistant!);
+        _upsertAssistant(_pendingAssistant!);
         final calls = _pendingCalls;
         _pendingCalls = const [];
         _pendingAssistant = null;

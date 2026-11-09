@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -159,10 +160,12 @@ class ChatPageState extends ChangeNotifier {
   bool _disposed = false;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   ChatMessage? _currentStreamingMessage;
+  StreamSubscription<ConnectionStatus>? _connectionSubscription;
 
-  ChatPageState({required this.endpoint})
-      : _service = AgUiService() {
-    _service.connectionStatus.listen((status) {
+  ChatPageState({required this.endpoint, AgUiService? service})
+      : _service = service ?? AgUiService() {
+    _connectionSubscription = _service.connectionStatus.listen((status) {
+      if (_disposed) return;
       _connectionStatus = status;
       notifyListeners();
     });
@@ -498,6 +501,7 @@ class ChatPageState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_connectionSubscription?.cancel());
     _service.dispose();
     super.dispose();
   }
