@@ -234,8 +234,10 @@ onToolCallArgsEvent?(params: { event: ToolCallArgsEvent; toolCallBuffer: string;
 Called when a tool call is complete with final arguments.
 
 ```typescript
-onToolCallEndEvent?(params: { event: ToolCallEndEvent; toolCallName: string; toolCallArgs: Record<string, any> } & AgentSubscriberParams): MaybePromise<AgentStateMutation | void>
+onToolCallEndEvent?(params: { event: ToolCallEndEvent; toolCallName: string; toolCallArgs: Record<string, any>; toolCallArgsRaw: string; toolCallAborted: boolean } & AgentSubscriberParams): MaybePromise<AgentStateMutation | void>
 ```
+
+`toolCallArgsRaw` is the arguments exactly as streamed. When they do not parse, `toolCallArgs` is `{}` and the raw text is the only record. `toolCallAborted` is `true` when the producer marked the call aborted (a subagent was cut off mid call; see [Aborted tool calls](/concepts/subagents#aborted-tool-calls)). Treat its arguments as meaningless and do not run it.
 
 #### onToolCallResultEvent()
 
@@ -341,7 +343,7 @@ onNewMessage?(params: { message: Message } & Omit<AgentSubscriberParams, "input"
 
 #### onNewToolCall()
 
-Triggered when a new tool call is added to a message.
+Triggered when a new tool call is added to a message. It is not called for an aborted tool call.
 
 ```typescript
 onNewToolCall?(params: { toolCall: ToolCall } & Omit<AgentSubscriberParams, "input"> & { input?: RunAgentInput }): MaybePromise<void>
