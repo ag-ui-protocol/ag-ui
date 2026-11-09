@@ -2,7 +2,7 @@
 
 import unittest
 from typing import Iterator
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -19,8 +19,12 @@ from ag_ui_langgraph.types import LangGraphEventTypes
 FAILED_TOOL_RUN_ID = "failed-tool-run"
 
 
-def _make_agent() -> LangGraphAgent:
-    agent = LangGraphAgent(name="test", graph=MagicMock())
+def _make_agent(*, attributed=False) -> LangGraphAgent:
+    agent = LangGraphAgent(
+        name="test",
+        graph=MagicMock(),
+        emit_subagent_events=attributed,
+    )
     agent.active_run = {
         "id": "run-1",
         "reasoning_processes": {},
@@ -33,12 +37,16 @@ def _make_agent() -> LangGraphAgent:
         "has_function_streaming": False,
         "model_made_tool_call": False,
         "state_reliable": True,
+        "current_subagent_run_id": None,
     }
     agent.dispatched = []
+    real_dispatch = agent._dispatch_event
 
     def _dispatch(event):
-        agent.dispatched.append(event)
-        return event
+        resolved = real_dispatch(event) if attributed else event
+        if resolved is not None:
+            agent.dispatched.append(resolved)
+        return resolved
 
     agent._dispatch_event = _dispatch
     return agent
@@ -86,6 +94,55 @@ async def _feed(agent: LangGraphAgent, *events) -> None:
     for event in events:
         async for _ in agent._handle_single_event(event, {}):
             pass
+
+
+async def _drive_full_stream(events):
+    graph = MagicMock()
+    graph.config_specs = []
+    graph.nodes = {}
+    final_state = MagicMock()
+    final_state.values = {"messages": []}
+    final_state.tasks = []
+    final_state.next = []
+    final_state.metadata = {"writes": {}}
+    graph.aget_state = AsyncMock(return_value=final_state)
+
+    agent = LangGraphAgent(
+        name="test",
+        graph=graph,
+        emit_subagent_events=True,
+        emit_raw_events=False,
+    )
+
+    async def fake_prepare(*args, **kwargs):
+        agent.active_run["schema_keys"] = {
+            "input": ["messages"],
+            "output": ["messages"],
+            "config": [],
+            "context": [],
+        }
+
+        async def gen():
+            for event in events:
+                yield event
+
+        return {
+            "stream": gen(),
+            "state": MagicMock(values={"messages": []}),
+            "config": {"configurable": {"thread_id": "t1"}},
+        }
+
+    agent.prepare_stream = fake_prepare
+    run_input = MagicMock()
+    run_input.run_id = "run-1"
+    run_input.thread_id = "t1"
+    run_input.forwarded_props = {}
+
+    return [
+        event
+        async for event in agent._handle_stream_events(run_input)
+        if event is not None
+    ]
 
 
 def _types(agent: LangGraphAgent):
@@ -371,4 +428,167 @@ class TestFailedToolStreamCleanup(unittest.IsolatedAsyncioTestCase):
                 if event.type == EventType.TEXT_MESSAGE_CONTENT
             ),
             "before error after error",
+        )
+
+    async def test_closes_matching_streams_in_their_original_lanes(self):
+        agent = _make_agent(attributed=True)
+
+        agent.active_run["current_subagent_run_id"] = "tools:text"
+        await _feed(
+            agent,
+            _model_chunk(
+                chunk_id="child-text",
+                content="partial",
+                parent_ids=[FAILED_TOOL_RUN_ID],
+            ),
+        )
+
+        agent.active_run["current_subagent_run_id"] = "tools:call"
+        await _feed(
+            agent,
+            _model_chunk(
+                chunk_id="child-call",
+                tool_call_chunks=[
+                    {
+                        "id": "child-tool-call",
+                        "name": "read_file",
+                        "args": '{"path":',
+                    }
+                ],
+                parent_ids=[FAILED_TOOL_RUN_ID],
+            ),
+        )
+
+        agent.active_run["current_subagent_run_id"] = "tools:reasoning"
+        await _feed(
+            agent,
+            _model_chunk(
+                chunk_id="child-reasoning",
+                content=[
+                    {
+                        "type": "reasoning_content",
+                        "reasoning_content": {"text": "partial thought"},
+                        "index": 0,
+                    }
+                ],
+                parent_ids=[FAILED_TOOL_RUN_ID],
+            ),
+        )
+
+        agent.active_run["current_subagent_run_id"] = "tools:sibling"
+        await _feed(
+            agent,
+            _model_chunk(
+                chunk_id="sibling-text",
+                content="still running",
+                parent_ids=["other-tool-run"],
+            ),
+        )
+
+        agent.active_run["current_subagent_run_id"] = None
+        await _feed(agent, _tool_error(), _tool_error())
+
+        terminal_owners = [
+            (event.type, getattr(event, "subagent_run_id", None))
+            for event in agent.dispatched
+            if event.type
+            in (
+                EventType.TEXT_MESSAGE_END,
+                EventType.TOOL_CALL_END,
+                EventType.REASONING_END,
+            )
+        ]
+        self.assertEqual(
+            terminal_owners,
+            [
+                (EventType.TEXT_MESSAGE_END, "tools:text"),
+                (EventType.TOOL_CALL_END, "tools:call"),
+                (EventType.REASONING_END, "tools:reasoning"),
+            ],
+        )
+        self.assertIsNotNone(
+            agent.get_message_in_progress("run-1", "tools:sibling")
+        )
+        self.assertIsNone(
+            agent.get_message_in_progress("run-1", "tools:text")
+        )
+        self.assertIsNone(
+            agent.get_message_in_progress("run-1", "tools:call")
+        )
+        self.assertIsNone(agent._get_reasoning_process("tools:reasoning"))
+
+    async def test_task_error_closes_child_before_subagent_terminal(self):
+        task_start = {
+            "event": LangGraphEventTypes.OnToolStart,
+            "run_id": FAILED_TOOL_RUN_ID,
+            "name": "task",
+            "parent_ids": ["tools-node-run"],
+            "metadata": {
+                "langgraph_node": "tools",
+                "langgraph_checkpoint_ns": "tools:child",
+                "lc_agent_name": "researcher",
+            },
+            "data": {
+                "input": {
+                    "subagent_type": "researcher",
+                    "description": "delegate",
+                }
+            },
+        }
+        child_chunk = _model_chunk(
+            chunk_id="child-text",
+            content="partial child answer",
+            parent_ids=["tools-node-run", FAILED_TOOL_RUN_ID],
+            node="model",
+        )
+        child_chunk["metadata"].update(
+            {
+                "langgraph_checkpoint_ns": "tools:child|model:inner",
+                "lc_agent_name": "researcher",
+            }
+        )
+        task_error = _tool_error()
+        task_error["name"] = "task"
+        task_error["metadata"] = {
+            "langgraph_node": "tools",
+            "langgraph_checkpoint_ns": "",
+            "lc_agent_name": "main",
+        }
+        parent_chunk = _model_chunk(
+            chunk_id="parent-text",
+            content="parent recovered",
+            parent_ids=["agent-node-run"],
+            node="agent",
+        )
+        parent_chunk["metadata"].update(
+            {
+                "langgraph_checkpoint_ns": "",
+                "lc_agent_name": "main",
+            }
+        )
+
+        events = await _drive_full_stream(
+            [task_start, child_chunk, task_error, parent_chunk]
+        )
+        relevant = [
+            (event.type, getattr(event, "subagent_run_id", None))
+            for event in events
+            if event.type
+            in (
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+                EventType.SUBAGENT_ERROR,
+            )
+        ]
+        self.assertEqual(
+            relevant,
+            [
+                (EventType.TEXT_MESSAGE_START, "tools:child"),
+                (EventType.TEXT_MESSAGE_CONTENT, "tools:child"),
+                (EventType.TEXT_MESSAGE_END, "tools:child"),
+                (EventType.SUBAGENT_ERROR, "tools:child"),
+                (EventType.TEXT_MESSAGE_START, None),
+                (EventType.TEXT_MESSAGE_CONTENT, None),
+            ],
         )

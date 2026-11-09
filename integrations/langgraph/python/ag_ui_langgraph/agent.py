@@ -1914,6 +1914,21 @@ class LangGraphAgent:
                 for sub_ev in sub_events:
                     yield self._dispatch_event(sub_ev)
 
+                # A failed `task` boundary belongs to the parent lane, while a
+                # model stream interrupted inside that task belongs to the child.
+                # Close the child's stream before _finish_subagent_on_task_end
+                # restores the parent lane and emits SUBAGENT_ERROR. The
+                # OnToolError handler calls this helper again for ordinary tool
+                # failures; clearing is idempotent, so the second call is a no-op.
+                is_failed_task = (
+                    event.get("event") == LangGraphEventTypes.OnToolError.value
+                    and event.get("run_id")
+                    in (self.active_run.get("subagent_task_runs") or {})
+                )
+                if is_failed_task:
+                    for end_ev in self._close_streams_interrupted_by_tool_error(event):
+                        yield self._dispatch_event(end_ev)
+
                 # Finish a subagent as soon as its `task` delegation returns, so
                 # its reported status tracks the subagent's own lifecycle rather
                 # than waiting for drain_subagents at RUN_FINISHED.
@@ -2640,6 +2655,88 @@ class LangGraphAgent:
         lanes = self.messages_in_process.get(run_id)
         if lanes is not None:
             lanes[lane] = None
+
+    def _close_streams_interrupted_by_tool_error(
+        self, event: dict
+    ) -> List[ProcessedEvents]:
+        """Close every stream descended from a failed tool, in its owning lane."""
+        if event.get("event") != LangGraphEventTypes.OnToolError.value:
+            return []
+        data = event.get("data") or {}
+        failed_tool_run_id = event.get("run_id")
+        if (
+            not failed_tool_run_id
+            or isinstance(data.get("error"), GraphBubbleUp)
+            or self.active_run is None
+        ):
+            return []
+
+        events: List[ProcessedEvents] = []
+        run_id = self.active_run["id"]
+        message_lanes = self.messages_in_process.get(run_id) or {}
+        for lane, stream in list(message_lanes.items()):
+            if (
+                not stream
+                or failed_tool_run_id not in (stream.get("parent_ids") or [])
+            ):
+                continue
+            owner = None if lane == _ROOT_LANE else lane
+            if stream.get("tool_call_id"):
+                events.append(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=stream["tool_call_id"],
+                        subagent_run_id=owner,
+                        raw_event=event,
+                    )
+                )
+            elif stream.get("id"):
+                events.append(
+                    TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        message_id=stream["id"],
+                        subagent_run_id=owner,
+                        raw_event=event,
+                    )
+                )
+            self.clear_message_in_progress(run_id, lane)
+
+        reasoning_lanes = self.active_run.get("reasoning_processes") or {}
+        for lane, process in list(reasoning_lanes.items()):
+            if (
+                not process
+                or failed_tool_run_id not in (process.get("parent_ids") or [])
+            ):
+                continue
+            owner = None if lane == _ROOT_LANE else lane
+            reasoning_message_id = process["message_id"]
+            if process.get("signature"):
+                events.append(
+                    ReasoningEncryptedValueEvent(
+                        type=EventType.REASONING_ENCRYPTED_VALUE,
+                        subtype="message",
+                        entity_id=reasoning_message_id,
+                        encrypted_value=process["signature"],
+                        subagent_run_id=owner,
+                    )
+                )
+            if process.get("type"):
+                events.append(
+                    ReasoningMessageEndEvent(
+                        type=EventType.REASONING_MESSAGE_END,
+                        message_id=reasoning_message_id,
+                        subagent_run_id=owner,
+                    )
+                )
+            events.append(
+                ReasoningEndEvent(
+                    type=EventType.REASONING_END,
+                    message_id=reasoning_message_id,
+                    subagent_run_id=owner,
+                )
+            )
+            self._set_reasoning_process(None, lane)
+        return events
 
     def has_any_message_in_progress(self, run_id: str) -> bool:
         """True if any lane in this run has an open in-flight message/tool call.
@@ -3838,65 +3935,8 @@ class LangGraphAgent:
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
             data = event.get("data") or {}
-            failed_tool_run_id = event.get("run_id")
-            is_tool_failure = (
-                failed_tool_run_id
-                and not isinstance(data.get("error"), GraphBubbleUp)
-            )
-            current_stream = self.get_message_in_progress(self.active_run["id"])
-            if (
-                is_tool_failure
-                and current_stream
-                and failed_tool_run_id in (current_stream.get("parent_ids") or [])
-            ):
-                if current_stream.get("tool_call_id"):
-                    yield self._dispatch_event(
-                        ToolCallEndEvent(
-                            type=EventType.TOOL_CALL_END,
-                            tool_call_id=current_stream["tool_call_id"],
-                            raw_event=event,
-                        )
-                    )
-                elif current_stream.get("id"):
-                    yield self._dispatch_event(
-                        TextMessageEndEvent(
-                            type=EventType.TEXT_MESSAGE_END,
-                            message_id=current_stream["id"],
-                            raw_event=event,
-                        )
-                    )
-                self.clear_message_in_progress(self.active_run["id"])
-
-            reasoning_process = self._get_reasoning_process()
-            if (
-                is_tool_failure
-                and reasoning_process
-                and failed_tool_run_id in (reasoning_process.get("parent_ids") or [])
-            ):
-                reasoning_message_id = reasoning_process["message_id"]
-                if reasoning_process.get("signature"):
-                    yield self._dispatch_event(
-                        ReasoningEncryptedValueEvent(
-                            type=EventType.REASONING_ENCRYPTED_VALUE,
-                            subtype="message",
-                            entity_id=reasoning_message_id,
-                            encrypted_value=reasoning_process["signature"],
-                        )
-                    )
-                if reasoning_process.get("type"):
-                    yield self._dispatch_event(
-                        ReasoningMessageEndEvent(
-                            type=EventType.REASONING_MESSAGE_END,
-                            message_id=reasoning_message_id,
-                        )
-                    )
-                yield self._dispatch_event(
-                    ReasoningEndEvent(
-                        type=EventType.REASONING_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                self._set_reasoning_process(None)
+            for end_ev in self._close_streams_interrupted_by_tool_error(event):
+                yield self._dispatch_event(end_ev)
             # OnToolEnd never fires for this call. When ToolNode handles the
             # error it returns an error ToolMessage instead, which OnChainEnd
             # below streams as the call's result. A GraphBubbleUp (an
