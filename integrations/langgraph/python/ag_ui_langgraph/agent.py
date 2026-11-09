@@ -1699,6 +1699,7 @@ class LangGraphAgent:
             "mode": "start",
             "reasoning_processes": {},
             "pending_reasoning_ids": {},
+            "pending_reasoning_parent_ids": {},
             "current_text_message_ids": {},
             "current_text_message_nodes": {},
             "node_name": None,
@@ -2736,6 +2737,16 @@ class LangGraphAgent:
                 )
             )
             self._set_reasoning_process(None, lane)
+
+        pending_ids = self.active_run.get("pending_reasoning_ids") or {}
+        pending_parent_ids = (
+            self.active_run.get("pending_reasoning_parent_ids") or {}
+        )
+        for lane, parent_ids in list(pending_parent_ids.items()):
+            if failed_tool_run_id not in parent_ids:
+                continue
+            pending_ids.pop(lane, None)
+            pending_parent_ids.pop(lane, None)
         return events
 
     def has_any_message_in_progress(self, run_id: str) -> bool:
@@ -4060,6 +4071,9 @@ class LangGraphAgent:
         if not reasoning_data["text"]:
             if reasoning_data.get("id"):
                 self.active_run.setdefault("pending_reasoning_ids", {})[lane] = reasoning_data["id"]
+                self.active_run.setdefault("pending_reasoning_parent_ids", {})[lane] = list(
+                    parent_ids or []
+                )
             return
 
         reasoning_step_index = reasoning_data.get("index", 0)
@@ -4093,9 +4107,15 @@ class LangGraphAgent:
             # under that id, and only a matching id lets the client reconcile
             # the streamed copy with the snapshot copy instead of rendering
             # both.
+            pending_reasoning_id = (
+                self.active_run.get("pending_reasoning_ids") or {}
+            ).pop(lane, None)
+            (self.active_run.get("pending_reasoning_parent_ids") or {}).pop(
+                lane, None
+            )
             raw_reasoning_id = (
                 reasoning_data.get("id")
-                or (self.active_run.get("pending_reasoning_ids") or {}).pop(lane, None)
+                or pending_reasoning_id
                 or str(uuid.uuid4())
             )
             # Public, not raw: reasoning ids are run-global on the client (its

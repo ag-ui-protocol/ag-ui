@@ -8,6 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
+from langgraph.errors import GraphBubbleUp
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -29,6 +30,7 @@ def _make_agent(*, attributed=False) -> LangGraphAgent:
         "id": "run-1",
         "reasoning_processes": {},
         "pending_reasoning_ids": {},
+        "pending_reasoning_parent_ids": {},
         "current_text_message_ids": {},
         "current_text_message_nodes": {},
         "streamed_tool_call_ids": set(),
@@ -394,6 +396,78 @@ class TestFailedToolStreamCleanup(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(starts), 2)
         self.assertNotEqual(starts[0], starts[1])
+
+    async def test_clears_pending_reasoning_id_from_failed_tool(self):
+        agent = _make_agent()
+        list(
+            agent.handle_reasoning_event(
+                {
+                    "type": "reasoning_content",
+                    "text": "",
+                    "id": "rs-failed",
+                },
+                parent_ids=[FAILED_TOOL_RUN_ID],
+            )
+        )
+
+        await _feed(agent, _tool_error())
+        list(
+            agent.handle_reasoning_event(
+                {
+                    "type": "reasoning_content",
+                    "text": "parent thinks",
+                },
+                parent_ids=["agent-node-run"],
+            )
+        )
+
+        starts = [
+            event
+            for event in agent.dispatched
+            if event.type == EventType.REASONING_START
+        ]
+        self.assertEqual(len(starts), 1)
+        self.assertNotEqual(starts[0].message_id, "rs-failed")
+        self.assertNotIn(
+            "__root__", agent.active_run["pending_reasoning_ids"]
+        )
+
+    async def test_pending_reasoning_cleanup_is_ancestry_scoped(self):
+        agent = _make_agent(attributed=True)
+
+        agent.active_run["current_subagent_run_id"] = "tools:failed"
+        list(
+            agent.handle_reasoning_event(
+                {
+                    "type": "reasoning_content",
+                    "text": "",
+                    "id": "rs-failed",
+                },
+                parent_ids=[FAILED_TOOL_RUN_ID],
+            )
+        )
+        agent.active_run["current_subagent_run_id"] = "tools:sibling"
+        list(
+            agent.handle_reasoning_event(
+                {
+                    "type": "reasoning_content",
+                    "text": "",
+                    "id": "rs-sibling",
+                },
+                parent_ids=["other-tool-run"],
+            )
+        )
+
+        agent.active_run["current_subagent_run_id"] = None
+        await _feed(agent, _tool_error())
+        pending = agent.active_run["pending_reasoning_ids"]
+        self.assertNotIn("tools:failed", pending)
+        self.assertEqual(pending["tools:sibling"], "rs-sibling")
+
+        bubble_up = _tool_error("other-tool-run")
+        bubble_up["data"]["error"] = GraphBubbleUp()
+        await _feed(agent, bubble_up)
+        self.assertEqual(pending["tools:sibling"], "rs-sibling")
 
     async def test_does_not_close_stream_from_unrelated_model(self):
         agent = _make_agent()
