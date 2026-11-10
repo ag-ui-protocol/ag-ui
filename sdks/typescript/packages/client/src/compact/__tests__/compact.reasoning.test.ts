@@ -241,6 +241,117 @@ describe("reasoning message compaction", () => {
     ]);
   });
 
+  describe("replays to the same messages as the original stream", () => {
+    const run = (events: BaseEvent[]): BaseEvent[] => [
+      { type: EventType.RUN_STARTED, threadId: "t", runId: "r" },
+      ...events,
+      { type: EventType.RUN_FINISHED, threadId: "t", runId: "r" },
+    ];
+
+    async function expectSameReplay(events: BaseEvent[]) {
+      await expect(verify(events)).resolves.toHaveLength(events.length);
+      const compacted = compactEvents(events);
+      await expect(verify(compacted)).resolves.toHaveLength(compacted.length);
+      expect(await applyToMessages(compacted)).toEqual(await applyToMessages(events));
+      return compacted;
+    }
+
+    it.each([
+      {
+        kind: "reasoning",
+        start: { type: EventType.REASONING_MESSAGE_START, messageId: "m", role: "reasoning" },
+        delta: (delta: string) => ({ type: EventType.REASONING_MESSAGE_CONTENT, messageId: "m", delta }),
+        end: { type: EventType.REASONING_MESSAGE_END, messageId: "m" },
+        snapshot: { id: "m", role: "reasoning", content: "a" },
+      },
+      {
+        kind: "text",
+        start: { type: EventType.TEXT_MESSAGE_START, messageId: "m", role: "assistant" },
+        delta: (delta: string) => ({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m", delta }),
+        end: { type: EventType.TEXT_MESSAGE_END, messageId: "m" },
+        snapshot: { id: "m", role: "assistant", content: "a" },
+      },
+      {
+        kind: "tool call",
+        start: {
+          type: EventType.TOOL_CALL_START,
+          toolCallId: "c",
+          toolCallName: "lookup",
+          parentMessageId: "m",
+        },
+        delta: (delta: string) => ({ type: EventType.TOOL_CALL_ARGS, toolCallId: "c", delta }),
+        end: { type: EventType.TOOL_CALL_END, toolCallId: "c" },
+        snapshot: {
+          id: "m",
+          role: "assistant",
+          toolCalls: [{ id: "c", type: "function", function: { name: "lookup", arguments: "a" } }],
+        },
+      },
+    ])("does not combine $kind deltas across a messages snapshot", async ({ start, delta, end, snapshot }) => {
+      // The snapshot restates the deltas before it; the one after it still
+      // applies. Combined into one delta ahead of the snapshot, "b" is lost.
+      await expectSameReplay(
+        run([
+          start,
+          delta("a"),
+          { type: EventType.MESSAGES_SNAPSHOT, messages: [snapshot] },
+          delta("b"),
+          end,
+        ] as BaseEvent[]),
+      );
+    });
+
+    it("keeps reasoning ahead of an answer that starts later but finishes first", async () => {
+      const compacted = await expectSameReplay(
+        run([
+          { type: EventType.REASONING_MESSAGE_START, messageId: "reason", role: "reasoning" },
+          { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason", delta: "a" },
+          { type: EventType.TEXT_MESSAGE_START, messageId: "answer", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "answer", delta: "answer" },
+          { type: EventType.TEXT_MESSAGE_END, messageId: "answer" },
+          { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason", delta: "b" },
+          { type: EventType.REASONING_MESSAGE_END, messageId: "reason" },
+        ] as BaseEvent[]),
+      );
+      expect((await applyToMessages(compacted)).map((message) => message.id)).toEqual([
+        "reason",
+        "answer",
+      ]);
+    });
+
+    it("keeps two answers in the order they started", async () => {
+      await expectSameReplay(
+        run([
+          { type: EventType.TEXT_MESSAGE_START, messageId: "first", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "first", delta: "one" },
+          { type: EventType.TEXT_MESSAGE_START, messageId: "second", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "second", delta: "two" },
+          { type: EventType.TEXT_MESSAGE_END, messageId: "second" },
+          { type: EventType.TEXT_MESSAGE_END, messageId: "first" },
+        ] as BaseEvent[]),
+      );
+    });
+
+    it("keeps an activity message between messages where it arrived", async () => {
+      await expectSameReplay(
+        run([
+          { type: EventType.REASONING_MESSAGE_START, messageId: "reason", role: "reasoning" },
+          { type: EventType.TEXT_MESSAGE_START, messageId: "answer", role: "assistant" },
+          { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "answer", delta: "answer" },
+          { type: EventType.TEXT_MESSAGE_END, messageId: "answer" },
+          {
+            type: EventType.ACTIVITY_SNAPSHOT,
+            messageId: "activity",
+            activityType: "progress",
+            content: { done: 1 },
+          },
+          { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "reason", delta: "a" },
+          { type: EventType.REASONING_MESSAGE_END, messageId: "reason" },
+        ] as BaseEvent[]),
+      );
+    });
+  });
+
   it("passes an end without a start through unchanged", () => {
     const events = [
       { type: EventType.REASONING_MESSAGE_END, messageId: "r1" },

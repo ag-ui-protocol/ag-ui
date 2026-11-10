@@ -166,12 +166,12 @@ describe("compactEvents preserves metadata", () => {
   });
 });
 
-describe("compaction reorders entities, but not their metadata", () => {
-  // compactEvents flushes a tool call when its END arrives, so parallel calls
-  // can end up swapped in the assistant message's toolCalls array. Each still
-  // keeps its own metadata, because a tool call is its own merge destination —
-  // which is what makes a compacted replay agree with the original stream.
-  it("swaps the tool call order but keeps each one's metadata", () => {
+describe("parallel tool calls keep their order and their metadata", () => {
+  // Parallel calls can end in a different order than they started. Each stream
+  // stays where it started, so the assistant message's toolCalls array keeps
+  // the original order, and each call keeps its own metadata, because a tool
+  // call is its own merge destination.
+  it("keeps the tool call order and each one's metadata when they end in reverse", () => {
     const compacted = compactEvents([
       {
         type: EventType.TOOL_CALL_START,
@@ -191,14 +191,13 @@ describe("compaction reorders entities, but not their metadata", () => {
       { type: EventType.TOOL_CALL_END, toolCallId: "tc1" } as ToolCallEndEvent,
     ]);
 
-    // tc2 flushes first because its END arrived first.
+    // tc1 stays first although tc2's END arrived first.
     const starts = compacted.filter((e) => e.type === EventType.TOOL_CALL_START);
-    expect(starts.map((e) => (e as ToolCallStartEvent).toolCallId)).toEqual(["tc2", "tc1"]);
+    expect(starts.map((e) => (e as ToolCallStartEvent).toolCallId)).toEqual(["tc1", "tc2"]);
 
-    // Each START keeps its own metadata; only the order they reach the shared
-    // assistant message changes.
-    expect(starts[0].metadata).toEqual({ phase: "two" });
-    expect(starts[1].metadata).toEqual({ phase: "one" });
+    // Each START keeps its own metadata.
+    expect(starts[0].metadata).toEqual({ phase: "one" });
+    expect(starts[1].metadata).toEqual({ phase: "two" });
   });
 });
 
