@@ -1271,6 +1271,16 @@ export class A2UIMiddleware extends Middleware {
                 messages,
                 state: heldRunFinished.state,
               };
+              // The initial run consumed the approval, including its legacy channel.
+              if (nextInput.forwardedProps?.command?.resume !== undefined) {
+                nextInput.forwardedProps = {
+                  ...nextInput.forwardedProps,
+                  command: {
+                    ...nextInput.forwardedProps.command,
+                    resume: undefined,
+                  },
+                };
+              }
               subscriptions.add(
                 this.processStream(
                   this.runNextWithState(nextInput, continuation.next),
