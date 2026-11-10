@@ -214,6 +214,45 @@ final class URLSessionHTTPClientTests: XCTestCase {
         let cancelled = await StallingURLProtocol.waitUntilCancelledOrTimeout(timeout: 0.05)
         XCTAssertFalse(cancelled)
     }
+
+    // MARK: - Mid-stream errors
+
+    func test_midStreamFailure_isReportedAsClientError() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [FailingStreamURLProtocol.self]
+        let client = URLSessionHTTPClient(session: URLSession(configuration: config))
+        let request = URLRequest(url: URL(string: "https://fail.test/stream")!)
+        let response = try await client.execute(request)
+
+        do {
+            for try await _ in response.bytes {}
+            XCTFail("Expected a network error")
+        } catch let error as ClientError {
+            guard case .networkError = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+}
+
+// MARK: - FailingStreamURLProtocol
+
+/// URLProtocol that sends 200 response headers and one byte, then drops the connection.
+private final class FailingStreamURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data([42]))
+        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+    }
+
+    override func stopLoading() {}
 }
 
 // MARK: - StallingURLProtocol

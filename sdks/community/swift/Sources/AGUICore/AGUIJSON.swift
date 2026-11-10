@@ -20,6 +20,9 @@ public indirect enum AGUIJSON: Equatable, Sendable {
     }
     public var bool: Bool? { if case .bool(let v) = self { v } else { nil } }
 
+    /// Maximum number of nested JSON containers accepted from the wire.
+    public static let maximumNestingDepth = 128
+
     public static func parse(_ data: Data) throws -> AGUIJSON {
         var parser = JSONParser(bytes: Array(data))
         let result = try parser.parseValue()
@@ -66,9 +69,12 @@ private struct JSONParser {
         while index < bytes.count && [9, 10, 13, 32].contains(bytes[index]) { index += 1 }
     }
 
-    mutating func parseValue() throws -> AGUIJSON {
+    mutating func parseValue(depth: Int = 0) throws -> AGUIJSON {
         skipSpace()
         guard index < bytes.count else { throw AGUISchemaError.invalidJSON }
+        if bytes[index] == 123 || bytes[index] == 91 {
+            guard depth < AGUIJSON.maximumNestingDepth else { throw AGUISchemaError.invalidJSON }
+        }
         switch bytes[index] {
         case 123:
             index += 1
@@ -76,10 +82,10 @@ private struct JSONParser {
             var fields: [String: AGUIJSON] = [:]
             if consume(125) { return .object(fields) }
             while true {
-                guard case .string(let key) = try parseValue(), fields[key] == nil else { throw AGUISchemaError.invalidJSON }
+                guard case .string(let key) = try parseValue(depth: depth + 1), fields[key] == nil else { throw AGUISchemaError.invalidJSON }
                 skipSpace()
                 guard consume(58) else { throw AGUISchemaError.invalidJSON }
-                fields[key] = try parseValue()
+                fields[key] = try parseValue(depth: depth + 1)
                 skipSpace()
                 if consume(125) { return .object(fields) }
                 guard consume(44) else { throw AGUISchemaError.invalidJSON }
@@ -90,7 +96,7 @@ private struct JSONParser {
             var values: [AGUIJSON] = []
             if consume(93) { return .array(values) }
             while true {
-                values.append(try parseValue())
+                values.append(try parseValue(depth: depth + 1))
                 skipSpace()
                 if consume(93) { return .array(values) }
                 guard consume(44) else { throw AGUISchemaError.invalidJSON }

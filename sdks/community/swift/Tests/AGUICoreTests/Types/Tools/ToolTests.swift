@@ -494,4 +494,120 @@ final class ToolTests: XCTestCase {
 
         XCTAssertNotEqual(tool1, tool2)
     }
+
+    // MARK: - Regression: JSON Schema boolean values must survive encode → decode round-trip
+
+    // Root cause: AnyCodable.encode(to:) used a switch that checked Int before Bool.
+    // JSONSerialization returns __NSCFBoolean for JSON booleans.  Due to NSNumber
+    // bridging, `__NSCFBoolean as? Int` succeeds (yielding 1 / 0), so the encode
+    // branch fired for Int — turning `false` into 0 and `true` into 1 on the wire.
+    //
+    // The test verifies that the JSON the SDK sends preserves boolean literals,
+    // since the receiving agent validates the schema against a JSON Schema validator
+    // that distinguishes `false` from `0`.
+
+    func test_tool_roundTrip_boolFalseInSchema_preservesType() throws {
+        // "additionalProperties": false is a real JSON Schema keyword.
+        // It must survive encode → decode as the boolean literal `false`, not the
+        // integer `0`.
+        let schema = Data("""
+        {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "additionalProperties": false
+        }
+        """.utf8)
+        let tool = Tool(name: "weather", description: "Get weather", parameters: schema)
+
+        let encoded = try JSONEncoder().encode(tool)
+
+        // The raw JSON the SDK sends over the wire must contain `false`, not `0`.
+        let rawJSON = String(data: encoded, encoding: .utf8) ?? ""
+        XCTAssertTrue(
+            rawJSON.contains("\"additionalProperties\":false") ||
+            rawJSON.contains("\"additionalProperties\": false"),
+            "Expected boolean false in encoded JSON, got: \(rawJSON)"
+        )
+
+        // And it must decode back to false (not an integer 0).
+        let decoded = try JSONDecoder().decode(Tool.self, from: encoded)
+        let decodedSchema = try JSONSerialization.jsonObject(with: decoded.parameters) as? [String: Any]
+        let additionalProps = decodedSchema?["additionalProperties"]
+        XCTAssertTrue(
+            additionalProps is Bool,
+            "additionalProperties must decode as Bool, got \(type(of: additionalProps))"
+        )
+        XCTAssertEqual(additionalProps as? Bool, false)
+    }
+
+    func test_tool_roundTrip_boolTrueInSchema_preservesType() throws {
+        // A property with a boolean `true` value (e.g., "uniqueItems": true) must
+        // round-trip as `true`, not as the integer `1`.
+        let schema = Data("""
+        {
+            "type": "object",
+            "properties": {"tags": {"type": "array", "uniqueItems": true}}
+        }
+        """.utf8)
+        let tool = Tool(name: "tag_tool", description: "Tag-based tool", parameters: schema)
+
+        let encoded = try JSONEncoder().encode(tool)
+        let decoded = try JSONDecoder().decode(Tool.self, from: encoded)
+
+        let decodedSchema = try JSONSerialization.jsonObject(with: decoded.parameters) as? [String: Any]
+        let properties = decodedSchema?["properties"] as? [String: Any]
+        let tagsSchema = properties?["tags"] as? [String: Any]
+        let uniqueItems = tagsSchema?["uniqueItems"]
+
+        XCTAssertTrue(
+            uniqueItems is Bool,
+            "uniqueItems must decode as Bool, got \(type(of: uniqueItems))"
+        )
+        XCTAssertEqual(uniqueItems as? Bool, true)
+    }
+
+    func test_tool_roundTrip_integerInSchema_notTreatedAsBool() throws {
+        // Integer schema constraints (minLength, maxLength, minimum, maximum) must
+        // remain integers after the round-trip, not become booleans.
+        let schema = Data("""
+        {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "minLength": 1, "maxLength": 10}
+            }
+        }
+        """.utf8)
+        let tool = Tool(name: "code_tool", description: "Code tool", parameters: schema)
+
+        let encoded = try JSONEncoder().encode(tool)
+
+        // Check the WIRE JSON — this is the authoritative test.
+        // __NSCFBoolean(true) as? Int returns 1 via NSNumber bridging, so
+        // asserting on the decoded value's Int cast would give a false positive.
+        let wire = String(data: encoded, encoding: .utf8) ?? ""
+        XCTAssertTrue(
+            wire.contains("\"minLength\":1") || wire.contains("\"minLength\": 1"),
+            "minLength:1 must be integer 1 on the wire, not true. Got: \(wire)"
+        )
+        XCTAssertTrue(
+            wire.contains("\"maxLength\":10") || wire.contains("\"maxLength\": 10"),
+            "maxLength:10 must be integer 10 on the wire. Got: \(wire)"
+        )
+
+        let decoded = try JSONDecoder().decode(Tool.self, from: encoded)
+        let decodedSchema = try JSONSerialization.jsonObject(with: decoded.parameters) as? [String: Any]
+        let properties = decodedSchema?["properties"] as? [String: Any]
+        let codeSchema = properties?["code"] as? [String: Any]
+
+        // isJSONBoolean uses CFGetTypeID — the only reliable way to distinguish
+        // __NSCFBoolean from __NSCFNumber after JSONSerialization round-trips.
+        XCTAssertFalse(
+            isJSONBoolean(codeSchema?["minLength"] as Any),
+            "minLength must be an integer NSNumber, not __NSCFBoolean"
+        )
+        XCTAssertFalse(
+            isJSONBoolean(codeSchema?["maxLength"] as Any),
+            "maxLength must be an integer NSNumber, not __NSCFBoolean"
+        )
+    }
 }

@@ -65,6 +65,10 @@ private final class EventVerifier {
             return
         }
 
+        if runError {
+            throw AGUIProtocolError(message: "The run has already errored with 'RUN_ERROR': \(type)")
+        }
+
         // Handle RUN_ERROR as a special case — allowed as first event
         if let _ = event as? RunErrorEvent {
             runError = true

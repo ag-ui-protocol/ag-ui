@@ -28,7 +28,10 @@ from .a2ui_tool import (
     plan_a2ui_injection,
     is_auto_injected_a2ui_tool,
 )
+from .a2ui_google_sdk import compile_a2ui_express
+
 __all__ = [
+    "compile_a2ui_express",
     'ADKAgent',
     'AgentResolver',
     'add_adk_fastapi_endpoint',

@@ -292,33 +292,8 @@ private func encodeUserMessage(_ message: any Message, encoder: JSONEncoder) thr
                     binaryDict["filename"] = filename
                 }
                 contentArray.append(binaryDict)
-            } else if let imagePart = part as? ImageInputContent {
-                var d: [String: Any] = ["type": "image"]
-                if let url = imagePart.url { d["url"] = url }
-                if let data = imagePart.data { d["data"] = data }
-                if let detail = imagePart.detail { d["detail"] = detail }
-                if let mimeType = imagePart.mimeType { d["mimeType"] = mimeType }
-                contentArray.append(d)
-            } else if let audioPart = part as? AudioInputContent {
-                var d: [String: Any] = ["type": "audio"]
-                if let url = audioPart.url { d["url"] = url }
-                if let data = audioPart.data { d["data"] = data }
-                if let format = audioPart.format { d["format"] = format }
-                if let mimeType = audioPart.mimeType { d["mimeType"] = mimeType }
-                contentArray.append(d)
-            } else if let videoPart = part as? VideoInputContent {
-                var d: [String: Any] = ["type": "video"]
-                if let url = videoPart.url { d["url"] = url }
-                if let data = videoPart.data { d["data"] = data }
-                if let mimeType = videoPart.mimeType { d["mimeType"] = mimeType }
-                contentArray.append(d)
-            } else if let docPart = part as? DocumentInputContent {
-                var d: [String: Any] = ["type": "document"]
-                if let url = docPart.url { d["url"] = url }
-                if let data = docPart.data { d["data"] = data }
-                if let mimeType = docPart.mimeType { d["mimeType"] = mimeType }
-                if let title = docPart.title { d["title"] = title }
-                contentArray.append(d)
+            } else if let mediaPart = part as? any MediaInputContent {
+                contentArray.append(try mediaPart.wireObject)
             }
         }
         dict["content"] = contentArray

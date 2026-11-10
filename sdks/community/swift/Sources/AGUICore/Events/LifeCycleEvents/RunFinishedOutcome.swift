@@ -8,7 +8,6 @@
 /// ```json
 /// { "type": "success" }
 /// { "type": "interrupt", "interrupts": [ { "id": "...", "reason": "..." } ] }
-/// { "type": "cancelled" }
 /// ```
 ///
 /// A `nil` outcome on `RunFinishedEvent` means the field was absent or `null` —
@@ -23,6 +22,11 @@ public enum RunFinishedOutcome: Equatable, Hashable, Sendable {
     /// Wire: `{ "type": "success" }`
     case success
 
+    /// The run was stopped before it completed, without failing.
+    ///
+    /// Wire: `{ "type": "cancelled" }`
+    case cancelled
+
     /// The run paused and is waiting for human input.
     ///
     /// Wire: `{ "type": "interrupt", "interrupts": [...] }`
@@ -31,8 +35,4 @@ public enum RunFinishedOutcome: Equatable, Hashable, Sendable {
     /// the agent is waiting for. Resume the run by sending a new `RunAgentInput`
     /// with a `resume` array referencing each interrupt's `id`.
     case interrupt([Interrupt])
-
-    /// The run stopped before completion without failing.
-    /// Wire: `{ "type": "cancelled" }`
-    case cancelled
 }

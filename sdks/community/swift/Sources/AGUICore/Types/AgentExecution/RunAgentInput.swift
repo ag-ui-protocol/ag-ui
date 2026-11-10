@@ -230,17 +230,11 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
         try container.encodeIfPresent(parentRunId, forKey: .parentRunId)
 
-        // Encode state: send null when empty so backends treat it as "no state".
-        // An empty {} object causes some adapters (e.g. claude-agent-sdk) to
-        // spin up unnecessary state-management infrastructure. null is the
-        // correct sentinel for "caller has no state to manage."
+        // Protocol 1.0 permits omission, but not a null state. Preserve the
+        // caller's empty object rather than emitting a schema-invalid sentinel.
         let stateObject = try JSONSerialization.jsonObject(with: state)
-        if let stateDict = stateObject as? [String: Any], stateDict.isEmpty {
-            try container.encodeNil(forKey: .state)
-        } else {
-            var stateContainer = container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: .state)
-            try stateContainer.encodeJSONObject(stateObject)
-        }
+        var stateContainer = container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: .state)
+        try stateContainer.encodeJSONObject(stateObject)
 
         // Encode messages as polymorphic array using MessageEncoder
         let messageEncoder = MessageEncoder()

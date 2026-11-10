@@ -6,24 +6,23 @@ import {
   BaseEvent,
   EventType,
   Message,
-  AssistantMessage,
-  ToolMessage,
   ToolCall,
   ActivitySnapshotEvent,
   ToolCallResultEvent,
   RunFinishedEvent,
+  RunStartedEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
+  MessagesSnapshotEvent,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
   Tool,
   contentToText,
 } from "@ag-ui/client";
 import { Observable, Subscription } from "rxjs";
 
-import {
-  A2UIMiddlewareConfig,
-  A2UIForwardedProps,
-  A2UIUserAction,
-} from "./types";
+import { A2UIMiddlewareConfig, A2UIForwardedProps } from "./types";
 import {
   RENDER_A2UI_TOOL,
   RENDER_A2UI_TOOL_NAME,
@@ -44,6 +43,18 @@ import {
   MAX_A2UI_ATTEMPTS,
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
+
+// The run-correlated name is a reserved transport marker, independent of IDs,
+// roles rewritten by adapters, content encoding, and optional provider artifacts.
+// Initial caller assistant/tool history stays public; adapters must clear this
+// name when constructing independent public outputs rather than echoing context.
+const USER_ACTION_CONTEXT_NAME_PREFIX = "a2ui_action_context_";
+const USER_ACTION_CONTEXT_NAME = /^a2ui_action_context_[A-Za-z0-9_-]{43}$/;
+const USER_ACTION_CONTEXT_PREFIX = "A2UI user action:\n";
+
+function isUserActionContextName(name: unknown): boolean {
+  return typeof name === "string" && USER_ACTION_CONTEXT_NAME.test(name);
+}
 
 /**
  * Detect a structured hard-failure envelope produced by the toolkit's recovery
@@ -245,7 +256,7 @@ export class A2UIMiddleware extends Middleware {
     // extractFrontendCatalogId and the catalogId resolution in processStream).
     const frontendCatalogId = extractFrontendCatalogId(input);
 
-    // Process user action from forwardedProps (append synthetic messages)
+    // Process user action from forwardedProps as user input
     const recovery = this.recoverUnansweredCalls(input);
     const enhancedInput = this.processUserAction(recovery.input);
 
@@ -257,17 +268,85 @@ export class A2UIMiddleware extends Middleware {
       ? this.injectToolGuidelines(this.injectToolAndFlag(withSchema))
       : withSchema;
 
-    // Process the event stream using runNextWithState for automatic message tracking
-    const stream = this.processStream(
-      this.runNextWithState(finalInput, next),
-      frontendCatalogId,
-      this.getValidationCatalog(finalInput),
-      { input: finalInput, next, rounds: 0 },
-    );
-    return new Observable((subscriber) =>
-      stream.subscribe({
+    return new Observable((subscriber) => {
+      // First observation fixes ownership for this subscription. Later optional
+      // fields cannot publish private context or hide a proven public message.
+      const visibility = new Map<string, "public" | "private">();
+      const projectMessages = (
+        messages: Message[],
+        initialInput = false,
+      ): Message[] => {
+        for (const message of messages) {
+          if (!visibility.has(message.id)) {
+            visibility.set(
+              message.id,
+              isUserActionContextName(
+                "name" in message ? message.name : undefined,
+              ) &&
+                (!initialInput || message.role === "user")
+                ? "private"
+                : "public",
+            );
+          }
+        }
+        return messages.filter(
+          (message) => visibility.get(message.id) !== "private",
+        );
+      };
+      projectMessages(finalInput.messages, true);
+
+      // Keep the model's complete context inside private stream bookkeeping.
+      // Project only the two canonical history-bearing events the SDK applies.
+      const stream = this.processStream(
+        this.runNextWithState(finalInput, next),
+        frontendCatalogId,
+        this.getValidationCatalog(finalInput),
+        { input: finalInput, next, rounds: 0 },
+      );
+      return stream.subscribe({
         next: (event) => {
-          subscriber.next(event);
+          let outwardEvent = event;
+          if (event.type === EventType.MESSAGES_SNAPSHOT) {
+            const snapshot = event as MessagesSnapshotEvent;
+            outwardEvent = {
+              ...snapshot,
+              messages: projectMessages(snapshot.messages),
+            } as MessagesSnapshotEvent;
+          } else if (event.type === EventType.RUN_STARTED) {
+            const started = event as RunStartedEvent;
+            if (started.input?.messages) {
+              outwardEvent = {
+                ...started,
+                input: {
+                  ...started.input,
+                  messages: projectMessages(started.input.messages),
+                },
+              } as RunStartedEvent;
+            }
+          } else if (
+            event.type === EventType.TEXT_MESSAGE_START ||
+            event.type === EventType.TEXT_MESSAGE_CONTENT ||
+            event.type === EventType.TEXT_MESSAGE_END
+          ) {
+            const text = event as
+              | TextMessageStartEvent
+              | TextMessageContentEvent
+              | TextMessageEndEvent;
+            if (
+              event.type === EventType.TEXT_MESSAGE_START &&
+              !visibility.has(text.messageId)
+            ) {
+              const start = text as TextMessageStartEvent;
+              visibility.set(
+                start.messageId,
+                isUserActionContextName(start.name) ? "private" : "public",
+              );
+            }
+            if (visibility.get(text.messageId) === "private") {
+              return;
+            }
+          }
+          subscriber.next(outwardEvent);
           if (event.type === EventType.RUN_STARTED) {
             for (const result of recovery.results) {
               subscriber.next(result);
@@ -283,8 +362,8 @@ export class A2UIMiddleware extends Middleware {
         },
         error: (error) => subscriber.error(error),
         complete: () => subscriber.complete(),
-      }),
-    );
+      });
+    });
   }
 
   /**
@@ -324,7 +403,7 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Check forwardedProps for a2uiAction and append synthetic tool call messages
+   * Append UI actions as user input, preserving the model's original tool history.
    */
   private processUserAction(input: RunAgentInput): RunAgentInput {
     const forwardedProps = input.forwardedProps as
@@ -336,67 +415,35 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Hash the run identity to keep retries stable and synthetic IDs bounded.
-    // A new click starts a new run, even when its payload is unchanged.
-    const actionId = createHash("sha256").update(input.runId).digest("hex");
-    const assistantMessageId = `a2ui-action-assistant-${actionId}`;
-    const toolCallId = actionId;
-    const toolMessageId = `a2ui-action-result-${actionId}`;
-
-    // Create synthetic assistant message with tool call
-    const syntheticAssistantMessage: AssistantMessage = {
-      id: assistantMessageId,
-      role: "assistant",
-      content: "",
-      toolCalls: [
-        {
-          id: toolCallId,
-          type: "function",
-          function: {
-            name: LOG_A2UI_EVENT_TOOL_NAME,
-            arguments: JSON.stringify(userAction),
-          },
-        },
-      ],
-    };
-
-    // Create synthetic tool result message
-    const resultContent = this.formatUserActionResult(userAction);
-    const syntheticToolMessage: ToolMessage = {
-      id: toolMessageId,
-      role: "tool",
-      toolCallId: toolCallId,
-      content: resultContent,
-    };
-
-    // Append synthetic messages to existing messages (so they appear as the latest action)
-    const messages: Message[] = [
-      ...(input.messages || []),
-      syntheticAssistantMessage,
-      syntheticToolMessage,
-    ];
+    // A retry keeps its identity; a separate click gets a new run ID even when
+    // its payload is identical. Hashing also bounds the resulting message ID.
+    const actionHash = createHash("sha256").update(input.runId).digest();
+    const messageId = `a2ui-action-user-${actionHash.toString("hex")}`;
+    // 20-character prefix + 43-character unpadded digest fits provider names.
+    const contextName = `${USER_ACTION_CONTEXT_NAME_PREFIX}${actionHash.toString("base64url")}`;
+    const messages = input.messages || [];
+    if (
+      messages.some(
+        (message) =>
+          message.role === "user" &&
+          (message.id === messageId || message.name === contextName),
+      )
+    ) {
+      return input;
+    }
 
     return {
       ...input,
-      messages,
+      messages: [
+        ...messages,
+        {
+          id: messageId,
+          role: "user",
+          name: contextName,
+          content: `${USER_ACTION_CONTEXT_PREFIX}${JSON.stringify(userAction)}`,
+        },
+      ],
     };
-  }
-
-  /**
-   * Format the user action result message for the agent
-   */
-  private formatUserActionResult(action: A2UIUserAction): string {
-    const actionName = action.name ?? "unknown_action";
-    const surfaceId = action.surfaceId ?? "unknown_surface";
-    const componentId = action.sourceComponentId;
-    const contextStr = action.context ? JSON.stringify(action.context) : "{}";
-
-    let message = `User performed action "${actionName}" on surface "${surfaceId}"`;
-    if (componentId) {
-      message += ` (component: ${componentId})`;
-    }
-    message += `. Context: ${contextStr}`;
-    return message;
   }
 
   /**
@@ -565,10 +612,75 @@ export class A2UIMiddleware extends Middleware {
           : new Set(this.config.a2uiGenerationToolNames);
       let currentOuterCall: ToolCallStartEvent | null = null;
 
+      // Explicit result envelopes can resolve a call even when argument
+      // extraction did not paint. Preserve those paints and adapter failures.
+      const settledActivityKeys = new Set<string>();
+      type StreamingCall = NonNullable<
+        ReturnType<typeof streamingToolCalls.get>
+      >;
+      const terminalFailure = (entry: StreamingCall) => {
+        let args;
+        try {
+          args = JSON.parse(entry.args);
+        } catch {
+          return { error: "A2UI tool arguments must be complete valid JSON." };
+        }
+        if (
+          !args ||
+          typeof args.surfaceId !== "string" ||
+          !args.surfaceId.trim()
+        ) {
+          return {
+            error: "A2UI tool arguments require a non-empty surfaceId.",
+          };
+        }
+        const validation = validateA2UIComponents({
+          components: args.components,
+          data: args.data,
+          catalog,
+        });
+        if (!validation.valid) {
+          return {
+            error:
+              "Invalid A2UI components: " +
+              validation.errors.map((e) => e.message).join("; "),
+            errors: validation.errors,
+          };
+        }
+        if (!entry.componentsEmitted || entry.componentsRejected) {
+          return { error: "The A2UI interface did not emit a valid surface." };
+        }
+        return null;
+      };
+      const finalizeActivities = () => {
+        // Only the last attempt owns a shared outer activity. An earlier failed
+        // attempt must never erase its successful retry or a sibling surface.
+        const latestByKey = new Map<string, StreamingCall>();
+        for (const [id, entry] of streamingToolCalls) {
+          latestByKey.set(entry.outerCallId ?? id, entry);
+        }
+        for (const [key, entry] of latestByKey) {
+          if (settledActivityKeys.has(key)) continue;
+          const failure = terminalFailure(entry);
+          if (failure) {
+            subscriber.next(
+              this.buildLifecycleActivity(key, {
+                status: "failed",
+                ...failure,
+              }),
+            );
+            settledActivityKeys.add(key);
+          }
+        }
+      };
+
       const subscription = source.subscribe({
         next: (eventWithState) => {
           const event = eventWithState.event;
-          if (event.type === EventType.RUN_ERROR) errored = true;
+          if (event.type === EventType.RUN_ERROR) {
+            errored = true;
+            finalizeActivities();
+          }
 
           if (event.type === EventType.TOOL_CALL_START) {
             const startEvent = event as ToolCallStartEvent;
@@ -612,6 +724,7 @@ export class A2UIMiddleware extends Middleware {
               // "building"; a subsequent attempt means we're already "retrying"
               // (a prior attempt's components were rejected), so keep that state.
               const key = outerCallId ?? startEvent.toolCallId;
+              settledActivityKeys.delete(key);
               const attempt = (attemptCountByKey.get(key) ?? 0) + 1;
               attemptCountByKey.set(key, attempt);
               lastTokenEmitByKey.set(key, 0);
@@ -730,23 +843,13 @@ export class A2UIMiddleware extends Middleware {
                       streaming.args,
                       "components",
                     );
-                    if (
-                      result &&
-                      result.arrayClosed &&
-                      result.items.length > 0 &&
-                      result.items.every(
-                        (c) =>
-                          c &&
-                          typeof c === "object" &&
-                          typeof (c as any).component === "string",
-                      )
-                    ) {
+                    if (result && result.arrayClosed) {
                       const components = result.items as Array<
                         Record<string, unknown>
                       >;
-                      // Semantic gate (OSS-162): never paint an UNVALIDATED
-                      // component tree. The structural check above only proves
-                      // the array closed with typed items; here we enforce
+                      // Validate every closed array, including empty arrays and
+                      // malformed items; type-less items must fail, not wait
+                      // forever for more input. Here we enforce
                       // root/catalog/required-prop/child-ref validity against the
                       // catalog. Bindings are DEFERRED (validateBindings: false) —
                       // the data model has not streamed yet, so resolving them
@@ -1011,12 +1114,26 @@ export class A2UIMiddleware extends Middleware {
                     // splitting schema and data would cause the renderer to
                     // crash on unresolved path bindings before data exists.
                     // Resolve from this call, not whichever sibling started last.
-                    for (const activityEvent of this.createA2UIActivityEvents(
+                    const activityKey =
+                      streamingEntry?.outerCallId ?? resultEvent.toolCallId;
+                    const activities = this.createA2UIActivityEvents(
                       operationsToEmit,
-                      streamingEntry?.outerCallId ?? resultEvent.toolCallId,
-                    )) {
-                      subscriber.next(activityEvent);
+                      activityKey,
+                    );
+                    for (const [index, activityEvent] of activities.entries()) {
+                      // A tracked render already owns one loading slot. The
+                      // first fallback surface replaces it, even when the result
+                      // contains multiple surfaces; siblings retain their IDs.
+                      subscriber.next(
+                        index === 0 && attemptCountByKey.has(activityKey)
+                          ? {
+                              ...activityEvent,
+                              messageId: `a2ui-surface-${activityKey}`,
+                            }
+                          : activityEvent,
+                      );
                     }
+                    settledActivityKeys.add(activityKey);
                   }
                 } else {
                   // Hard-failure path (OSS-162): an exhausted recovery loop
@@ -1042,6 +1159,7 @@ export class A2UIMiddleware extends Middleware {
                           : maxAttempts,
                       }),
                     );
+                    settledActivityKeys.add(failKey);
                     retriedOuterKeys.delete(failKey);
                   }
                 }
@@ -1055,6 +1173,7 @@ export class A2UIMiddleware extends Middleware {
           }
         },
         error: (err) => {
+          finalizeActivities();
           // On error, flush any held event and propagate error
           if (heldRunFinished) {
             subscriber.next(heldRunFinished.event);
@@ -1070,6 +1189,7 @@ export class A2UIMiddleware extends Middleware {
               (outcome && outcome.type !== "success") ||
               subscriber.closed
             ) {
+              finalizeActivities();
               subscriber.next(heldRunFinished.event);
               subscriber.complete();
               return;
@@ -1092,6 +1212,7 @@ export class A2UIMiddleware extends Middleware {
               continuation.rounds >= 10 &&
               pendingRenderCalls.length
             ) {
+              finalizeActivities();
               subscriber.error(
                 new Error("A2UI continuation limit reached (10)"),
               );
@@ -1100,21 +1221,10 @@ export class A2UIMiddleware extends Middleware {
             for (const toolCall of pendingRenderCalls) {
               if (subscriber.closed) return;
               const entry = streamingToolCalls.get(toolCall.id);
-              let valid =
-                !!entry?.componentsEmitted && !entry.componentsRejected;
-              if (valid) {
-                try {
-                  const args = JSON.parse(toolCall.function.arguments);
-                  if (Array.isArray(args.components))
-                    valid = validateA2UIComponents({
-                      components: args.components,
-                      data: args.data,
-                      catalog,
-                    }).valid;
-                } catch {
-                  valid = false;
-                }
-              }
+              const failure = entry
+                ? terminalFailure(entry)
+                : { error: "A2UI call was not streamed." };
+              const valid = !failure;
               const resultEvent: ToolCallResultEvent = {
                 type: EventType.TOOL_CALL_RESULT,
                 messageId: randomUUID(),
@@ -1128,7 +1238,7 @@ export class A2UIMiddleware extends Middleware {
                     : {
                         status: "failed",
                         code: "a2ui_render_failed",
-                        error: "The A2UI interface could not be rendered.",
+                        ...failure,
                       },
                 ),
               };
@@ -1140,19 +1250,8 @@ export class A2UIMiddleware extends Middleware {
                 content: resultEvent.content,
                 ...(!valid ? { error: "" } : {}),
               });
-              if (!valid) {
-                // Inner attempts share their outer activity. Do not overwrite a
-                // successful later attempt or an adapter-owned retry lifecycle.
-                if (!entry?.outerCallId)
-                  subscriber.next(
-                    this.buildLifecycleActivity(toolCall.id, {
-                      status: "failed",
-                      error:
-                        "The interface could not be rendered. Please try again.",
-                    }),
-                  );
-              }
             }
+            finalizeActivities();
             const messages = [...heldRunFinished.messages, ...results];
             if (
               continuation &&
@@ -1200,6 +1299,7 @@ export class A2UIMiddleware extends Middleware {
             subscriber.next(heldRunFinished.event);
             heldRunFinished = null;
           }
+          finalizeActivities();
           subscriber.complete();
         },
       });

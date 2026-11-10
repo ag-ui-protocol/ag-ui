@@ -449,6 +449,19 @@ class EventsTest < Minitest::Test
         )
       end
 
+      should "serialize with protocol version" do
+        event = AgUiProtocol::Core::Events::RunStartedEvent.new(thread_id: "t1", run_id: "r1", protocol_version: "v1")
+        assert_event_payload(
+          event,
+          {
+            "type" => "RUN_STARTED",
+            "threadId" => "t1",
+            "runId" => "r1",
+            "protocolVersion" => "v1"
+          }
+        )
+      end
+
       should "raise when run_id is missing" do
         assert_raises(ArgumentError) do
           AgUiProtocol::Core::Events::RunStartedEvent.new(thread_id: "t1")

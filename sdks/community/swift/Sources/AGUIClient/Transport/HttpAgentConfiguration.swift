@@ -54,17 +54,25 @@ public struct HttpAgentConfiguration: Sendable {
     /// 2. `bearerToken` → `Authorization: Bearer <token>`
     /// 3. `apiKey` → `<apiKeyHeader>: <key>`
     ///
+    /// Header names are compared case-insensitively when applying this priority.
+    ///
     /// - Returns: Merged header dictionary ready for request construction.
     public func buildHeaders() -> [String: String] {
         var result: [String: String] = [:]
+        func setHeader(_ name: String, value: String) {
+            if let existing = result.keys.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+                result.removeValue(forKey: existing)
+            }
+            result[name] = value
+        }
         if let key = apiKey {
-            result[apiKeyHeader] = sanitizeHeaderValue(key)
+            setHeader(apiKeyHeader, value: sanitizeHeaderValue(key))
         }
         if let token = bearerToken {
-            result["Authorization"] = "Bearer \(sanitizeHeaderValue(token))"
+            setHeader("Authorization", value: "Bearer \(sanitizeHeaderValue(token))")
         }
-        for (k, v) in headers {
-            result[k] = sanitizeHeaderValue(v)
+        for (k, v) in headers.sorted(by: { $0.key < $1.key }) {
+            setHeader(k, value: sanitizeHeaderValue(v))
         }
         return result
     }
@@ -111,19 +119,19 @@ public struct HttpAgentConfiguration: Sendable {
         self.retryPolicy = retryPolicy
         self.headers = headers
         self.debug = debug
-        self.bearerToken = nil
-        self.apiKey = nil
-        self.apiKeyHeader = "X-API-Key"
+        bearerToken = nil
+        apiKey = nil
+        apiKeyHeader = "X-API-Key"
     }
 }
 
-extension HttpAgentConfiguration {
+public extension HttpAgentConfiguration {
     /// Creates a configuration with the specified base URL string.
     ///
     /// - Parameter baseURLString: The base URL string
     /// - Throws: `ClientError.invalidURL` if the URL string is invalid
     /// - Returns: A new configuration instance
-    public static func create(baseURLString: String) throws -> HttpAgentConfiguration {
+    static func create(baseURLString: String) throws -> HttpAgentConfiguration {
         guard let url = URL(string: baseURLString) else {
             throw ClientError.invalidURL
         }

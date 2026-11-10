@@ -4,7 +4,7 @@ import XCTest
 
 final class SchemaFixtureTests: XCTestCase {
     private var repository: URL {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        URL(fileURLWithPath: #filePath).resolvingSymlinksInPath().deletingLastPathComponent()
             .appendingPathComponent("../../../../../")
             .standardizedFileURL
     }

@@ -10,7 +10,7 @@ struct RunFinishedEventDTO {
     let timestamp: Int64?
 
     static func decode(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> RunFinishedEventDTO {
-        guard let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let jsonObject = try? EventJSONField.envelope(["threadId", "runId", "outcome", "timestamp"], from: data) else {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(codingPath: [], debugDescription: "Expected JSON object at root")
             )
@@ -58,10 +58,7 @@ struct RunFinishedEventDTO {
 
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
 
-        var resultData: Data?
-        if let resultValue = jsonObject["result"], !(resultValue is NSNull) {
-            resultData = try? JSONSerialization.data(withJSONObject: resultValue)
-        }
+        let resultData = try EventJSONField.data("result", from: data)
 
         return RunFinishedEventDTO(threadId: threadId, runId: runId, outcome: outcome, result: resultData, timestamp: timestamp)
     }

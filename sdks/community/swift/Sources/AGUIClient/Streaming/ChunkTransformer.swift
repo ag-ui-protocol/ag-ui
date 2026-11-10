@@ -195,7 +195,11 @@ private actor EventTransformer {
 
         case let content as TextMessageContentEvent:
             mode = .text
-            textState = TextState(messageId: content.messageId, role: "assistant", fromChunk: false)
+            if textState?.messageId == content.messageId {
+                textState?.fromChunk = false
+            } else {
+                textState = TextState(messageId: content.messageId, role: "assistant", fromChunk: false)
+            }
             continuation.yield(event)
 
         case is TextMessageEndEvent:

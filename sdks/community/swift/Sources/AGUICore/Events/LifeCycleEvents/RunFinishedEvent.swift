@@ -77,10 +77,10 @@ extension RunFinishedEvent: CustomStringConvertible {
         switch outcome {
         case .success:
             outcomeDescription = "success"
-        case .interrupt(let interrupts):
-            outcomeDescription = "interrupt(\(interrupts.count) interrupt(s))"
         case .cancelled:
             outcomeDescription = "cancelled"
+        case .interrupt(let interrupts):
+            outcomeDescription = "interrupt(\(interrupts.count) interrupt(s))"
         case nil:
             outcomeDescription = "nil"
         }

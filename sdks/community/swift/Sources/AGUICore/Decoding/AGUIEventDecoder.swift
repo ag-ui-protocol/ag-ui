@@ -122,8 +122,8 @@ public struct AGUIEventDecoder: Sendable {
     public struct Configuration: Sendable {
         /// Strategy for handling unknown or unsupported event types.
         ///
-        /// Defaults to `.throwError` (strict mode).
-        public var unknownEventStrategy: UnknownEventStrategy = .throwError
+        /// Defaults to `.returnUnknown` for forward-compatible streams.
+        public var unknownEventStrategy: UnknownEventStrategy = .returnUnknown
         /// Enables stripping of optional future fields at the client boundary.
         public var enforceForwardCompatibility: Bool = false
 
@@ -233,6 +233,9 @@ public struct AGUIEventDecoder: Sendable {
     /// }
     /// ```
     public func decode(_ data: Data) throws -> any AGUIEvent {
+        // Bound nesting before handing any part of the event to Foundation.
+        do { _ = try AGUIJSON.parse(data) }
+        catch { throw EventDecodingError.invalidJSON }
         let decoder = makeDecoder()
 
         let disc = try decodeTypeDiscriminator(from: data, decoder: decoder)
@@ -320,7 +323,7 @@ public struct AGUIEventDecoder: Sendable {
             let id = UUID().uuidString
             remapState.currentMessageId = id
             targetType = .reasoningMessageStart
-            extraFields = ["messageId": id, "role": "assistant"]
+            extraFields = ["messageId": id, "role": "reasoning"]
 
         case "THINKING_TEXT_MESSAGE_CONTENT":
             let id = remapState.currentMessageId ?? UUID().uuidString

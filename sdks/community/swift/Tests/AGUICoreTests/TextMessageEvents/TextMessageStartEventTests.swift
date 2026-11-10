@@ -149,23 +149,11 @@ final class TextMessageStartEventTests: XCTestCase,
         }
     }
 
-    func test_decodeTextMessageStart_missingRole_throwsDecodingFailed() {
-        // Given
-        let data = jsonData("""
-        {
-          "type": "TEXT_MESSAGE_START",
-          "messageId": "msg-123"
-        }
-        """)
-        let decoder = makeStrictDecoder()
-
-        // When / Then
-        XCTAssertThrowsError(try decoder.decode(data)) { error in
-            guard case .decodingFailed(let message) = error as? EventDecodingError else {
-                return XCTFail("Expected decodingFailed, got \(error)")
-            }
-            XCTAssertTrue(message.contains("role") || message.contains("Missing key"))
-        }
+    func test_decodeTextMessageStart_missingRole_defaultsToAssistant() throws {
+        let event = try makeStrictDecoder().decode(jsonData(
+            #"{"type":"TEXT_MESSAGE_START","messageId":"msg-123"}"#
+        ))
+        XCTAssertEqual((event as? TextMessageStartEvent)?.role, "assistant")
     }
 
     func test_decodeTextMessageStart_wrongTypeForMessageId_throwsDecodingFailed() {

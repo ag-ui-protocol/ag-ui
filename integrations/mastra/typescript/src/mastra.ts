@@ -35,7 +35,11 @@ import type { Agent as LocalMastraAgent } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
 import { randomUUID } from "@ag-ui/client";
 import jsonpatch from "fast-json-patch";
-import { parsePartialJson } from "@ai-sdk/ui-utils";
+// Vendored synchronous copy of @ai-sdk/ui-utils' parsePartialJson, as Mastra did in
+// https://github.com/mastra-ai/mastra/pull/27297. Fixes
+// https://github.com/ag-ui-protocol/ag-ui/issues/3096 and
+// https://github.com/ag-ui-protocol/ag-ui/issues/2874.
+import { parsePartialJson } from "./utils/ai-sdk-v4";
 import { Observable, type Subscriber } from "rxjs";
 import { MastraClient } from "@mastra/client-js";
 import {

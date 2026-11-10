@@ -58,6 +58,8 @@ on:
           - integration-llama-index
           - integration-mastra
           - integration-omnara
+          - integration-openai-agents-py
+          - integration-openai-agents-ts
           - integration-pydantic-ai
           - integration-spring-ai
           - integration-spring-ai-java

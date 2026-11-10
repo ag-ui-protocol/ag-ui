@@ -106,8 +106,8 @@ final class AudioInputContentTests: XCTestCase {
         let contentArray = json?["content"] as? [[String: Any]]
 
         XCTAssertEqual(contentArray?[0]["type"] as? String, "audio")
-        XCTAssertEqual(contentArray?[0]["url"] as? String, "https://example.com/clip.wav")
-        XCTAssertEqual(contentArray?[0]["format"] as? String, "wav")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["value"] as? String, "https://example.com/clip.wav")
+        XCTAssertEqual((contentArray?[0]["metadata"] as? [String: Any])?["format"] as? String, "wav")
     }
 
     // MARK: - Equatable / Hashable / Sendable
@@ -144,8 +144,8 @@ final class AudioInputContentTests: XCTestCase {
         XCTAssertNil(AudioInputContent(url: "https://example.com/clip.mp3").mimeType)
     }
 
-    func test_mimeType_isNilByDefault_data() {
-        XCTAssertNil(AudioInputContent(data: "base64audio").mimeType)
+    func test_mimeType_defaultsToOctetStream_data() {
+        XCTAssertEqual(AudioInputContent(data: "base64audio").mimeType, "application/octet-stream")
     }
 
     func test_mimeType_roundTripsViaURLInit() {
@@ -183,6 +183,6 @@ final class AudioInputContentTests: XCTestCase {
         let data = try encoder.encode(userMsg)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let contentArray = json?["content"] as? [[String: Any]]
-        XCTAssertEqual(contentArray?[0]["mimeType"] as? String, "audio/mpeg")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["mimeType"] as? String, "audio/mpeg")
     }
 }

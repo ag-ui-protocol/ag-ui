@@ -47,4 +47,13 @@ final class PatchPrecisionProbeTests: XCTestCase {
         let different = Data("[{\"op\":\"test\",\"path\":\"/large\",\"value\":10e9223372036854775808}]".utf8)
         XCTAssertThrowsError(try PatchApplicator().apply(patch: different, to: state))
     }
+    func testZeroPaddedExponentsCompareNumerically() throws {
+        for (lhs, rhs) in [("1e00", "1"), ("1e+01", "10"), ("1e-01", "0.1"),
+                           ("10e-001", "1"), ("1e-000", "1"), ("1e000000000000000000001", "10")] {
+            let state = Data("{\"n\":\(lhs)}".utf8)
+            let patch = Data("[{\"op\":\"test\",\"path\":\"/n\",\"value\":\(rhs)}]".utf8)
+            XCTAssertNoThrow(try PatchApplicator().apply(patch: patch, to: state), "\(lhs) == \(rhs)")
+        }
+    }
+
 }

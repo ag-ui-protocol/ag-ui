@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Perfect Aduh. MIT License. See LICENSE for details.
+
 import AGUICore
 import Foundation
 
@@ -27,12 +29,11 @@ public struct PatchApplicator: Sendable {
             operations = array
         } catch { throw PatchError.invalidPatch("Unable to parse patch: \(error)") }
         var document = parsed
-        for (index, entry) in operations.enumerated() {
+        for entry in operations {
             guard let fields = entry.object, let op = fields["op"]?.string, let path = fields["path"]?.string
             else { throw PatchError.invalidPatch("Malformed operation") }
             guard ["add", "remove", "replace", "move", "copy", "test"].contains(op) else {
-                FileHandle.standardError.write(Data("Dropped unknown patch operation at /delta/\(index)\n".utf8))
-                continue
+                throw PatchError.invalidOperation("Unknown operation: \(op)")
             }
             let tokens = try pointer(path)
             switch op {
@@ -167,7 +168,8 @@ public struct PatchApplicator: Sendable {
             magnitude = subtractDigits(b, a)
             negative = shiftNegative
         }
-        let canonical = magnitude.reversed().map(String.init).joined()
+        let trimmed = magnitude.reversed().drop(while: { $0 == 0 })
+        let canonical = trimmed.isEmpty ? "0" : trimmed.map(String.init).joined()
         return (negative && canonical != "0" ? "-" : "") + canonical
     }
 

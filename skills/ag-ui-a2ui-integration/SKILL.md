@@ -1,7 +1,7 @@
 ---
 name: ag-ui-a2ui-integration
 description: "Use when adding A2UI rendering to any AG-UI-supported framework or custom AG-UI application, scaffolding an AG-UI app that should render A2UI, adapting an AG-UI integration to emit A2UI surfaces, or wiring the AG-UI A2UI middleware/toolkit with a compatible renderer."
-version: 1.1.0
+version: 1.1.1
 ---
 
 # AG-UI + A2UI Integration Skill

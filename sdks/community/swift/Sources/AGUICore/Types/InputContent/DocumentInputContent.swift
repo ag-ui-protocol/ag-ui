@@ -2,55 +2,43 @@
 
 import Foundation
 
-/// Represents a document in multimodal user input.
-///
-/// `DocumentInputContent` carries document data either as a URL reference or as
-/// base64-encoded bytes. The optional `mimeType` and `title` fields provide
-/// metadata about the document.
-///
-/// - SeeAlso: ``InputContent``, ``UserMessage``
-public struct DocumentInputContent: InputContent, Hashable, Sendable {
+/// A document part using the AG-UI 1.0 source representation.
+public struct DocumentInputContent: InputContent, Hashable, Sendable, MediaInputContent {
+    public let type = "document"
+    public let source: InputContentSource
+    public let id: String?
+    /// Optional metadata as raw JSON bytes (including scalar and array values).
+    public let metadata: Data?
 
-    /// The content type discriminator (always `"document"`).
-    public let type: String
+    /// Compatibility accessor for URL-backed content.
+    public var url: String? { source.type == "url" ? source.value : nil }
+    /// Compatibility accessor for inline content.
+    public var data: String? { source.type == "data" ? source.value : nil }
+    public var mimeType: String? { source.mimeType }
 
-    /// Optional URL pointing to the document.
-    public let url: String?
-
-    /// Optional base64-encoded document data.
-    public let data: String?
-
-    /// Optional MIME type of the document (e.g., `"application/pdf"`, `"text/plain"`).
-    public let mimeType: String?
-
-    /// Optional human-readable title for the document.
-    public let title: String?
-
-    /// Creates document content from a URL.
-    ///
-    /// - Parameters:
-    ///   - url: URL pointing to the document
-    ///   - mimeType: Optional MIME type (e.g., `"application/pdf"`)
-    ///   - title: Optional document title
-    public init(url: String, mimeType: String? = nil, title: String? = nil) {
-        self.type = "document"
-        self.url = url
-        self.data = nil
-        self.mimeType = mimeType
-        self.title = title
+    /// Legacy hint, carried in metadata on the 1.0 wire.
+    public var title: String? {
+        guard let metadata,
+              let object = try? JSONSerialization.jsonObject(with: metadata) as? [String: Any] else { return nil }
+        return object["title"] as? String
     }
 
-    /// Creates document content from base64-encoded data.
-    ///
-    /// - Parameters:
-    ///   - data: Base64-encoded document bytes
-    ///   - mimeType: Optional MIME type (e.g., `"application/pdf"`)
-    ///   - title: Optional document title
+    public init(source: InputContentSource, id: String? = nil, metadata: Data? = nil) {
+        self.source = source
+        self.id = id
+        self.metadata = metadata
+    }
+
+    /// Creates URL-backed content. Legacy hints are carried in metadata.
+    public init(url: String, mimeType: String? = nil, title: String? = nil) {
+        let metadata = title.flatMap { try? JSONSerialization.data(withJSONObject: ["title": $0], options: .sortedKeys) }
+        self.init(source: .url(value: url, mimeType: mimeType), metadata: metadata)
+    }
+
+    /// Creates inline content. If omitted, the MIME type defaults to application/octet-stream.
+    /// Supply the actual MIME type whenever known.
     public init(data: String, mimeType: String? = nil, title: String? = nil) {
-        self.type = "document"
-        self.url = nil
-        self.data = data
-        self.mimeType = mimeType
-        self.title = title
+        let metadata = title.flatMap { try? JSONSerialization.data(withJSONObject: ["title": $0], options: .sortedKeys) }
+        self.init(source: .data(value: data, mimeType: mimeType ?? "application/octet-stream"), metadata: metadata)
     }
 }
