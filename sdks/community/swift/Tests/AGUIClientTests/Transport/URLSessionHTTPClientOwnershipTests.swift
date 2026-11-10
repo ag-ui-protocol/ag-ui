@@ -5,9 +5,15 @@ import XCTest
 @testable import AGUIClient
 
 final class URLSessionHTTPClientOwnershipTests: XCTestCase {
-    func testDeinitDoesNotInvalidateCallerOwnedSession() {
-        let session = InvalidationTrackingSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
+    func testDeinitDoesNotInvalidateCallerOwnedSession() async {
+        let invalidated = expectation(description: "caller-owned session must remain valid")
+        invalidated.isInverted = true
+        let observer = SessionInvalidationObserver(expectation: invalidated)
+        let session = URLSession(configuration: .ephemeral, delegate: observer, delegateQueue: nil)
+        defer {
+            observer.stopObserving()
+            session.invalidateAndCancel()
+        }
         var client: URLSessionHTTPClient? = URLSessionHTTPClient(session: session)
         weak var weakClient = client
 
@@ -15,12 +21,19 @@ final class URLSessionHTTPClientOwnershipTests: XCTestCase {
         client = nil
 
         XCTAssertNil(weakClient, "The caller should retain the session, not the wrapper")
-        XCTAssertEqual(session.invalidationCount, 0)
+        await fulfillment(of: [invalidated], timeout: 0.2)
+        XCTAssertEqual(observer.invalidationCount, 0)
     }
 
-    func testDeinitDoesNotInvalidateSessionSharedByOtherClients() {
-        let session = InvalidationTrackingSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
+    func testDeinitDoesNotInvalidateSessionSharedByOtherClients() async {
+        let invalidated = expectation(description: "shared session must remain valid")
+        invalidated.isInverted = true
+        let observer = SessionInvalidationObserver(expectation: invalidated)
+        let session = URLSession(configuration: .ephemeral, delegate: observer, delegateQueue: nil)
+        defer {
+            observer.stopObserving()
+            session.invalidateAndCancel()
+        }
         var firstClient: URLSessionHTTPClient? = URLSessionHTTPClient(session: session)
         var secondClient: URLSessionHTTPClient? = URLSessionHTTPClient(session: session)
         weak var weakFirstClient = firstClient
@@ -31,17 +44,23 @@ final class URLSessionHTTPClientOwnershipTests: XCTestCase {
 
             XCTAssertNil(weakFirstClient)
             XCTAssertNotNil(weakSecondClient)
-            XCTAssertEqual(session.invalidationCount, 0, "Another client still uses the session")
         }
 
         secondClient = nil
 
         XCTAssertNil(weakSecondClient)
-        XCTAssertEqual(session.invalidationCount, 0, "The session still belongs to the caller")
+        await fulfillment(of: [invalidated], timeout: 0.2)
+        XCTAssertEqual(observer.invalidationCount, 0, "The session still belongs to the caller")
     }
 
-    func testDeinitInvalidatesOwnedSession() {
-        let session = InvalidationTrackingSession(configuration: .ephemeral)
+    func testDeinitInvalidatesOwnedSession() async {
+        let invalidated = expectation(description: "owned session invalidated")
+        let observer = SessionInvalidationObserver(expectation: invalidated)
+        let session = URLSession(configuration: .ephemeral, delegate: observer, delegateQueue: nil)
+        defer {
+            observer.stopObserving()
+            session.invalidateAndCancel()
+        }
         var client: URLSessionHTTPClient? = URLSessionHTTPClient(
             session: session,
             shouldInvalidateSession: true
@@ -49,19 +68,27 @@ final class URLSessionHTTPClientOwnershipTests: XCTestCase {
         weak var weakClient = client
 
         XCTAssertNotNil(weakClient)
-        XCTAssertEqual(session.invalidationCount, 0)
+        XCTAssertEqual(observer.invalidationCount, 0)
         client = nil
 
         XCTAssertNil(weakClient)
-        XCTAssertEqual(session.invalidationCount, 1)
+        await fulfillment(of: [invalidated], timeout: 2)
+        XCTAssertEqual(observer.invalidationCount, 1)
     }
 }
 
-/// Observes invalidation without creating a task on an invalidated session,
+/// Observes a real session without subclassing URLSession, whose initializers
+/// differ between Darwin and FoundationNetworking. Never requests work from an invalidated session,
 /// which can raise an Objective-C exception instead of a catchable Swift error.
-private final class InvalidationTrackingSession: URLSession, @unchecked Sendable {
+private final class SessionInvalidationObserver: NSObject, URLSessionDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private var expectation: XCTestExpectation?
+
+    init(expectation: XCTestExpectation) {
+        self.expectation = expectation
+        super.init()
+    }
 
     var invalidationCount: Int {
         lock.lock()
@@ -69,10 +96,16 @@ private final class InvalidationTrackingSession: URLSession, @unchecked Sendable
         return count
     }
 
-    override func invalidateAndCancel() {
+    func stopObserving() {
         lock.lock()
+        defer { lock.unlock() }
+        expectation = nil
+    }
+
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        lock.lock()
+        defer { lock.unlock() }
         count += 1
-        lock.unlock()
-        super.invalidateAndCancel()
+        expectation?.fulfill()
     }
 }
