@@ -312,6 +312,10 @@ jobs:
             test_path: tests/middlewareStarterTests
             services: ["dojo"]
             wait_on: http://localhost:9999
+          - suite: pi
+            test_path: tests/piTests
+            services: ["dojo", "pi"]
+            wait_on: http://localhost:9999,tcp:localhost:8032
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
             services: ["dojo", "pydantic-ai"]

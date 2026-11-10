@@ -736,6 +736,11 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  pi: () => ({
+    agentic_chat: ["server.ts", "conversation.ts", "client-tools.ts"].map((file) =>
+      path.join(__dirname, integrationsFolderPath, "community/pi/typescript/examples", file),
+    ),
+  }),
   "cloudflare-agents": (agentKeys: string[]) =>
     agentKeys.reduce(
       (acc, agentId) => ({

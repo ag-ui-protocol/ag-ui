@@ -39,6 +39,16 @@ The desktop/web default is `http://127.0.0.1:8080`. For a different Go `PORT` or
 
 Web and macOS are the required validation targets for this migration; build and interactive results will be recorded after integration. Android, iOS, Linux and Windows runners are retained and currently unverified. Physical devices need a reachable host and explicit Go bind address; Android emulators generally need their host bridge address. No mobile HTTP support is claimed.
 
+### Use Pi for Agentic Chat
+
+The [Pi TypeScript example](../../../../integrations/community/pi/typescript/README.md) also serves `/agentic_chat`. Start its server, then run the Flutter app with its base URL:
+
+```sh
+flutter run -d chrome --dart-define=AG_UI_BASE_URL=http://127.0.0.1:8032
+```
+
+Open **Agentic Chat** and ask the model to use `calculate` for `6 * 7`. Flutter executes the tool and sends its result back to Pi. Use the paired Go server for the other demos.
+
 ## Source provenance
 
 | Source | Revision | Disposition |

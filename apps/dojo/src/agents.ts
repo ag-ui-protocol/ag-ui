@@ -893,6 +893,10 @@ export const agentsIntegrations = {
       },
     ),
 
+  pi: async () => ({
+    agentic_chat: new HttpAgent({ url: `${envVars.piUrl}/agentic_chat` }),
+  }),
+
   watsonx: async () => {
     const agent = new WatsonxAgent({
       region: envVars.watsonxRegion,

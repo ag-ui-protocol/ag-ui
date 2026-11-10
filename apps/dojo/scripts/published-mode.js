@@ -110,6 +110,11 @@ const LANES = {
   },
   "mastra-agent-local": { npm: ["@ag-ui/mastra"] },
   "middleware-starter": { npm: ["@ag-ui/middleware-starter"] },
+  pi: {
+    npm: ["@ag-ui/encoder"],
+    npmRoots: ["integrations/community/pi/typescript"],
+    note: "example uses the local Pi adapter with published AG-UI dependencies",
+  },
   "pydantic-ai": {
     npm: ["@ag-ui/pydantic-ai"],
     python: { dir: "integrations/pydantic-ai/python/examples", tool: "uv", producers: ["pydantic-ai-slim"] },

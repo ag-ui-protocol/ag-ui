@@ -177,6 +177,11 @@ const ALL_TARGETS = {
     name: "Claude Managed Agents (TypeScript)",
     cwd: path.join(integrationsRoot, "claude-managed-agents/typescript"),
   },
+  pi: {
+    command: "pnpm install && pnpm exec nx run @ag-ui/pi:build",
+    name: "Pi",
+    cwd: gitRoot,
+  },
   "cloudflare-agents": {
     // Standalone install (own lockfile, keeps wrangler/workerd out of the root
     // lockfile); the linked @ag-ui packages are then built from the repo root.

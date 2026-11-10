@@ -397,6 +397,18 @@ const ALL_SERVICES = {
       },
     },
   ],
+  pi: [
+    {
+      command: "pnpm start",
+      name: "Pi",
+      cwd: path.join(integrationsRoot, "community/pi/typescript"),
+      env: {
+        PORT: 8032,
+        OPENAI_BASE_URL:
+          process.env.OPENAI_BASE_URL || `http://localhost:${AIMOCK_PORT}/v1`,
+      },
+    },
+  ],
   "cloudflare-agents": [
     {
       // wrangler dev runs the Worker on a local workerd with a local Durable
@@ -487,6 +499,7 @@ const ALL_SERVICES = {
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
+        PI_URL: "http://localhost:8032",
         OPENAI_AGENTS_PYTHON_URL: "http://localhost:8031",
         ...adkJsEnv,
         ...watsonxEnv,
@@ -532,6 +545,7 @@ const ALL_SERVICES = {
         LANGROID_URL: "http://localhost:8021",
         SPRING_AI_URL: "http://localhost:8028",
         CLOUDFLARE_AGENTS_URL: "http://localhost:8030",
+        PI_URL: "http://localhost:8032",
         OPENAI_AGENTS_PYTHON_URL: "http://localhost:8031",
         ...adkJsEnv,
         ...watsonxEnv,
