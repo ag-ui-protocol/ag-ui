@@ -66,6 +66,12 @@
     "notice": "integrations/community/omnara/typescript/LICENSE"
   },
   {
+    "directory": "integrations/community/pi/typescript",
+    "names": ["@ag-ui/pi"],
+    "license": "MIT",
+    "notice": "integrations/community/pi/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/community/spring-ai/typescript",
     "names": ["@ag-ui/spring-ai"],
     "license": "Apache-2.0",

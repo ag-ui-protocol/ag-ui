@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": true,
+    "paths": { "@ag-ui/pi": ["./src/index.ts"] }
+  },
+  "include": ["src", "examples"]
+}

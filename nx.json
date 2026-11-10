@@ -32,6 +32,7 @@
       "@ag-ui/mastra",
       "@ag-ui/omnara",
       "@ag-ui/openai-agents",
+      "@ag-ui/pi",
       "@ag-ui/pydantic-ai",
       "@ag-ui/spring-ai",
       "@ag-ui/watsonx",
