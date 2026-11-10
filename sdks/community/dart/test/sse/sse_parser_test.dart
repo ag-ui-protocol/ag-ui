@@ -280,6 +280,40 @@ void main() {
     });
 
     group('parseBytes', () {
+      test('rejects an oversized open line before a terminator or EOF',
+          () async {
+        var cancellations = 0;
+        final source = StreamController<List<int>>(
+          onCancel: () {
+            cancellations++;
+          },
+        );
+        final failure = Completer<Object>();
+        final subscription =
+            SseParser(maxDataCodeUnits: 8).parseBytes(source.stream).listen(
+          (_) => fail('an oversized open line must not emit a message'),
+          onError: (Object error) {
+            if (!failure.isCompleted) {
+              failure.complete(error);
+            }
+          },
+        );
+
+        try {
+          source.add(utf8.encode('data: 1234567890'));
+          await Future<void>.delayed(Duration.zero);
+          expect(failure.isCompleted, isTrue);
+          expect(await failure.future, isA<FormatException>());
+          expect(cancellations, 1);
+        } finally {
+          if (!failure.isCompleted) {
+            source.addError(StateError('test cleanup'));
+          }
+          await source.close();
+          await subscription.cancel();
+        }
+      });
+
       test('handles UTF-8 encoded bytes', () async {
         final text = 'data: hello 世界\n\n';
         final bytes = Stream.value(utf8.encode(text));
