@@ -1080,7 +1080,29 @@ export class A2UIMiddleware extends Middleware {
                 }
               }
 
-              if (!outerHasStreamedSurface) {
+              // Exhausted recovery is authoritative even after a valid streamed
+              // paint. Only successful operations belong behind the paint dedup.
+              const failure = tryParseRecoveryFailure(
+                contentToText(resultEvent.content),
+              );
+              if (failure) {
+                // Replace the same activity slot and preserve the adapter's
+                // attempt history and true cap reached.
+                const failKey =
+                  streamingEntry?.outerCallId ?? resultEvent.toolCallId;
+                subscriber.next(
+                  this.buildLifecycleActivity(failKey, {
+                    status: "failed",
+                    error: failure.error,
+                    attempts: failure.attempts,
+                    maxAttempts: Array.isArray(failure.attempts)
+                      ? failure.attempts.length || maxAttempts
+                      : maxAttempts,
+                  }),
+                );
+                settledActivityKeys.add(failKey);
+                retriedOuterKeys.delete(failKey);
+              } else if (!outerHasStreamedSurface) {
                 const parsed = tryParseA2UIOperations(
                   contentToText(resultEvent.content),
                 );
@@ -1134,33 +1156,6 @@ export class A2UIMiddleware extends Middleware {
                       );
                     }
                     settledActivityKeys.add(activityKey);
-                  }
-                } else {
-                  // Hard-failure path (OSS-162): an exhausted recovery loop
-                  // returns a structured error envelope (no a2ui_operations).
-                  // Surface it as a client-rendered failure rather than dropping
-                  // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(
-                    contentToText(resultEvent.content),
-                  );
-                  if (failure) {
-                    // Hard failure replaces the building/retrying skeleton in
-                    // place (same surface messageId). `attempts.length` is the
-                    // true cap reached; fall back to the configured cap.
-                    const failKey =
-                      streamingEntry?.outerCallId ?? resultEvent.toolCallId;
-                    subscriber.next(
-                      this.buildLifecycleActivity(failKey, {
-                        status: "failed",
-                        error: failure.error,
-                        attempts: failure.attempts,
-                        maxAttempts: Array.isArray(failure.attempts)
-                          ? failure.attempts.length || maxAttempts
-                          : maxAttempts,
-                      }),
-                    );
-                    settledActivityKeys.add(failKey);
-                    retriedOuterKeys.delete(failKey);
                   }
                 }
               }
