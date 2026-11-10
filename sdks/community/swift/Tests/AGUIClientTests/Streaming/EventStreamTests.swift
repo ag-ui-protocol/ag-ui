@@ -492,6 +492,18 @@ extension EventStreamTests {
         XCTAssertEqual((events.first as? TextMessageContentEvent)?.delta, "a\u{FFFD}b")
     }
 
+    func testInvalidUTF8AtEndOfFinalEventIsNotLost() async throws {
+        // Only the event's closing bytes follow the invalid one, then the stream ends.
+        var data = Data("data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m1\",\"delta\":\"a".utf8)
+        data.append(0xFF)
+        data.append(contentsOf: Data("\"}\n\n".utf8))
+        let stream = EventStream(bytes: MockAsyncBytes(data: data), decoder: AGUIEventDecoder())
+        var events: [any AGUIEvent] = []
+        for try await event in stream { events.append(event) }
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual((events.first as? TextMessageContentEvent)?.delta, "a\u{FFFD}")
+    }
+
     func testLargeEventIsParsedInLinearTime() async throws {
         let delta = String(repeating: "x", count: 64 * 1024)
         let sseData = "data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m1\",\"delta\":\"\(delta)\"}\n\n"
