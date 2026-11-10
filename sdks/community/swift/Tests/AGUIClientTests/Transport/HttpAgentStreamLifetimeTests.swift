@@ -13,7 +13,7 @@ final class HttpAgentStreamLifetimeTests: XCTestCase {
         func makeStream() async throws -> EventStream<AsyncThrowingStream<UInt8, Error>> {
             let config = URLSessionConfiguration.ephemeral
             config.protocolClasses = [TwoChunkURLProtocol.self]
-            let client = URLSessionHTTPClient(session: URLSession(configuration: config))
+            let client = URLSessionHTTPClient.create(configuration: config)
             let configuration = HttpAgentConfiguration(baseURL: URL(string: "https://lifetime.test")!)
             var agent: HttpAgent? = HttpAgent(configuration: configuration, httpClient: client)
             let stream = try await agent!.run(RunAgentInput(threadId: "thread", runId: "run"))

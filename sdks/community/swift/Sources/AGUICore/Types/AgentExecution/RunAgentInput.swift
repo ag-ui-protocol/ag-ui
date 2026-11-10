@@ -81,7 +81,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
     /// Optional parent run identifier for nested agent calls.
     public let parentRunId: String?
 
-    /// Current state data as JSON.
+    /// Current state data as a non-null JSON value (object, array, or scalar).
     ///
     /// Defaults to an empty JSON object.
     public let state: Data
@@ -179,13 +179,11 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         protocolVersion = try container.decodeIfPresent(String.self, forKey: .protocolVersion) ?? "1.0"
         parentRunId = try container.decodeIfPresent(String.self, forKey: .parentRunId)
 
-        // Decode state as arbitrary JSON object and convert to Data.
-        // The encoder writes `null` when state is an empty `{}` object, so treat
-        // an explicit null here as equivalent to "no state" (empty object).
+        // Preserve the state shape, including arrays and scalars. Continue to
+        // accept the legacy null sentinel as "no state" (empty object).
         if container.contains(.state), !(try container.decodeNil(forKey: .state)) {
-            let stateContainer = try container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: .state)
-            let stateObject = try stateContainer.decodeJSONObject()
-            state = try JSONSerialization.data(withJSONObject: stateObject)
+            let stateValue = try container.decode(AnyCodable.self, forKey: .state)
+            state = try JSONSerialization.data(withJSONObject: stateValue.value, options: [.fragmentsAllowed])
         } else {
             state = Data("{}".utf8)
         }
@@ -230,11 +228,16 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
         try container.encodeIfPresent(parentRunId, forKey: .parentRunId)
 
-        // Protocol 1.0 permits omission, but not a null state. Preserve the
-        // caller's empty object rather than emitting a schema-invalid sentinel.
-        let stateObject = try JSONSerialization.jsonObject(with: state)
-        var stateContainer = container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: .state)
-        try stateContainer.encodeJSONObject(stateObject)
+        // State may be an object, array, or scalar. Do not force it through a
+        // keyed container, which silently replaces arrays with empty objects.
+        let stateValue = try JSONSerialization.jsonObject(with: state, options: [.fragmentsAllowed])
+        guard !(stateValue is NSNull) else {
+            throw EncodingError.invalidValue(state, .init(
+                codingPath: container.codingPath + [CodingKeys.state],
+                debugDescription: "RunAgentInput.state must be a non-null JSON value"
+            ))
+        }
+        try container.encode(AnyCodable(stateValue), forKey: .state)
 
         // Encode messages as polymorphic array using MessageEncoder
         let messageEncoder = MessageEncoder()
