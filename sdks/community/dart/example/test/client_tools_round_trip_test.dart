@@ -35,44 +35,386 @@ class FakeAgUiService extends AgUiService {
 }
 
 EndpointConfig _clientToolsEndpoint() => const EndpointConfig(
-      name: 'Agentic Chat',
-      path: 'agentic_chat',
-      description: 'test',
-      icon: Icons.chat,
-      featureKind: FeatureKind.clientTools,
-      tools: [
-        Tool(
-          name: 'calculate',
-          description: 'calc',
-          parameters: {
-            'type': 'object',
-            'properties': {
-              'expression': {'type': 'string'}
-            },
-          },
+  name: 'Agentic Chat',
+  path: 'agentic_chat',
+  description: 'test',
+  icon: Icons.chat,
+  featureKind: FeatureKind.clientTools,
+  tools: [
+    Tool(
+      name: 'calculate',
+      description: 'calc',
+      parameters: {
+        'type': 'object',
+        'properties': {
+          'expression': {'type': 'string'},
+        },
+      },
+    ),
+  ],
+);
+
+MessagesSnapshotEvent _snapshotWithToolCall(String callId, String expr) =>
+    MessagesSnapshotEvent(
+      messages: [
+        UserMessage(id: 'snapshot_user', content: 'Calculate $expr'),
+        AssistantMessage(
+          id: 'a_$callId',
+          toolCalls: [
+            ToolCall(
+              id: callId,
+              function: FunctionCall(
+                name: 'calculate',
+                arguments: '{"expression":"$expr"}',
+              ),
+            ),
+          ],
         ),
       ],
     );
-
-MessagesSnapshotEvent _snapshotWithToolCall(String callId, String expr) =>
-    MessagesSnapshotEvent(messages: [
-      AssistantMessage(id: 'a_$callId', toolCalls: [
-        ToolCall(
-          id: callId,
-          function: FunctionCall(
-            name: 'calculate',
-            arguments: '{"expression":"$expr"}',
-          ),
-        ),
-      ]),
-    ]);
 
 final _runFinished = RunFinishedEvent(threadId: 't', runId: 'r');
 
 int _countType(List<ChatMessage> ms, ChatMessageType t) =>
     ms.where((m) => m.type == t).length;
 
+// The Go backend rebuilds every message ID when converting its full model
+// conversation to MESSAGES_SNAPSHOT; only toolCallId survives the round trip.
+MessagesSnapshotEvent _goSnapshot(String prefix, {bool answered = false}) =>
+    MessagesSnapshotEvent(
+      messages: [
+        SystemMessage(id: '${prefix}_system', content: 'You are helpful.'),
+        UserMessage(id: '${prefix}_user', content: 'What is 6*7?'),
+        AssistantMessage(
+          id: '${prefix}_proposal',
+          toolCalls: [
+            ToolCall(
+              id: 'c1',
+              function: FunctionCall(
+                name: 'calculate',
+                arguments: '{"expression":"6*7"}',
+              ),
+            ),
+          ],
+        ),
+        if (answered) ...[
+          ToolMessage(
+            id: '${prefix}_result',
+            toolCallId: 'c1',
+            content: '{"result":42}',
+          ),
+          AssistantMessage(id: '${prefix}_answer', content: '42'),
+        ],
+      ],
+    );
+
+MessagesSnapshotEvent _mixedToolSnapshot() => MessagesSnapshotEvent(
+  messages: [
+    UserMessage(id: 'mixed_user', content: 'Calculate 6*7'),
+    AssistantMessage(
+      id: 'mixed_proposal',
+      toolCalls: [
+        ToolCall(
+          id: 'server_call',
+          function: FunctionCall(name: 'server_tool', arguments: '{}'),
+        ),
+        ToolCall(
+          id: 'client_call',
+          function: FunctionCall(
+            name: 'calculate',
+            arguments: '{"expression":"6*7"}',
+          ),
+        ),
+      ],
+    ),
+    ToolMessage(
+      id: 'server_result',
+      toolCallId: 'server_call',
+      content: 'already handled',
+    ),
+  ],
+);
+
 void main() {
+  for (final endBeforeSnapshot in [true, false]) {
+    test('Go cumulative snapshots with fresh IDs keep a tool follow-up valid '
+        '(text end first: $endBeforeSnapshot)', () async {
+      final service = FakeAgUiService([
+        [_goSnapshot('first'), _runFinished],
+        [
+          TextMessageStartEvent(messageId: 'stream_answer'),
+          TextMessageContentEvent(messageId: 'stream_answer', delta: '42'),
+          if (endBeforeSnapshot)
+            TextMessageEndEvent(messageId: 'stream_answer'),
+          _goSnapshot('second', answered: true),
+          _goSnapshot('third', answered: true),
+          if (!endBeforeSnapshot)
+            TextMessageEndEvent(messageId: 'stream_answer'),
+          _runFinished,
+        ],
+        [_runFinished],
+      ]);
+      final state = ClientToolsPageState(
+        endpoint: _clientToolsEndpoint(),
+        service: service,
+      );
+      addTearDown(state.dispose);
+      state.sendMessage('What is 6*7?');
+      await pumpEventQueue();
+      state.sendMessage('What was that result?');
+      await pumpEventQueue();
+
+      expect(service.calls, 3);
+      final followUp = service.requests[2];
+      expect(followUp.map((m) => m.role), [
+        MessageRole.system,
+        MessageRole.user,
+        MessageRole.assistant,
+        MessageRole.tool,
+        MessageRole.assistant,
+        MessageRole.user,
+      ]);
+      expect(followUp.take(5).map((m) => m.id), [
+        'third_system',
+        'third_user',
+        'third_proposal',
+        'third_result',
+        'third_answer',
+      ]);
+      expect((followUp[2] as AssistantMessage).toolCalls!.single.id, 'c1');
+      expect((followUp[3] as ToolMessage).toolCallId, 'c1');
+      expect(followUp[4].content, '42');
+      expect(followUp.last.content, 'What was that result?');
+      expect(_countType(state.messages, ChatMessageType.tool), 1);
+      expect(state.busy, isFalse);
+    });
+  }
+
+  test('a snapshot does not suppress a new streamed reply after it', () async {
+    final service = FakeAgUiService([
+      [
+        MessagesSnapshotEvent(
+          messages: [UserMessage(id: 'canonical_user', content: 'Hello')],
+        ),
+        TextMessageChunkEvent(messageId: 'new_answer', delta: 'Hi'),
+        _runFinished,
+      ],
+      [_runFinished],
+    ]);
+    final state = ClientToolsPageState(
+      endpoint: _clientToolsEndpoint(),
+      service: service,
+    );
+    addTearDown(state.dispose);
+    state.sendMessage('Hello');
+    await pumpEventQueue();
+    state.sendMessage('Continue');
+    await pumpEventQueue();
+    expect(service.requests[1].map((m) => m.role), [
+      MessageRole.user,
+      MessageRole.assistant,
+      MessageRole.user,
+    ]);
+    expect(service.requests[1].first.id, 'canonical_user');
+    expect(service.requests[1][1].id, 'new_answer');
+    expect(service.requests[1][1].content, 'Hi');
+  });
+
+  test('mixed server/client snapshot preserves results and executes only missing calls', () async {
+    final service = FakeAgUiService([
+      [_mixedToolSnapshot(), _runFinished],
+      [_runFinished],
+    ]);
+    final state = ClientToolsPageState(
+      endpoint: _clientToolsEndpoint(),
+      service: service,
+    );
+    addTearDown(state.dispose);
+    state.sendMessage('Calculate 6*7');
+    await pumpEventQueue();
+
+    expect(service.calls, 2);
+    final resolved = service.requests[1];
+    expect(resolved.map((m) => m.role), [
+      MessageRole.user,
+      MessageRole.assistant,
+      MessageRole.tool,
+      MessageRole.tool,
+    ]);
+    expect(resolved.whereType<ToolMessage>().map((m) => m.toolCallId), [
+      'server_call',
+      'client_call',
+    ]);
+    expect(resolved[2].id, 'server_result');
+    expect(resolved[2].content, 'already handled');
+    expect(resolved[3].content, contains('42'));
+    expect(_countType(state.messages, ChatMessageType.tool), 1);
+  });
+
+  for (final explicitError in [false, true]) {
+    test('interrupted mixed snapshot drops the entire staged exchange '
+        '(RUN_ERROR: $explicitError)', () async {
+      final service = FakeAgUiService([
+        [
+          _mixedToolSnapshot(),
+          if (explicitError) RunErrorEvent(message: 'Connection lost'),
+        ],
+        [_runFinished],
+      ]);
+      final state = ClientToolsPageState(
+        endpoint: _clientToolsEndpoint(),
+        service: service,
+      );
+      addTearDown(state.dispose);
+      state.sendMessage('Calculate 6*7');
+      await pumpEventQueue();
+      state.sendMessage('Continue');
+      await pumpEventQueue();
+
+      expect(service.calls, 2);
+      expect(service.requests[1].map((m) => m.role), [
+        MessageRole.user,
+        MessageRole.user,
+      ]);
+      expect(_countType(state.messages, ChatMessageType.tool), 0);
+    });
+  }
+
+  for (final emptySnapshot in [false, true]) {
+    test('replacement snapshot discards staged mixed calls and results '
+        '(empty: $emptySnapshot)', () async {
+      final service = FakeAgUiService([
+        [
+          _mixedToolSnapshot(),
+          MessagesSnapshotEvent(
+            messages: [
+              if (!emptySnapshot) ...[
+                UserMessage(id: 'replacement_user', content: 'Calculate 6*7'),
+                AssistantMessage(
+                  id: 'replacement_answer',
+                  content: 'No tool needed',
+                ),
+              ],
+            ],
+          ),
+          _runFinished,
+        ],
+        [_runFinished],
+      ]);
+      final state = ClientToolsPageState(
+        endpoint: _clientToolsEndpoint(),
+        service: service,
+      );
+      addTearDown(state.dispose);
+      state.sendMessage('Calculate 6*7');
+      await pumpEventQueue();
+      state.sendMessage('Continue');
+      await pumpEventQueue();
+
+      expect(service.calls, 2);
+      expect(service.requests[1].map((m) => m.role), [
+        if (!emptySnapshot) ...[MessageRole.user, MessageRole.assistant],
+        MessageRole.user,
+      ]);
+      expect(service.requests[1].whereType<ToolMessage>(), isEmpty);
+      expect(
+        service.requests[1].whereType<AssistantMessage>().any(
+          (m) => m.toolCalls?.isNotEmpty ?? false,
+        ),
+        isFalse,
+      );
+      expect(_countType(state.messages, ChatMessageType.tool), 0);
+    });
+  }
+
+  for (final explicitError in [false, true]) {
+    test('interrupted continuation does not execute its staged mixed calls '
+        '(RUN_ERROR: $explicitError)', () async {
+      final service = FakeAgUiService([
+        [_goSnapshot('first'), _runFinished],
+        [
+          MessagesSnapshotEvent(
+            messages: [
+              ..._goSnapshot('second', answered: true).messages,
+              ..._mixedToolSnapshot().messages.skip(1),
+            ],
+          ),
+          if (explicitError) RunErrorEvent(message: 'Connection lost'),
+        ],
+        [_runFinished],
+      ]);
+      final state = ClientToolsPageState(
+        endpoint: _clientToolsEndpoint(),
+        service: service,
+      );
+      addTearDown(state.dispose);
+      state.sendMessage('What is 6*7?');
+      await pumpEventQueue();
+      expect(
+        service.calls,
+        2,
+        reason: 'a snapshot alone must not start another run',
+      );
+      expect(state.busy, isFalse);
+      state.sendMessage('Continue');
+      await pumpEventQueue();
+
+      expect(service.calls, 3);
+      final followUp = service.requests.last;
+      expect(followUp.map((m) => m.role), [
+        MessageRole.system,
+        MessageRole.user,
+        MessageRole.assistant,
+        MessageRole.tool,
+        MessageRole.assistant,
+        MessageRole.user,
+      ]);
+      expect(followUp.whereType<ToolMessage>().single.toolCallId, 'c1');
+      expect(_countType(state.messages, ChatMessageType.tool), 1);
+    });
+  }
+
+  test('finished continuation resolves its next tool exchange once', () async {
+    final service = FakeAgUiService([
+      [_goSnapshot('first'), _runFinished],
+      [
+        MessagesSnapshotEvent(
+          messages: [
+            ..._goSnapshot('second', answered: true).messages,
+            ..._mixedToolSnapshot().messages.skip(1),
+          ],
+        ),
+        _runFinished,
+      ],
+      [_runFinished],
+    ]);
+    final state = ClientToolsPageState(
+      endpoint: _clientToolsEndpoint(),
+      service: service,
+    );
+    addTearDown(state.dispose);
+    state.sendMessage('What is 6*7?');
+    await pumpEventQueue();
+
+    expect(service.calls, 3);
+    expect(service.requests.last.map((m) => m.role), [
+      MessageRole.system,
+      MessageRole.user,
+      MessageRole.assistant,
+      MessageRole.tool,
+      MessageRole.assistant,
+      MessageRole.assistant,
+      MessageRole.tool,
+      MessageRole.tool,
+    ]);
+    expect(
+      service.requests.last.whereType<ToolMessage>().map((m) => m.toolCallId),
+      ['c1', 'server_call', 'client_call'],
+    );
+    expect(_countType(state.messages, ChatMessageType.tool), 2);
+    expect(state.busy, isFalse);
+  });
+
   test(
     'sending after disposal does not start a run or change history',
     () async {
@@ -214,6 +556,7 @@ void main() {
         '(streamed first: $streamFirst)', () async {
       final snapshot = MessagesSnapshotEvent(
         messages: [
+          UserMessage(id: 'snapshot_user', content: 'What is the answer?'),
           AssistantMessage(id: 'answer_1', content: 'The final answer is 42.'),
         ],
       );
@@ -261,6 +604,7 @@ void main() {
   test(
     'second turn retains tool exchange and answer without replaying calls',
     () async {
+      final user = UserMessage(id: 'snapshot_user', content: 'What is 6*7?');
       final proposal = AssistantMessage(
         id: 'proposal_1',
         content: 'Calculating now.',
@@ -287,7 +631,7 @@ void main() {
             delta: 'Calculating now.',
           ),
           TextMessageEndEvent(messageId: 'proposal_1'),
-          MessagesSnapshotEvent(messages: [proposal]),
+          MessagesSnapshotEvent(messages: [user, proposal]),
           _runFinished,
         ],
         [
@@ -296,6 +640,7 @@ void main() {
           TextMessageEndEvent(messageId: 'answer_1'),
           MessagesSnapshotEvent(
             messages: [
+              user,
               proposal,
               echoedResult,
               AssistantMessage(id: 'answer_1', content: '6*7 = 42'),
@@ -306,7 +651,7 @@ void main() {
         // A cumulative snapshot may repeat the old proposal as its last assistant
         // message. The already-recorded tool result must prevent a second execution.
         [
-          MessagesSnapshotEvent(messages: [proposal, echoedResult]),
+          MessagesSnapshotEvent(messages: [user, proposal, echoedResult]),
           _runFinished,
         ],
       ]);
@@ -359,6 +704,7 @@ void main() {
           _snapshotWithToolCall('c1', '6*7'),
           MessagesSnapshotEvent(
             messages: [
+              UserMessage(id: 'snapshot_user', content: 'Answer me.'),
               AssistantMessage(id: 'answer_1', content: 'No tool is needed.'),
             ],
           ),

@@ -142,12 +142,16 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
   final AgUiService _service;
   final String _threadId = 'thread_${DateTime.now().millisecondsSinceEpoch}';
 
-  /// Conversation history sent on every run (grows across the round-trip).
+  /// Conversation history sent on every run, replaced by full snapshots.
   final List<Message> _history = [];
   Set<String> _priorRunMessageIds = const {};
+  final Set<String> _snapshotCoveredMessageIds = {};
 
   List<ToolCall> _pendingCalls = const [];
   AssistantMessage? _pendingAssistant;
+  List<ToolMessage> _pendingResults = const [];
+  // A continuation snapshot is staged until that run emits RUN_FINISHED.
+  bool _runCompleted = false;
 
   /// Reasoning message ids already rendered, so a cumulative MESSAGES_SNAPSHOT
   /// (the full history each round) doesn't re-append earlier reasoning blocks.
@@ -192,8 +196,10 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     // Called by the mixin on RUN_ERROR. Mark aborted and clear pending work, but do NOT
     // touch _busy/_resolving while a resolve loop owns them — its finally tears down.
     _aborted = true;
+    _runCompleted = false;
     _pendingCalls = const [];
     _pendingAssistant = null;
+    _pendingResults = const [];
     if (!_resolving) _busy = false;
   }
 
@@ -204,6 +210,7 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     // without RUN_FINISHED (network drop), so they can't replay against this turn.
     _pendingCalls = const [];
     _pendingAssistant = null;
+    _pendingResults = const [];
     _aborted = false;
 
     final id = uid('user');
@@ -235,7 +242,9 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
   }
 
   Stream<BaseEvent> _run() {
+    _runCompleted = false;
     _priorRunMessageIds = messages.map((message) => message.id).toSet();
+    _snapshotCoveredMessageIds.clear();
     // Reset the display-only stream between requests, including an interrupted
     // stream. Otherwise the next chunk-only reply could append to its fragment.
     final streaming = messages
@@ -263,32 +272,37 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     }
 
     if (event is MessagesSnapshotEvent) {
-      final resolvedCalls = _history
+      // MESSAGES_SNAPSHOT is the entire authoritative conversation, not a
+      // batch of additions. The Go backend regenerates every message ID, so
+      // merging by ID duplicates replies and creates unanswered tool proposals.
+      _snapshotCoveredMessageIds.addAll(messages.map((message) => message.id));
+      final resolvedCalls = event.messages
           .whereType<ToolMessage>()
-          .map((m) => m.toolCallId)
+          .map((message) => message.toolCallId)
           .toSet();
-      for (final assistant in event.messages.whereType<AssistantMessage>()) {
-        // A snapshot can carry prose without text events, or replace a streamed
-        // reply. Keep one protocol message per ID. Unresolved proposals still go
-        // into history only when execution starts below, so an interrupted run
-        // does not leave a new, unanswered tool call in the next user turn.
-        if ((assistant.toolCalls ?? const <ToolCall>[]).every(
-          (call) => resolvedCalls.contains(call.id),
-        )) {
-          _upsertAssistant(assistant);
-        }
-      }
-      // LOAD-BEARING SERVER CONTRACT: the round-trip fires only because the dojo server
-      // emits MESSAGES_SNAPSHOT (carrying the assistant's toolCalls) before RUN_FINISHED
-      // (loop.go:229-249). We read the authoritative tool-call list from the snapshot,
-      // NOT from the streamed TOOL_CALL_* events. .messages is non-nullable.
       final assistant = event.messages.whereType<AssistantMessage>().lastOrNull;
-      // Cumulative snapshots may end in a proposal we have already answered.
-      // Replacing the pending list also clears stale work on a text-only snapshot.
       _pendingCalls = (assistant?.toolCalls ?? const <ToolCall>[])
           .where((call) => !resolvedCalls.contains(call.id))
           .toList();
       _pendingAssistant = _pendingCalls.isEmpty ? null : assistant;
+      final stagedCallIds = _pendingAssistant?.toolCalls
+              ?.map((call) => call.id)
+              .toSet() ??
+          const <String>{};
+      _pendingResults = event.messages
+          .whereType<ToolMessage>()
+          .where((message) => stagedCallIds.contains(message.toolCallId))
+          .toList();
+      // Stage a pending proposal together with any results the server already
+      // supplied. An interrupted run must not leave an unanswered call (or an
+      // orphaned result) in the next user turn. The resolve loop appends this
+      // exchange in order only after RUN_FINISHED.
+      _history
+        ..clear()
+        ..addAll(event.messages.where((message) =>
+            !identical(message, _pendingAssistant) &&
+            !(message is ToolMessage &&
+                stagedCallIds.contains(message.toolCallId))));
       // Reasoning messages: a snapshot is the FULL history, so dedup by id or each
       // round would re-render earlier reasoning blocks.
       for (final m in event.messages.whereType<ReasoningMessage>()) {
@@ -297,6 +311,7 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
         addReasoningMessage(m.content ?? '');
       }
     } else if (event is RunFinishedEvent) {
+      _runCompleted = true;
       // Chunk-only peers may omit TEXT_MESSAGE_END. A successful run completes
       // only this run's replies, never fragments from an earlier interrupted run.
       _rememberCompletedReplies();
@@ -321,6 +336,7 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     for (final reply in messages) {
       if (reply.type != ChatMessageType.assistant ||
           _priorRunMessageIds.contains(reply.id) ||
+          _snapshotCoveredMessageIds.contains(reply.id) ||
           (messageId != null && reply.id != messageId)) {
         continue;
       }
@@ -331,26 +347,19 @@ class ClientToolsPageState extends ChangeNotifier with AgUiEventHandling {
     }
   }
 
-  void _upsertAssistant(AssistantMessage message) {
-    final index = _history.indexWhere((previous) => previous.id == message.id);
-    if (index < 0) {
-      _history.add(message);
-    } else {
-      _history[index] = message;
-    }
-  }
-
   Future<void> _resolveToolCalls() async {
     _resolving = true;
     try {
-      while (!_aborted && !disposed && _pendingCalls.isNotEmpty) {
+      while (!_aborted && !disposed && _runCompleted && _pendingCalls.isNotEmpty) {
         // The assistant message that requested the calls must precede the tool
         // results in history (the model provider enforces this ordering, not the
         // Go server).
-        _upsertAssistant(_pendingAssistant!);
+        _history.add(_pendingAssistant!);
+        _history.addAll(_pendingResults);
         final calls = _pendingCalls;
         _pendingCalls = const [];
         _pendingAssistant = null;
+        _pendingResults = const [];
 
         for (final call in calls) {
           final result = await _execute(call); // may await a user decision (approval)
