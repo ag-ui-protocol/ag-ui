@@ -43,6 +43,7 @@ import {
   MAX_A2UI_ATTEMPTS,
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
+import { BASIC_CATALOG_ID } from "./constants";
 
 // The run-correlated name is a reserved transport marker, independent of IDs,
 // roles rewritten by adapters, content encoding, and optional provider artifacts.
@@ -830,7 +831,7 @@ export class A2UIMiddleware extends Middleware {
                     frontendCatalogId ??
                     (streamedCatalogId && streamedCatalogId !== "basic"
                       ? streamedCatalogId
-                      : "https://a2ui.org/specification/v0_9/basic_catalog.json");
+                      : BASIC_CATALOG_ID);
 
                   // (2) Components — emit ONCE, only when the array is fully
                   // closed and every component has a `component` type. Partial
