@@ -1754,3 +1754,57 @@ class TestTaskActivityTeardown:
         assert _patch_of(deltas[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
         assert types[-1] == EventType.RUN_ERROR
         assert types.index(EventType.ACTIVITY_DELTA) < types.index(EventType.RUN_ERROR)
+
+
+class TestEventsCarryOnlySpecFields:
+    """TEXT_MESSAGE_* and TOOL_CALL_* events have no threadId/runId in the
+    AG-UI spec (``spec/1.0/schema.json`` sets ``unevaluatedProperties:
+    false``). The Python models keep unknown fields, so passing them put the
+    extra keys on the wire, and ``@ag-ui/client`` strips them with an
+    ``[ag-ui][enforce]`` warning for every event."""
+
+    @staticmethod
+    def _assert_no_extra_fields(events):
+        checked = [
+            e for e in events
+            if e.type.value.startswith(("TEXT_MESSAGE_", "TOOL_CALL_"))
+        ]
+        assert checked
+        for event in checked:
+            assert not event.model_extra, (event.type, event.model_extra)
+            wire = event.model_dump(by_alias=True)
+            assert "threadId" not in wire and "runId" not in wire, wire
+
+    @pytest.mark.asyncio
+    async def test_streamed_text_and_tool_calls(self, make_input):
+        adapter = ClaudeAgentAdapter(name="t")
+        stream = [
+            stream_event({"type": "message_start", "message": {"id": "m1"}}),
+            stream_event({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hi"}}),
+            stream_event({"type": "content_block_start", "content_block": {"type": "tool_use", "id": "tc1", "name": "mcp__srv__lookup"}}),
+            stream_event({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}}),
+            stream_event({"type": "content_block_stop"}),
+            stream_event({"type": "message_stop"}),
+            # A second message left open: the cleanup path closes the tool
+            # call and the text message.
+            stream_event({"type": "message_start", "message": {"id": "m2"}}),
+            stream_event({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "More"}}),
+            stream_event({"type": "content_block_start", "content_block": {"type": "tool_use", "id": "tc2", "name": "mcp__srv__lookup"}}),
+        ]
+        self._assert_no_extra_fields(await _drive(adapter, stream, make_input))
+
+    @pytest.mark.asyncio
+    async def test_non_streamed_tool_calls_results_and_text(self, make_input):
+        from claude_agent_sdk import ResultMessage
+        adapter = ClaudeAgentAdapter(name="t")
+        stream = [
+            AssistantMessage(content=[ToolUseBlock(id="tc1", name="mcp__srv__lookup", input={"q": "x"})], model="claude-x"),
+            UserMessage(content=[ToolResultBlock(tool_use_id="tc1", content="found", is_error=False)]),
+            ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+                          num_turns=1, session_id="thread-1", result="Final answer"),
+        ]
+        events = await _drive(adapter, stream, make_input)
+        types = _types(events)
+        assert EventType.TOOL_CALL_RESULT in types
+        assert EventType.TEXT_MESSAGE_CONTENT in types
+        self._assert_no_extra_fields(events)
