@@ -10,4 +10,8 @@ AG-UI (Agent User Interaction Protocol) standardizes streaming communication bet
 - `AGUI.Client` — AG-UI HTTP client and `IChatClient` integration.
 - `AGUI.Server` — server-side adapter from `ChatResponseUpdate` streams to AG-UI events.
 
+## Client context
+
+`RunAgentInput.ToChatRequestContext` makes nonempty `Context` entries visible to the model as one user message containing a JSON array, after any leading system or developer messages. The original input is unchanged. Applications that already inject context manually should avoid injecting it twice. Context remains caller-supplied data; the host or agent framework controls message persistence. See [Messages and the request payload](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/dotnet/docs/architecture.md#messages-and-the-request-payload) for the format and behavior.
+
 For documentation, samples, and source, see https://github.com/ag-ui-protocol/ag-ui.
