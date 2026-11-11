@@ -45,6 +45,7 @@ jobs:
             sdks/typescript/packages/*/dist/
             integrations/*/typescript/dist/
             integrations/adk-middleware/js/dist/
+            integrations/community/cloudflare-agents/typescript/dist/
             middlewares/*/dist/
           retention-days: 1
 
@@ -74,5 +75,5 @@ jobs:
 
       - name: Publish via pkg-pr-new
         run: |
-          npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript ./integrations/adk-middleware/js || \
-          (sleep 10 && npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript ./integrations/adk-middleware/js)
+          npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript ./integrations/adk-middleware/js ./integrations/community/cloudflare-agents/typescript || \
+          (sleep 10 && npx pkg-pr-new publish --pnpm --packageManager pnpm ./sdks/typescript/packages/* ./middlewares/* ./integrations/*/typescript ./integrations/adk-middleware/js ./integrations/community/cloudflare-agents/typescript)

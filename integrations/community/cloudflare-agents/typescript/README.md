@@ -106,6 +106,7 @@ const agent = new CloudflareAgentsClient({
 | `run.emit(event)` | Streams an extra AG-UI event, such as a `CUSTOM` event. |
 | `run.abortSignal` | Fires when the client cancels or disconnects. Pass it to `streamText`. |
 | `run.input` | The `RunAgentInput` as sent. |
+| `run.request` | The HTTP request the run came in on, for its headers (undefined over a WebSocket). |
 
 ### Shared state
 

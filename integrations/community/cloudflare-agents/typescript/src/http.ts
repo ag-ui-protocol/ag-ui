@@ -63,7 +63,12 @@ export async function handleAGUIRequest<State = AGUIState>(
 
   const controller = new AbortController();
   const signal = anySignal([request.signal, controller.signal]);
-  const events = runAGUI(input, handler, { signal, state: options.state, approvals: options.approvals });
+  const events = runAGUI(input, handler, {
+    signal,
+    state: options.state,
+    approvals: options.approvals,
+    request,
+  });
   return eventStreamResponse(events, {
     headers: options.headers,
     onCancel: () => controller.abort(),

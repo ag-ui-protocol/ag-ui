@@ -100,6 +100,8 @@ describe("withAGUI over HTTP", () => {
     await client.runAgent();
 
     expect(urls).toEqual(["https://worker.example/agents/todo-agent/thread%2F42"]);
+    // The run sees the request's headers, to forward them (auth, tracing).
+    expect(agent.runs[0]!.request?.headers.get("accept")).toBe("text/event-stream");
     expect(client.messages.at(-1)).toMatchObject({ role: "assistant", content: "Hello!" });
     expect(agent.keepAlive).toHaveBeenCalledOnce();
     expect(agent.released).toHaveBeenCalledOnce();

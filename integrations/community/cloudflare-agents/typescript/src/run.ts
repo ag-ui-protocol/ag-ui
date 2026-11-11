@@ -72,6 +72,12 @@ export interface AGUIRun<State = AGUIState> {
   /** The request as the client sent it. */
   readonly input: RunAgentInput;
   /**
+   * The HTTP request that started the run (its body already read), for its
+   * headers: auth, tracing, headers to forward to the model provider.
+   * Undefined for runs over a WebSocket.
+   */
+  readonly request?: Request;
+  /**
    * The conversation as AI SDK model messages: multimodal input, reasoning
    * and provider metadata included, and the previous run's approvals turned
    * into AI SDK tool approvals so `streamText` resumes them.
@@ -108,6 +114,8 @@ export interface RunAGUIOptions<State = AGUIState> {
   state?: StateStore<State>;
   /** Where paused approvals are recorded. Without it, a resume trusts the client's history. */
   approvals?: ApprovalStore;
+  /** The HTTP request the run came in on, handed to the handler as `run.request`. */
+  request?: Request;
 }
 
 /**
@@ -155,6 +163,7 @@ export async function* runAGUI<State = AGUIState>(
     const abortSignal = options.signal ?? new AbortController().signal;
     const run: AGUIRun<State> = {
       input,
+      request: options.request,
       messages: converted.messages,
       clientTools: toClientTools(input.tools),
       context: input.context ?? [],

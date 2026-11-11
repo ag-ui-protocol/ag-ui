@@ -123,7 +123,7 @@ export function withAGUI<TBase extends AgentClass>(Base: TBase) {
       }
       const controller = new AbortController();
       request.signal?.addEventListener("abort", () => controller.abort(), { once: true });
-      return eventStreamResponse(this.aguiEvents(input, controller.signal), {
+      return eventStreamResponse(this.aguiEvents(input, controller.signal, request), {
         onCancel: () => controller.abort(),
       });
     }
@@ -181,13 +181,18 @@ export function withAGUI<TBase extends AgentClass>(Base: TBase) {
     }
 
     /** The AG-UI events of one run, with this agent's state as the shared state. */
-    async *aguiEvents(input: RunAgentInput, signal: AbortSignal): AsyncGenerator<BaseEvent> {
+    async *aguiEvents(
+      input: RunAgentInput,
+      signal: AbortSignal,
+      request?: Request,
+    ): AsyncGenerator<BaseEvent> {
       const release = await keepAlive(this);
       try {
         yield* runAGUI<State>(input, (run) => this.onAGUIRun(run), {
           signal,
           state: agentStateStore<State>(this),
           approvals: agentApprovalStore(this),
+          request,
         });
       } finally {
         release?.();
