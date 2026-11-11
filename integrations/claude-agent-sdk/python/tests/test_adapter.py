@@ -351,6 +351,34 @@ class TestStreamToolCall:
         assert any(c.delta == "AFTER" for c in contents)
         assert EventType.TOOL_CALL_END in _types(events)
 
+    @pytest.mark.asyncio
+    async def test_state_update_after_frontend_tool_in_same_turn(self, make_input):
+        # The model calls a frontend tool, then ag_ui_update_state, in one
+        # turn. The frontend call must not end the stream before the state
+        # update reaches the UI.
+        adapter = ClaudeAgentAdapter(name="t")
+        tools = [{"name": "enableAppMode", "description": "", "parameters": {}}]
+
+        def tool_call(call_id, name, args):
+            return [
+                stream_event({"type": "content_block_start", "content_block": {"type": "tool_use", "id": call_id, "name": name}}),
+                stream_event({"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": args}}),
+                stream_event({"type": "content_block_stop"}),
+            ]
+
+        stream = [
+            stream_event({"type": "message_start"}),
+            *tool_call("fe1", "mcp__ag_ui__enableAppMode", "{}"),
+            *tool_call("st1", STATE_MANAGEMENT_TOOL_FULL_NAME, '{"state_updates": {"appMode": true}}'),
+            stream_event({"type": "message_stop"}),
+        ]
+        events = await _drive(adapter, stream, make_input, tools=tools, state={"appMode": False})
+        types = _types(events)
+        snapshot = next(e for e in events if e.type == EventType.STATE_SNAPSHOT)
+        assert snapshot.snapshot == {"appMode": True}
+        frontend_start = next(i for i, e in enumerate(events) if e.type == EventType.TOOL_CALL_START and e.tool_call_id == "fe1")
+        assert frontend_start < types.index(EventType.STATE_SNAPSHOT)
+
 
 class TestStreamStateMerge:
     # ── Item 1: state merge when prior thread state is None ──
