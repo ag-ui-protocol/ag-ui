@@ -133,13 +133,13 @@ class TestGetStateAndMessagesSnapshots(unittest.IsolatedAsyncioTestCase):
 
 class TestSubgraphChangeTrigger(unittest.IsolatedAsyncioTestCase):
 
-    async def _drive(self, agent, stream_chunks):
+    async def _drive(self, agent, stream_chunks, forwarded_props=None):
         """Drive _handle_stream_events with synthetic chunks; return dispatched events."""
         run_input = MagicMock()
         run_input.run_id = "run-1"
         run_input.thread_id = "thread-1"
         run_input.messages = []
-        run_input.forwarded_props = {}
+        run_input.forwarded_props = forwarded_props or {}
 
         async def fake_prepare(*args, **kwargs):
             agent.active_run["schema_keys"] = {
@@ -211,6 +211,18 @@ class TestSubgraphChangeTrigger(unittest.IsolatedAsyncioTestCase):
         self.assertIn("h1", ids)
         if "f1" in ids:
             self.assertLess(ids.index("f1"), ids.index("h1"))
+
+    async def test_exit_durability_skips_mid_stream_checkpoint_snapshots(self):
+        """Under durability "exit" nothing is checkpointed until the run
+        exits, so a mid-stream aget_state would snapshot the pre-run state.
+        Only the end-of-run snapshot fires, but the subgraph bookkeeping
+        still advances."""
+        agent = _make_agent(["hotels_agent"])
+        events = await self._drive(
+            agent, self._hotels_to_root_chunks(), forwarded_props={"durability": "exit"}
+        )
+        self.assertEqual(_event_types(events).count("MESSAGES_SNAPSHOT"), 1)
+        self.assertEqual(agent.current_subgraph, "hotels_agent")
 
 
 # ---------------------------------------------------------------------------
