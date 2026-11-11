@@ -10,6 +10,7 @@ import {
 } from "@copilotkit/react-core/v2";
 import { z } from "zod";
 import { CopilotKit } from "@copilotkit/react-core";
+import { CodexTextChat } from "@/components/CodexTextChat";
 
 /** Shape of the `get_weather` tool result once parsed out of its JSON string. */
 type WeatherResult = {
@@ -36,7 +37,7 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
       showDevConsole={false}
       agent="agentic_chat"
     >
-      <Chat />
+      {integrationId === "codex-sdk-typescript" ? <CodexTextChat /> : <Chat />}
     </CopilotKit>
   );
 };

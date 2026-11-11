@@ -14,6 +14,7 @@ The following checks passed.
 - Flutter's web build and the web Dojo production build passed.
 - Controlled browser scenarios proved two-turn chat in both clients and serial rendering of overlapping native replies in Flutter.
 - A real provider run proved continuation, independent native conversations, and client cancellation. The server had no owned descendants after cleanup.
+- The actual Flutter browser also retained a unique marker across two real-provider turns. The browser redirected its compiled endpoint to the real server on port 18032. The compiled base URL was separately verified directly against the controlled server on port 8032.
 
 ## Repeat the package checks
 

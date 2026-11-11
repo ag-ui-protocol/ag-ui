@@ -151,6 +151,9 @@ jobs:
       - name: Verify build leaves the worktree clean
         run: git diff --exit-code
 
+      - name: Verify Codex package exports and installed server
+        run: pnpm exec nx run-many -p @ag-ui/codex-sdk -t test:exports test:packed --parallel=1
+
       - name: Run tests
         run: pnpm run test --parallel=1
 
