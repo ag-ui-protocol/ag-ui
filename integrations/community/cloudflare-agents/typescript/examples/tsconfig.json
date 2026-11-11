@@ -7,7 +7,11 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    // The adapter is linked from the repo, so without this its `ai` import
+    // would resolve to the repo root's copy. Installed from npm, `ai` is a
+    // peer dependency and there is only one copy.
+    "paths": { "ai": ["./node_modules/ai"] }
   },
   "include": ["src"]
 }
