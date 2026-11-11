@@ -5,6 +5,13 @@
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "client": [
+        "./dist/client.d.ts"
+      ]
+    }
+  },
   "sideEffects": false,
   "files": [
     "dist/**",
@@ -34,14 +41,12 @@
   "peerDependencies": {
     "@ag-ui/core": ">=1.0.0",
     "@ag-ui/client": ">=1.0.0",
-    "ai": "^5.0.0",
-    "rxjs": "^7.0.0",
-    "@cloudflare/workers-types": ">=4.0.0"
+    "ai": "^6.0.0 || ^7.0.0",
+    "rxjs": "^7.0.0"
   },
   "devDependencies": {
     "@ag-ui/core": "workspace:*",
     "@ag-ui/client": "workspace:*",
-    "ai": "^5.0.0",
     "@cloudflare/workers-types": "^4.20251106.1",
     "@types/node": "^20.11.19",
     "@vitest/coverage-istanbul": "^4.0.18",
@@ -50,7 +55,9 @@
     "rxjs": "7.8.1",
     "vitest": "^4.0.18",
     "tsdown": "^0.20.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "ai": "^7.0.0",
+    "ai-v6": "npm:ai@^6.0.0"
   },
   "repository": {
     "type": "git",
@@ -71,6 +78,10 @@
     ".": {
       "require": "./dist/index.js",
       "import": "./dist/index.mjs"
+    },
+    "./client": {
+      "require": "./dist/client.js",
+      "import": "./dist/client.mjs"
     },
     "./package.json": "./package.json"
   }

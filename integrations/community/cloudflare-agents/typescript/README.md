@@ -1,161 +1,215 @@
 # @ag-ui/cloudflare-agents
 
-AG-UI community integration for Cloudflare Agents. Provides a WebSocket client for connecting to deployed Cloudflare Workers and a server-side adapter for converting Vercel AI SDK v5 streams into AG-UI protocol events.
+Serve [AG-UI](https://docs.ag-ui.com) from [Cloudflare Agents](https://developers.cloudflare.com/agents/): any AG-UI client, such as CopilotKit, can talk to an Agents SDK agent running on Workers and Durable Objects. The [AI SDK](https://ai-sdk.dev) does the model work, so every AI SDK provider works, Workers AI included.
 
-## Components
-
-- **CloudflareAgentsClient** -- WebSocket client that connects to deployed Cloudflare Workers and translates their events to AG-UI protocol events.
-- **AgentsToAGUIAdapter** -- Server-side adapter that converts Vercel AI SDK v5 `StreamTextResult` into AG-UI events.
-- **createSSEResponse / createNDJSONResponse** -- Helper functions to stream AG-UI events over HTTP as Server-Sent Events or newline-delimited JSON.
-
-## Installation
-
-```bash
-npm install @ag-ui/cloudflare-agents
-# or
-pnpm add @ag-ui/cloudflare-agents
-```
-
-### Peer Dependencies
-
-- `@ag-ui/client` (>=1.0.0)
-- `@ag-ui/core` (>=1.0.0)
-- `ai` (^5.0.0) -- Vercel AI SDK v5+
-- `@cloudflare/workers-types` (>=4.0.0)
-
-## Usage
-
-### Client: Connect to a Deployed Agent
-
-```typescript
-import { CloudflareAgentsClient } from "@ag-ui/cloudflare-agents";
-
-const agent = new CloudflareAgentsClient({
-  url: "wss://your-agent.workers.dev",
-});
-
-agent
-  .runAgent({
-    threadId: "thread-123",
-    runId: "run-456",
-    messages: [{ role: "user", content: "What's the weather?" }],
-  })
-  .subscribe({
-    next: (event) => {
-      switch (event.type) {
-        case "TEXT_MESSAGE_CONTENT":
-          process.stdout.write(event.delta);
-          break;
-        case "STATE_SNAPSHOT":
-          console.log("State:", event.snapshot);
-          break;
-        case "TOOL_CALL_START":
-          console.log("Calling tool:", event.toolCallName);
-          break;
-      }
-    },
-    complete: () => console.log("Done"),
-  });
-```
-
-### Adapter: Build an Agent with SSE Streaming
-
-```typescript
-import { AgentsToAGUIAdapter, createSSEResponse } from "@ag-ui/cloudflare-agents";
+```ts
+import { Agent, routeAgentRequest } from "agents";
+import { withAGUI, type AGUIRun } from "@ag-ui/cloudflare-agents";
 import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { from } from "rxjs";
+import { createWorkersAI } from "workers-ai-provider";
 
-const adapter = new AgentsToAGUIAdapter();
+type State = { todos: string[] };
+
+export class Assistant extends withAGUI(Agent<Env, State>) {
+  initialState: State = { todos: [] };
+
+  onAGUIRun(run: AGUIRun<State>) {
+    return streamText({
+      model: createWorkersAI({ binding: this.env.AI })("@cf/meta/llama-4-scout-17b-16e-instruct"),
+      instructions: run.instructions("You are a helpful assistant."),
+      messages: run.messages,
+      tools: { ...run.clientTools },
+      abortSignal: run.abortSignal,
+    });
+  }
+}
 
 export default {
-  async fetch(request: Request): Promise<Response> {
-    const { messages, threadId, runId } = await request.json();
+  fetch: async (request, env) =>
+    (await routeAgentRequest(request, env)) ?? new Response("Not found", { status: 404 }),
+} satisfies ExportedHandler<Env>;
+```
 
-    const stream = streamText({
-      model: openai("gpt-4"),
-      messages,
-    });
+Each AG-UI thread is one instance of the agent (one Durable Object), at `/agents/assistant/<threadId>`.
 
-    const events$ = from(
-      adapter.adaptStreamToAGUI(stream, threadId, runId, messages)
-    );
+## What you get
 
-    return createSSEResponse(events$);
+- **Messages, as the model needs them.** `run.messages` holds the client's conversation as AI SDK model messages: text, images, audio, video and documents, tool calls and their results.
+- **Client tools.** `run.clientTools` holds the tools the frontend runs (CopilotKit's `useFrontendTool`, `useHumanInTheLoop`, generative UI renderers) as AI SDK tools without `execute`. When the model calls one, the run ends; the client runs it and sends the result with the next run.
+- **Context.** `run.instructions(base)` adds the application's context (`useAgentContext`), the conversation's system messages and the shared state to your instructions. AI SDK v7 does not accept system messages inside `messages`, so they belong here.
+- **Shared state, kept in the Durable Object.** The agent's `state` is the thread's AG-UI state. The client's edits are saved into it, every `this.setState()` during a run reaches the client as a STATE_SNAPSHOT, and a client that comes back to the thread gets it. What the server changes between runs (a schedule, another client) is kept: the client's copy only wins when the client changed it.
+- **Reasoning that survives the round trip.** Reasoning streams as `REASONING_*` events and stays in the history. Provider data that has to come back on the next request (Anthropic's thinking signatures, Gemini's thought signatures on tool calls, OpenAI's reasoning and message items) travels in AG-UI's `encryptedValue` and is restored as `providerOptions`, so extended thinking with tools works across client tool round trips.
+- **Tool approvals as AG-UI interrupts.** A tool with AI SDK's `needsApproval` ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
+- **Everything else in the stream.** Multi-step runs (`stopWhen`) with messages in order, streaming tool arguments, tool results and errors, token usage on `RUN_FINISHED`, cancellation (`RUN_FINISHED` with a `cancelled` outcome), sources and files as `CUSTOM` events.
+
+Supports AI SDK v6 and v7, and AG-UI 1.0.
+
+## Install
+
+```bash
+npm install @ag-ui/cloudflare-agents agents ai
+```
+
+## Connect a client
+
+The agent serves AG-UI at `/agents/<agent>/<threadId>`, over HTTP (Server-Sent Events) and over the agent's WebSocket.
+
+**CopilotKit, or any AG-UI client in your app:** `CloudflareAgentsHttpAgent` adds the thread id to the URL for you.
+
+```ts
+import { CloudflareAgentsHttpAgent } from "@ag-ui/cloudflare-agents/client";
+
+const runtime = new CopilotRuntime({
+  agents: {
+    assistant: new CloudflareAgentsHttpAgent({
+      url: "https://my-worker.example.workers.dev/agents/assistant",
+    }),
   },
+});
+```
+
+**A plain `HttpAgent` with one fixed URL:** let the Worker move the thread id from the request body into the path.
+
+```ts
+import { toThreadRequest } from "@ag-ui/cloudflare-agents";
+
+export default {
+  fetch: async (request, env) =>
+    (await routeAgentRequest(await toThreadRequest(request), env)) ??
+    new Response("Not found", { status: 404 }),
 };
 ```
 
-### Adapter: WebSocket Agent with Tools
+**WebSocket:** `CloudflareAgentsClient` runs over the agent's WebSocket, next to the Agents SDK's own protocol. One connection per run.
 
-```typescript
-import { Agent } from "agents";
-import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { AgentsToAGUIAdapter } from "@ag-ui/cloudflare-agents";
-import { z } from "zod";
+```ts
+import { CloudflareAgentsClient } from "@ag-ui/cloudflare-agents/client";
 
-export class MyAgent extends Agent {
-  private adapter = new AgentsToAGUIAdapter();
+const agent = new CloudflareAgentsClient({
+  url: "wss://my-worker.example.workers.dev/agents/assistant",
+});
+```
 
-  async onMessage(ws: WebSocket, raw: string | ArrayBuffer) {
-    const data = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-    const { messages, threadId } = JSON.parse(data);
+`@ag-ui/cloudflare-agents/client` runs anywhere (browsers, Node, Workers) and does not load the Agents SDK or the AI SDK.
 
-    const stream = streamText({
-      model: openai("gpt-4"),
-      messages,
+## The run
+
+`onAGUIRun(run)` gets one `AGUIRun` per request and returns the result of `streamText` (or of an AI SDK agent's `stream()`):
+
+| Field | |
+|---|---|
+| `run.messages` | The conversation as AI SDK `ModelMessage[]`. |
+| `run.clientTools` | The client's tools, without `execute`. Spread your server tools after them, so a server tool wins a name clash. |
+| `run.instructions(base?, { state? })` | `base`, the conversation's system messages, the application's context and the shared state (leave it out with `{ state: false }`). |
+| `run.context` | `RunAgentInput.context`. |
+| `run.state` / `run.setState(state)` | The shared state. In a `withAGUI` agent these are `this.state` and `this.setState()`. |
+| `run.emit(event)` | Streams an extra AG-UI event, such as a `CUSTOM` event. |
+| `run.abortSignal` | Fires when the client cancels or disconnects. Pass it to `streamText`. |
+| `run.input` | The `RunAgentInput` as sent. |
+
+### Shared state
+
+```ts
+export class Chef extends withAGUI(Agent<Env, { recipe?: Recipe }>) {
+  onAGUIRun(run: AGUIRun<{ recipe?: Recipe }>) {
+    return streamText({
+      model,
+      instructions: run.instructions("You help the user build the recipe shown next to the chat."),
+      messages: run.messages,
       tools: {
-        getWeather: {
-          description: "Get current weather",
-          parameters: z.object({ location: z.string() }),
-          execute: async ({ location }) => ({ temperature: 72, condition: "sunny" }),
-        },
+        ...run.clientTools,
+        save_recipe: tool({
+          inputSchema: recipeSchema,
+          execute: async (recipe) => {
+            this.setState({ ...this.state, recipe }); // streams to the client, and persists
+            return "Saved.";
+          },
+        }),
       },
+      stopWhen: stepCountIs(5),
+      abortSignal: run.abortSignal,
     });
-
-    for await (const event of this.adapter.adaptStreamToAGUI(
-      stream, threadId, crypto.randomUUID(), messages
-    )) {
-      ws.send(JSON.stringify(event));
-    }
   }
 }
 ```
 
-## Supported AG-UI Events
+A tool can update the state several times while it runs (a plan whose steps complete one by one); each update streams at once. For state that follows a tool's arguments as the model writes them, update it from the tool's `onInputDelta`.
 
-| Event | Supported |
-|---|---|
-| RUN_STARTED / RUN_FINISHED / RUN_ERROR | Yes |
-| TEXT_MESSAGE_START / CONTENT / END | Yes |
-| TOOL_CALL_START / ARGS / END | Yes (includes streaming args via tool-input-*) |
-| TOOL_CALL_RESULT | Yes (including error results) |
-| REASONING_START / MESSAGE_START / MESSAGE_CONTENT / MESSAGE_END / END | Yes |
-| STATE_SNAPSHOT | Yes |
-| MESSAGES_SNAPSHOT | Yes (with tool calls and results) |
-| STEP_STARTED / STEP_FINISHED | Yes |
-| RAW | Yes (adapter: AI SDK raw parts; client: unknown CF event types) |
-| CUSTOM | Yes (adapter: source/file parts; client: CUSTOM CF events) |
-| STATE_DELTA | Not yet |
-| ACTIVITY_SNAPSHOT / ACTIVITY_DELTA | Not yet |
-| REASONING_ENCRYPTED_VALUE | Not yet |
-| Interrupt / Resume | Not yet |
-| Subgraph support | Not yet |
+### Tool approvals
 
-## Not Yet Supported
+```ts
+issue_refund: tool({
+  inputSchema: z.object({ order_id: z.string() }),
+  needsApproval: true,
+  execute: async ({ order_id }) => refund(order_id),
+}),
+```
 
-- **STATE_DELTA** -- Requires application-level state diffing (JSON Patch RFC 6902) against previous state; currently only full STATE_SNAPSHOT is emitted.
-- **ACTIVITY_SNAPSHOT / ACTIVITY_DELTA** -- Requires application-level activity tracking.
-- **REASONING_ENCRYPTED_VALUE** -- Depends on the provider exposing encrypted reasoning signatures.
-- **Interrupt/resume** -- Requires Cloudflare Agents SDK checkpointing support for pausing and resuming agent runs.
-- **Subgraph support** -- This is a LangGraph-specific concept and does not apply to the Cloudflare Agents architecture.
+The run ends with `RUN_FINISHED { outcome: { type: "interrupt" } }`, one interrupt per paused call:
 
-## Requirements
+```json
+{
+  "id": "<tool call id>",
+  "reason": "tool_approval",
+  "message": "Approve call to issue_refund?",
+  "toolCallId": "<tool call id>",
+  "responseSchema": { "type": "object", "properties": { "approved": { "type": "boolean" } }, "required": ["approved"] },
+  "metadata": { "tool_name": "issue_refund", "tool_input": { "order_id": "ORD-1001" }, "ag-ui:tool-execution": "server" }
+}
+```
 
-- Vercel AI SDK v5+ (uses the `fullStream` API)
-- Cloudflare Workers runtime (for deployment)
-- Node.js 18+ or modern browser (for the client)
+The next run's `resume` answers it: `{ "interruptId": "<id>", "status": "resolved", "payload": { "approved": true } }`. An approved call runs its tool; a rejected or cancelled one tells the model it did not run (`payload.reason` becomes the reason). In CopilotKit, `useInterrupt` renders the decision and sends the resume.
+
+The reason is `tool_approval` rather than AG-UI's `tool_call` because clients treat `tool_call` answers as the tool's result; here the server runs the tool.
+
+As AG-UI's interrupt rules require, a request ends with `RUN_ERROR` (code `INVALID_RESUME`, without calling the model) when its `resume` leaves a pending approval unanswered, answers a call that is not waiting for approval, or resumes a call the conversation has already moved past. A server tool call left without a result some other way (the user stopped the run, the provider failed mid-call) is closed with a result saying it was interrupted, and the conversation carries on.
+
+The paused call is marked in its `encryptedValue`, with the AI SDK's approval id and, if you set `experimental_toolApprovalSecret`, its signature. Keep `encryptedValue` when your client stores or forwards messages.
+
+## Without Durable Objects
+
+In a plain Worker, `handleAGUIRequest` serves one run per request; the state lives for the length of the request. Pass `approvals` (an `ApprovalStore` on KV or D1) or set AI SDK's `experimental_toolApprovalSecret` if you gate tools with `needsApproval`: otherwise a resume trusts the tool calls in the client's history. `headers` adds headers (CORS) to every response, and preflight requests are answered.
+
+```ts
+import { handleAGUIRequest } from "@ag-ui/cloudflare-agents";
+
+export default {
+  fetch: (request, env) =>
+    handleAGUIRequest(request, (run) =>
+      streamText({
+        model,
+        instructions: run.instructions("You are a helpful assistant."),
+        messages: run.messages,
+        tools: run.clientTools,
+        abortSignal: run.abortSignal,
+      }),
+    ),
+};
+```
+
+## Building blocks
+
+For your own wiring (an `AIChatAgent` that keeps its own clients, another runtime):
+
+- `runAGUI(input, handler, { signal, state, approvals })`: the AG-UI events of one run, from `RUN_STARTED` to `RUN_FINISHED`/`RUN_ERROR`. `StateStore` and `ApprovalStore` say where state and paused approvals live.
+- `convertMessages(messages, { resume, clientToolNames, pendingApprovals })` / `toModelMessages(messages)`: AG-UI messages to AI SDK messages, with resume handling.
+- `toClientTools(tools)`, `buildInstructions(...)`, `formatContext(context)`.
+- `translateStream(fullStream, options)`, `streamToAGUI(input, result)`: an AI SDK stream as AG-UI events.
+- `eventStreamResponse(events)`, `parseRunAgentInput(body)`, `isAGUIRequest(request)`.
+
+`withAGUI` serves AG-UI requests and frames and passes everything else to the class it extends, so an `AIChatAgent` keeps serving its own clients. If you override `onRequest`, `onMessage`, `onClose` or `setState`, call `super`; `handleAGUIRequest(request)` is there to call from your own `onRequest`. It keeps two keys in the Durable Object's storage, `ag-ui:synced-state` and `ag-ui:pending-approvals`.
+
+## Limitations
+
+- Changes made to a Durable Object's state by its own WebSocket clients (`useAgent`) during an AG-UI run reach the AG-UI client at its next run, not live.
+- Preliminary tool results (tools that stream their output) are not sent; the final result is.
+- Provider file references in user messages (an uploaded file's id) reach the model as a text note.
+
+## Upgrading from 0.0.x
+
+- `AgentsToAGUIAdapter` and `createSSEResponse`/`createNDJSONResponse` still work but are deprecated: `withAGUI` or `handleAGUIRequest` replace them and add message and tool conversion, context, state and resume. `streamToAGUI(input, result)` replaces `adaptStreamToAGUI` for a result you already have.
+- `CloudflareAgentsClient` now speaks AG-UI over the agent's WebSocket (the frames `withAGUI` understands), appends the thread id to its URL, and ends a run on `RUN_FINISHED`/`RUN_ERROR`. Import it from `@ag-ui/cloudflare-agents/client`.
+- The `ai` peer dependency is now `^6 || ^7` (the Agents SDK requires one of them).
 
 ## License
 
