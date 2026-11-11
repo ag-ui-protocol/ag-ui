@@ -2,7 +2,7 @@ name: Rust SDK interoperability
 
 on:
   push:
-    branches: [main, chore/rust-updates, "feat/rust-**"]
+    branches: [main]
     paths:
       - "sdks/community/rust/**"
       - "sdks/fixtures/**"
@@ -15,7 +15,7 @@ on:
       - ".node-version"
       - ".github/workflows/rust-interop.yml"
   pull_request:
-    branches: [main, chore/rust-updates]
+    branches: [main]
     paths:
       - "sdks/community/rust/**"
       - "sdks/fixtures/**"

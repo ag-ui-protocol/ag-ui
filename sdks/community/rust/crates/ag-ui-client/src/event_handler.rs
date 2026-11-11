@@ -433,7 +433,11 @@ where
                 }
             }
             Event::MessagesSnapshot(e) => {
-                reconcile_messages(&mut self.messages, &e.messages);
+                reconcile_messages(
+                    &mut self.messages,
+                    &e.messages,
+                    authoritative_activity_types(&e.base.metadata),
+                );
                 self.protocol.reseed_history(&self.messages);
                 current_mutation.messages = Some(self.messages.clone());
                 for subscriber in &self.subscribers.clone() {
@@ -962,7 +966,37 @@ fn existing_tool_calls_mut(message: &mut Message) -> Option<&mut Vec<ToolCall>> 
     }
 }
 
-fn reconcile_messages(current: &mut Vec<Message>, snapshot: &[Message]) {
+// Mirror the canonical TS client activity-history.ts convention: absence uses
+// legacy inference, explicit null owns all types, and malformed declarations own
+// none. This is package-owned metadata, not the reserved protocol namespace.
+fn authoritative_activity_types(
+    metadata: &Option<serde_json::Map<String, JsonValue>>,
+) -> Option<Option<Vec<&str>>> {
+    let namespace = metadata.as_ref()?.get("@ag-ui/client")?;
+    let Some(namespace) = namespace.as_object() else {
+        return Some(Some(Vec::new()));
+    };
+    let types = namespace.get("authoritativeActivityTypes")?;
+    if types.is_null() {
+        return Some(None);
+    }
+    let types = types
+        .as_array()
+        .and_then(|types| {
+            types
+                .iter()
+                .map(JsonValue::as_str)
+                .collect::<Option<Vec<_>>>()
+        })
+        .unwrap_or_default();
+    Some(Some(types))
+}
+
+fn reconcile_messages(
+    current: &mut Vec<Message>,
+    snapshot: &[Message],
+    owned_activity_types: Option<Option<Vec<&str>>>,
+) {
     let declares_activity = snapshot
         .iter()
         .any(|message| message.role() == Role::Activity);
@@ -982,8 +1016,15 @@ fn reconcile_messages(current: &mut Vec<Message>, snapshot: &[Message]) {
             *message = (*replacement).clone();
             true
         } else {
-            matches!(message.role(), Role::Activity if !declares_activity)
-                || matches!(message.role(), Role::Reasoning if !declares_reasoning)
+            match message {
+                Message::Activity { activity_type, .. } => match &owned_activity_types {
+                    None => !declares_activity,
+                    Some(None) => false,
+                    Some(Some(types)) => !types.contains(&activity_type.as_str()),
+                },
+                Message::Reasoning { .. } => !declares_reasoning,
+                _ => false,
+            }
         }
     });
     let mut seen: HashSet<_> = current.iter().map(|message| message.id().clone()).collect();

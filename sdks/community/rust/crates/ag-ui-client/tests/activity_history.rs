@@ -286,3 +286,99 @@ async fn colliding_tool_result_preserves_activity_content_and_ownership() {
     assert_eq!(messages[1]["content"], "done");
     assert_eq!(messages[1]["subagentRunId"], "new");
 }
+
+#[tokio::test]
+async fn snapshots_honor_explicit_activity_authority_and_fail_closed_on_invalid_metadata() {
+    // Canonical TS authoritativeActivityTypes: absence infers authority; null owns
+    // all types; arrays own only listed types; malformed declarations own nothing.
+    let cases = [
+        (json!({}), true, true),
+        (json!({"@ag-ui/client": {}}), true, true),
+        (
+            json!({"@ag-ui/client": {"authoritativeActivityTypes": null}}),
+            true,
+            true,
+        ),
+        (
+            json!({"@ag-ui/client": {"authoritativeActivityTypes": ["owned"]}}),
+            true,
+            false,
+        ),
+        (
+            json!({"@ag-ui/client": {"authoritativeActivityTypes": []}}),
+            false,
+            false,
+        ),
+        (
+            json!({"@ag-ui/client": {"authoritativeActivityTypes": ["owned", 7]}}),
+            false,
+            false,
+        ),
+        (
+            json!({"@ag-ui/client": {"authoritativeActivityTypes": "owned"}}),
+            false,
+            false,
+        ),
+        (json!({"@ag-ui/client": null}), false, false),
+        (json!({"@ag-ui/client": []}), false, false),
+        (json!({"@ag-ui/client": "invalid"}), false, false),
+        (json!({"@ag-ui/client": false}), false, false),
+        (json!({"@ag-ui/client": 7}), false, false),
+    ];
+    for (metadata, owns_owned, owns_other) in cases {
+        for carries_activity in [false, true] {
+            let mut request = input("requested");
+            request.messages = vec![
+                message(
+                    json!({"id":"owned","role":"activity","activityType":"owned","content":{}}),
+                ),
+                message(
+                    json!({"id":"other","role":"activity","activityType":"other","content":{}}),
+                ),
+                message(json!({"id":"reasoning","role":"reasoning","content":"keep"})),
+            ];
+            let incoming = if carries_activity {
+                vec![json!({"id":"new","role":"activity","activityType":"new","content":{}})]
+            } else {
+                vec![]
+            };
+            let result = Script(vec![
+                start("requested"),
+                json!({"type":"MESSAGES_SNAPSHOT","messages":incoming,"metadata":metadata}),
+                finish("requested"),
+            ])
+            .run_input(&request, ())
+            .await
+            .unwrap();
+            let ids: Vec<_> = result.messages.iter().map(|m| m.id().as_str()).collect();
+            let inferred = metadata.get("@ag-ui/client").is_none()
+                || metadata["@ag-ui/client"]
+                    .as_object()
+                    .is_some_and(|m| !m.contains_key("authoritativeActivityTypes"));
+            assert_eq!(
+                ids.contains(&"owned"),
+                !(owns_owned && (!inferred || carries_activity)),
+                "metadata={metadata}, activity={carries_activity}"
+            );
+            assert_eq!(
+                ids.contains(&"other"),
+                !(owns_other && (!inferred || carries_activity)),
+                "metadata={metadata}, activity={carries_activity}"
+            );
+            assert!(ids.contains(&"reasoning"));
+            assert_eq!(ids.contains(&"new"), carries_activity);
+        }
+    }
+}
+
+#[tokio::test]
+async fn snapshot_updates_matching_activity_id_even_without_deletion_authority() {
+    let mut request = input("requested");
+    request.messages = vec![message(
+        json!({"id":"a","role":"activity","activityType":"old","content":{"old":true}}),
+    )];
+    let replacement =
+        json!({"id":"a","role":"activity","activityType":"new","content":{"new":true}});
+    let result = Script(vec![start("requested"), json!({"type":"MESSAGES_SNAPSHOT","messages":[replacement],"metadata":{"@ag-ui/client":{"authoritativeActivityTypes":[]}}}), finish("requested")]).run_input(&request, ()).await.unwrap();
+    assert_eq!(values(&result.messages), vec![replacement]);
+}

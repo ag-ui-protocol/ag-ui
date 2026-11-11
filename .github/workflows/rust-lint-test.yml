@@ -2,14 +2,14 @@ name: Rust SDK qualification
 
 on:
   push:
-    branches: [main, chore/rust-updates, "feat/rust-**"]
+    branches: [main]
     paths:
       - "sdks/community/rust/**"
       - "sdks/fixtures/**"
       - "spec/1.0/**"
       - ".github/workflows/rust-lint-test.yml"
   pull_request:
-    branches: [main, chore/rust-updates]
+    branches: [main]
     paths:
       - "sdks/community/rust/**"
       - "sdks/fixtures/**"

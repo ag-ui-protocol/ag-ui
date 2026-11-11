@@ -111,7 +111,7 @@ mod conformance_tests {
             message(json!({"id":"new","role":"assistant","content":"appended"})),
             message(json!({"id":"a","role":"assistant","content":"updated"})),
         ];
-        reconcile_messages(&mut current, &snapshot);
+        reconcile_messages(&mut current, &snapshot, None);
         let values: Vec<_> = current
             .iter()
             .map(|m| serde_json::to_value(m).unwrap())
@@ -129,7 +129,7 @@ mod conformance_tests {
             message(json!({"id":"act2","role":"activity","activityType":"search","content":{}})),
             message(json!({"id":"r2","role":"reasoning","content":"new thought"})),
         ];
-        reconcile_messages(&mut current, &snapshot);
+        reconcile_messages(&mut current, &snapshot, None);
         let ids: Vec<_> = current.iter().map(|m| m.id().as_ref()).collect();
         assert_eq!(ids, ["a", "act2", "r2"]);
     }
