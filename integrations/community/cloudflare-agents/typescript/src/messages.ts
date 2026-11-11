@@ -64,6 +64,12 @@ export interface ConvertedMessages {
   instructions: string[];
   /** Why the request cannot run (resume problems), as messages for RUN_ERROR. */
   resumeErrors: string[];
+  /**
+   * The reason given for each call this request denies, by tool call id. The
+   * AI SDK tells the model in this run; the denied call's result in the
+   * history carries it from then on.
+   */
+  denials: Map<string, string>;
 }
 
 type AssistantModelMessage = Extract<ModelMessage, { role: "assistant" }>;
@@ -72,7 +78,7 @@ type ToolPart = Extract<ModelMessage, { role: "tool" }>["content"][number];
 type UserPart = Exclude<Extract<ModelMessage, { role: "user" }>["content"], string>[number];
 
 /**
- * The approval interrupt for a server tool call that `needsApproval` paused.
+ * The approval interrupt for a server tool call the AI SDK paused for approval.
  * The interrupt and the call share an id, so a resume entry names the call.
  *
  * The reason is `"tool_approval"`, not `"tool_call"`: clients such as
@@ -235,8 +241,9 @@ export function convertMessages(
   closeAssistant();
 
   const open = [...calls.values()].filter(({ call }) => !answered.has(call.id));
-  const resumeErrors = settleOpenCalls(result, open, calls, options);
-  return { messages: result, instructions, resumeErrors };
+  const denials = new Map<string, string>();
+  const resumeErrors = settleOpenCalls(result, open, calls, options, denials);
+  return { messages: result, instructions, resumeErrors, denials };
 }
 
 /** Closes or resumes the calls without a result; returns why the request cannot run, if it cannot. */
@@ -245,6 +252,7 @@ function settleOpenCalls(
   open: OpenCall[],
   calls: Map<string, OpenCall>,
   options: ConvertMessagesOptions,
+  denials: Map<string, string>,
 ): string[] {
   const errors: string[] = [];
   const clientTools = new Set(options.clientToolNames ?? []);
@@ -325,6 +333,7 @@ function settleOpenCalls(
       toolCallId: call.id,
       ...(approval.signature && { signature: approval.signature }),
     } as ModelPart);
+    if (!decision.approved && decision.reason) denials.set(call.id, decision.reason);
     approvals.push({
       type: "tool-approval-response",
       approvalId: approval.approvalId,

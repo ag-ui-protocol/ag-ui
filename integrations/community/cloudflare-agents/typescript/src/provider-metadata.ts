@@ -18,7 +18,7 @@
 export type ProviderMetadata = Record<string, Record<string, unknown>>;
 
 /**
- * Marks a tool call the AI SDK paused for approval (`needsApproval`), with the
+ * Marks a tool call the AI SDK paused for approval (`toolApproval` / `needsApproval`), with the
  * ids a resume needs: the SDK's approval id and, when approvals are signed
  * (`experimental_toolApprovalSecret`), its signature.
  */

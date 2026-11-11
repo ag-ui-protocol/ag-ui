@@ -192,7 +192,11 @@ export async function* runAGUI<State = AGUIState>(
       return;
     }
 
-    const translation = yield* translate(input, result, { clientToolNames, channel });
+    const translation = yield* translate(input, result, {
+      clientToolNames,
+      channel,
+      denials: converted.denials,
+    });
     unsubscribe();
     // The previous run's approvals are answered now; record this run's.
     await options.approvals?.save(translation.approvals);
@@ -227,7 +231,11 @@ export async function* streamToAGUI(
 async function* translate(
   input: RunAgentInput,
   result: StreamTextLike,
-  options: { clientToolNames?: Iterable<string>; channel?: EventChannel },
+  options: {
+    clientToolNames?: Iterable<string>;
+    channel?: EventChannel;
+    denials?: ReadonlyMap<string, string>;
+  },
 ): AsyncGenerator<BaseEvent, { terminal: BaseEvent; approvals: PendingApproval[] }> {
   let translation;
   try {
@@ -235,6 +243,7 @@ async function* translate(
       inputMessages: input.messages ?? [],
       clientToolNames: options.clientToolNames,
       channel: options.channel,
+      denials: options.denials,
     });
   } catch (error) {
     return { terminal: runError(error, "STREAM_ERROR"), approvals: [] };

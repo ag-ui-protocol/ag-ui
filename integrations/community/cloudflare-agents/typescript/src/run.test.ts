@@ -348,6 +348,52 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
       expect(model.prompts[1].at(-1).content[0].output).toEqual({ type: "execution-denied", reason: REJECTED });
     });
 
+    it("keeps the reason a call was denied in its result", async () => {
+      const { agent, events } = refundAgent();
+      await agent.runAgent();
+
+      await agent.runAgent({
+        resume: [{ interruptId: "tc1", status: "resolved", payload: { approved: false, reason: "Over the limit." } }],
+      });
+
+      const result = events.filter((e) => e.type === EventType.TOOL_CALL_RESULT).at(-1) as any;
+      expect(result.content).toBe("Over the limit.");
+      expect(agent.messages.find((m) => m.role === "tool")).toMatchObject({ content: "Over the limit." });
+    });
+
+    if (sdk.name === "ai@7") {
+      it("resumes approvals configured on streamText (AI SDK v7 toolApproval)", async () => {
+        const execute = vi.fn(async ({ order }: any) => ({ refunded: order }));
+        const model = sdk.model([
+          turn(chunks.toolCall("tc1", "issue_refund", { order: "A1" })),
+          turn(chunks.text("t2", "All set.")),
+        ]);
+        const { agent, events } = clientFor((run) =>
+          ai.streamText({
+            model: model as any,
+            messages: run.messages,
+            stopWhen: ai.stepCountIs(3),
+            tools: {
+              issue_refund: ai.tool({
+                inputSchema: ai.jsonSchema({ type: "object", properties: { order: { type: "string" } } }),
+                execute,
+              }),
+            },
+            toolApproval: { issue_refund: "user-approval" },
+          } as any),
+        );
+        agent.messages = [userMessage("Refund A1")];
+
+        await agent.runAgent();
+        expect(execute).not.toHaveBeenCalled();
+        expect(agent.pendingInterrupts.map((i) => i.reason)).toEqual(["tool_approval"]);
+
+        await agent.runAgent({ resume: [{ interruptId: "tc1", status: "resolved", payload: { approved: true } }] });
+        expect(execute).toHaveBeenCalledOnce();
+        expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+      });
+    }
+
     it("refuses a request that does not answer the approval", async () => {
       const { agent, model } = refundAgent();
       await agent.runAgent();

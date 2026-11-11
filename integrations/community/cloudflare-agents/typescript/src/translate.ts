@@ -37,6 +37,8 @@ export interface TranslateOptions {
   clientToolNames?: Iterable<string>;
   /** Events produced beside the stream, interleaved as they arrive. */
   channel?: EventChannel;
+  /** Why the user denied a call, by tool call id: the denied call's result. */
+  denials?: ReadonlyMap<string, string>;
 }
 
 export type TranslationOutcome =
@@ -226,9 +228,11 @@ class Translation {
         yield* this.toolResult(String(part.toolCallId), JSON.stringify({ error: message }), message);
         break;
       }
-      case "tool-output-denied":
-        yield* this.toolResult(String(part.toolCallId), REJECTED);
+      case "tool-output-denied": {
+        const toolCallId = String(part.toolCallId);
+        yield* this.toolResult(toolCallId, this.options.denials?.get(toolCallId) ?? REJECTED);
         break;
+      }
       case "tool-approval-request":
         yield* this.approvalRequest(part);
         break;

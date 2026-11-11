@@ -39,7 +39,7 @@ Each AG-UI thread is one instance of the agent (one Durable Object), at `/agents
 - **Context.** `run.instructions(base)` adds the application's context (`useAgentContext`), the conversation's system messages and the shared state to your instructions. AI SDK v7 does not accept system messages inside `messages`, so they belong here.
 - **Shared state, kept in the Durable Object.** The agent's `state` is the thread's AG-UI state. The client's edits are saved into it, every `this.setState()` during a run reaches the client as a STATE_SNAPSHOT, and a client that comes back to the thread gets it. What the server changes between runs (a schedule, another client) is kept: the client's copy only wins when the client changed it.
 - **Reasoning that survives the round trip.** Reasoning streams as `REASONING_*` events and stays in the history. Provider data that has to come back on the next request (Anthropic's thinking signatures, Gemini's thought signatures on tool calls, OpenAI's reasoning and message items) travels in AG-UI's `encryptedValue` and is restored as `providerOptions`, so extended thinking with tools works across client tool round trips.
-- **Tool approvals as AG-UI interrupts.** A tool with AI SDK's `needsApproval` ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
+- **Tool approvals as AG-UI interrupts.** A tool that needs approval (AI SDK v7 `toolApproval`, v6 `needsApproval`) ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
 - **Everything else in the stream.** Multi-step runs (`stopWhen`) with messages in order, streaming tool arguments, tool results and errors, token usage on `RUN_FINISHED`, cancellation (`RUN_FINISHED` with a `cancelled` outcome), sources and files as `CUSTOM` events.
 
 Supports AI SDK v6 and v7, and AG-UI 1.0.
@@ -139,11 +139,17 @@ A tool can update the state several times while it runs (a plan whose steps comp
 ### Tool approvals
 
 ```ts
-issue_refund: tool({
-  inputSchema: z.object({ order_id: z.string() }),
-  needsApproval: true,
-  execute: async ({ order_id }) => refund(order_id),
-}),
+streamText({
+  // ...
+  tools: {
+    ...run.clientTools,
+    issue_refund: tool({
+      inputSchema: z.object({ order_id: z.string() }),
+      execute: async ({ order_id }) => refund(order_id),
+    }),
+  },
+  toolApproval: { issue_refund: "user-approval" }, // AI SDK v6: `needsApproval: true` on the tool
+});
 ```
 
 The run ends with `RUN_FINISHED { outcome: { type: "interrupt" } }`, one interrupt per paused call:
@@ -169,7 +175,7 @@ The paused call is marked in its `encryptedValue`, with the AI SDK's approval id
 
 ## Without Durable Objects
 
-In a plain Worker, `handleAGUIRequest` serves one run per request; the state lives for the length of the request. Pass `approvals` (an `ApprovalStore` on KV or D1) or set AI SDK's `experimental_toolApprovalSecret` if you gate tools with `needsApproval`: otherwise a resume trusts the tool calls in the client's history. `headers` adds headers (CORS) to every response, and preflight requests are answered.
+In a plain Worker, `handleAGUIRequest` serves one run per request; the state lives for the length of the request. Pass `approvals` (an `ApprovalStore` on KV or D1) or set AI SDK's `experimental_toolApprovalSecret` if tools need approval: otherwise a resume trusts the tool calls in the client's history. `headers` adds headers (CORS) to every response, and preflight requests are answered.
 
 ```ts
 import { handleAGUIRequest } from "@ag-ui/cloudflare-agents";

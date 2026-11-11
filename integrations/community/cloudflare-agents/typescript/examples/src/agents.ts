@@ -41,6 +41,9 @@ abstract class DojoAgent extends withAGUI(Agent<Env, DojoState>) {
     return {};
   }
 
+  /** Server tools that wait for the user's approval (AI SDK `toolApproval`). */
+  protected approvalRequired: string[] = [];
+
   protected model(): LanguageModel {
     // Chat Completions, not the Responses API, so any OpenAI-compatible
     // endpoint (aimock in CI included) can serve it.
@@ -61,6 +64,7 @@ abstract class DojoAgent extends withAGUI(Agent<Env, DojoState>) {
       messages: run.messages,
       // The client's tools first, so a server tool wins a name clash.
       tools: { ...run.clientTools, ...this.tools(run) },
+      toolApproval: Object.fromEntries(this.approvalRequired.map((name) => [name, "user-approval" as const])),
       stopWhen: stepCountIs(5),
       abortSignal: run.abortSignal,
     });
@@ -130,8 +134,10 @@ export class HumanInTheLoop extends DojoAgent {
     "You are the Cloudflare Agents Dojo planner. When the user asks for a plan, call generate_task_steps with the steps. After the user has chosen, briefly confirm the plan you will follow.";
 }
 
-/** A server tool that pauses for the user's approval (AI SDK `needsApproval`). */
+/** A server tool that pauses for the user's approval (AI SDK `toolApproval`). */
 export class HumanInTheLoopApproval extends DojoAgent {
+  protected approvalRequired = ["issue_refund"];
+
   protected prompt =
     "You are the Cloudflare Agents Dojo refund desk. Call issue_refund when the user asks for a refund. If it was not approved, say the refund was not issued.";
 
@@ -140,7 +146,6 @@ export class HumanInTheLoopApproval extends DojoAgent {
       issue_refund: tool({
         description: "Refund an order. Needs the user's approval.",
         inputSchema: z.object({ order_id: z.string().describe("The order to refund, such as ORD-1001.") }),
-        needsApproval: true,
         execute: async ({ order_id }) => ({ order_id, status: "refunded" }),
       }),
     };
