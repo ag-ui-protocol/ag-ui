@@ -31,8 +31,10 @@ def v1_guidelines(guidelines: Optional[dict], *, direct_json: bool) -> dict:
             ).replace('"path"', '"@path"')
             + "\nUse only components, properties and functions defined by the supplied "
             'catalog. A function call uses {"@call": "functionName", "args": {...}}, '
-            'without returnType. Literal objects may contain a "path" key; '
-            'only "@path" denotes a data binding in 1.0.\n'
+            'without returnType. Value bindings use "@path". Repeating children '
+            'keep {"componentId": "item", "path": "/items"}; initialize that '
+            'path in the data model. A literal object with "path" and no '
+            '"componentId" is not a data binding.\n'
         )
     if result.get("design_guidelines") is None:
         result["design_guidelines"] = DEFAULT_DESIGN_GUIDELINES.replace(
@@ -106,21 +108,27 @@ def validate_v1_components(
             for index, value in enumerate(node):
                 bindings(value, f"{location}[{index}]")
         elif isinstance(node, dict):
-            path = node.get("@path")
-            if (
-                isinstance(path, str)
-                and path.startswith("/")
-                and not _path_resolves(path, data)
-            ):
-                errors.append(
-                    {
-                        "code": "unresolved_binding",
-                        "path": location,
-                        "message": (
-                            f"Binding path '{path}' does not resolve in the data model"
-                        ),
-                    }
-                )
+            paths = [node.get("@path")]
+            # Repeating children retain their template `path` in 1.0. An
+            # ordinary literal object with only `path` is still not a binding.
+            if isinstance(node.get("componentId"), str):
+                paths.append(node.get("path"))
+            for path in paths:
+                if (
+                    isinstance(path, str)
+                    and path.startswith("/")
+                    and not _path_resolves(path, data)
+                ):
+                    errors.append(
+                        {
+                            "code": "unresolved_binding",
+                            "path": location,
+                            "message": (
+                                f"Binding path '{path}' does not resolve "
+                                "in the data model"
+                            ),
+                        }
+                    )
             for key, value in node.items():
                 bindings(value, f"{location}.{key}")
 

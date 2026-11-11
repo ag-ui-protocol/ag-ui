@@ -267,3 +267,97 @@ def test_v1_binding_resolution_handles_pointer_escapes_arrays_and_relative_paths
         catalog=BasicCatalog("1.0").to_json(),
     )
     assert result["valid"], result
+
+
+@pytest.mark.parametrize(
+    "path,data,valid",
+    [
+        ("/items", {}, False),
+        ("/items", {"items": []}, True),
+        ("/items", {"items": [{"name": "Ada"}]}, True),
+        ("/groups/0/items", {"groups": [{"items": []}]}, True),
+        ("/a~1b/~0items", {"a/b": {"~items": []}}, True),
+        ("items", {}, True),
+    ],
+)
+def test_v1_template_paths_resolve_without_changing_directive_syntax(path, data, valid):
+    from ag_ui_adk.a2ui_protocol import validate_v1_components
+
+    components = [
+        {
+            "id": "root",
+            "component": "List",
+            "children": {"componentId": "item", "path": path},
+        },
+        {"id": "item", "component": "Text", "text": "Item"},
+    ]
+    result = validate_v1_components(
+        components=components, data=data, catalog=BasicCatalog("1.0").to_json()
+    )
+    assert result["valid"] is valid, result
+    if not valid:
+        assert result["errors"] == [
+            {
+                "code": "unresolved_binding",
+                "path": "components[0].children",
+                "message": f"Binding path '{path}' does not resolve in the data model",
+            }
+        ]
+    assert components[0]["children"] == {"componentId": "item", "path": path}
+
+
+@pytest.mark.parametrize("inference_format", ["direct_json", "express"])
+async def test_v1_missing_template_data_retries_then_accepts_initialized_items(
+    inference_format,
+):
+    class RetryingListLlm(_RenderLlm):
+        async def generate_content_async(self, llm_request, stream=False):
+            self.args = {
+                "components": [
+                    {
+                        "id": "root",
+                        "component": "List",
+                        "children": {"componentId": "item", "path": "/items"},
+                    },
+                    {"id": "item", "component": "Text", "text": "Item"},
+                ],
+                "data": {} if not self.prompts else {"items": [{"name": "Ada"}]},
+            }
+            async for response in super().generate_content_async(llm_request, stream):
+                yield response
+
+    missing = 'root=List({componentId:"item",path:"/items"})\nitem=Text("Item")'
+    model = (
+        RetryingListLlm(model="scripted")
+        if inference_format == "direct_json"
+        else _ExpressLlm(
+            model="scripted",
+            scripts=[
+                [f"<a2ui>{missing}</a2ui>"],
+                ['<a2ui>$/items=[{name:"Ada"}]\n', missing, "</a2ui>"],
+            ],
+        )
+    )
+    attempts = []
+    tool = _tool(
+        model, inference_format=inference_format, on_a2ui_attempt=attempts.append
+    )
+    result = await tool.run_async(args={}, tool_context=_context())
+    assert [attempt["ok"] for attempt in attempts] == [False, True], attempts
+    assert attempts[0]["errors"][0]["code"] == "unresolved_binding"
+    assert "/items" in attempts[0]["errors"][0]["message"]
+    prompt = (
+        model.prompts[1]
+        if inference_format == "direct_json"
+        else model.requests[1].config.system_instruction
+    )
+    assert "Previous attempt was invalid" in prompt and "unresolved_binding" in prompt
+    assert "a2ui_operations" in result, result
+    assert result["a2ui_operations"][-1]["updateDataModel"]["value"] == {
+        "items": [{"name": "Ada"}]
+    }
+    for event in tool.event_queue._queue:
+        if event.type == "ACTIVITY_SNAPSHOT" and "a2ui_operations" in event.content:
+            assert event.content["a2ui_operations"][-1]["updateDataModel"]["value"] == {
+                "items": [{"name": "Ada"}]
+            }
