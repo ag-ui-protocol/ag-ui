@@ -202,9 +202,17 @@ jobs:
       # The shared fixture's AG-UI protocol check, run in a real browser against
       # scripted streams: each prompt needs its own run, and a cancellation
       # covers only the response it cancelled.
+      # The browser download does not use the Ubuntu mirrors. The system
+      # libraries do, and the runner image already has the ones Chromium needs,
+      # so a mirror outage only gives a warning here. If a library is really
+      # missing, the next step fails when it launches the browser.
       - name: Install Chromium for the protocol-check scenarios
         working-directory: apps/dojo/e2e
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          pnpm exec playwright install chromium
+          if ! pnpm exec playwright install-deps chromium; then
+            echo "::warning::Could not install Chromium's system libraries (Ubuntu mirrors unreachable); using the libraries on the runner image."
+          fi
 
       - name: Run protocol-check fixture scenarios
         working-directory: apps/dojo/e2e
