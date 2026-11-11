@@ -1,7 +1,8 @@
 import { AbstractAgent } from "@/agent";
 import { defaultApplyEvents } from "../default";
 import { EventType, Message, StateDeltaEvent } from "@ag-ui/core";
-import { of } from "rxjs";
+import { lastValueFrom, of, toArray } from "rxjs";
+import { DebugLogger } from "@/debug-logger";
 import { AgentStateMutation } from "@/agent/subscriber";
 import { describe, it, expect, vi } from "vitest";
 
@@ -210,6 +211,62 @@ describe("defaultApplyEvents - State Patching", () => {
           resolve();
         },
       });
+    });
+  });
+  describe("a patch that cannot apply", () => {
+    const input = {
+      messages: [],
+      state: { profile: { email: "doc-secret" } },
+      threadId: "test-thread",
+      runId: "test-run",
+      tools: [],
+      context: [],
+    };
+    const failing: StateDeltaEvent = {
+      type: EventType.STATE_DELTA,
+      delta: [
+        { op: "add", path: "/profile/name", value: "Ada" },
+        { op: "replace", path: "/missing/key", value: "patch-secret" },
+      ],
+    };
+    const run = (debugLogger?: DebugLogger) =>
+      lastValueFrom(
+        defaultApplyEvents(input, of(failing), createAgent(), [], debugLogger).pipe(toArray()),
+      );
+    const logged = (spy: { mock: { calls: unknown[][] } }) =>
+      spy.mock.calls.map((call) => call.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ")).join("\n");
+
+    it("warns with the failing operation, not the state or the patch values", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await run();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(logged(warn)).toContain("Failed to apply state patch");
+        expect(logged(warn)).toContain("operation 2 of 2: replace /missing/key");
+        expect(logged(warn)).not.toMatch(/doc-secret|patch-secret/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it.each([
+      ["verbose", true, true],
+      ["summary", false, false],
+    ])("logs %s detail to the opt-in debug logger", async (_mode, verbose, detailed) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+      try {
+        await run(new DebugLogger({ enabled: true, events: true, lifecycle: false, verbose }));
+        const debugged = logged(debug);
+        expect(debugged).toContain("State patch failed");
+        // Verbose mode is where the full state belongs; summary mode keeps a count.
+        expect(debugged.includes("doc-secret")).toBe(detailed);
+        if (!detailed) expect(debugged).toContain('"operations":2');
+        expect(logged(warn)).not.toMatch(/doc-secret|patch-secret/);
+      } finally {
+        warn.mockRestore();
+        debug.mockRestore();
+      }
     });
   });
 });

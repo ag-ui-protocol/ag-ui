@@ -176,3 +176,29 @@ describe("the compaction warning behaves like every other transformation warning
     expect(warnings).toEqual([]);
   });
 });
+
+describe("compacting a state patch that cannot apply", () => {
+  it("warns with the failing operation, not the state or the patch values", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      compactEvents([
+        RUN_STARTED,
+        { type: EventType.STATE_SNAPSHOT, snapshot: { profile: { email: "doc-secret" } } } as StateSnapshotEvent,
+        {
+          type: EventType.STATE_DELTA,
+          delta: [
+            { op: "add", path: "/profile/name", value: "Ada" },
+            { op: "replace", path: "/missing/key", value: "patch-secret" },
+          ],
+        } as StateDeltaEvent,
+        RUN_FINISHED,
+      ]);
+      const warned = warn.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+      expect(warned).toContain("Failed to apply state patch while compacting");
+      expect(warned).toContain("operation 2 of 2: replace /missing/key");
+      expect(warned).not.toMatch(/doc-secret|patch-secret/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
