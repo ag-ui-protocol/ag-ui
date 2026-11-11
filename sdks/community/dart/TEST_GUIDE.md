@@ -50,3 +50,28 @@ The SDK has comprehensive unit test coverage including:
 1. **SSE Retry Tests**: Two tests are skipped because SSE protocol doesn't support automatic retry on HTTP errors - this is a protocol limitation, not a bug.
 
 2. **Integration Tests**: Require TypeScript SDK infrastructure that may not be available in the Dart SDK directory structure.
+
+## SSE byte-bound verification
+
+Run these checks from `sdks/community/dart`:
+
+```bash
+dart test test/sse/sse_parser_test.dart test/sse/sse_client_stream_test.dart test/sse/sse_client_basic_test.dart test/sse/sse_byte_bounds_http_test.dart test/client/http_endpoints_test.dart
+dart test --platform chrome test/sse/sse_parser_test.dart test/sse/sse_client_stream_test.dart
+dart run tool/verify_sse_byte_bounds.dart
+dart --enable-vm-service=0 run tool/verify_sse_logging.dart
+dart test --exclude-tags requires-server
+dart analyze lib
+dart analyze test
+dart analyze tool
+dart format --output=none --set-exit-if-changed lib test tool
+```
+
+The focused VM tests, both public probes, and the full non-server VM suite are
+required. The Chrome command verifies JavaScript-safe limit validation and
+stream lifecycle behavior. A local Chrome run may be unavailable when no
+Chrome executable is installed; the dedicated Dart workflow runs it in CI.
+
+The repository contains inherited analyzer and formatter findings. New and
+changed files must add no diagnostics and must be formatted. Do not treat an
+unrelated whole-package finding as evidence that the SSE checks failed.
