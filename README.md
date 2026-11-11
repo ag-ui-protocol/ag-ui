@@ -124,6 +124,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 | [Omnara](https://omnara.com) | ✅ Supported | ➡️ [Docs](https://docs.ag-ui.com/integrations/omnara) 🎮 [Demos](https://dojo.ag-ui.com/omnara/feature/tool_based_generative_ui) |
 | [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | ✅ Supported | ➡️ [Integration](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/community/cloudflare-agents) |
+| [DSPy](https://dspy.ai) | ✅ Supported | ➡️ [Integration](https://github.com/wrabit/ag-ui-dspy) |
 
 
 ## Agent Interaction Protocols
