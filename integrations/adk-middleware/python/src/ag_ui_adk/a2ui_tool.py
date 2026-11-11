@@ -1,9 +1,9 @@
 """A2UI subagent tool factory for Google ADK agents (OSS-158).
 
-Thin adapter over ``ag-ui-a2ui-toolkit`` — the heavy lifting (op builders,
-prompt assembly, history walkers, output envelope, and the validate→retry
-recovery loop) lives in the toolkit. This adapter owns only the ADK-specific
-glue: the ``BaseTool`` decorator, runtime/state access, model bind + invoke,
+Adapter over ``ag-ui-a2ui-toolkit``: it reuses op builders, prompt assembly,
+history lookup and the 0.9 recovery loop. Native 1.0 validation/recovery lives
+in ``a2ui_protocol`` until the published toolkit supports that protocol.
+ADK glue includes the ``BaseTool`` decorator, runtime/state access, model invocation,
 and — unlike LangGraph, which gets it free via langchain's ``astream_events`` —
 explicit emission of the nested ``render_a2ui`` tool-call stream onto the run's
 event queue so the middleware paint gate and client see progressive components.
@@ -22,6 +22,7 @@ import logging
 import threading
 import uuid
 from contextlib import aclosing
+from functools import partial
 from typing import Any, Optional
 
 from google.adk.models.llm_request import LlmRequest
@@ -53,10 +54,16 @@ from ag_ui_a2ui_toolkit import (
 )
 
 from .a2ui_google_sdk import (
+    catalog_protocol_version,
     create_express_processor,
     heal_json_arg,
     normalize_catalog_dict,
     render_catalog_instructions,
+)
+from .a2ui_protocol import (
+    run_v1_generation_with_recovery,
+    v1_guidelines,
+    validate_v1_components,
 )
 from .event_translator import adk_events_to_messages
 from .session_manager import CONTEXT_STATE_KEY
@@ -80,6 +87,58 @@ _A2UI_AUTOINJECT_ATTR = "_a2ui_auto_injected"
 
 class _ExpressOutputError(ValueError):
     """The compiled output cannot be represented by this single-surface tool."""
+
+
+def _versioned_envelope(version: str, **kwargs: Any) -> str:
+    """Reuse toolkit assembly while selecting the catalog's wire protocol."""
+    envelope = json.loads(build_a2ui_envelope(**kwargs))
+    for operation in envelope[A2UI_OPERATIONS_KEY]:
+        operation["version"] = version
+    return json.dumps(envelope)
+
+
+def _prior_protocol_version(messages: list, surface_id: str) -> str:
+    """Read the protocol of the current surface lifetime from normalized history.
+
+    The toolkit reconstructs components/data/catalog ID but discards versions.
+    Prefer the create operation, stopping at a deletion so older lifetimes
+    cannot supply the version. Sparse histories can fall back to an update;
+    legacy history without version declarations retains the 0.9 default.
+    """
+    latest_version = None
+    for message in reversed(messages):
+        if getattr(message, "role", None) != "tool":
+            continue
+        envelope = A2UISubAgentTool._extract_envelope(message.content)
+        if envelope is None:
+            continue
+        operations = envelope.get(A2UI_OPERATIONS_KEY)
+        if not isinstance(operations, list):
+            continue
+        for operation in reversed(operations):
+            if not isinstance(operation, dict):
+                continue
+            for action in (
+                "createSurface",
+                "updateComponents",
+                "updateDataModel",
+                "deleteSurface",
+            ):
+                body = operation.get(action)
+                if not isinstance(body, dict) or body.get("surfaceId") != surface_id:
+                    continue
+                if action == "deleteSurface":
+                    return latest_version or "v0.9"
+                version = operation.get("version")
+                if version is not None:
+                    version = catalog_protocol_version(
+                        {"protocolVersion": version}
+                    ).value
+                    if latest_version is None:
+                        latest_version = version
+                if action == "createSurface":
+                    return version or "v0.9"
+    return latest_version or "v0.9"
 
 
 # Description the A2UI middleware stamps on the schema context entry. MUST stay
@@ -147,7 +206,7 @@ class A2UISubAgentTool(BaseTool):
         )
         # Injected per-run by ADKAgent so the tool can emit nested tool-call
         # events onto the active run's stream.
-        self.event_queue = None
+        self.event_queue: Any = None
 
     def for_run(
         self, event_queue: Any, *, inference_format: Optional[str] = None
@@ -210,7 +269,7 @@ class A2UISubAgentTool(BaseTool):
         conversation = self._conversation_contents(events)
         state, schema_value = self._state_view(tool_context)
         is_express = self._inference_format == "express"
-        processor = None
+        processor: Any = None
         guidelines = self._guidelines
 
         # Single catalog, client-sourced (no drift): prefer a host-supplied catalog
@@ -220,7 +279,22 @@ class A2UISubAgentTool(BaseTool):
         # prompt slot — richer than dumping the raw catalog. Render is best-effort
         # and tolerates the client's non-conformant catalog; on failure we leave the
         # raw schema text in the slot (today's behavior).
-        catalog_source = self._catalog or schema_value
+        catalog_source = self._catalog if self._catalog is not None else schema_value
+        from a2ui.core.schema import ProtocolVersion
+
+        try:
+            protocol = catalog_protocol_version(catalog_source)
+            if protocol not in (ProtocolVersion.V0_9, ProtocolVersion.V1_0):
+                raise ValueError("ADK A2UI requires protocol version 0.9 or 1.0")
+        except ValueError as error:
+            return self._as_tool_return(wrap_error_envelope(str(error)))
+        version = protocol.value
+        validation_catalog = normalize_catalog_dict(
+            catalog_source, default_catalog_id=self._default_catalog_id
+        )
+        catalog_id = (validation_catalog or {}).get(
+            "catalogId", self._default_catalog_id
+        )
         if is_express:
             from a2ui.core import A2uiError
 
@@ -230,7 +304,11 @@ class A2UISubAgentTool(BaseTool):
                     default_catalog_id=self._default_catalog_id,
                     surface_id=target_surface_id or self._default_surface_id,
                 )
-                guidelines = dict(self._guidelines or {})
+                guidelines = (
+                    v1_guidelines(self._guidelines, direct_json=False)
+                    if protocol == ProtocolVersion.V1_0
+                    else dict(self._guidelines or {})
+                )
                 custom_generation = guidelines.get("generation_guidelines") or ""
                 guidelines["generation_guidelines"] = (
                     processor.prompt_snippet + "\n\n" + custom_generation
@@ -241,6 +319,8 @@ class A2UISubAgentTool(BaseTool):
                     wrap_error_envelope(f"Invalid Express catalog: {error}")
                 )
         else:
+            if protocol == ProtocolVersion.V1_0:
+                guidelines = v1_guidelines(self._guidelines, direct_json=True)
             instructions = render_catalog_instructions(
                 catalog_source, default_catalog_id=self._default_catalog_id
             )
@@ -257,6 +337,18 @@ class A2UISubAgentTool(BaseTool):
         )
         if prep.get("error"):
             return self._as_tool_return(wrap_error_envelope(prep["error"]))
+        if prep.get("prior"):
+            try:
+                prior_version = _prior_protocol_version(
+                    messages, target_surface_id or self._default_surface_id
+                )
+                if prior_version != version:
+                    raise ValueError(
+                        f"Cannot change surface protocol version from {prior_version} "
+                        f"to {version}; create a new surface instead"
+                    )
+            except ValueError as error:
+                return self._as_tool_return(wrap_error_envelope(str(error)))
         if is_express and prep.get("prior"):
             prior_catalog_id = prep["prior"].get("catalogId")
             if (
@@ -265,19 +357,12 @@ class A2UISubAgentTool(BaseTool):
             ):
                 return self._as_tool_return(
                     wrap_error_envelope(
-                        "The Express catalog must match the existing surface's catalogId"
+                        "The Express catalog must match the existing "
+                        "surface's catalogId"
                     )
                 )
 
-        # Validate with the toolkit's structural/lenient validator against the SAME
-        # client catalog (membership; it does not strict-resolve $refs, so the
-        # non-conformant catalog is fine) — parity with the LangGraph/Declarative
-        # A2UI demos. None → pure structural validation.
-        validation_catalog = normalize_catalog_dict(
-            catalog_source, default_catalog_id=self._default_catalog_id
-        )
-
-        # One stable nested tool-call id, reused across every recovery attempt so
+        # One stable nested tool-call id is reused across recovery attempts so
         # the middleware/client swap the in-progress surface in place rather than
         # stacking N tool calls.
         surface_tool_call_id = f"a2ui-render-{uuid.uuid4().hex[:8]}"
@@ -330,13 +415,14 @@ class A2UISubAgentTool(BaseTool):
         def _build_envelope(generated: dict) -> str:
             if is_express:
                 return json.dumps({A2UI_OPERATIONS_KEY: generated["_operations"]})
-            return build_a2ui_envelope(
+            return _versioned_envelope(
+                version,
                 args=generated,
                 is_update=prep["is_update"],
                 target_surface_id=target_surface_id,
                 prior=prep.get("prior"),
                 default_surface_id=self._default_surface_id,
-                default_catalog_id=self._default_catalog_id,
+                default_catalog_id=catalog_id,
             )
 
         def on_attempt(record: dict) -> None:
@@ -361,7 +447,13 @@ class A2UISubAgentTool(BaseTool):
 
         try:
             result = await asyncio.to_thread(
-                run_a2ui_generation_with_recovery,
+                (
+                    partial(
+                        run_v1_generation_with_recovery, validate_schema=not is_express
+                    )
+                    if protocol == ProtocolVersion.V1_0
+                    else run_a2ui_generation_with_recovery
+                ),
                 base_prompt=prep["prompt"],
                 catalog=validation_catalog,
                 config=self._recovery,
@@ -419,11 +511,13 @@ class A2UISubAgentTool(BaseTool):
 
         state = processor.create_state()
         catalog_id = processor.active_catalogs[0].catalog_id
+        version = catalog_protocol_version(processor.active_catalogs[0].to_json()).value
         if prep.get("prior"):
             prior = prep["prior"]
             state.apply(
                 json.loads(
-                    build_a2ui_envelope(
+                    _versioned_envelope(
+                        version,
                         args={
                             "surfaceId": surface_id,
                             "components": prior["components"],
@@ -500,17 +594,19 @@ class A2UISubAgentTool(BaseTool):
                 create_body["sendDataModel"] = True
             if surface.theme:
                 create_body["theme"] = surface.theme
+            if surface.metadata is not None:
+                create_body["metadata"] = surface.metadata
             full_ops = [
-                {"version": "v0.9", "createSurface": create_body},
+                {"version": version, "createSurface": create_body},
                 {
-                    "version": "v0.9",
+                    "version": version,
                     "updateComponents": {
                         "surfaceId": surface_id,
                         "components": components,
                     },
                 },
                 {
-                    "version": "v0.9",
+                    "version": version,
                     "updateDataModel": {
                         "surfaceId": surface_id,
                         "path": "/",
@@ -532,7 +628,12 @@ class A2UISubAgentTool(BaseTool):
             # may be schema-valid before the model initializes its data. Defer
             # that snapshot; the unchanged recovery loop diagnoses it if the
             # completed attempt still fails the toolkit's validator.
-            if not validate_a2ui_components(
+            validate_components = (
+                partial(validate_v1_components, validate_schema=False)
+                if version == "1.0"
+                else validate_a2ui_components
+            )
+            if not validate_components(
                 components=components, data=data, catalog=validation_catalog
             )["valid"]:
                 return
@@ -546,7 +647,10 @@ class A2UISubAgentTool(BaseTool):
             "Do not delete surfaces or call standalone renderer functions."
         )
         if prep["is_update"]:
-            prompt += f"\nBegin the Express block with surface({json.dumps(surface_id)}, update=true)."
+            prompt += (
+                "\nBegin the Express block with "
+                f"surface({json.dumps(surface_id)}, update=true)."
+            )
         request = self._build_llm_request(prompt, conversation)
         saw_partial = False
         try:
@@ -690,7 +794,10 @@ class A2UISubAgentTool(BaseTool):
         # schemas from the prose; this string shape is ADK/Gemini-specific glue.
         declaration = types.FunctionDeclaration(
             name=_RENDER_A2UI_NAME,
-            description=RENDER_A2UI_TOOL_DEF["function"]["description"],
+            description=(
+                "Render a dynamic A2UI surface using the supplied catalog. "
+                "The root component must have id 'root'."
+            ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
@@ -701,7 +808,7 @@ class A2UISubAgentTool(BaseTool):
                     "components": types.Schema(
                         type=types.Type.STRING,
                         description=(
-                            "The A2UI v0.9 component array as a JSON string, e.g. "
+                            "The A2UI component array as a JSON string, e.g. "
                             '\'[{"id":"root","component":"Text","text":"Hi"}]\'. '
                             "The root component must have id 'root'."
                         ),
@@ -823,6 +930,35 @@ class A2UISubAgentTool(BaseTool):
             if role == "tool" and isinstance(content, str):
                 envelope = cls._extract_envelope(content)
                 if envelope is not None:
+                    # Native 1.0 can initialize state in createSurface. The
+                    # published toolkit history walker only reads update ops;
+                    # expand a private history view without changing the ADK
+                    # event or the envelope sent to the renderer.
+                    operations = envelope.get(A2UI_OPERATIONS_KEY)
+                    if isinstance(operations, list):
+                        expanded = []
+                        for operation in operations:
+                            expanded.append(operation)
+                            if not isinstance(operation, dict):
+                                continue
+                            create = operation.get("createSurface")
+                            if operation.get("version") != "1.0" or not isinstance(
+                                create, dict
+                            ):
+                                continue
+                            for source_key, action, value_key in (
+                                ("components", "updateComponents", "components"),
+                                ("dataModel", "updateDataModel", "value"),
+                            ):
+                                if source_key in create:
+                                    body = {
+                                        "surfaceId": create.get("surfaceId"),
+                                        value_key: create[source_key],
+                                    }
+                                    if action == "updateDataModel":
+                                        body["path"] = "/"
+                                    expanded.append({"version": "1.0", action: body})
+                        envelope[A2UI_OPERATIONS_KEY] = expanded
                     msg = ToolMessage(
                         id=getattr(msg, "id", None) or str(uuid.uuid4()),
                         role="tool",
