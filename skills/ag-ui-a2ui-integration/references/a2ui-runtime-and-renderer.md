@@ -8,7 +8,9 @@ operation source, and a client renderer with the matching catalog.
 AG-UI now provides `@ag-ui/a2ui-middleware`. It injects schema context, can
 inject the `render_a2ui` tool, detects `a2ui_operations` tool results, emits
 `ACTIVITY_SNAPSHOT` events with `activityType: "a2ui-surface"`, and forwards
-user actions back to the agent as synthetic `log_a2ui_event` tool messages.
+user actions back to the agent as private user context: `A2UI user action:`
+followed by a newline and the complete action as JSON. Existing model history
+is preserved; the internal action message is kept out of public chat.
 
 Apply it directly to one agent:
 

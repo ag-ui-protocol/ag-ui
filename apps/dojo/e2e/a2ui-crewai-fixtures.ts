@@ -31,8 +31,17 @@ const textOf = (content: ChatMessage["content"] | undefined): string => {
 };
 const allText = (messages: ChatMessage[] = []): string =>
   messages.map((m) => textOf(m.content)).join("\n");
+const USER_ACTION_PREFIX = "A2UI user action:\n";
 const userText = (messages: ChatMessage[] = []): string =>
-  textOf(messages.filter((m) => m.role === "user").pop()?.content);
+  textOf(
+    messages
+      .filter(
+        (m) =>
+          m.role === "user" &&
+          !textOf(m.content).startsWith(USER_ACTION_PREFIX),
+      )
+      .pop()?.content,
+  );
 const lastMessage = (messages: ChatMessage[] = []): ChatMessage | undefined =>
   messages[messages.length - 1];
 
@@ -43,9 +52,8 @@ const lastMessage = (messages: ChatMessage[] = []): ChatMessage | undefined =>
 // gated on one of them, so nothing in this file can answer another
 // integration's A2UI demo (they prompt with "Find flights" / "Find hotels" /
 // "a comparison of 3 hotels") even though they register the same tool names.
-// The last user message survives a surface-action run unchanged (the action is
-// forwarded as tool messages, not as a new user turn), so the same gate scopes
-// the action turns too.
+// Scope follows the latest actual prompt, skipping middleware-generated user
+// action messages. The Python fixed-schema flow still forwards tool reports.
 // ---------------------------------------------------------------------------
 const isFixedFlightPrompt = (text: string) => /search for flights/i.test(text);
 const isFixedHotelPrompt = (text: string) => /search for hotels/i.test(text);
@@ -63,7 +71,7 @@ const isCrewAIA2UIRun = (req: { messages?: ChatMessage[] }) =>
 // Surface actions
 // ---------------------------------------------------------------------------
 
-/** The tool-result line the A2UI middleware synthesizes for a surface action. */
+/** Legacy tool-result line still used by the Python fixed-schema middleware. */
 const ACTION_REPORT =
   /^User performed action "([^"]*)" on surface "([^"]*)"(?: \(component: ([^)]*)\))?\. Context: ([\s\S]*)$/;
 
@@ -111,8 +119,33 @@ const pendingAction = (req: {
   messages?: ChatMessage[];
 }): SurfaceAction | null => {
   const last = lastMessage(req.messages);
-  if (!last || last.role !== "tool") return null;
-  return parseActionReport(textOf(last.content));
+  if (!last) return null;
+  const text = textOf(last.content);
+  if (last.role === "user" && text.startsWith(USER_ACTION_PREFIX)) {
+    try {
+      const action = JSON.parse(text.slice(USER_ACTION_PREFIX.length));
+      if (
+        action &&
+        typeof action.name === "string" &&
+        typeof action.surfaceId === "string"
+      ) {
+        return {
+          name: action.name,
+          surfaceId: action.surfaceId,
+          context:
+            action.context &&
+            typeof action.context === "object" &&
+            !Array.isArray(action.context)
+              ? action.context
+              : {},
+        };
+      }
+    } catch {
+      // A malformed user message is not a parsed surface action.
+    }
+    return null;
+  }
+  return last.role === "tool" ? parseActionReport(text) : null;
 };
 
 const asText = (value: unknown): string | undefined =>

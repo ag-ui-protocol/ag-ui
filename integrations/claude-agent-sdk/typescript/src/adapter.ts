@@ -143,8 +143,19 @@ export class ClaudeAgentAdapter extends AbstractAgent {
     this.bindings.delete(threadId);
   }
 
+  /**
+   * `AbstractAgent.clone()` skips field initializers, so the per-thread maps
+   * must be set here. Clones share them with the original: a host such as the
+   * CopilotKit runtime clones the agent for each request, and the follow-up
+   * run must find the session and the paused tool call of the earlier run, and
+   * be refused while another run of the same thread is active.
+   */
   public clone(): ClaudeAgentAdapter {
     const cloned = super.clone() as ClaudeAgentAdapter;
+    cloned.bindings = this.bindings;
+    cloned.admitted = this.admitted;
+    cloned.activeQueries = this.activeQueries;
+    cloned.sessions = this.sessions;
     cloned.config = { ...this.config };
     if (this.headers) {
       cloned.headers = { ...this.headers };

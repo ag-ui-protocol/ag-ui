@@ -43,29 +43,59 @@ const turn = (input: RunAgentInput, id: string): BaseEvent[] => [
 ];
 
 describe("bounded A2UI completion", () => {
-  it("returns invalid rendering to the original call as an error, without replaying an approval", async () => {
-    const agent = new SequenceAgent((input, index) =>
-      index === 0 ? turn(input, "original") : [finish(input)],
-    );
-    await collectEvents(
-      new A2UIMiddleware().run(
-        createRunAgentInput({
-          resume: [{ interruptId: "old", status: "resolved", payload: {} }],
+  it.each(["top-level", "legacy", "both"] as const)(
+    "returns invalid rendering to the original call as an error, without replaying a %s approval",
+    async (channel) => {
+      const agent = new SequenceAgent((input, index) =>
+        index < 2 ? turn(input, `original-${index}`) : [finish(input)],
+      );
+      const input = createRunAgentInput({
+        ...(channel !== "legacy"
+          ? {
+              resume: [
+                {
+                  interruptId: "old",
+                  status: "resolved" as const,
+                  payload: {},
+                },
+              ],
+            }
+          : {}),
+        forwardedProps: {
+          threadMetadata: { source: "approval-test" },
+          command: {
+            ...(channel !== "top-level" ? { resume: "approved" } : {}),
+            update: { approved: true },
+          },
+        },
+        context: [{ description: "approval context", value: "keep this" }],
+      });
+      const originalInput = structuredClone(input);
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      expect(agent.calls).toHaveLength(3);
+      expect(agent.calls[0].resume).toEqual(originalInput.resume);
+      expect(agent.calls[0].forwardedProps).toEqual(
+        originalInput.forwardedProps,
+      );
+      for (const continuation of agent.calls.slice(1)) {
+        expect(continuation.resume).toBeUndefined();
+        expect(continuation.forwardedProps).toEqual({
+          threadMetadata: { source: "approval-test" },
+          command: { update: { approved: true } },
+        });
+        expect(continuation.context).toEqual(originalInput.context);
+      }
+      expect(input).toEqual(originalInput);
+      expect(agent.calls[1].messages).toContainEqual(
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "original-0",
+          error: "",
+          content: expect.stringContaining('"status":"failed"'),
         }),
-        agent,
-      ),
-    );
-    expect(agent.calls).toHaveLength(2);
-    expect(agent.calls[1].resume).toBeUndefined();
-    expect(agent.calls[1].messages).toContainEqual(
-      expect.objectContaining({
-        role: "tool",
-        toolCallId: "original",
-        error: "",
-        content: expect.stringContaining('"status":"failed"'),
-      }),
-    );
-  });
+      );
+    },
+  );
   it.each(["interrupt", "cancelled"] as const)(
     "does not finish or resume a %s run",
     async (type) => {

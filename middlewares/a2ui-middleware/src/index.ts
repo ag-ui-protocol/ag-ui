@@ -6,24 +6,23 @@ import {
   BaseEvent,
   EventType,
   Message,
-  AssistantMessage,
-  ToolMessage,
   ToolCall,
   ActivitySnapshotEvent,
   ToolCallResultEvent,
   RunFinishedEvent,
+  RunStartedEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
+  MessagesSnapshotEvent,
+  TextMessageStartEvent,
+  TextMessageContentEvent,
+  TextMessageEndEvent,
   Tool,
   contentToText,
 } from "@ag-ui/client";
 import { Observable, Subscription } from "rxjs";
 
-import {
-  A2UIMiddlewareConfig,
-  A2UIForwardedProps,
-  A2UIUserAction,
-} from "./types";
+import { A2UIMiddlewareConfig, A2UIForwardedProps } from "./types";
 import {
   RENDER_A2UI_TOOL,
   RENDER_A2UI_TOOL_NAME,
@@ -44,6 +43,18 @@ import {
   MAX_A2UI_ATTEMPTS,
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
+
+// The run-correlated name is a reserved transport marker, independent of IDs,
+// roles rewritten by adapters, content encoding, and optional provider artifacts.
+// Initial caller assistant/tool history stays public; adapters must clear this
+// name when constructing independent public outputs rather than echoing context.
+const USER_ACTION_CONTEXT_NAME_PREFIX = "a2ui_action_context_";
+const USER_ACTION_CONTEXT_NAME = /^a2ui_action_context_[A-Za-z0-9_-]{43}$/;
+const USER_ACTION_CONTEXT_PREFIX = "A2UI user action:\n";
+
+function isUserActionContextName(name: unknown): boolean {
+  return typeof name === "string" && USER_ACTION_CONTEXT_NAME.test(name);
+}
 
 /**
  * Detect a structured hard-failure envelope produced by the toolkit's recovery
@@ -245,7 +256,7 @@ export class A2UIMiddleware extends Middleware {
     // extractFrontendCatalogId and the catalogId resolution in processStream).
     const frontendCatalogId = extractFrontendCatalogId(input);
 
-    // Process user action from forwardedProps (append synthetic messages)
+    // Process user action from forwardedProps as user input
     const recovery = this.recoverUnansweredCalls(input);
     const enhancedInput = this.processUserAction(recovery.input);
 
@@ -257,17 +268,85 @@ export class A2UIMiddleware extends Middleware {
       ? this.injectToolGuidelines(this.injectToolAndFlag(withSchema))
       : withSchema;
 
-    // Process the event stream using runNextWithState for automatic message tracking
-    const stream = this.processStream(
-      this.runNextWithState(finalInput, next),
-      frontendCatalogId,
-      this.getValidationCatalog(finalInput),
-      { input: finalInput, next, rounds: 0 },
-    );
-    return new Observable((subscriber) =>
-      stream.subscribe({
+    return new Observable((subscriber) => {
+      // First observation fixes ownership for this subscription. Later optional
+      // fields cannot publish private context or hide a proven public message.
+      const visibility = new Map<string, "public" | "private">();
+      const projectMessages = (
+        messages: Message[],
+        initialInput = false,
+      ): Message[] => {
+        for (const message of messages) {
+          if (!visibility.has(message.id)) {
+            visibility.set(
+              message.id,
+              isUserActionContextName(
+                "name" in message ? message.name : undefined,
+              ) &&
+                (!initialInput || message.role === "user")
+                ? "private"
+                : "public",
+            );
+          }
+        }
+        return messages.filter(
+          (message) => visibility.get(message.id) !== "private",
+        );
+      };
+      projectMessages(finalInput.messages, true);
+
+      // Keep the model's complete context inside private stream bookkeeping.
+      // Project only the two canonical history-bearing events the SDK applies.
+      const stream = this.processStream(
+        this.runNextWithState(finalInput, next),
+        frontendCatalogId,
+        this.getValidationCatalog(finalInput),
+        { input: finalInput, next, rounds: 0 },
+      );
+      return stream.subscribe({
         next: (event) => {
-          subscriber.next(event);
+          let outwardEvent = event;
+          if (event.type === EventType.MESSAGES_SNAPSHOT) {
+            const snapshot = event as MessagesSnapshotEvent;
+            outwardEvent = {
+              ...snapshot,
+              messages: projectMessages(snapshot.messages),
+            } as MessagesSnapshotEvent;
+          } else if (event.type === EventType.RUN_STARTED) {
+            const started = event as RunStartedEvent;
+            if (started.input?.messages) {
+              outwardEvent = {
+                ...started,
+                input: {
+                  ...started.input,
+                  messages: projectMessages(started.input.messages),
+                },
+              } as RunStartedEvent;
+            }
+          } else if (
+            event.type === EventType.TEXT_MESSAGE_START ||
+            event.type === EventType.TEXT_MESSAGE_CONTENT ||
+            event.type === EventType.TEXT_MESSAGE_END
+          ) {
+            const text = event as
+              | TextMessageStartEvent
+              | TextMessageContentEvent
+              | TextMessageEndEvent;
+            if (
+              event.type === EventType.TEXT_MESSAGE_START &&
+              !visibility.has(text.messageId)
+            ) {
+              const start = text as TextMessageStartEvent;
+              visibility.set(
+                start.messageId,
+                isUserActionContextName(start.name) ? "private" : "public",
+              );
+            }
+            if (visibility.get(text.messageId) === "private") {
+              return;
+            }
+          }
+          subscriber.next(outwardEvent);
           if (event.type === EventType.RUN_STARTED) {
             for (const result of recovery.results) {
               subscriber.next(result);
@@ -283,8 +362,8 @@ export class A2UIMiddleware extends Middleware {
         },
         error: (error) => subscriber.error(error),
         complete: () => subscriber.complete(),
-      }),
-    );
+      });
+    });
   }
 
   /**
@@ -324,7 +403,7 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Check forwardedProps for a2uiAction and append synthetic tool call messages
+   * Append UI actions as user input, preserving the model's original tool history.
    */
   private processUserAction(input: RunAgentInput): RunAgentInput {
     const forwardedProps = input.forwardedProps as
@@ -336,67 +415,35 @@ export class A2UIMiddleware extends Middleware {
       return input;
     }
 
-    // Hash the run identity to keep retries stable and synthetic IDs bounded.
-    // A new click starts a new run, even when its payload is unchanged.
-    const actionId = createHash("sha256").update(input.runId).digest("hex");
-    const assistantMessageId = `a2ui-action-assistant-${actionId}`;
-    const toolCallId = actionId;
-    const toolMessageId = `a2ui-action-result-${actionId}`;
-
-    // Create synthetic assistant message with tool call
-    const syntheticAssistantMessage: AssistantMessage = {
-      id: assistantMessageId,
-      role: "assistant",
-      content: "",
-      toolCalls: [
-        {
-          id: toolCallId,
-          type: "function",
-          function: {
-            name: LOG_A2UI_EVENT_TOOL_NAME,
-            arguments: JSON.stringify(userAction),
-          },
-        },
-      ],
-    };
-
-    // Create synthetic tool result message
-    const resultContent = this.formatUserActionResult(userAction);
-    const syntheticToolMessage: ToolMessage = {
-      id: toolMessageId,
-      role: "tool",
-      toolCallId: toolCallId,
-      content: resultContent,
-    };
-
-    // Append synthetic messages to existing messages (so they appear as the latest action)
-    const messages: Message[] = [
-      ...(input.messages || []),
-      syntheticAssistantMessage,
-      syntheticToolMessage,
-    ];
+    // A retry keeps its identity; a separate click gets a new run ID even when
+    // its payload is identical. Hashing also bounds the resulting message ID.
+    const actionHash = createHash("sha256").update(input.runId).digest();
+    const messageId = `a2ui-action-user-${actionHash.toString("hex")}`;
+    // 20-character prefix + 43-character unpadded digest fits provider names.
+    const contextName = `${USER_ACTION_CONTEXT_NAME_PREFIX}${actionHash.toString("base64url")}`;
+    const messages = input.messages || [];
+    if (
+      messages.some(
+        (message) =>
+          message.role === "user" &&
+          (message.id === messageId || message.name === contextName),
+      )
+    ) {
+      return input;
+    }
 
     return {
       ...input,
-      messages,
+      messages: [
+        ...messages,
+        {
+          id: messageId,
+          role: "user",
+          name: contextName,
+          content: `${USER_ACTION_CONTEXT_PREFIX}${JSON.stringify(userAction)}`,
+        },
+      ],
     };
-  }
-
-  /**
-   * Format the user action result message for the agent
-   */
-  private formatUserActionResult(action: A2UIUserAction): string {
-    const actionName = action.name ?? "unknown_action";
-    const surfaceId = action.surfaceId ?? "unknown_surface";
-    const componentId = action.sourceComponentId;
-    const contextStr = action.context ? JSON.stringify(action.context) : "{}";
-
-    let message = `User performed action "${actionName}" on surface "${surfaceId}"`;
-    if (componentId) {
-      message += ` (component: ${componentId})`;
-    }
-    message += `. Context: ${contextStr}`;
-    return message;
   }
 
   /**
@@ -1033,7 +1080,29 @@ export class A2UIMiddleware extends Middleware {
                 }
               }
 
-              if (!outerHasStreamedSurface) {
+              // Exhausted recovery is authoritative even after a valid streamed
+              // paint. Only successful operations belong behind the paint dedup.
+              const failure = tryParseRecoveryFailure(
+                contentToText(resultEvent.content),
+              );
+              if (failure) {
+                // Replace the same activity slot and preserve the adapter's
+                // attempt history and true cap reached.
+                const failKey =
+                  streamingEntry?.outerCallId ?? resultEvent.toolCallId;
+                subscriber.next(
+                  this.buildLifecycleActivity(failKey, {
+                    status: "failed",
+                    error: failure.error,
+                    attempts: failure.attempts,
+                    maxAttempts: Array.isArray(failure.attempts)
+                      ? failure.attempts.length || maxAttempts
+                      : maxAttempts,
+                  }),
+                );
+                settledActivityKeys.add(failKey);
+                retriedOuterKeys.delete(failKey);
+              } else if (!outerHasStreamedSurface) {
                 const parsed = tryParseA2UIOperations(
                   contentToText(resultEvent.content),
                 );
@@ -1087,33 +1156,6 @@ export class A2UIMiddleware extends Middleware {
                       );
                     }
                     settledActivityKeys.add(activityKey);
-                  }
-                } else {
-                  // Hard-failure path (OSS-162): an exhausted recovery loop
-                  // returns a structured error envelope (no a2ui_operations).
-                  // Surface it as a client-rendered failure rather than dropping
-                  // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(
-                    contentToText(resultEvent.content),
-                  );
-                  if (failure) {
-                    // Hard failure replaces the building/retrying skeleton in
-                    // place (same surface messageId). `attempts.length` is the
-                    // true cap reached; fall back to the configured cap.
-                    const failKey =
-                      streamingEntry?.outerCallId ?? resultEvent.toolCallId;
-                    subscriber.next(
-                      this.buildLifecycleActivity(failKey, {
-                        status: "failed",
-                        error: failure.error,
-                        attempts: failure.attempts,
-                        maxAttempts: Array.isArray(failure.attempts)
-                          ? failure.attempts.length || maxAttempts
-                          : maxAttempts,
-                      }),
-                    );
-                    settledActivityKeys.add(failKey);
-                    retriedOuterKeys.delete(failKey);
                   }
                 }
               }
@@ -1224,6 +1266,16 @@ export class A2UIMiddleware extends Middleware {
                 messages,
                 state: heldRunFinished.state,
               };
+              // The initial run consumed the approval, including its legacy channel.
+              if (nextInput.forwardedProps?.command?.resume !== undefined) {
+                nextInput.forwardedProps = {
+                  ...nextInput.forwardedProps,
+                  command: {
+                    ...nextInput.forwardedProps.command,
+                    resume: undefined,
+                  },
+                };
+              }
               subscriptions.add(
                 this.processStream(
                   this.runNextWithState(nextInput, continuation.next),
