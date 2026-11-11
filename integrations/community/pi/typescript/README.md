@@ -70,10 +70,9 @@ The example runs with Pi's built-in coding tools disabled. A host owns authentic
 | 1.5.0 | 1.0.4 | Workspace build and official-client tests |
 | 1.5.2 | 1.0.4 | Clean consumer installed from the npm tarball |
 
-From the repository root:
+From the repository root, the typecheck target builds the package first so the examples and tests can resolve its public exports:
 
 ```sh
-pnpm nx run @ag-ui/pi:build
 pnpm nx run @ag-ui/pi:typecheck
 pnpm nx run @ag-ui/pi:test
 pnpm --filter @ag-ui/pi test:pack

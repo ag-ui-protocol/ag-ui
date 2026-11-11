@@ -30,6 +30,13 @@
     "test:pack": "bash test/packed.sh",
     "start": "node dist/examples/server.js"
   },
+  "nx": {
+    "targets": {
+      "typecheck": {
+        "dependsOn": ["build"]
+      }
+    }
+  },
   "peerDependencies": {
     "@ag-ui/client": "^1.0.4",
     "@ag-ui/core": "^1.0.4",
