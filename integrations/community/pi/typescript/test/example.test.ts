@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test, type TestContext } from "node:test";
 import { HttpAgent } from "@ag-ui/client";
-import { EventType, type Event } from "@ag-ui/core";
+import { EventType, type Event, type Tool } from "@ag-ui/core";
 import { EventSchema } from "@ag-ui/core/schemas";
 import {
   contentText,
@@ -37,14 +37,18 @@ async function fixture(
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const url = `http://127.0.0.1:${address.port}/agentic_chat`;
-  return { url, agent: new HttpAgent({ url, threadId: "conversation" }) };
+  return { url, provider, agent: new HttpAgent({ url, threadId: "conversation" }) };
 }
 
 async function ask(agent: HttpAgent, id: string, text: string) {
   agent.addMessage({ id: `user-${id}`, role: "user", content: text });
+  return run(agent, id);
+}
+
+async function run(agent: HttpAgent, runId: string, tools: Tool[] = []) {
   const events: Event[] = [];
   await agent.runAgent(
-    { runId: id },
+    { runId, tools },
     {
       onEvent({ event }) {
         events.push(EventSchema.parse(event));
@@ -220,15 +224,7 @@ test("a Flutter-style client executes a tool from the snapshot and resubmits its
     },
   ]);
   agent.addMessage({ role: "user", id: "flutter-user", content: "Calculate 12 * 7" });
-  const events: Event[] = [];
-  await agent.runAgent(
-    { runId: "propose", tools },
-    {
-      onEvent({ event }) {
-        events.push(EventSchema.parse(event));
-      },
-    },
-  );
+  const events = await run(agent, "propose", tools);
   assert.equal(requests.length, 1);
   assert.ok(!events.some((e) => e.type === EventType.TOOL_CALL_RESULT));
   const snapshot = events.at(-2);
@@ -264,6 +260,127 @@ test("a Flutter-style client executes a tool from the snapshot and resubmits its
     requests[1].messages.filter((m) => m.role !== "system").map((m) => m.role),
     ["user", "assistant", "toolResult"],
   );
+});
+
+test("rendering a card ends the run silently, including on replay, until the user asks again", async (t) => {
+  const tools = [
+    {
+      name: "render_card",
+      description: "Render a card",
+      parameters: { type: "object" },
+    },
+  ];
+  const prompts = ["Show a card", "Do it again without saying Card rendered: after"];
+  const { url, provider } = await fixture(
+    t,
+    prompts.map((title, index) =>
+      fauxAssistantMessage(fauxToolCall("render_card", { title }, { id: `card-${index}` }), {
+        stopReason: "toolUse",
+      }),
+    ),
+  );
+  const agent = new HttpAgent({
+    url: new URL("/tool_based_generative_ui", url).href,
+    threadId: "cards",
+  });
+  for (const [index, prompt] of prompts.entries()) {
+    agent.addMessage({ id: `user-${index}`, role: "user", content: prompt });
+    await run(agent, `propose-${index}`, tools);
+    const proposal = agent.messages.at(-1);
+    assert.equal(proposal?.role, "assistant");
+    const id = `card-${index}`;
+    assert.deepEqual(
+      proposal.toolCalls?.map((call) => [call.id, call.function.name]),
+      [[id, "render_card"]],
+    );
+    agent.addMessage({
+      id: `result-${index}`,
+      role: "tool",
+      toolCallId: id,
+      content: '{"rendered":true}',
+    });
+    const acknowledged = structuredClone(agent.messages);
+    for (const attempt of ["ack", "replay"]) {
+      const events = await run(agent, `${attempt}-${index}`, tools);
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [EventType.RUN_STARTED, EventType.MESSAGES_SNAPSHOT, EventType.RUN_FINISHED],
+      );
+      const snapshot = events[1];
+      assert.equal(snapshot.type, EventType.MESSAGES_SNAPSHOT);
+      assert.deepEqual(snapshot.messages, acknowledged);
+      assert.deepEqual(agent.messages, acknowledged);
+      assert.equal(provider.state.callCount, index + 1);
+    }
+  }
+});
+
+test("only successful card-only batches stop before another provider turn on the card route", async (t) => {
+  const cases = [
+    {
+      route: "agentic_chat",
+      names: ["render_card"],
+      content: '{"rendered":true}',
+    },
+    {
+      route: "tool_based_generative_ui",
+      names: ["calculate", "render_card"],
+      content: '{"rendered":true}',
+    },
+    {
+      route: "tool_based_generative_ui",
+      names: ["render_card"],
+      content: '{"rendered":false}',
+    },
+    {
+      route: "tool_based_generative_ui",
+      names: ["render_card"],
+      content: "invalid JSON",
+    },
+    {
+      route: "tool_based_generative_ui",
+      names: ["render_card"],
+      content: '{"rendered":true}',
+      error: "failed",
+    },
+  ];
+  const { url, provider } = await fixture(
+    t,
+    cases.map(() => fauxAssistantMessage("Continued")),
+  );
+  for (const [index, { route, names, content, error }] of cases.entries()) {
+    const agent = new HttpAgent({
+      url: new URL(`/${route}`, url).href,
+      threadId: `thread-${index}`,
+    });
+    const tools = names.map((name) => ({
+      name,
+      description: name,
+      parameters: { type: "object" },
+    }));
+    agent.addMessage({ id: "user", role: "user", content: "Run the tools" });
+    agent.addMessage({
+      id: "assistant",
+      role: "assistant",
+      toolCalls: names.map((name) => ({
+        id: name,
+        type: "function",
+        function: { name, arguments: "{}" },
+      })),
+    });
+    for (const name of names) {
+      agent.addMessage({
+        id: `result-${name}`,
+        role: "tool",
+        toolCallId: name,
+        content,
+        error,
+      });
+    }
+    await run(agent, `continue-${index}`, tools);
+    assert.equal(agent.messages.at(-1)?.content, "Continued");
+    assert.equal(provider.state.callCount, index + 1);
+  }
 });
 
 test("the browser preflight permits a local Flutter web origin", async (t) => {

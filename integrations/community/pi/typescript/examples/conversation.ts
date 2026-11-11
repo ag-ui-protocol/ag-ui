@@ -19,6 +19,23 @@ function argumentsObject(serialized: string): JsonObject {
   return value;
 }
 
+export function endsWithRenderedCards(messages: RunAgentInput["messages"]): boolean {
+  if (messages.at(-1)?.role !== "tool") return false;
+  const index = messages.findLastIndex((message) => message.role === "assistant");
+  const proposal = messages[index];
+  if (proposal?.role !== "assistant" || !proposal.toolCalls?.length) return false;
+  if (!proposal.toolCalls.every((call) => call.function.name === "render_card")) return false;
+
+  return messages.slice(index + 1).every((result) => {
+    if (result.role !== "tool" || result.error != null) return false;
+    try {
+      return JSON.parse(text(result))?.rendered === true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export function conversation(input: RunAgentInput, model: Model<Api>) {
   const latest = input.messages.at(-1);
   if ((latest?.role !== "user" && latest?.role !== "tool") || input.resume?.length) {

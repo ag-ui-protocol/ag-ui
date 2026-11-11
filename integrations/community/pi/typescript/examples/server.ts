@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { createClientTools } from "./client-tools.ts";
-import { conversation } from "./conversation.ts";
+import { conversation, endsWithRenderedCards } from "./conversation.ts";
 
 interface ExampleOptions {
   modelRuntime: ModelRuntime;
@@ -35,7 +35,8 @@ async function readInput(request: IncomingMessage): Promise<RunAgentInput> {
 
 export function createExampleServer(options: ExampleOptions) {
   async function run(request: IncomingMessage, response: ServerResponse) {
-    if (request.url !== "/agentic_chat") {
+    const cardRoute = request.url === "/tool_based_generative_ui";
+    if (request.url !== "/agentic_chat" && !cardRoute) {
       response.writeHead(404).end();
       return;
     }
@@ -114,6 +115,11 @@ export function createExampleServer(options: ExampleOptions) {
       "Cache-Control": "no-cache",
     });
     write(translator.start());
+    if (cardRoute && endsWithRenderedCards(messages)) {
+      write(translator.finish());
+      response.end();
+      return;
+    }
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: false },

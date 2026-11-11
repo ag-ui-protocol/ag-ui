@@ -14,7 +14,9 @@ HOST=127.0.0.1 PORT=8032 pnpm --filter @ag-ui/pi start
 
 The npm archive also contains the compiled example. In a project with the package installed, start it with `npm explore @ag-ui/pi -- npm start`.
 
-POST a `RunAgentInput` to `/agentic_chat`. Supply the conversation so far, including the new user message or the client's tool results. Each request opens an in-memory Pi session. The example restores prior messages, runs the new turn, and streams AG-UI events using the official encoder. The default bind address is `0.0.0.0` and the default port is `8032`. The example allows browser requests from loopback origins.
+POST a `RunAgentInput` to `/agentic_chat` for chat or `/tool_based_generative_ui` for Flutter cards. Supply the conversation so far, including the new user message or the client's tool results. The example validates the history and streams AG-UI events using the official encoder. Model turns run in an in-memory Pi session. The default bind address is `0.0.0.0` and the default port is `8032`. The example allows browser requests from loopback origins.
+
+On the card route, Flutter acknowledges each successful `render_card` call with `{"rendered":true}`. When every call in the latest batch has that acknowledgment and every call is `render_card`, the server sends the conversation snapshot and finishes without invoking the model. Replaying the acknowledgment has the same effect. A new user message starts a new model turn. Agentic Chat, mixed-tool batches, and unsuccessful acknowledgments follow the normal Pi continuation flow.
 
 ### Connect a Dojo
 
@@ -55,6 +57,7 @@ Choose `completion: "caller"` when the host decides whether to finish, fail, or 
 | Capability | Support |
 | --- | --- |
 | Agentic Chat | Streams split assistant text and preserves text history across requests. |
+| Tool-based UI (Flutter) | Renders client-requested cards and finishes silently when Flutter acknowledges the full card batch. |
 | Pi tool calls | Sends the proposed name and complete JSON arguments when Pi commits the call. Emits one correlated result when Pi supplies the native result. |
 | Client tools in the example | Ends the run with a snapshot containing the pending proposal. The client executes it and resubmits the history with its actual result. |
 | History projection | Preserves caller-supplied IDs, public text and tool calls. Internal messages and reasoning are omitted. |
