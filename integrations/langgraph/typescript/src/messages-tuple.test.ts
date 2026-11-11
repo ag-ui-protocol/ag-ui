@@ -135,6 +135,7 @@ describe("messages-tuple stream mode", () => {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
           content: "Hello",
+          tool_call_chunks: [],
           response_metadata: {},
         },
         {},
@@ -162,6 +163,7 @@ describe("messages-tuple stream mode", () => {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
           content: "Hello",
+          tool_call_chunks: [],
           response_metadata: {},
         },
         {},
@@ -172,6 +174,7 @@ describe("messages-tuple stream mode", () => {
           type: AI_CHUNK_TYPE,
           id: "msg-1",
           content: " world",
+          tool_call_chunks: [],
           response_metadata: {},
         },
         {},
@@ -211,6 +214,34 @@ describe("messages-tuple stream mode", () => {
       );
       expect(endEvents).toHaveLength(1);
       expect(endEvents[0].messageId).toBe("msg-1");
+    });
+
+    // An AIMessage that a node built itself reaches this handler once, whole.
+    // Both LangGraph runtimes put it on the wire as below: type "ai", no
+    // tool_call_chunks, and no finish reason, so nothing later ends it.
+    it("starts and ends a message that arrives whole", () => {
+      const { agent, events } = createAgent();
+
+      agent.handleSingleEvent([
+        {
+          type: "ai",
+          id: "msg-1",
+          content: "Ticket triaged",
+          additional_kwargs: {},
+          response_metadata: {},
+          tool_calls: [],
+          invalid_tool_calls: [],
+        },
+        {},
+      ]);
+
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+      ]);
+      expect(events[2].messageId).toBe("msg-1");
+      expect((agent as any).messagesInProcess["run-1"]).toBeNull();
     });
   });
 
