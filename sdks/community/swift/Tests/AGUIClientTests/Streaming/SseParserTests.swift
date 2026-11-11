@@ -563,4 +563,70 @@ extension SseParserTests {
         XCTAssertTrue(try parser.parse("\n").isEmpty)
         XCTAssertEqual(try parser.parse("data: second\r\n\r\n").first?.data, "second")
     }
+
+    // MARK: - Framing Cost and UTF-8 Recovery
+
+    /// `EventStream` hands the parser one byte at a time, so a buffer that is
+    /// re-split on every call costs time quadratic in the size of one event.
+    /// Asserted as a ratio rather than a wall-clock number so it does not turn
+    /// into a timing flake on a loaded runner.
+    func testLargeEventFramesInLinearTime() throws {
+        func elapsedParsing(deltaBytes: Int) throws -> TimeInterval {
+            let text = "data: {\"delta\":\"" + String(repeating: "D", count: deltaBytes) + "\"}\n\n"
+            var parser = SseParser()
+            var events: [SseEvent] = []
+            let start = Date()
+            for byte in Array(text.utf8) {
+                events += try parser.parse(String(UnicodeScalar(byte)))
+            }
+            let elapsed = Date().timeIntervalSince(start)
+            XCTAssertEqual(events.count, 1)
+            XCTAssertEqual(events.first?.data.count, deltaBytes + 12)
+            return elapsed
+        }
+
+        let small = try elapsedParsing(deltaBytes: 16_384)
+        let large = try elapsedParsing(deltaBytes: 65_536)
+
+        // Four times the input. Linear framing lands near 4x; re-splitting the
+        // whole buffer every time lands near 16x.
+        XCTAssertLessThan(large, max(small, 0.001) * 8)
+    }
+
+    func testIllFormedUTF8BecomesReplacementCharacter() throws {
+        var parser = SseParser()
+        var bytes = Array("data: {\"delta\":\"a".utf8)
+        bytes.append(0xFF)
+        bytes += Array("b\"}\n\n".utf8)
+
+        var events: [SseEvent] = []
+        var pending: [UInt8] = []
+        for byte in bytes {
+            pending.append(byte)
+            if let chunk = String(bytes: pending, encoding: .utf8) {
+                pending.removeAll()
+                events += try parser.parse(chunk)
+            } else if pending.count > 4 {
+                pending.removeFirst()
+                events += try parser.parse("\u{FFFD}")
+            }
+        }
+
+        XCTAssertEqual(events.count, 1)
+        // The byte is substituted, not dropped: a shortened delta would read as
+        // the text the producer meant to send.
+        XCTAssertEqual(events.first?.data, "{\"delta\":\"a\u{FFFD}b\"}")
+    }
+
+    func testMultiByteCharacterSplitAcrossChunksSurvives() throws {
+        var parser = SseParser()
+        let euro = Array("€".utf8)
+
+        var events = try parser.parse("data: {\"delta\":\"")
+        events += try parser.parse(String(decoding: euro[0..<1], as: UTF8.self))
+        events += try parser.parse(String(decoding: euro[1...], as: UTF8.self))
+        events += try parser.parse("\"}\n\n")
+
+        XCTAssertEqual(events.count, 1)
+    }
 }

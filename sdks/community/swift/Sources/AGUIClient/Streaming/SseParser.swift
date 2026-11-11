@@ -22,8 +22,17 @@ public struct SseParser {
     /// unbounded memory growth from malformed or malicious streams.
     public static let maxBufferByteCount = 10 * 1_048_576 // 10 MB
 
-    /// Internal buffer for incomplete events.
-    private var buffer: String = ""
+    /// Internal buffer for incomplete events, held as UTF-8 bytes.
+    ///
+    /// Framing happens on bytes so that a multi-byte character split across two
+    /// chunks stays intact until the event holding it is complete.
+    private var buffer: [UInt8] = []
+
+    /// How many leading bytes of `buffer` have already been searched for a
+    /// separator. A chunk that completes no event leaves its last byte
+    /// unsearched, because the separator it starts may be finished by the chunk
+    /// that follows.
+    private var scanIndex = 0
 
     /// True when the previous chunk's last raw character was a lone `\r`.
     ///
@@ -91,28 +100,47 @@ public struct SseParser {
         // Remember whether this chunk ends with a lone \r before it is erased.
         endsWithCR = step1.hasSuffix("\r")
         let normalized = step1.replacingOccurrences(of: "\r", with: "\n")
-        buffer += normalized
+        buffer.append(contentsOf: normalized.utf8)
 
         // Guard against unbounded buffer growth from malformed/malicious streams.
-        guard buffer.utf8.count <= Self.maxBufferByteCount else {
+        guard buffer.count <= Self.maxBufferByteCount else {
             reset()
             throw SseParserError.bufferOverflow
         }
 
         var events: [SseEvent] = []
 
-        // Split on double newline (event separator — handles \n\n after normalization)
-        let parts = buffer.components(separatedBy: "\n\n")
+        // Search forward from where the previous chunk's scan stopped. Splitting
+        // the whole buffer on every chunk looks again at everything already
+        // held, which costs time quadratic in the size of one event.
+        var eventStart = 0
+        var index = scanIndex
 
-        // Keep the last part in buffer (might be incomplete)
-        buffer = parts.last ?? ""
-
-        // Process complete events (all parts except the last)
-        for part in parts.dropLast() where !part.isEmpty {
-            if let event = parseEvent(part) {
-                events.append(event)
+        while index + 1 < buffer.count {
+            guard buffer[index] == 0x0A, buffer[index + 1] == 0x0A else {
+                index += 1
+                continue
             }
+
+            // Empty parts carry no fields, so they are skipped rather than parsed.
+            if index > eventStart {
+                // Decoded a whole event at a time, so an ill-formed sequence
+                // becomes U+FFFD here instead of being dropped earlier.
+                let part = String(decoding: buffer[eventStart..<index], as: UTF8.self)
+                if let event = parseEvent(part) {
+                    events.append(event)
+                }
+            }
+
+            index += 2
+            eventStart = index
         }
+
+        // Keep the trailing part in buffer (might be incomplete)
+        if eventStart > 0 {
+            buffer.removeFirst(eventStart)
+        }
+        scanIndex = max(0, buffer.count - 1)
 
         return events
     }
@@ -204,7 +232,8 @@ public struct SseParser {
     /// let events = try parser.parse("data: new\n\n")
     /// ```
     public mutating func reset() {
-        buffer = ""
+        buffer = []
+        scanIndex = 0
         endsWithCR = false
     }
 }

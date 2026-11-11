@@ -480,4 +480,26 @@ extension EventStreamTests {
         let lastID = await stream.lastEventId
         XCTAssertEqual(lastID, "last")
     }
+
+    /// An ill-formed byte in the middle of a delta used to be discarded, so the
+    /// text arrived shortened and read as what the producer meant to send. It
+    /// is substituted instead, which is what the TypeScript client's non-fatal
+    /// `TextDecoder` already does.
+    func testIllFormedUTF8SurvivesAsReplacementCharacter() async throws {
+        var raw = Array("data: {\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m\",\"delta\":\"a".utf8)
+        raw.append(0xFF)
+        raw += Array("b\"}\n\n".utf8)
+
+        let bytes = MockAsyncBytes(data: Data(raw))
+        let stream = EventStream(bytes: bytes, decoder: AGUIEventDecoder())
+
+        var events: [any AGUIEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events.count, 1)
+        let content = try XCTUnwrap(events.first as? TextMessageContentEvent)
+        XCTAssertEqual(content.delta, "a\u{FFFD}b")
+    }
 }
