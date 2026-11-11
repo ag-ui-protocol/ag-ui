@@ -1,0 +1,8 @@
+phase	decision	reason	evidence	result
+scope	Keep text chat additive and tool-free	The SDK does not expose frontend tool and approval response callbacks	../src/inputs.ts	Unsupported requests fail before native execution
+sessions	Share trusted records and admission across clones	One public thread must have one active native writer	../src/sessions.ts	Concurrency and clone tests pass
+translation	Serialize aggregate item snapshots	Flutter tracks one active streaming assistant message	../src/__tests__/events.test.ts	Overlapping replies reconstruct once in native order
+cleanup	Ship a process supervisor with the package	The pinned SDK can return before its child exits and a repository patch would not reach installed consumers	../src/__tests__/adapter-cleanup.test.ts	Delayed, resistant and orphan process cases pass
+progress	Validate projected scalar fields	SDK JSON parsing alone does not enforce TypeScript declarations	../src/__tests__/events.test.ts	Malformed status, exit code, file and todo values fail safely
+verification	Separate fixtures from provider checks	Controlled JSONL proves transport behavior but cannot establish native provider operation	../examples/smoke.ts	Real provider continuation and isolation passed locally
+platform	Reject Windows until supervision exists	Owned process groups currently require POSIX	../src/sdk.ts	Explicit documented platform limit

@@ -25,6 +25,7 @@
       "@ag-ui/claude-agent-sdk",
       "@ag-ui/claude-managed-agents",
       "@ag-ui/cloudflare-agents",
+      "@ag-ui/codex-sdk",
       "@ag-ui/crewai",
       "@ag-ui/langchain",
       "@ag-ui/langgraph",
