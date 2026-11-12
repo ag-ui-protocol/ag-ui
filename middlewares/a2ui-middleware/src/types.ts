@@ -7,6 +7,11 @@
 export interface A2UIInlineCatalogSchema {
   /** Catalog identifier */
   catalogId: string;
+  /**
+   * Declared A2UI protocol ("0.9" or "1.0"). Selects the version label of the
+   * operations the middleware streams for this catalog; absent means v0.9.
+   */
+  protocolVersion?: string;
   /** Component schemas keyed by component name */
   components: Record<string, Record<string, unknown>>;
 }

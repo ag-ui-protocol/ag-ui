@@ -13,6 +13,10 @@ import { registerAntigravityA2UIFixtures } from "./antigravity-a2ui-fixtures";
 import { registerAntigravityInterruptFixtures } from "./antigravity-interrupt-fixtures";
 import { registerA2UIADKFixtures } from "./a2ui-adk-fixtures";
 import {
+  openAIAgentsAnswersToolResultTurn,
+  registerOpenAIAgentsFixtures,
+} from "./openai-agents-fixtures";
+import {
   crewAIA2UIAnswersToolResultTurn,
   registerA2UICrewAIFixtures,
 } from "./a2ui-crewai-fixtures";
@@ -129,6 +133,7 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   // OSS-162 A2UI recovery showcase fixtures (predicate fixtures, must precede
   // the generic loadFixtureFile below).
   registerA2UIRecoveryFixtures(mockServer);
+  registerOpenAIAgentsFixtures(mockServer);
 
   // CrewAI A2UI fixtures (openai/gpt-5.4, scoped to CrewAI-unique prompts so
   // they never intercept the LangGraph/ADK demos). Predicate fixtures, before
@@ -1741,6 +1746,15 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         );
         if (hasCrewExitTool && textOf(last.content) === "Crew exited")
           return false;
+        const hasOpenAIAgentsSupervisorTools = req.tools?.some((t) =>
+          ["research_topic", "write_prose", "critique_draft"].includes(
+            t.function.name,
+          ),
+        );
+        if (hasOpenAIAgentsSupervisorTools) return false;
+        // Don't match the OpenAI Agents approval demo's follow-up: its approve
+        // and reject branches answer differently, which its spec asserts.
+        if (openAIAgentsAnswersToolResultTurn(req)) return false;
         // Don't match the CrewAI crew-RUN follow-up (defect 2) — it has a
         // dedicated fixture keyed on the crew output string.
         if (hasCrewRunTool(req) && textOf(last.content) === CREW_RUN_OUTPUT)

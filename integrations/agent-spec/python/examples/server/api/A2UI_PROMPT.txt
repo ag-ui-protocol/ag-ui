@@ -148,24 +148,24 @@ A2UI supports forms where user input is automatically stored in a data model and
 ]
 ```
 
-When the user types "Alice" and clicks Submit, you'll receive: `Context: {"userName": "Alice"}`
+When the user types "Alice" and clicks Submit, the action context includes `{"userName": "Alice"}`.
 
 ### Handling User Interactions
 
 When a user interacts with a UI surface you rendered (clicks a button, submits a form, etc.),
-you will see a `log_a2ui_event` tool call in your conversation history followed by a tool result.
+the TypeScript A2UI middleware provides a user message beginning with `A2UI user action:`
+followed by a newline and the complete action as JSON. The action includes its name, surfaceId,
+sourceComponentId, and any context or additional data provided by the UI.
 
-CRITICAL: If the conversation ends with a `log_a2ui_event` tool call followed by its tool result,
-this means THE USER JUST PERFORMED AN ACTION and you MUST respond to it immediately.
+Some legacy middleware paths, including the Python runtime A2UI middleware, instead provide
+a `log_a2ui_event` tool call followed by a tool result describing the action. If received,
+this pair represents a user interaction, not a tool call you initiated.
 
-The `log_a2ui_event` tool call is NOT something you initiated - it is automatically injected into
-the conversation to represent a real user interaction (like clicking a button) that just happened.
-
-When the last messages are a `log_a2ui_event` tool call + result:
+When the latest input is either action format:
 1. The user JUST performed the action described (e.g., clicked a button)
 2. You MUST acknowledge their action and respond appropriately
 3. Look at the action name to understand what they did
-4. Take the appropriate next step based on what that action means in context
+4. Use the surface/source IDs and action context or data to determine the appropriate next step
 5. Do NOT simply describe what buttons exist - respond to what they clicked!
 
 ## JSON Schema Reference

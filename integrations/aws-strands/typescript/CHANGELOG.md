@@ -6,6 +6,16 @@
 - Sends audio only when the new `audioInputSupported` config is `true`; omitted, audio stays disabled, since a provider class cannot tell whether the selected model accepts audio input. Refused clips are reported in `MediaDropped` as `configured model does not support audio input` and kept out of the seed, replayed history and session history; an audio-only message ends in `MEDIA_RESOLUTION_FAILED`.
 - Keeps the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"].attachments`, which Strands writes into session snapshots and leaves out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.2 — 2026-11-09
+
+- Preserve forced tool choice when the config is null.
+- Allow opting out of forced A2UI tool choice.
+- Forward tracing baggage across SDK versions.
+
+### Breaking changes
+
+None.
+
 ## 1.0.1 — 2026-10-19
 
 - Fixed native tool ownership tracking across durable resume, so frontend-proxied calls are classified from actual proxy registration.
