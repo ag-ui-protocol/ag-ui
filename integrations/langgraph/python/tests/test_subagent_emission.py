@@ -571,6 +571,7 @@ class TestInterruptWithOpenSubagent(unittest.IsolatedAsyncioTestCase):
             interrupt.id = "int-1"
             interrupt.value = "please confirm"
             task.interrupts = [interrupt]
+            task.result = None  # pending, like a real PregelTask
             final_state.tasks = [task]
         else:
             final_state.tasks = []
