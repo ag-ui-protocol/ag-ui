@@ -10,6 +10,8 @@ import {
   Agent as StrandsAgentCore,
   AfterToolsEvent,
   BeforeToolCallEvent,
+  CachePointBlock,
+  GuardContentBlock,
   InterruptResponseContent,
   Message as StrandsMessage,
   SessionManager,
@@ -814,8 +816,32 @@ function _readRegistryContents(
   return undefined;
 }
 
-/** `StateStore`-shaped values serialize to a plain object; others pass through. */
+/** Copy prompt values without stripping SDK block prototypes or sharing data. */
+function _copySystemPrompt(
+  prompt: AgentConfig["systemPrompt"],
+): AgentConfig["systemPrompt"] {
+  if (!Array.isArray(prompt)) return prompt;
+  // Keep data arrays as data and SDK block arrays as SDK instances.
+  return prompt.map((block) => {
+    if ("type" in block) {
+      switch (block.type) {
+        case "textBlock":
+          return TextBlock.fromJSON(block.toJSON());
+        case "cachePointBlock":
+          return CachePointBlock.fromJSON(structuredClone(block.toJSON()));
+        case "guardContentBlock":
+          return GuardContentBlock.fromJSON(structuredClone(block.toJSON()));
+      }
+    }
+    return structuredClone(block);
+  }) as typeof prompt;
+}
+
+/** Normalize stored state and snapshot mutable system prompt content. */
 function _normalizeTemplateValue(key: string, value: unknown): unknown {
+  if (key === "systemPrompt") {
+    return _copySystemPrompt(value as AgentConfig["systemPrompt"]);
+  }
   if (key === "appState" || key === "modelState") {
     const dump = (
       value as { getAll?: () => Record<string, JSONValue> }
@@ -6024,6 +6050,9 @@ export class StrandsAgent {
       ...t,
       tools: t.tools.slice(),
     };
+    if (t.systemPrompt !== undefined) {
+      cfg.systemPrompt = _copySystemPrompt(t.systemPrompt);
+    }
     // Always set a stable id so SessionManager can locate snapshots after
     // the in-memory agent cache is cleared (stateless resume / restart).
     cfg.id = t.id ?? this.name;
