@@ -236,6 +236,27 @@ function convertMCPToolToAGUITool(mcpTool: {
 }
 
 /**
+ * Drop the legacy `forwardedProps.command.resume` channel without mutating
+ * the caller's objects. Everything else in `forwardedProps` passes through.
+ */
+function withoutLegacyResume(forwardedProps: unknown): unknown {
+  if (forwardedProps === null || typeof forwardedProps !== "object") {
+    return forwardedProps;
+  }
+  const { command } = forwardedProps as { command?: unknown };
+  if (
+    command === null ||
+    typeof command !== "object" ||
+    Array.isArray(command) ||
+    !("resume" in command)
+  ) {
+    return forwardedProps;
+  }
+  const { resume: _resume, ...rest } = command as Record<string, unknown>;
+  return { ...forwardedProps, command: rest };
+}
+
+/**
  * MCP Apps middleware - executes model-visible tools and renders UI resources.
  */
 export class MCPAppsMiddleware extends Middleware {
@@ -663,6 +684,9 @@ export class MCPAppsMiddleware extends Middleware {
                   ...continuation.input,
                   runId: randomUUID(),
                   resume: undefined,
+                  forwardedProps: withoutLegacyResume(
+                    continuation.input.forwardedProps,
+                  ),
                   messages,
                   state: heldRunFinished.state,
                 };
