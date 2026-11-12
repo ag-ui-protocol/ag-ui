@@ -1,4 +1,4 @@
-use ag_ui_core::patch::apply_patch_to_copy;
+use ag_ui_core::patch::{PatchError, apply_patch_to_copy};
 use serde_json::{Value, json};
 
 fn growing_patch(kind: &str, count: usize) -> Value {
@@ -90,4 +90,34 @@ fn insertion_depth_accounts_for_values_and_escaped_pointer_segments() {
     .unwrap();
     apply_patch_to_copy(&mut document, &operations).unwrap();
     assert_eq!(document, json!({"a/b":{"":1},"copy":{"":1}}));
+}
+
+#[test]
+fn typed_errors_distinguish_invalid_operations_and_depth_limits() {
+    let mut document = json!({});
+    let invalid = serde_json::from_value::<Vec<json_patch::PatchOperation>>(json!([
+        {"op":"remove", "path":"/missing"}
+    ]))
+    .unwrap();
+    assert_eq!(
+        apply_patch_to_copy(&mut document, &invalid),
+        Err(PatchError::InvalidOperation)
+    );
+    let too_deep = serde_json::from_value::<Vec<json_patch::PatchOperation>>(json!([
+        {"op":"add", "path":"/x".repeat(129), "value":null}
+    ]))
+    .unwrap();
+    assert_eq!(
+        apply_patch_to_copy(&mut document, &too_deep),
+        Err(PatchError::OperationTooDeep)
+    );
+    let mut nested = Value::Null;
+    for _ in 0..129 {
+        nested = json!([nested]);
+    }
+    assert_eq!(
+        apply_patch_to_copy(&mut nested, &[]),
+        Err(PatchError::DocumentTooDeep)
+    );
+    assert_eq!(PatchError::InvalidOperation.to_string(), "patch failed");
 }

@@ -2,6 +2,9 @@
 
 ## 0.2.0 (unreleased)
 
+`Limits` and `EncodeError` are non-exhaustive. Use `Limits::new` or `Default`
+and assign fields instead of struct literals; include wildcard error match arms.
+
 Initial framework-independent AG-UI 1.0 JSON/SSE encoder release, sharing the
 core 0.2.0 model. Rust 1.88 is required.
 

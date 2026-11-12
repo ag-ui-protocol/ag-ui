@@ -156,10 +156,7 @@ async fn only_stream_initial_bom_is_removed() {
 
 #[tokio::test]
 async fn exact_limits_and_comment_growth_are_bounded_without_changing_delivery() {
-    let limits = SseLimits {
-        max_line_bytes: 7,
-        max_frame_bytes: 8,
-    };
+    let limits = SseLimits::new(7, 8);
     assert_eq!(
         data(decode(vec![Bytes::from_static(b"data: x\n\n")], limits).await),
         ["x"]
@@ -185,10 +182,7 @@ async fn exact_limits_and_comment_growth_are_bounded_without_changing_delivery()
 async fn many_coalesced_frames_are_partition_invariant_and_source_is_backpressured() {
     let frame = b"data: ok\n\n";
     let all = frame.repeat(10000);
-    let limits = SseLimits {
-        max_line_bytes: 8,
-        max_frame_bytes: 9,
-    };
+    let limits = SseLimits::new(8, 9);
     let coalesced = data(decode(vec![Bytes::from(all.clone())], limits).await);
     let framed = data(
         decode(

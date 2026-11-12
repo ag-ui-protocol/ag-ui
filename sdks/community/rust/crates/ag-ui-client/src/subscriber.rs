@@ -17,6 +17,24 @@ pub struct AgentSubscriberParams<'a, StateT: AgentState, FwdPropsT: FwdProps> {
 
 /// Subscriber trait for hooking into Agent run lifecycle events.
 /// Currently makes use of the [`async_trait`] crate.
+/// Chunk events are expanded before delivery. Implement the corresponding
+/// start/content/end (or tool-call start/args/end) callbacks instead of the
+/// removed chunk callbacks. Overriding an obsolete hook now fails to compile.
+///
+/// ```compile_fail
+/// use ag_ui_client::{subscriber::{AgentSubscriber, AgentSubscriberParams},
+///     agent::{AgentError, AgentStateMutation}, core::event::TextMessageChunkEvent};
+/// struct Observer;
+/// #[async_trait::async_trait]
+/// impl AgentSubscriber for Observer {
+///     async fn on_text_message_chunk_event(
+///         &self, event: &TextMessageChunkEvent,
+///         params: AgentSubscriberParams<'async_trait, serde_json::Value, serde_json::Value>,
+///     ) -> Result<AgentStateMutation, AgentError> {
+///         Ok(AgentStateMutation::default())
+///     }
+/// }
+/// ```
 #[async_trait::async_trait]
 pub trait AgentSubscriber<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
 where
@@ -208,28 +226,6 @@ where
         Ok(AgentStateMutation::default())
     }
 
-    #[deprecated(
-        note = "Chunks are expanded before delivery; subscribe to start/content/end events instead"
-    )]
-    async fn on_text_message_chunk_event(
-        &self,
-        event: &TextMessageChunkEvent,
-        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        Ok(AgentStateMutation::default())
-    }
-
-    #[deprecated(
-        note = "Chunks are expanded before delivery; subscribe to start/content/end events instead"
-    )]
-    async fn on_tool_call_chunk_event(
-        &self,
-        event: &ToolCallChunkEvent,
-        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        Ok(AgentStateMutation::default())
-    }
-
     async fn on_activity_snapshot_event(
         &self,
         event: &ActivitySnapshotEvent,
@@ -273,17 +269,6 @@ where
     async fn on_reasoning_message_end_event(
         &self,
         event: &ReasoningMessageEndEvent,
-        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        Ok(AgentStateMutation::default())
-    }
-
-    #[deprecated(
-        note = "Chunks are expanded before delivery; subscribe to start/content/end events instead"
-    )]
-    async fn on_reasoning_message_chunk_event(
-        &self,
-        event: &ReasoningMessageChunkEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())

@@ -25,9 +25,20 @@ type DiagnosticHandler = Arc<dyn Fn(&Diagnostic) + Send + Sync>;
 /// explicit inspection; normal error formatting omits potentially secret body
 /// contents. Set `max_bytes` to zero to disable capture.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ErrorBodyLimits {
     pub max_bytes: usize,
     pub read_timeout: Duration,
+}
+
+impl ErrorBodyLimits {
+    /// Construct explicit limits. Zero byte limits are permitted.
+    pub const fn new(max_bytes: usize, read_timeout: Duration) -> Self {
+        Self {
+            max_bytes,
+            read_timeout,
+        }
+    }
 }
 
 impl Default for ErrorBodyLimits {

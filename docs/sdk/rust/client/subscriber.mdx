@@ -129,11 +129,10 @@ callbacks include:
   on_tool_call_result_event
 - on_state_snapshot_event / on_state_delta_event
 - on_messages_snapshot_event
-- on_text_message_chunk_event / on_tool_call_chunk_event
 - on_activity_snapshot_event / on_activity_delta_event
 - on_reasoning_start_event / on_reasoning_message_start_event /
   on_reasoning_message_content_event / on_reasoning_message_end_event /
-  on_reasoning_message_chunk_event / on_reasoning_end_event /
+  on_reasoning_end_event /
   on_reasoning_encrypted_value_event
 - on_subagent_started_event / on_subagent_finished_event /
   on_subagent_error_event
@@ -143,8 +142,9 @@ The compatibility boundary translates deprecated `THINKING_*` events before
 subscriber dispatch. The HTTP boundary drops unknown variants and reports
 structured processing diagnostics through
 `with_diagnostic_handler`. `on_event` observes each verified, expanded event;
-lifecycle execution expands chunk shorthands, so the deprecated raw chunk hooks are not invoked
-by `run_input` or `run_agent`. `Agent::run` exposes raw events without
+lifecycle execution expands chunk shorthands. The raw text/tool/reasoning chunk
+hooks were removed in 0.2.0 because they never fired; subscribe to the corresponding
+start/content/end or tool-call start/args/end hooks instead. `Agent::run` exposes raw events without
 subscriber dispatch.
 
 `on_diagnostic` receives reducer warnings, including a bounded `MissingTarget`

@@ -1,3 +1,4 @@
+#[cfg(feature = "http")]
 use reqwest::StatusCode;
 use thiserror::Error;
 
@@ -22,6 +23,7 @@ pub struct HttpErrorBody {
 }
 
 impl HttpErrorBody {
+    #[cfg(feature = "http")]
     pub(crate) fn new(bytes: Vec<u8>, stop_reason: ErrorBodyStopReason) -> Self {
         Self { bytes, stop_reason }
     }
@@ -83,14 +85,17 @@ pub enum AgUiClientError {
 
     /// Transport-level HTTP failures from reqwest
     #[error("HTTP transport error: {0}")]
-    HttpTransport(reqwest::Error),
+    #[cfg(feature = "http")]
+    HttpTransport(#[source] reqwest::Error),
 
     /// Transport failed after response headers; retry could duplicate a server run.
     #[error("HTTP streaming transport error: {0}")]
-    StreamingTransport(reqwest::Error),
+    #[cfg(feature = "http")]
+    StreamingTransport(#[source] reqwest::Error),
 
     /// Non-success HTTP status with an explicitly inspectable, redacted body
     #[error("HTTP status {status}: {context}")]
+    #[cfg(feature = "http")]
     HttpStatus {
         status: reqwest::StatusCode,
         context: String,
@@ -117,9 +122,6 @@ pub enum AgUiClientError {
     #[error("Protocol processing failed: {0}")]
     Processing(#[from] ag_ui_core::processing::ProcessingError),
 
-    #[error("Exchange identity mismatch: {0}")]
-    ExchangeIdentity(String),
-
     #[error("Incomplete run: {0}")]
     IncompleteRun(String),
 
@@ -140,6 +142,7 @@ impl AgUiClientError {
     /// Inspect a non-success response body. Normal error formatting omits it.
     pub fn http_error_body(&self) -> Option<&HttpErrorBody> {
         match self {
+            #[cfg(feature = "http")]
             Self::HttpStatus { body, .. } => Some(body),
             _ => None,
         }
@@ -161,7 +164,9 @@ impl AgUiClientError {
     /// Timeouts and streaming failures may follow a server-side commit and are not retried.
     pub fn is_retryable(&self) -> bool {
         match self {
+            #[cfg(feature = "http")]
             AgUiClientError::HttpTransport(e) => e.is_connect(),
+            #[cfg(feature = "http")]
             AgUiClientError::HttpStatus { status, .. } => {
                 status.is_server_error() || *status == StatusCode::TOO_MANY_REQUESTS
             }
@@ -177,8 +182,37 @@ impl AgUiClientError {
 pub type Result<T> = std::result::Result<T, AgUiClientError>;
 
 // reqwest errors can contain the URL, including query credentials. Never retain it.
+#[cfg(feature = "http")]
 impl From<reqwest::Error> for AgUiClientError {
     fn from(error: reqwest::Error) -> Self {
         Self::HttpTransport(error.without_url())
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn reqwest_errors_remain_available_through_the_source_chain() {
+        let request_error = || {
+            reqwest::Client::new()
+                .get("not a valid URL")
+                .build()
+                .unwrap_err()
+        };
+        for error in [
+            AgUiClientError::from(request_error()),
+            AgUiClientError::StreamingTransport(request_error().without_url()),
+        ] {
+            assert!(
+                error
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<reqwest::Error>()
+                    .is_some()
+            );
+        }
     }
 }

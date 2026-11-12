@@ -147,7 +147,8 @@ and enforces JSON Content-Type and SSE Accept. Responses must have a valid
 partitions, UTF-8, LF/CRLF/CR and comments; incomplete terminal frames fail.
 
 Non-success response bodies are received for at most 64 KiB or two seconds by
-default and are never included in errors. `with_error_body_limits` changes
+default and are omitted from error `Display` and `Debug` output. The structured
+error retains the bounded capture for explicit `http_error_body()` inspection. `with_error_body_limits` changes
 receipt bounds. `with_sse_limits` changes unfinished line/frame limits. Dropping
 a stream releases local resources; it does not establish remote cancellation.
 

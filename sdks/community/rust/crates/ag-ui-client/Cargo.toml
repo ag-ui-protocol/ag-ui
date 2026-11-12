@@ -13,6 +13,13 @@ categories = ["api-bindings"]
 exclude = ["tests/**"]
 readme = "README.md"
 
+[features]
+default = ["native-tls"]
+# The Agent pipeline and bounded SSE decoder are available without HTTP.
+http = ["dep:reqwest", "dep:mime"]
+native-tls = ["http", "reqwest/native-tls"]
+rustls-tls = ["http", "reqwest/rustls-tls"]
+
 [dependencies]
 ag-ui-core = { path = "../ag-ui-core", version = "0.2.0" }
 thiserror = { workspace = true }
@@ -23,10 +30,10 @@ uuid = { version = "1.17.0", features = ["v4"] }
 futures = "0.3.31"
 json-patch = "4.0.0"
 log = "0.4.27"
-reqwest = { version = "0.12.22" , features = ["json", "stream"]}
+reqwest = { version = "0.12.22", optional = true, default-features = false, features = ["json", "stream", "charset", "http2", "system-proxy"] }
 bytes = "1.5.0"
 tokio = { version = "1.36.0", features = ["time"] }
-mime = "0.3"
+mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 ag-ui-encoder = { path = "../ag-ui-encoder", version = "0.2.0" }
@@ -36,3 +43,40 @@ tokio = { version = "1.36.0", features = ["full"] }
 [[example]]
 name = "basic_agent"
 path = "examples/basic_agent.rs"
+required-features = ["http"]
+
+[[example]]
+name = "generative_ui"
+required-features = ["http"]
+
+[[example]]
+name = "logging_subscriber"
+required-features = ["http"]
+
+[[example]]
+name = "shared_state"
+required-features = ["http"]
+
+[[example]]
+name = "sse_example"
+required-features = ["http"]
+
+[[test]]
+name = "conformance_streams"
+required-features = ["http"]
+
+[[test]]
+name = "explicit_input"
+required-features = ["http"]
+
+[[test]]
+name = "http_agent_test"
+required-features = ["http"]
+
+[[test]]
+name = "sse_test"
+required-features = ["http"]
+
+[[test]]
+name = "transport_http"
+required-features = ["http"]

@@ -3,9 +3,8 @@ use ag_ui_client::core::JsonValue;
 use ag_ui_client::core::event::{
     CustomEvent, Event, MessagesSnapshotEvent, RawEvent, RunErrorEvent, RunFinishedEvent,
     RunStartedEvent, StateDeltaEvent, StateSnapshotEvent, StepFinishedEvent, StepStartedEvent,
-    TextMessageChunkEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent,
-    ToolCallArgsEvent, ToolCallChunkEvent, ToolCallEndEvent, ToolCallResultEvent,
-    ToolCallStartEvent,
+    TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent, ToolCallArgsEvent,
+    ToolCallEndEvent, ToolCallResultEvent, ToolCallStartEvent,
 };
 use ag_ui_client::http::HttpAgent;
 use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
@@ -276,24 +275,6 @@ where
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("Custom", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_text_message_chunk_event(
-        &self,
-        event: &TextMessageChunkEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("TextMessageChunk", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_tool_call_chunk_event(
-        &self,
-        event: &ToolCallChunkEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ToolCallChunk", event);
         Ok(AgentStateMutation::default())
     }
 

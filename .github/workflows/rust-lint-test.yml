@@ -70,3 +70,34 @@ jobs:
       - name: Verify all registry packages together
         if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-latest'
         run: cargo +stable publish --workspace --dry-run --locked
+
+  client-features:
+    name: Rust client features [${{ matrix.features }}]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [none, http, rustls-tls, all]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install minimum compiler
+        run: rustup toolchain install 1.88.0 --profile minimal --component clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: sdks/community/rust
+          key: features-${{ matrix.features }}
+      - name: Check feature-specific tests, docs and lint
+        env:
+          FEATURE_SET: ${{ matrix.features }}
+        run: |
+          case "$FEATURE_SET" in
+            none) flags=(--no-default-features) ;;
+            all) flags=(--all-features) ;;
+            *) flags=(--no-default-features --features "$FEATURE_SET") ;;
+          esac
+          cargo +1.88.0 test -p ag-ui-client --all-targets --locked "${flags[@]}"
+          cargo +1.88.0 test -p ag-ui-client --doc --locked "${flags[@]}"
+          cargo +1.88.0 clippy -p ag-ui-client --all-targets --locked "${flags[@]}" -- -D warnings

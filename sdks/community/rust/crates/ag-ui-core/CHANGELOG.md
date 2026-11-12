@@ -2,11 +2,18 @@
 
 ## 0.2.0 (unreleased)
 
+`DiagnosticCategory` and `EventValidationError` are non-exhaustive; downstream
+matches need wildcard arms. The unreachable `EventValidationError::EmptyDelta`
+variant is removed: empty string deltas are valid AG-UI 1.0 input.
+
 Breaking AG-UI 1.0 update: string identifiers, seven message roles, multimodal
 content, activity/reasoning/subagent events, typed JSON Patch, run outcomes,
 usage, interrupts, resume entries, and capabilities. Rust 1.88 is required.
 
 Migration notes:
+- `apply_patch_to_copy` now returns non-exhaustive `PatchError` instead of `String`,
+  distinguishing document depth, operation depth and invalid operations. Callers
+  must still discard the working copy on any error.
 - Public protocol enums and record structs are non-exhaustive. Add wildcard
   branches to external enum matches and `..` to struct patterns. Replace struct
   literals with required-field constructors or `Default` for all-optional

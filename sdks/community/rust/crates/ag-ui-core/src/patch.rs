@@ -3,16 +3,29 @@
 use json_patch::PatchOperation;
 use serde_json::Value;
 
+/// Failure while applying a bounded patch to a disposable working copy.
+/// The caller must discard that copy after any error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PatchError {
+    #[error("patch document exceeds maximum JSON depth")]
+    DocumentTooDeep,
+    #[error("patch operation would exceed maximum JSON depth")]
+    OperationTooDeep,
+    #[error("patch failed")]
+    InvalidOperation,
+}
+
 /// Maximum number of edges from the document root to any JSON value.
 pub const MAX_PATCH_DEPTH: usize = 128;
 
 // Iterative so checking an untrusted value does not itself recurse.
-fn depth(value: &Value) -> Result<usize, String> {
+fn depth(value: &Value) -> Result<usize, PatchError> {
     let mut pending = vec![(value, 0)];
     let mut maximum = 0;
     while let Some((value, level)) = pending.pop() {
         if level > MAX_PATCH_DEPTH {
-            return Err("patch document exceeds maximum JSON depth".into());
+            return Err(PatchError::DocumentTooDeep);
         }
         maximum = maximum.max(level);
         match value {
@@ -36,7 +49,7 @@ fn depth(value: &Value) -> Result<usize, String> {
 pub fn apply_patch_to_copy(
     document: &mut Value,
     operations: &[PatchOperation],
-) -> Result<(), String> {
+) -> Result<(), PatchError> {
     depth(document)?;
     for operation in operations {
         let insertion = match operation {
@@ -59,11 +72,11 @@ pub fn apply_patch_to_copy(
             // count path segments, including empty property names.
             let destination_depth = path.bytes().filter(|byte| *byte == b'/').count();
             if destination_depth.saturating_add(depth(value)?) > MAX_PATCH_DEPTH {
-                return Err("patch operation would exceed maximum JSON depth".into());
+                return Err(PatchError::OperationTooDeep);
             }
         }
         json_patch::patch_unsafe(document, std::slice::from_ref(operation))
-            .map_err(|_| "patch failed".to_string())?;
+            .map_err(|_| PatchError::InvalidOperation)?;
     }
     Ok(())
 }

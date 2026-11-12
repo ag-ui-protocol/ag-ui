@@ -12,10 +12,21 @@ pub const DEFAULT_MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_MAX_COMMENT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Limits {
     pub max_event_bytes: usize,
     pub max_comment_bytes: usize,
 }
+impl Limits {
+    /// Construct explicit limits. Zero byte limits are permitted.
+    pub const fn new(max_event_bytes: usize, max_comment_bytes: usize) -> Self {
+        Self {
+            max_event_bytes,
+            max_comment_bytes,
+        }
+    }
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -24,7 +35,19 @@ impl Default for Limits {
         }
     }
 }
+/// Encoding failures may gain new variants; downstream matches need a fallback.
+///
+/// ```compile_fail
+/// use ag_ui_encoder::EncodeError;
+/// fn describe(error: EncodeError) {
+///     match error {
+///         EncodeError::InvalidEvent(_) | EncodeError::SizeLimit { .. } |
+///         EncodeError::Serialization => {}
+///     }
+/// }
+/// ```
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum EncodeError {
     #[error(transparent)]
     InvalidEvent(#[from] ProcessingError),

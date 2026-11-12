@@ -770,10 +770,16 @@ impl Event {
 
 /// Validation error types for events in the Agent User Interaction Protocol.
 /// These errors represent validation failures when creating or processing events.
+///
+/// ```compile_fail
+/// use ag_ui_core::event::EventValidationError;
+/// fn describe(error: EventValidationError) {
+///     match error { EventValidationError::InvalidFormat(_) => {} }
+/// }
+/// ```
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum EventValidationError {
-    #[error("Delta must not be an empty string")]
-    EmptyDelta,
     #[error("Invalid event format: {0}")]
     InvalidFormat(String),
 }

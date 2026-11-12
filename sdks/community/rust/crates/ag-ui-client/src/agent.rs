@@ -11,8 +11,22 @@ use crate::event_handler::EventHandler;
 use crate::stream::EventStream;
 use crate::subscriber::IntoSubscribers;
 
-/// Configuration for an Agent.
+/// Configuration for an Agent. Construct with `Default` and assign public fields.
+///
+/// ```
+/// let mut config = ag_ui_client::agent::AgentConfig::<serde_json::Value>::default();
+/// config.debug = Some(true);
+/// ```
+///
+/// External struct literals are deliberately unsupported so fields can be added:
+/// ```compile_fail
+/// let config = ag_ui_client::agent::AgentConfig::<serde_json::Value> {
+///     agent_id: None, description: None, thread_id: None,
+///     initial_messages: None, initial_state: None, debug: None,
+/// };
+/// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AgentConfig<StateT = JsonValue> {
     pub agent_id: Option<AgentId>,
     pub description: Option<String>,
@@ -40,6 +54,7 @@ where
 
 /// Parameters for running an agent.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct RunAgentParams<StateT: AgentState = JsonValue, FwdPropsT: FwdProps = JsonValue> {
     /// Omit to start a fresh thread; supply this for subsequent turns.
     pub thread_id: Option<ThreadId>,
@@ -136,13 +151,26 @@ impl RunAgentParams<JsonValue, JsonValue> {
 
 /// The last run segment's producer-reported terminal status.
 /// Consumer protocol, transport, and callback failures are returned as `Err` instead.
+/// Include a wildcard arm when matching this extensible enum.
+///
+/// ```compile_fail
+/// use ag_ui_client::agent::RunTerminalStatus;
+/// fn describe(status: RunTerminalStatus) {
+///     match status {
+///         RunTerminalStatus::Finished { .. } => {},
+///         RunTerminalStatus::ProducerError(_) => {},
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum RunTerminalStatus {
     Finished { thread_id: ThreadId, run_id: RunId },
     ProducerError(crate::core::event::RunErrorEvent),
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RunAgentResult<StateT: AgentState> {
     /// Successful producer result, matching the canonical TypeScript client.
     /// Missing/whole-null results and non-success outcomes produce `None`.
@@ -155,6 +183,22 @@ pub struct RunAgentResult<StateT: AgentState> {
     pub usage: Option<Vec<crate::core::types::TokenUsage>>,
     pub new_messages: Vec<Message>,
     pub new_state: StateT,
+}
+
+impl<StateT: AgentState> RunAgentResult<StateT> {
+    /// Construct a terminal result with empty history and no optional producer
+    /// result, outcome or usage. Set the public fields to supply those values.
+    pub fn new(terminal_status: RunTerminalStatus, new_state: StateT) -> Self {
+        Self {
+            result: None,
+            terminal_status,
+            messages: Vec::new(),
+            outcome: None,
+            usage: None,
+            new_messages: Vec::new(),
+            new_state,
+        }
+    }
 }
 
 pub type AgentRunState<StateT, FwdPropsT> = RunAgentInput<StateT, FwdPropsT>;
@@ -205,6 +249,8 @@ where
     ///
     /// # Examples
     /// ```no_run
+    /// # #[cfg(feature = "http")]
+    /// # mod http_example {
     /// # use ag_ui_client::{Agent, HttpAgent, RunAgentParams, core::types::Message};
     /// # use std::error::Error;
     ///
@@ -222,6 +268,8 @@ where
     ///  let result = agent.run_agent(&params, ()).await?;
     /// # Ok(())
     /// # }
+    /// # }
+    /// # fn main() {}
     /// ```
     ///
     /// # Notes

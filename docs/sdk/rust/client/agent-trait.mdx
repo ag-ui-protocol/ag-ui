@@ -121,6 +121,7 @@ and whole-null results become `None`; nested nulls are preserved. Interrupted
 or cancelled runs have no result. The redundant `output` field was removed:
 
 ```rust
+#[non_exhaustive]
 pub struct RunAgentResult<StateT: AgentState> {
     pub result: Option<serde_json::Value>,
     pub terminal_status: RunTerminalStatus,
@@ -131,6 +132,13 @@ pub struct RunAgentResult<StateT: AgentState> {
     pub new_state: StateT,
 }
 ```
+
+`AgentConfig`, `RunAgentParams`, and `RunAgentResult` are non-exhaustive. Use
+`AgentConfig::default()`, the parameter constructors/builders, or
+`RunAgentResult::new(terminal_status, final_state)` instead of struct literals,
+then assign public fields. A newly constructed result has empty history and no
+optional result, outcome, or usage until explicitly supplied.
+`RunTerminalStatus` is also non-exhaustive: downstream matches need a wildcard arm.
 
 ## Complete-history continuation
 

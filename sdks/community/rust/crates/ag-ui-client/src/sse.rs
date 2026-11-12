@@ -2,7 +2,10 @@
 use crate::error::AgUiClientError;
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::Stream;
+#[cfg(feature = "http")]
+use futures::StreamExt;
+#[cfg(feature = "http")]
 use reqwest::Response;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -21,9 +24,20 @@ pub struct SseEvent {
 /// its delimiter; a frame limit counts non-comment lines plus one byte per line.
 /// Comments are discarded after each bounded line. There is no parsed-event queue.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct SseLimits {
     pub max_line_bytes: usize,
     pub max_frame_bytes: usize,
+}
+
+impl SseLimits {
+    /// Construct explicit limits. Zero byte limits are permitted.
+    pub const fn new(max_line_bytes: usize, max_frame_bytes: usize) -> Self {
+        Self {
+            max_line_bytes,
+            max_frame_bytes,
+        }
+    }
 }
 
 impl Default for SseLimits {
@@ -47,6 +61,7 @@ pub trait SseResponseExt {
     ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, AgUiClientError>> + Send>>;
 }
 
+#[cfg(feature = "http")]
 #[async_trait]
 impl SseResponseExt for Response {
     async fn event_source(

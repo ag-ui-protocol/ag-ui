@@ -51,7 +51,7 @@ JSON Patch operations retain legal additional members, without allowing the
 extension map to shadow their defined fields. Deprecated `THINKING_*`, illegal
 attribution, roles, pointers and out-of-range integers are rejected.
 
-`Encoder::new(Limits { max_event_bytes, max_comment_bytes })` configures finite
+`Encoder::new(Limits::new(max_event_bytes, max_comment_bytes))` configures finite
 byte limits including SSE framing. Defaults are 16 MiB per event and 64 KiB per
 comment, allowing common inline media while remaining bounded. Output buffers
 are capped; oversized data returns `EncodeError::SizeLimit` without partial output
@@ -66,3 +66,6 @@ SSE `data`, `event` or `id` fields. Standalone `encode`, `encode_live`, and
 Individual event validation does not prove lifecycle ordering, successful remote
 execution, durable authority, or registry publication readiness. Use the verified
 Git dependency recipe in the workspace README while crate versions are unpublished.
+
+`Limits` and `EncodeError` are non-exhaustive. Construct limits with `new` or
+`Default` and assign public fields; include a wildcard arm when matching errors.

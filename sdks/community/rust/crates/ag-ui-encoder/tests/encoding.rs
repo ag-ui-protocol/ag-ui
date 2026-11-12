@@ -56,19 +56,12 @@ fn event_and_comment_limits_include_framing_and_have_exact_edges() {
     for difference in [-1_i32, 0, 1] {
         let event_limit = (bytes.len() as i32 + difference) as usize;
         let comment_limit = (comment.len() as i32 + difference) as usize;
-        let encoder = Encoder::new(Limits {
-            max_event_bytes: event_limit,
-            max_comment_bytes: comment_limit,
-        });
+        let encoder = Encoder::new(Limits::new(event_limit, comment_limit));
         assert_eq!(encoder.encode(&e).is_ok(), difference >= 0);
         assert_eq!(encoder.keepalive("α").is_ok(), difference >= 0);
     }
     assert!(matches!(
-        Encoder::new(Limits {
-            max_event_bytes: 0,
-            max_comment_bytes: 0
-        })
-        .encode(&e),
+        Encoder::new(Limits::new(0, 0)).encode(&e),
         Err(EncodeError::SizeLimit { kind: "event", .. })
     ));
     assert_eq!(Encoder::default().limits(), Limits::default());

@@ -10,8 +10,22 @@ use serde_json::{Map, Value};
 /// The version declared by this SDK, independent of any peer declaration.
 pub const PROTOCOL_VERSION: &str = "1.0";
 
+/// Extensible diagnostic classification; downstream matches need a wildcard arm.
+///
+/// ```compile_fail
+/// use ag_ui_core::processing::DiagnosticCategory::*;
+/// fn describe(category: ag_ui_core::processing::DiagnosticCategory) {
+///     match category {
+///         UnknownField | UnknownVariant | UnknownEnumValue | OptionalNull |
+///         NewerMinorVersion | UninterpretableVersion | UnsupportedMajorVersion |
+///         InvalidValue | DeprecatedEvent | PatchNotApplied | MissingTarget |
+///         DiagnosticLimit => {}
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DiagnosticCategory {
     UnknownField,
     UnknownVariant,

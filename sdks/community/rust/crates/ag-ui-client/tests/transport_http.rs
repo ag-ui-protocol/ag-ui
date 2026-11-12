@@ -302,10 +302,7 @@ async fn malformed_json_utf8_oversize_and_trailing_truncation_fail() {
         let agent = HttpAgent::builder()
             .with_url_str(&url)
             .unwrap()
-            .with_sse_limits(SseLimits {
-                max_line_bytes: 7,
-                max_frame_bytes: 8,
-            })
+            .with_sse_limits(SseLimits::new(7, 8))
             .build()
             .unwrap();
         let request = input();
@@ -395,10 +392,7 @@ async fn non_success_receipt_has_byte_and_deadline_bounds_and_releases_connectio
             let agent = HttpAgent::builder()
                 .with_url_str(&url)
                 .unwrap()
-                .with_error_body_limits(ErrorBodyLimits {
-                    max_bytes: 64,
-                    read_timeout: Duration::from_millis(30),
-                })
+                .with_error_body_limits(ErrorBodyLimits::new(64, Duration::from_millis(30)))
                 .build()
                 .unwrap();
             let error = tokio::time::timeout(TEST_TIMEOUT, agent.run(&input()))
@@ -765,10 +759,7 @@ async fn error_body_capture_preserves_bytes_and_handles_zero_and_exact_limits() 
             let agent = HttpAgent::builder()
                 .with_url_str(&url)
                 .unwrap()
-                .with_error_body_limits(ErrorBodyLimits {
-                    max_bytes: limit,
-                    read_timeout: Duration::from_secs(2),
-                })
+                .with_error_body_limits(ErrorBodyLimits::new(limit, Duration::from_secs(2)))
                 .build()
                 .unwrap();
             let error = agent.run(&input()).await.err().unwrap();
@@ -813,10 +804,7 @@ async fn error_body_capture_retains_prefix_on_timeout_and_read_failure() {
             let agent = HttpAgent::builder()
                 .with_url_str(&url)
                 .unwrap()
-                .with_error_body_limits(ErrorBodyLimits {
-                    max_bytes: 64,
-                    read_timeout: Duration::from_millis(100),
-                })
+                .with_error_body_limits(ErrorBodyLimits::new(64, Duration::from_millis(100)))
                 .build()
                 .unwrap();
             let error = agent.run(&input()).await.err().unwrap();

@@ -3,6 +3,25 @@
 HTTP/SSE client for AG-UI 1.0 with explicit lifecycle, canonical event processing,
 complete application history, structured diagnostics, and bounded transport.
 
+## Transport features
+
+Default features keep the HTTP transport with native TLS. HTTP/2, charset
+decoding and system-proxy support remain enabled for every HTTP build, preserving
+the prior reqwest defaults apart from the selectable TLS backend. To select rustls instead:
+
+```toml
+ag-ui-client = { version = "0.2.0", default-features = false, features = ["rustls-tls"] }
+```
+
+Use `default-features = false` with no additional features for a custom `Agent`
+without reqwest or a TLS backend. The lifecycle pipeline, subscribers, and bounded
+`SseDecoder` remain available. `HttpAgent`, its builder, reqwest error variants,
+and the reqwest `SseResponseExt` implementation require `http`. The `http` feature
+alone enables plain HTTP without TLS; `native-tls` and `rustls-tls` each enable it.
+Cargo features are additive: disable defaults when selecting rustls to avoid also
+enabling native TLS through this dependency. Other dependencies may still enable
+reqwest features in the final application.
+
 ## Same-thread turns
 
 Use `Agent::run_input` with a complete `core::types::RunAgentInput`. Each turn
@@ -11,6 +30,8 @@ has a new run ID, while the thread ID stays stable. Reuse the complete public
 cannot reconstruct snapshot replacements/deletions.
 
 ```no_run
+# #[cfg(feature = "http")]
+# mod example {
 use ag_ui_client::{Agent, HttpAgent, RunTerminalStatus};
 use ag_ui_client::core::types::RunAgentInput;
 use serde_json::json;
@@ -33,6 +54,7 @@ input.run_id = "run-2".into();
 let second = agent.run_input(&input, ()).await?;
 # let _ = second;
 # Ok(())
+# }
 # }
 ```
 
