@@ -150,6 +150,16 @@ export function parseEventTraceSse(body: string): TraceEvent[] {
 
 function isGeneratedIdentityField(key: string, path: readonly string[]) {
   if (GENERATED_ID_FIELDS.has(key)) return true;
+  // CopilotKit's logical request identity lives in the run input, not in
+  // application records that happen to use the same private-looking name.
+  if (
+    key === "__copilotkitRequestId" &&
+    path.length === 2 &&
+    path[0] === "input" &&
+    path[1] === "forwardedProps"
+  ) {
+    return true;
+  }
   if (key !== "id") return false;
 
   return path.some(
