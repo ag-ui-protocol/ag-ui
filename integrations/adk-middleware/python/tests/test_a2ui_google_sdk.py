@@ -16,6 +16,7 @@ import json
 from typing import AsyncGenerator
 
 import pytest
+from a2ui.core.state import SurfaceComponentsModel
 from a2ui.inference_formats.direct_json import DirectJsonPromptGenerator
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_response import LlmResponse
@@ -491,6 +492,7 @@ class _ExpressLlm(BaseLlm):
     requests: list = []
     queues: list = []
     emitted_before_completion: bool = False
+    snapshot_counts: list = []
 
     async def generate_content_async(self, llm_request, stream=False):
         self.requests.append(llm_request)
@@ -501,6 +503,13 @@ class _ExpressLlm(BaseLlm):
                 partial=True,
             )
             if self.queues:
+                self.snapshot_counts.append(
+                    sum(
+                        "a2ui_operations" in event.content
+                        for event in self.queues[0]._queue
+                        if event.type == "ACTIVITY_SNAPSHOT"
+                    )
+                )
                 self.emitted_before_completion |= any(
                     event.type == "ACTIVITY_SNAPSHOT"
                     and "a2ui_operations" in event.content
@@ -511,6 +520,179 @@ class _ExpressLlm(BaseLlm):
             partial=False,
             turn_complete=True,
         )
+
+
+_requires_partial_components = pytest.mark.skipif(
+    not hasattr(SurfaceComponentsModel, "get_partial_components"),
+    reason="Requires the unreleased upstream a2ui-core get_partial_components API",
+)
+
+
+@_requires_partial_components
+@pytest.mark.asyncio
+async def test_express_top_down_surface_paints_while_children_and_data_are_pending():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                "<a2ui>\nroot = Column([heading, field, later])\n",
+                'heading = Text("Ready")\n',
+                'field = TextField(label="Name", value=$/form/name)\n',
+                '$/form/name = "Ada"\n',
+                'later = Text("Finished")\n',
+                "</a2ui>",
+            ]
+        ],
+    )
+    tool = get_a2ui_tool({"model": model, "inference_format": "express"})
+    tool.event_queue = asyncio.Queue()
+    model.queues.append(tool.event_queue)
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert "a2ui_operations" in result
+    painted = [e for e in tool.event_queue._queue if "a2ui_operations" in e.content]
+    # A heading must paint before either the binding data or final child arrives.
+    assert model.snapshot_counts[1] > 0
+    views = [
+        next(
+            op["updateComponents"]["components"]
+            for op in e.content["a2ui_operations"]
+            if "updateComponents" in op
+        )
+        for e in painted
+    ]
+    assert any(
+        any(c.get("text") == "Ready" for c in view)
+        and all(c["id"] != "field" for c in view)
+        for view in views
+    )
+    assert any(
+        any(c["id"] == "field" for c in view) and all(c["id"] != "later" for c in view)
+        for view in views
+    )
+    assert model.snapshot_counts[3] > model.snapshot_counts[1]
+    assert {c["id"] for c in views[-1]} == {"root", "heading", "field", "later"}
+
+
+@_requires_partial_components
+@pytest.mark.asyncio
+async def test_express_partial_view_cannot_hide_invalid_final_output():
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                "<a2ui>\nroot = Column([ready, missing])\n",
+                'ready = Text("Visible before failure")\n',
+                "</a2ui>",
+            ]
+        ],
+    )
+    tool = get_a2ui_tool(
+        {"model": model, "inference_format": "express", "recovery": {"maxAttempts": 1}}
+    )
+    tool.event_queue = asyncio.Queue()
+    model.queues.append(tool.event_queue)
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert result["code"] == "a2ui_recovery_exhausted"
+    assert model.snapshot_counts[1] > 0
+    assert any(e.content.get("status") == "failed" for e in tool.event_queue._queue)
+    assert len(model.requests) == 1
+
+
+@_requires_partial_components
+@pytest.mark.asyncio
+async def test_express_partial_update_keeps_prior_children_and_omits_create():
+    from ag_ui_adk.a2ui_google_sdk import create_express_processor
+
+    model = _ExpressLlm(
+        model="express",
+        scripts=[
+            [
+                '<a2ui>\nsurface("existing", update=true)\nroot = Column([old, added])\n',
+                'added = Text("New content")\n',
+                "</a2ui>",
+            ]
+        ],
+    )
+    tool = get_a2ui_tool({"model": model, "inference_format": "express"})
+    tool.event_queue = asyncio.Queue()
+    model.queues.append(tool.event_queue)
+    processor = create_express_processor(
+        None, default_catalog_id="test://basic", surface_id="existing"
+    )
+    result = await tool._stream_express_attempt(
+        "Update the UI",
+        [],
+        processor,
+        {
+            "is_update": True,
+            "prior": {
+                "components": [
+                    {"id": "root", "component": "Column", "children": ["old"]},
+                    {"id": "old", "component": "Text", "text": "Prior content"},
+                ],
+                "data": {},
+            },
+        },
+        "update-call",
+        "existing",
+        None,
+    )
+    assert model.snapshot_counts[0] > 0
+    assert all("createSurface" not in op for op in result["_operations"])
+    painted = [e for e in tool.event_queue._queue if "a2ui_operations" in e.content]
+    roots = [
+        next(
+            c
+            for op in e.content["a2ui_operations"]
+            if "updateComponents" in op
+            for c in op["updateComponents"]["components"]
+            if c["id"] == "root"
+        )
+        for e in painted
+    ]
+    assert roots[0]["children"] == ["old"]
+    assert roots[-1]["children"] == ["old", "added"]
+
+
+@pytest.mark.parametrize("complete", [True, False])
+@pytest.mark.asyncio
+async def test_express_old_core_keeps_holdback_and_final_integrity(
+    monkeypatch, complete
+):
+    monkeypatch.delattr(SurfaceComponentsModel, "get_partial_components", raising=False)
+    script = [
+        "<a2ui>\nroot = Column([heading, later])\n",
+        'heading = Text("Ready")\n',
+    ]
+    if complete:
+        script.append('later = Text("Finished")\n')
+    script.append("</a2ui>")
+    model = _ExpressLlm(model="express", scripts=[script])
+    tool = get_a2ui_tool(
+        {"model": model, "inference_format": "express", "recovery": {"maxAttempts": 1}}
+    )
+    tool.event_queue = asyncio.Queue()
+    model.queues.append(tool.event_queue)
+    result = await tool.run_async(args={}, tool_context=_Ctx())
+    assert model.snapshot_counts[:2] == [0, 0]
+    painted = [e for e in tool.event_queue._queue if "a2ui_operations" in e.content]
+    if complete:
+        assert "a2ui_operations" in result
+        assert len(painted) == 1
+        components = next(
+            op["updateComponents"]["components"]
+            for op in painted[0].content["a2ui_operations"]
+            if "updateComponents" in op
+        )
+        assert {c["id"] for c in components} == {"root", "heading", "later"}
+        assert next(c for c in components if c["id"] == "root")["children"] == [
+            "heading",
+            "later",
+        ]
+    else:
+        assert result["code"] == "a2ui_recovery_exhausted"
+        assert "express_compilation_error" in json.dumps(result)
+        assert not painted
 
 
 @pytest.mark.asyncio

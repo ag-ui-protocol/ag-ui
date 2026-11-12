@@ -581,14 +581,42 @@ class A2UISubAgentTool(BaseTool):
                 raise _ExpressOutputError(
                     "The Express surface data model root must be an object"
                 )
+            if not final:
+                # Feature-detect the upstream core API during its release rollout;
+                # released cores without it keep the whole-snapshot paint gate.
+                partial_view = getattr(
+                    surface.components_model, "get_partial_components", None
+                )
+                if partial_view is not None:
+                    # Binding readiness belongs to the shared recovery validator.
+                    # Exclude only those components, then let the SDK prune their
+                    # incoming references from a detached, schema-valid tree.
+                    validation = validate_a2ui_components(
+                        components=components, data=data, catalog=validation_catalog
+                    )
+                    unresolved = {
+                        error["path"]
+                        for error in validation["errors"]
+                        if error["code"] == "unresolved_binding"
+                    }
+                    components = partial_view(
+                        exclude_ids={
+                            component["id"]
+                            for index, component in enumerate(components)
+                            if f"components[{index}]" in unresolved
+                        }
+                    )
+                    if not components:
+                        return
             generated = {
                 "surfaceId": surface_id,
                 "components": components,
                 "data": data,
             }
-            # A stream can contain valid component deltas with forward child
-            # references. Wait until a complete snapshot passes SDK topology
-            # validation before asking the frontend to paint it.
+            # Validate the derived view before painting. Final validation always
+            # sees the full canonical graph, including unresolved references and
+            # bindings: projection cannot turn malformed output into success.
+            # Older SDKs retain the safe whole-snapshot holdback behavior.
             create_body = {"surfaceId": surface_id, "catalogId": catalog_id}
             if surface.send_data_model:
                 create_body["sendDataModel"] = True
