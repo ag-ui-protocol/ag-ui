@@ -1,0 +1,61 @@
+{
+  "name": "@ag-ui/pi",
+  "version": "0.0.1",
+  "description": "Translate Pi agent events and conversation history to AG-UI",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git",
+    "directory": "integrations/community/pi/typescript"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./examples/server": {
+      "types": "./dist/examples/server.d.ts",
+      "import": "./dist/examples/server.js"
+    }
+  },
+  "types": "./dist/src/index.d.ts",
+  "files": ["dist", "examples", "LICENSE", "PROVENANCE.md"],
+  "engines": { "node": ">=22.19.0" },
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "test:pack": "bash test/packed.sh",
+    "start": "node dist/examples/server.js"
+  },
+  "nx": {
+    "targets": {
+      "typecheck": {
+        "dependsOn": ["build"]
+      }
+    }
+  },
+  "peerDependencies": {
+    "@ag-ui/client": "^1.0.4",
+    "@ag-ui/core": "^1.0.4",
+    "@earendil-works/pi-agent-core": ">=1.5.0 <=1.5.2",
+    "@earendil-works/pi-ai": ">=1.5.0 <=1.5.2",
+    "@earendil-works/pi-coding-agent": ">=1.5.0 <=1.5.2"
+  },
+  "dependencies": {
+    "@ag-ui/encoder": "1.0.4",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@ag-ui/client": "1.0.4",
+    "@ag-ui/core": "1.0.4",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@types/node": "^22.15.30",
+    "tsx": "^4.20.6",
+    "typescript": "5.8.2"
+  }
+}

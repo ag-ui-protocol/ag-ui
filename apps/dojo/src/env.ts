@@ -32,6 +32,7 @@ type envVars = {
   claudeManagedAgentsTypescriptUrl: string;
   langroidUrl: string;
   cloudflareAgentsUrl: string;
+  piUrl: string;
   watsonxRegion: string;
   watsonxInstanceId: string;
   watsonxAgentId: string;
@@ -110,6 +111,7 @@ export default function getEnvVars(): envVars {
     langroidUrl: process.env.LANGROID_URL || "http://localhost:8021",
     cloudflareAgentsUrl:
       process.env.CLOUDFLARE_AGENTS_URL || "http://localhost:8030",
+    piUrl: process.env.PI_URL || "http://localhost:8032",
     watsonxRegion: process.env.WATSONX_REGION || "",
     watsonxInstanceId: process.env.WATSONX_INSTANCE_ID || "",
     watsonxAgentId: process.env.WATSONX_AGENT_ID || "",

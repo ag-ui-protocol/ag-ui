@@ -60,6 +60,7 @@ on:
           - integration-omnara
           - integration-openai-agents-py
           - integration-openai-agents-ts
+          - integration-pi
           - integration-pydantic-ai
           - integration-spring-ai
           - integration-spring-ai-java

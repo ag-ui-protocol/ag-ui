@@ -218,11 +218,8 @@ jobs:
         working-directory: apps/dojo/e2e
         run: pnpm test:protocol-fixture
 
-      # aimock is owned by the dojo package, so install that package before
-      # type-checking fixtures imported by the ADK-JS suite.
-      - name: Install dojo dependencies for ADK-JS E2E type-check
-        run: pnpm install --frozen-lockfile --filter demo-viewer
-
+      # Reuse the dojo dependencies (including aimock) from the initial workspace
+      # install. A second, filtered install needlessly rewrites pnpm's hoisted links.
       - name: Type-check ADK-JS Playwright specs and fixtures
         working-directory: apps/dojo/e2e
         run: pnpm check:adk-js-e2e-types
@@ -320,6 +317,10 @@ jobs:
             test_path: tests/middlewareStarterTests
             services: ["dojo"]
             wait_on: http://localhost:9999
+          - suite: pi
+            test_path: tests/piTests
+            services: ["dojo", "pi"]
+            wait_on: http://localhost:9999,tcp:localhost:8032
           - suite: pydantic-ai
             test_path: tests/pydanticAITests
             services: ["dojo", "pydantic-ai"]

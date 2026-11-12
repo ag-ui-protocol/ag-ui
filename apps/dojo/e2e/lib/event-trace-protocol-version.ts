@@ -65,6 +65,7 @@ export const PROTOCOL_VERSION_LANES: ReadonlySet<string> = new Set([
   "agent-spec-wayflow",
   // @ag-ui/cloudflare-agents declares PROTOCOL_VERSION on RUN_STARTED.
   "cloudflare-agents",
+  "pi",
   // The Claude Managed Agents adapters (Python, TypeScript, .NET) declare the
   // protocol version on RUN_STARTED.
   "claude-managed-agents-python",

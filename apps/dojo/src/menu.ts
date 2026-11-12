@@ -531,6 +531,12 @@ export const menuIntegrations = [
     localOnly: true,
   },
   {
+    id: "pi",
+    name: "Pi",
+    features: ["agentic_chat"],
+    localOnly: true,
+  },
+  {
     id: "watsonx",
     name: "IBM watsonx orchestrate",
     features: ["agentic_chat", "v1_agentic_chat"],
