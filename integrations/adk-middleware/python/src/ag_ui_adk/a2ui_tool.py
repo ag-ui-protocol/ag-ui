@@ -97,13 +97,14 @@ def _versioned_envelope(version: str, **kwargs: Any) -> str:
     return json.dumps(envelope)
 
 
-def _prior_protocol_version(messages: list, surface_id: str) -> str:
-    """Read the protocol of the current surface lifetime from normalized history.
+def _prior_surface_configuration(messages: list, surface_id: str) -> tuple[str, dict]:
+    """Read the protocol and creation attributes of the current surface lifetime.
 
     The toolkit reconstructs components/data/catalog ID but discards versions.
     Prefer the create operation, stopping at a deletion so older lifetimes
     cannot supply the version. Sparse histories can fall back to an update;
-    legacy history without version declarations retains the 0.9 default.
+    legacy history without version declarations retains the 0.9 default. Retain
+    creation attributes so an update activity can recreate the same surface.
     """
     latest_version = None
     for message in reversed(messages):
@@ -128,7 +129,7 @@ def _prior_protocol_version(messages: list, surface_id: str) -> str:
                 if not isinstance(body, dict) or body.get("surfaceId") != surface_id:
                     continue
                 if action == "deleteSurface":
-                    return latest_version or "v0.9"
+                    return latest_version or "v0.9", {}
                 version = operation.get("version")
                 if version is not None:
                     version = catalog_protocol_version(
@@ -137,8 +138,16 @@ def _prior_protocol_version(messages: list, surface_id: str) -> str:
                     if latest_version is None:
                         latest_version = version
                 if action == "createSurface":
-                    return version or "v0.9"
-    return latest_version or "v0.9"
+                    version = version or "v0.9"
+                    keys = (
+                        "sendDataModel",
+                        "theme" if version == "v0.9" else "metadata",
+                    )
+                    attributes = {
+                        key: copy.deepcopy(body[key]) for key in keys if key in body
+                    }
+                    return version, attributes
+    return latest_version or "v0.9", {}
 
 
 # Description the A2UI middleware stamps on the schema context entry. MUST stay
@@ -339,7 +348,7 @@ class A2UISubAgentTool(BaseTool):
             return self._as_tool_return(wrap_error_envelope(prep["error"]))
         if prep.get("prior"):
             try:
-                prior_version = _prior_protocol_version(
+                prior_version, creation_attributes = _prior_surface_configuration(
                     messages, target_surface_id or self._default_surface_id
                 )
                 if prior_version != version:
@@ -347,6 +356,7 @@ class A2UISubAgentTool(BaseTool):
                         f"Cannot change surface protocol version from {prior_version} "
                         f"to {version}; create a new surface instead"
                     )
+                prep["prior_creation_attributes"] = creation_attributes
             except ValueError as error:
                 return self._as_tool_return(wrap_error_envelope(str(error)))
         if is_express and prep.get("prior"):
@@ -514,22 +524,24 @@ class A2UISubAgentTool(BaseTool):
         version = catalog_protocol_version(processor.active_catalogs[0].to_json()).value
         if prep.get("prior"):
             prior = prep["prior"]
-            state.apply(
-                json.loads(
-                    _versioned_envelope(
-                        version,
-                        args={
-                            "surfaceId": surface_id,
-                            "components": prior["components"],
-                            "data": prior.get("data"),
-                        },
-                        is_update=False,
-                        target_surface_id=None,
-                        prior=None,
-                        default_catalog_id=catalog_id,
-                    )
-                )[A2UI_OPERATIONS_KEY]
+            seed_ops = json.loads(
+                _versioned_envelope(
+                    version,
+                    args={
+                        "surfaceId": surface_id,
+                        "components": prior["components"],
+                        "data": prior.get("data"),
+                    },
+                    is_update=False,
+                    target_surface_id=None,
+                    prior=None,
+                    default_catalog_id=catalog_id,
+                )
+            )[A2UI_OPERATIONS_KEY]
+            seed_ops[0]["createSurface"].update(
+                copy.deepcopy(prep.get("prior_creation_attributes", {}))
             )
+            state.apply(seed_ops)
         stream = processor.open_stream(state=state)
         last_generated = None
         last_content = None
@@ -637,7 +649,10 @@ class A2UISubAgentTool(BaseTool):
                 components=components, data=data, catalog=validation_catalog
             )["valid"]:
                 return
-            content = {A2UI_OPERATIONS_KEY: operations}
+            # Each activity owns an independent renderer state. Its snapshot
+            # must include creation even when the final protocol result is an
+            # update to a surface established by an earlier tool call.
+            content = {A2UI_OPERATIONS_KEY: full_ops}
             if content != last_content:
                 await self._emit_express_activity(activity_key, content)
                 last_content = content
