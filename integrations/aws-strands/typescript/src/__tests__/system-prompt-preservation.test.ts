@@ -38,6 +38,16 @@ function setup(systemPrompt: AgentConfig["systemPrompt"]) {
   return { model, template, adapter };
 }
 
+async function nativeModelPrompt(systemPrompt: AgentConfig["systemPrompt"]) {
+  const model = new ScriptedModel([{ kind: "text", text: "native" }]);
+  const agent = new Agent({ model, systemPrompt, printer: false });
+  for await (const _event of agent.stream("hi")) {
+    // Drain the native stream so its model input is recorded.
+  }
+  expect(model.callOptions).toHaveLength(1);
+  return model.callOptions[0]?.systemPrompt;
+}
+
 async function run(adapter: StrandsAgent, threadId = "a") {
   const events = await collect(
     adapter,
@@ -69,10 +79,13 @@ describe("system prompt preservation with the real SDK", () => {
   ] satisfies [string, AgentConfig["systemPrompt"]][])(
     "preserves %s at the model boundary",
     async (_name, prompt) => {
+      const expected = await nativeModelPrompt(prompt);
       const { model, template, adapter } = setup(prompt);
       const thread = await run(adapter);
 
-      expect(model.callOptions[0]?.systemPrompt).toEqual(template.systemPrompt);
+      // Compare native invocations: newer SDKs clone/serialize prompts in
+      // model middleware, beyond the adapter's stored prompt representation.
+      expect(model.callOptions[0]?.systemPrompt).toEqual(expected);
       expect(thread.systemPrompt).toEqual(template.systemPrompt);
       expect(thread.model).toBe(model);
       if (Array.isArray(thread.systemPrompt)) {
@@ -85,6 +98,7 @@ describe("system prompt preservation with the real SDK", () => {
   );
 
   it("captures nested values and array membership at wrap time", async () => {
+    const expected = await nativeModelPrompt(blocks());
     const { model, template, adapter } = setup(blocks());
     const held = template.systemPrompt as SystemContentBlock[];
     const guard = held[3] as GuardContentBlock;
@@ -94,15 +108,22 @@ describe("system prompt preservation with the real SDK", () => {
     held.push(new TextBlock("new template block"));
     template.systemPrompt = "replacement template prompt";
 
-    await run(adapter);
+    const thread = await run(adapter);
 
-    expect(model.callOptions[0]?.systemPrompt).toEqual(blocks());
+    expect(thread.systemPrompt).toEqual(blocks());
+    expect(model.callOptions[0]?.systemPrompt).toEqual(expected);
   });
 
   it("isolates threads while retaining changes on cached agents", async () => {
     const { model, template, adapter } = setup(blocks());
     const first = await run(adapter, "a");
     const prompt = first.systemPrompt as SystemContentBlock[];
+    const bytes = (prompt[4] as GuardContentBlock).image!.source.bytes;
+    const templateBytes = (
+      (template.systemPrompt as SystemContentBlock[])[4] as GuardContentBlock
+    ).image!.source.bytes;
+    expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+    expect(bytes).not.toBe(templateBytes);
     (prompt[3] as GuardContentBlock).text!.text = "thread a text";
     (prompt[4] as GuardContentBlock).image!.source.bytes[0] = 99;
     prompt.push(new TextBlock("thread a block"));
