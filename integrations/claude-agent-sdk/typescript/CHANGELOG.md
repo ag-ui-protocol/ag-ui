@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.9 — 2026-11-11
+
+- Fixed `clone()` of `ClaudeAgentAdapter`, which previously lacked state maps and threw "Cannot read properties of undefined (reading 'has')" in hosts that clone agents per request, such as CopilotKit runtime.
+- Clones now share per-thread state (bindings, admitted, activeQueries, sessions) with the original.
+- Frontend tool parameter schemas are now converted from JSON Schema recursively, preserving nested object properties, array item schemas, required fields, enums, const, nullable/union types and descriptions.
+- Nested objects no longer strip undeclared keys during parsing.
+- Preserved raw frontend outcomes during native recovery and replay saved tool results after executor failure.
+- Preserved final assistant identity without streaming and reconciled superseded recovery deliveries.
+- Accept public interrupt answers and saved-result retries.
+- Recover child dependency graphs, internal state, parallel root and frontend results across restarts from canonical history.
+- Clear completed diagnostics after child results and keep recovery guards across interrupted bridges.
+- Recover native child approvals without event storage.
+
+### Breaking changes
+
+- Frontend tool parameter schemas now carry nested structure instead of collapsing to `any[]` or open records; verify agents relying on the previous loose shapes.
+
 ## 0.0.8 — 2026-10-21
 
 - Fixed queued SDK recovery turns to wait for each turn to finish before proceeding.

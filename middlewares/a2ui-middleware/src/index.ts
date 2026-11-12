@@ -7,6 +7,7 @@ import {
   EventType,
   Message,
   ToolCall,
+  ActivityDeltaEvent,
   ActivitySnapshotEvent,
   ToolCallResultEvent,
   RunFinishedEvent,
@@ -24,13 +25,14 @@ import { Observable, Subscription } from "rxjs";
 
 import { A2UIMiddlewareConfig, A2UIForwardedProps } from "./types";
 import {
-  RENDER_A2UI_TOOL,
+  renderA2UITool,
   RENDER_A2UI_TOOL_NAME,
   RENDER_A2UI_TOOL_GUIDELINES,
   LOG_A2UI_EVENT_TOOL_NAME,
 } from "./tools";
 import {
   getOperationSurfaceId,
+  isRecord,
   tryParseA2UIOperations,
   A2UI_OPERATIONS_KEY,
   extractCompleteItemsWithStatus,
@@ -43,6 +45,20 @@ import {
   MAX_A2UI_ATTEMPTS,
   type A2UIValidationCatalog,
 } from "@ag-ui/a2ui-toolkit";
+import {
+  basicCatalogId,
+  catalogProtocolVersion,
+  detectProtocolMarkers,
+  protocolMismatchErrors,
+  type A2UIProtocolVersion,
+} from "./protocol";
+import {
+  mergeSurfaceOperations,
+  readPaintedActivity,
+  sameOperations,
+  type A2UIOperationRecord,
+  type PaintedActivity,
+} from "./activity-snapshots";
 
 // The run-correlated name is a reserved transport marker, independent of IDs,
 // roles rewritten by adapters, content encoding, and optional provider artifacts.
@@ -87,6 +103,13 @@ function tryParseRecoveryFailure(
 export * from "./types";
 export * from "./tools";
 export * from "./schema";
+export {
+  A2UI_PROTOCOL_V0_9,
+  A2UI_PROTOCOL_V1_0,
+  catalogProtocolVersion,
+  normalizeProtocolVersion,
+  type A2UIProtocolVersion,
+} from "./protocol";
 
 /**
  * Activity type for A2UI surface events
@@ -181,16 +204,28 @@ export class A2UIMiddleware extends Middleware {
   }
 
   /**
-   * Extract the inline catalog (component name → JSON Schema with `required`)
-   * for semantic validation, when one is configured. Returns undefined for the
-   * legacy array form or no schema — validation then degrades to structural-only.
+   * The run's catalog: the inline catalog (component name → JSON Schema with
+   * `required`) for semantic validation, and the protocol it declares.
+   *
+   * A configured non-empty `schema` is the catalog (injectSchemaContext has
+   * replaced the frontend entry with it); otherwise the frontend's schema
+   * context entry is parsed once for both answers. The legacy array form or no
+   * schema yields no validation catalog (structural-only validation) and the
+   * v0.9 default.
    */
-  private getValidationCatalog(
-    input?: RunAgentInput,
-  ): A2UIValidationCatalog | undefined {
-    let schema = this.config.schema;
-    if (!schema && input) {
-      const context = input.context.find(
+  private resolveCatalog(input: RunAgentInput): {
+    validation: A2UIValidationCatalog | undefined;
+    protocolVersion: A2UIProtocolVersion;
+  } {
+    const configured = this.config.schema;
+    const configuredIsCatalog =
+      !!configured &&
+      (Array.isArray(configured)
+        ? configured.length > 0
+        : Object.keys(configured.components ?? {}).length > 0);
+    let schema: unknown = configuredIsCatalog ? configured : undefined;
+    if (!configuredIsCatalog) {
+      const context = (input.context ?? []).find(
         (entry) => entry.description === A2UI_SCHEMA_CONTEXT_DESCRIPTION,
       );
       if (context) {
@@ -201,17 +236,13 @@ export class A2UIMiddleware extends Middleware {
         }
       }
     }
-    if (
-      schema &&
-      !Array.isArray(schema) &&
-      schema.components &&
-      Object.keys(schema.components).length > 0
-    ) {
-      return {
-        components: schema.components as A2UIValidationCatalog["components"],
-      };
-    }
-    return undefined;
+    const inline = isRecord(schema) ? schema : undefined;
+    const components = inline?.components;
+    const validation =
+      isRecord(components) && Object.keys(components).length > 0
+        ? { components: components as A2UIValidationCatalog["components"] }
+        : undefined;
+    return { validation, protocolVersion: catalogProtocolVersion(inline) };
   }
 
   /**
@@ -262,10 +293,15 @@ export class A2UIMiddleware extends Middleware {
 
     // Inject A2UI component schema as context so agents know what components are available
     const withSchema = this.injectSchemaContext(enhancedInput);
+    const catalog = this.resolveCatalog(withSchema);
 
-    // Conditionally inject the render_a2ui tool and its usage guidelines
+    // Conditionally inject the render_a2ui tool and its usage guidelines,
+    // written for the protocol the catalog declares.
     const finalInput = this.config.injectA2UITool
-      ? this.injectToolGuidelines(this.injectToolAndFlag(withSchema))
+      ? this.injectToolGuidelines(
+          this.injectToolAndFlag(withSchema, catalog.protocolVersion),
+          catalog.protocolVersion,
+        )
       : withSchema;
 
     return new Observable((subscriber) => {
@@ -300,7 +336,8 @@ export class A2UIMiddleware extends Middleware {
       const stream = this.processStream(
         this.runNextWithState(finalInput, next),
         frontendCatalogId,
-        this.getValidationCatalog(finalInput),
+        catalog.validation,
+        catalog.protocolVersion,
         { input: finalInput, next, rounds: 0 },
       );
       return stream.subscribe({
@@ -451,12 +488,15 @@ export class A2UIMiddleware extends Middleware {
    * Uses the configured name from `injectA2UITool` (string) or defaults to "render_a2ui".
    * Always replaces the tool if it already exists to ensure the correct parameter schema.
    */
-  private injectToolAndFlag(input: RunAgentInput): RunAgentInput {
+  private injectToolAndFlag(
+    input: RunAgentInput,
+    protocolVersion: A2UIProtocolVersion,
+  ): RunAgentInput {
     const toolName =
       typeof this.config.injectA2UITool === "string"
         ? this.config.injectA2UITool
         : RENDER_A2UI_TOOL_NAME;
-    const tool: Tool = { ...RENDER_A2UI_TOOL, name: toolName };
+    const tool: Tool = { ...renderA2UITool(protocolVersion), name: toolName };
     // Guard against undefined ``input.tools`` — the AG-UI shape allows it.
     const filteredTools = (input.tools ?? []).filter(
       (t) => t.name !== toolName,
@@ -476,7 +516,10 @@ export class A2UIMiddleware extends Middleware {
    * Provides the LLM with protocol instructions and a minimal example so it
    * can produce valid A2UI without agent-specific prompting.
    */
-  private injectToolGuidelines(input: RunAgentInput): RunAgentInput {
+  private injectToolGuidelines(
+    input: RunAgentInput,
+    protocolVersion: A2UIProtocolVersion,
+  ): RunAgentInput {
     const toolName =
       typeof this.config.injectA2UITool === "string"
         ? this.config.injectA2UITool
@@ -495,7 +538,7 @@ export class A2UIMiddleware extends Middleware {
         ...filtered,
         {
           description: guidelinesDescription,
-          value: RENDER_A2UI_TOOL_GUIDELINES(toolName),
+          value: RENDER_A2UI_TOOL_GUIDELINES(toolName, protocolVersion),
         },
       ],
     };
@@ -507,8 +550,9 @@ export class A2UIMiddleware extends Middleware {
    */
   private processStream(
     source: Observable<EventWithState>,
-    frontendCatalogId?: string,
-    catalog?: A2UIValidationCatalog,
+    frontendCatalogId: string | undefined,
+    catalog: A2UIValidationCatalog | undefined,
+    protocolVersion: A2UIProtocolVersion,
     continuation?: {
       input: RunAgentInput;
       next: AbstractAgent;
@@ -579,18 +623,111 @@ export class A2UIMiddleware extends Middleware {
       const lastTokenEmitByKey = new Map<string, number>();
       const estimateTokens = (args: string) => Math.round(args.length / 4);
 
-      // Surfaces already painted via the streaming/progressive path this run,
-      // tracked by surfaceId. The final-envelope (TOOL_CALL_RESULT carrying
-      // ``a2ui_operations``) commonly re-wraps the SAME surface that an inner
-      // ``render_a2ui`` already streamed. The call-id linkage dedup below only
-      // catches that when the streamed entry's outerCallId equals the result's
-      // toolCallId — which breaks with ``injectA2UITool``, where ``generate_a2ui``
-      // is itself an A2UI tool name so it never becomes the tracked outer call
-      // (the inner entry's outerCallId stays null). This surfaceId guard kills the
-      // redundant re-paint for ANY adapter: any final-envelope operation whose
-      // target surface is already in this set is dropped. Surfaces NOT in this
-      // set (unrelated tools in the same run) still paint normally.
-      const streamedSurfaceIds = new Set<string>();
+      // Painted ``a2ui-surface`` activities this run, keyed by messageId: the
+      // operations each one currently shows plus the wrapper keys around them.
+      // Covers paints this middleware streamed AND paints the wrapped agent
+      // emitted itself (the ADK Express path paints its own complete activity
+      // before returning the canonical envelope as the tool result). A final
+      // envelope (TOOL_CALL_RESULT carrying ``a2ui_operations``) is resolved
+      // against this map: identical content is a redundant re-paint and is
+      // dropped; different content is folded onto the retained creation so the
+      // activity stays independently replayable. A lifecycle state or delta on
+      // the same messageId supersedes the paint and clears the entry.
+      const paintedActivities = new Map<string, PaintedActivity>();
+      // surfaceId → messageId of the streaming paint that owns it this run.
+      // The final envelope can arrive under a different call id than the
+      // streamed render (``injectA2UITool`` makes ``generate_a2ui`` an A2UI tool
+      // name, so the inner render never links to it); the owner lookup still
+      // routes that envelope to the painted activity instead of a second anchor.
+      const streamedSurfaceOwners = new Map<string, string>();
+      const trackActivity = (event: BaseEvent) => {
+        if (event.type === EventType.ACTIVITY_SNAPSHOT) {
+          const snapshot = event as ActivitySnapshotEvent;
+          if (snapshot.activityType !== A2UIActivityType) return;
+          const painted = readPaintedActivity(snapshot.content);
+          if (painted) {
+            // replace:false leaves an existing activity's content untouched.
+            if (
+              snapshot.replace === false &&
+              paintedActivities.has(snapshot.messageId)
+            )
+              return;
+            paintedActivities.set(snapshot.messageId, painted);
+          } else if (snapshot.replace !== false) {
+            paintedActivities.delete(snapshot.messageId);
+          }
+        } else if (event.type === EventType.ACTIVITY_DELTA) {
+          paintedActivities.delete((event as ActivityDeltaEvent).messageId);
+        }
+      };
+      const emit = (event: BaseEvent) => {
+        trackActivity(event);
+        subscriber.next(event);
+      };
+      const paintsSurface = (messageId: string, surfaceId: string) =>
+        !!paintedActivities
+          .get(messageId)
+          ?.operations.some((op) => getOperationSurfaceId(op) === surfaceId);
+      // The painted activity a final envelope's surface resolves to, for the
+      // call keyed `activityKey`: that call's own activity (its lifecycle slot
+      // or the per-surface id a multi-surface result uses), else the streamed
+      // paint that owns the surface. (With ``injectA2UITool`` the inner render
+      // streams under its own id and the envelope arrives under the outer
+      // call, which never painted.) A call whose own attempt was rejected —
+      // its slot shows "retrying" — resolves that slot instead of folding into
+      // another call's activity and leaving the skeleton behind.
+      const findPaintOwner = (
+        surfaceId: string,
+        activityKey: string,
+      ): string | undefined => {
+        for (const id of [
+          `a2ui-surface-${activityKey}`,
+          `a2ui-surface-${surfaceId}-${activityKey}`,
+        ]) {
+          if (paintsSurface(id, surfaceId)) return id;
+        }
+        if (retriedOuterKeys.has(activityKey)) return undefined;
+        const streamed = streamedSurfaceOwners.get(surfaceId);
+        return streamed && paintsSurface(streamed, surfaceId)
+          ? streamed
+          : undefined;
+      };
+      // The creation this run streamed for a surface, so a result that lacks
+      // one can still paint a self-contained activity.
+      const streamedCreation = (
+        surfaceId: string,
+      ): A2UIOperationRecord | undefined => {
+        const streamed = streamedSurfaceOwners.get(surfaceId);
+        return streamed
+          ? paintedActivities
+              .get(streamed)
+              ?.operations.find(
+                (op) =>
+                  "createSurface" in op &&
+                  getOperationSurfaceId(op) === surfaceId,
+              )
+          : undefined;
+      };
+      const streamedOps = (
+        surfaceId: string,
+        catalogId: string,
+        components: Array<Record<string, unknown>>,
+        data?: { path: string; value: unknown },
+      ): A2UIOperationRecord[] => [
+        { version: protocolVersion, createSurface: { surfaceId, catalogId } },
+        {
+          version: protocolVersion,
+          updateComponents: { surfaceId, components },
+        },
+        ...(data
+          ? [
+              {
+                version: protocolVersion,
+                updateDataModel: { surfaceId, ...data },
+              },
+            ]
+          : []),
+      ];
 
       // Outer tool call context. Any non-A2UI tool call (e.g. ``generate_a2ui``
       // wrapping a subagent that emits ``render_a2ui`` calls) is treated as
@@ -663,7 +800,7 @@ export class A2UIMiddleware extends Middleware {
           if (settledActivityKeys.has(key)) continue;
           const failure = terminalFailure(entry);
           if (failure) {
-            subscriber.next(
+            emit(
               this.buildLifecycleActivity(key, {
                 status: "failed",
                 ...failure,
@@ -729,9 +866,7 @@ export class A2UIMiddleware extends Middleware {
               attemptCountByKey.set(key, attempt);
               lastTokenEmitByKey.set(key, 0);
               if (!retriedOuterKeys.has(key)) {
-                subscriber.next(
-                  this.buildLifecycleActivity(key, { status: "building" }),
-                );
+                emit(this.buildLifecycleActivity(key, { status: "building" }));
               }
             } else if (!nonOuterToolNames.has(startEvent.toolCallName)) {
               // Track a candidate outer call for legacy adapters that omit
@@ -771,7 +906,7 @@ export class A2UIMiddleware extends Middleware {
                   TOKEN_EMIT_STEP
                 ) {
                   lastTokenEmitByKey.set(tokenKey, tokens);
-                  subscriber.next(
+                  emit(
                     this.buildLifecycleActivity(tokenKey, {
                       status: "building",
                       progressTokens: tokens,
@@ -830,7 +965,7 @@ export class A2UIMiddleware extends Middleware {
                     frontendCatalogId ??
                     (streamedCatalogId && streamedCatalogId !== "basic"
                       ? streamedCatalogId
-                      : "https://a2ui.org/specification/v0_9/basic_catalog.json");
+                      : basicCatalogId(protocolVersion));
 
                   // (2) Components — emit ONCE, only when the array is fully
                   // closed and every component has a `component` type. Partial
@@ -860,7 +995,18 @@ export class A2UIMiddleware extends Middleware {
                         catalog,
                         validateBindings: false,
                       });
-                      if (validation.valid) {
+                      // The payload must be written in the protocol the catalog
+                      // declares: v0.9 and 1.0 spell bindings differently, and a
+                      // relabeled payload never renders. Treat a mismatch like any
+                      // other invalid attempt — never paint it; the adapter's
+                      // recovery loop regenerates and its final envelope stands.
+                      const errors = validation.valid
+                        ? protocolMismatchErrors(
+                            protocolVersion,
+                            detectProtocolMarkers(components),
+                          )
+                        : validation.errors;
+                      if (errors.length === 0) {
                         streaming.schema = { surfaceId, catalogId, components };
                         streaming.dataItemsKey =
                           deriveRepeatedDataKey(components) ?? "items";
@@ -882,12 +1028,12 @@ export class A2UIMiddleware extends Middleware {
                           maxAttempts,
                         );
                         lastTokenEmitByKey.set(recoveryKey, 0);
-                        subscriber.next(
+                        emit(
                           this.buildLifecycleActivity(recoveryKey, {
                             status: "retrying",
                             attempt: nextAttempt,
                             maxAttempts,
-                            errors: validation.errors,
+                            errors,
                           }),
                         );
                       }
@@ -925,38 +1071,26 @@ export class A2UIMiddleware extends Middleware {
                     !!streaming.schema && !streaming.componentsEmitted;
 
                   if (componentsAdvanced || dataItemsAdvanced) {
-                    const ops: Array<Record<string, unknown>> = [];
                     // Always include createSurface — the frontend filters it out
                     // if the surface already exists, so snapshots stay self-sufficient.
-                    ops.push({
-                      version: "v0.9",
-                      createSurface: { surfaceId, catalogId },
-                    });
-
-                    if (streaming.schema) {
-                      ops.push({
-                        version: "v0.9",
-                        updateComponents: {
-                          surfaceId,
-                          components: streaming.schema.components,
-                        },
-                      });
-                      streaming.componentsEmitted = true;
-                      // Record the surfaceId so the final envelope doesn't re-paint it.
-                      streamedSurfaceIds.add(streaming.schema.surfaceId);
-                    }
-
+                    // The components are present whenever this branch runs
+                    // (componentsAdvanced requires the schema; dataItemsAdvanced
+                    // only happens once the schema exists).
                     if (dataItems && dataItems.length > 0) {
                       streaming.dataItemsCount = dataItems.length;
-                      ops.push({
-                        version: "v0.9",
-                        updateDataModel: {
-                          surfaceId,
-                          path: "/",
-                          value: { [streaming.dataItemsKey]: dataItems },
-                        },
-                      });
                     }
+                    const ops = streamedOps(
+                      surfaceId,
+                      catalogId,
+                      streaming.schema!.components,
+                      dataItems && dataItems.length > 0
+                        ? {
+                            path: "/",
+                            value: { [streaming.dataItemsKey]: dataItems },
+                          }
+                        : undefined,
+                    );
+                    streaming.componentsEmitted = true;
 
                     const content: Record<string, unknown> = {
                       [A2UI_OPERATIONS_KEY]: ops,
@@ -972,7 +1106,12 @@ export class A2UIMiddleware extends Middleware {
                       content,
                       replace: true,
                     };
-                    subscriber.next(snapshotEvent);
+                    // Record the owner so the final envelope resolves to this paint.
+                    streamedSurfaceOwners.set(
+                      surfaceId,
+                      snapshotEvent.messageId,
+                    );
+                    emit(snapshotEvent);
                     // A valid surface painted → it supersedes any building/retrying
                     // skeleton on this same messageId. No separate "resolved" needed.
                     retriedOuterKeys.delete(
@@ -991,27 +1130,12 @@ export class A2UIMiddleware extends Middleware {
                     const data = extractCompleteObject(streaming.args, "data");
                     if (data) {
                       streaming.dataComplete = true;
-                      const ops: Array<Record<string, unknown>> = [
-                        {
-                          version: "v0.9",
-                          createSurface: { surfaceId, catalogId },
-                        },
-                        {
-                          version: "v0.9",
-                          updateComponents: {
-                            surfaceId,
-                            components: streaming.schema!.components,
-                          },
-                        },
-                        {
-                          version: "v0.9",
-                          updateDataModel: {
-                            surfaceId,
-                            path: "/",
-                            value: data,
-                          },
-                        },
-                      ];
+                      const ops = streamedOps(
+                        surfaceId,
+                        catalogId,
+                        streaming.schema!.components,
+                        { path: "/", value: data },
+                      );
                       const content: Record<string, unknown> = {
                         [A2UI_OPERATIONS_KEY]: ops,
                       };
@@ -1022,7 +1146,11 @@ export class A2UIMiddleware extends Middleware {
                         content,
                         replace: true,
                       };
-                      subscriber.next(snapshotEvent);
+                      streamedSurfaceOwners.set(
+                        surfaceId,
+                        snapshotEvent.messageId,
+                      );
+                      emit(snapshotEvent);
                     }
                   }
                 }
@@ -1040,128 +1168,142 @@ export class A2UIMiddleware extends Middleware {
           if (event.type === EventType.RUN_FINISHED) {
             heldRunFinished = eventWithState;
           } else {
-            subscriber.next(event);
+            // The canonical event (including an adapter's own activity paint
+            // and its tool result) is forwarded unchanged.
+            emit(event);
 
             // Auto-detect A2UI JSON in tool call results from other tools
             if (event.type === EventType.TOOL_CALL_RESULT) {
               const resultEvent = event as ToolCallResultEvent;
-              const isStreaming = streamingToolCalls.has(
-                resultEvent.toolCallId,
-              );
-
-              // Fallback: if a streaming tool call never emitted its components
-              // (e.g. args didn't parse), fall through to auto-detection on the
-              // final result.
               const streamingEntry = streamingToolCalls.get(
                 resultEvent.toolCallId,
               );
-              const streamingHandled =
-                isStreaming && streamingEntry?.componentsEmitted;
+              // The activity this call owns: an inner render keyed by its outer
+              // call, otherwise the call itself. Resolve from this call, not
+              // whichever sibling started last.
+              const activityKey =
+                streamingEntry?.outerCallId ?? resultEvent.toolCallId;
+              const ownMessageId = `a2ui-surface-${activityKey}`;
 
-              // Also dedup against the SPECIFIC outer call this result belongs
-              // to: if an inner ``render_a2ui`` started inside the same outer
-              // call already streamed its surface, the outer's result (which
-              // typically wraps the same envelope) would re-emit the same
-              // surface. Earlier we used a blanket "any streaming entry handled"
-              // check, but that wrongly suppressed legitimate later
-              // ``a2ui_operations`` payloads from unrelated tools in the same
-              // run. Scope the dedup to entries whose outerCallId matches the
-              // result's tool-call id.
-              let outerHasStreamedSurface = !!streamingHandled;
-              if (!outerHasStreamedSurface) {
-                for (const entry of streamingToolCalls.values()) {
-                  if (
-                    entry.componentsEmitted &&
-                    entry.outerCallId === resultEvent.toolCallId
-                  ) {
-                    outerHasStreamedSurface = true;
-                    break;
-                  }
-                }
-              }
-
-              if (!outerHasStreamedSurface) {
+              // Exhausted recovery is authoritative even after a valid paint.
+              const failure = tryParseRecoveryFailure(
+                contentToText(resultEvent.content),
+              );
+              if (failure) {
+                // Replace the same activity slot and preserve the adapter's
+                // attempt history and true cap reached.
+                emit(
+                  this.buildLifecycleActivity(activityKey, {
+                    status: "failed",
+                    error: failure.error,
+                    attempts: failure.attempts,
+                    maxAttempts: Array.isArray(failure.attempts)
+                      ? failure.attempts.length || maxAttempts
+                      : maxAttempts,
+                  }),
+                );
+                settledActivityKeys.add(activityKey);
+                retriedOuterKeys.delete(activityKey);
+              } else {
                 const parsed = tryParseA2UIOperations(
                   contentToText(resultEvent.content),
                 );
-                if (parsed) {
-                  // surfaceId-based dedup (framework-agnostic): drop any
-                  // operation whose target surface was already painted via the
-                  // streaming path this run. This kills the redundant final
-                  // re-paint even when the call-id linkage above misses (e.g.
-                  // injectA2UITool, where the inner render entry has a null
-                  // outerCallId). Operations for surfaces NOT yet streamed
-                  // (unrelated tools) pass through untouched.
-                  const operationsToEmit =
-                    streamedSurfaceIds.size > 0
-                      ? parsed.operations.filter((op) => {
-                          const opSurfaceId = getOperationSurfaceId(op);
-                          // Keep ops with no resolvable surface (can't be a dup)
-                          // and ops targeting surfaces not yet streamed.
-                          return (
-                            opSurfaceId == null ||
-                            !streamedSurfaceIds.has(opSurfaceId)
-                          );
-                        })
-                      : parsed.operations;
+                if (parsed && parsed.operations.length > 0) {
+                  // Resolve each surface of the final envelope against what is
+                  // already painted for it. The paint may be this run's streamed
+                  // render or the adapter's own activity; either way the final
+                  // envelope is redundant when it repeats the paint and
+                  // authoritative when it differs — then it is folded onto the
+                  // retained creation so the activity stays replayable on its
+                  // own. Surfaces nothing painted keep the classic fallback and
+                  // paint as-is.
+                  const groups = new Map<
+                    string | null,
+                    A2UIOperationRecord[]
+                  >();
+                  for (const op of parsed.operations) {
+                    const surfaceId = getOperationSurfaceId(op) ?? null;
+                    const group = groups.get(surfaceId);
+                    if (group) group.push(op);
+                    else groups.set(surfaceId, [op]);
+                  }
+                  const remaining: A2UIOperationRecord[] = [];
+                  let resolved = false;
+                  for (const [surfaceId, ops] of groups) {
+                    const ownerId =
+                      surfaceId === null
+                        ? undefined
+                        : findPaintOwner(surfaceId, activityKey);
+                    const owner = ownerId
+                      ? paintedActivities.get(ownerId)
+                      : undefined;
+                    if (!ownerId || !owner || surfaceId === null) {
+                      // An update-only result for a surface this run streamed
+                      // under another call paints with that creation, so the
+                      // activity it leaves behind still replays on its own.
+                      const creation =
+                        surfaceId !== null &&
+                        !ops.some((op) => "createSurface" in op)
+                          ? streamedCreation(surfaceId)
+                          : undefined;
+                      remaining.push(...(creation ? [creation, ...ops] : ops));
+                      continue;
+                    }
+                    // Folding into another call's streamed paint does not settle
+                    // this call: its own render is still judged at the end.
+                    if (
+                      ownerId === ownMessageId ||
+                      ownerId === `a2ui-surface-${surfaceId}-${activityKey}`
+                    )
+                      resolved = true;
+                    const merged = mergeSurfaceOperations(
+                      owner.operations,
+                      surfaceId,
+                      ops,
+                    );
+                    if (sameOperations(merged, owner.operations)) continue;
+                    emit({
+                      type: EventType.ACTIVITY_SNAPSHOT,
+                      messageId: ownerId,
+                      activityType: A2UIActivityType,
+                      content: {
+                        ...owner.wrapper,
+                        [A2UI_OPERATIONS_KEY]: merged,
+                      },
+                      replace: true,
+                    } as ActivitySnapshotEvent);
+                  }
 
-                  // If filtering removed everything, the final envelope was
-                  // entirely a re-paint of already-streamed surfaces — emit
-                  // nothing. Otherwise emit the surviving operations.
-                  if (operationsToEmit.length > 0) {
+                  if (remaining.length > 0) {
                     // Emit all operations at once. Unlike the streaming path
                     // (render_a2ui), explicit a2ui_operations arrive complete —
                     // splitting schema and data would cause the renderer to
                     // crash on unresolved path bindings before data exists.
-                    // Resolve from this call, not whichever sibling started last.
-                    const activityKey =
-                      streamingEntry?.outerCallId ?? resultEvent.toolCallId;
+                    // A result spanning several surfaces keeps per-surface ids
+                    // for the ones painted here, so a new sibling never takes
+                    // over an activity another surface already occupies.
+                    const surfaceScoped = groups.size > 1;
                     const activities = this.createA2UIActivityEvents(
-                      operationsToEmit,
+                      remaining,
                       activityKey,
+                      surfaceScoped,
                     );
+                    // A tracked render owns one loading slot. While that slot
+                    // still shows a lifecycle state, the first fallback surface
+                    // replaces it; a painted slot is never taken over.
+                    const slotFree = !paintedActivities.has(ownMessageId);
                     for (const [index, activityEvent] of activities.entries()) {
-                      // A tracked render already owns one loading slot. The
-                      // first fallback surface replaces it, even when the result
-                      // contains multiple surfaces; siblings retain their IDs.
-                      subscriber.next(
-                        index === 0 && attemptCountByKey.has(activityKey)
-                          ? {
-                              ...activityEvent,
-                              messageId: `a2ui-surface-${activityKey}`,
-                            }
+                      emit(
+                        index === 0 &&
+                          slotFree &&
+                          attemptCountByKey.has(activityKey)
+                          ? { ...activityEvent, messageId: ownMessageId }
                           : activityEvent,
                       );
                     }
-                    settledActivityKeys.add(activityKey);
+                    resolved = true;
                   }
-                } else {
-                  // Hard-failure path (OSS-162): an exhausted recovery loop
-                  // returns a structured error envelope (no a2ui_operations).
-                  // Surface it as a client-rendered failure rather than dropping
-                  // it silently — the conversation stays usable.
-                  const failure = tryParseRecoveryFailure(
-                    contentToText(resultEvent.content),
-                  );
-                  if (failure) {
-                    // Hard failure replaces the building/retrying skeleton in
-                    // place (same surface messageId). `attempts.length` is the
-                    // true cap reached; fall back to the configured cap.
-                    const failKey =
-                      streamingEntry?.outerCallId ?? resultEvent.toolCallId;
-                    subscriber.next(
-                      this.buildLifecycleActivity(failKey, {
-                        status: "failed",
-                        error: failure.error,
-                        attempts: failure.attempts,
-                        maxAttempts: Array.isArray(failure.attempts)
-                          ? failure.attempts.length || maxAttempts
-                          : maxAttempts,
-                      }),
-                    );
-                    settledActivityKeys.add(failKey);
-                    retriedOuterKeys.delete(failKey);
-                  }
+                  if (resolved) settledActivityKeys.add(activityKey);
                 }
               }
 
@@ -1271,11 +1413,22 @@ export class A2UIMiddleware extends Middleware {
                 messages,
                 state: heldRunFinished.state,
               };
+              // The initial run consumed the approval, including its legacy channel.
+              if (nextInput.forwardedProps?.command?.resume !== undefined) {
+                nextInput.forwardedProps = {
+                  ...nextInput.forwardedProps,
+                  command: {
+                    ...nextInput.forwardedProps.command,
+                    resume: undefined,
+                  },
+                };
+              }
               subscriptions.add(
                 this.processStream(
                   this.runNextWithState(nextInput, continuation.next),
                   frontendCatalogId,
                   catalog,
+                  protocolVersion,
                   {
                     ...continuation,
                     input: nextInput,
@@ -1428,6 +1581,7 @@ export class A2UIMiddleware extends Middleware {
   private createA2UIActivityEvents(
     operations: Array<Record<string, unknown>>,
     toolCallId?: string,
+    surfaceScopedIds = false,
   ): BaseEvent[] {
     const events: BaseEvent[] = [];
 
@@ -1454,8 +1608,10 @@ export class A2UIMiddleware extends Middleware {
       // OSS-162: for the common single-surface case, key by the outer call ONLY
       // (no surfaceId) so this paint shares the messageId of any building/retrying
       // skeleton emitted for the same call and replaces it in place. Multi-surface
-      // results keep the per-surface id (they never had a single lifecycle slot).
-      const singleSurface = operationsBySurface.size === 1;
+      // results keep the per-surface id (they never had a single lifecycle slot);
+      // `surfaceScopedIds` asks for the same when the caller already resolved
+      // part of a multi-surface result onto an existing activity.
+      const singleSurface = !surfaceScopedIds && operationsBySurface.size === 1;
       const messageId = toolCallId
         ? singleSurface
           ? `a2ui-surface-${toolCallId}`

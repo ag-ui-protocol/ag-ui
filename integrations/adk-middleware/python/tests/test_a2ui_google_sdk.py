@@ -146,7 +146,7 @@ def clear_render_cache():
     sdk_helper._RENDER_CACHE.clear()
 
 
-@pytest.mark.parametrize("version", ["0.8", "0.9"])
+@pytest.mark.parametrize("version", ["0.8", "0.9", "1.0"])
 def test_render_uses_sdk_with_versioned_client_catalog(version, monkeypatch):
     catalog = copy.deepcopy(CLEAN_CATALOG)
     catalog.update(
@@ -259,10 +259,10 @@ def test_render_cache_isolated_by_protocol_version():
         render_catalog_instructions(
             {**CLEAN_CATALOG, "protocolVersion": version}, default_catalog_id=CID
         )
-        for version in ("0.8", "0.9")
+        for version in ("0.8", "0.9", "1.0")
     ]
     assert all(prompts)
-    assert prompts[0] != prompts[1]
+    assert len(set(prompts)) == 3
 
 
 def test_render_failure_is_logged_and_not_replaced_with_server_catalog(
@@ -659,7 +659,12 @@ def test_express_component_local_refs_preserve_constraints_and_source_order():
 async def test_express_preserves_data_bindings_actions_and_outer_activity_id():
     from types import SimpleNamespace
 
-    dsl = '<a2ui>\n$/form/name = "Ada"\nroot = Column([TextField("Name", $/form/name), Button(Text("Submit"), action=Event("submit", {name: $/form/name}))])\n</a2ui>'
+    dsl = (
+        '<a2ui>\n$/form/name = "Ada"\n'
+        'root = Column([TextField("Name", $/form/name), '
+        'Button(Text("Submit"), action=Event("submit", '
+        "{name: $/form/name}))])\n</a2ui>"
+    )
     model = _ExpressLlm(model="express", scripts=[[dsl]])
     tool = get_a2ui_tool({"model": model, "inference_format": "express"})
     tool.event_queue = asyncio.Queue()
@@ -728,7 +733,8 @@ async def test_express_updates_existing_surface_without_recreating_it():
         model="express",
         scripts=[
             [
-                '<a2ui>\nsurface("existing", update=true)\nroot = Text("Updated")\n</a2ui>'
+                '<a2ui>\nsurface("existing", update=true)\n'
+                'root = Text("Updated")\n</a2ui>'
             ]
         ],
     )
@@ -1111,10 +1117,14 @@ async def test_direct_json_diagnostic_is_callback_only():
     )
 
 
-def test_express_normalizes_canonical_web_function_list_and_positional_arguments():
+@pytest.mark.parametrize("protocol,call_key", [("v0.9", "call"), ("1.0", "@call")])
+def test_express_normalizes_canonical_web_function_list_and_positional_arguments(
+    protocol, call_key
+):
     from ag_ui_adk import compile_a2ui_express
 
     catalog = copy.deepcopy(EXPRESS_CATALOG)
+    catalog["protocolVersion"] = protocol
     catalog["components"]["Text"]["properties"]["text"] = {
         "$ref": "common_types.json#/$defs/DynamicString"
     }
@@ -1137,9 +1147,12 @@ def test_express_normalizes_canonical_web_function_list_and_positional_arguments
     original = copy.deepcopy(catalog)
     ops = compile_a2ui_express('root = Text(greet("Ada", "!"))', catalog=catalog)
     components = next(
-        op["updateComponents"]["components"] for op in ops if "updateComponents" in op
+        body["components"]
+        for op in ops
+        for action, body in op.items()
+        if action in ("createSurface", "updateComponents") and "components" in body
     )
-    assert components[0]["text"]["call"] == "greet"
+    assert components[0]["text"][call_key] == "greet"
     assert components[0]["text"]["args"] == {"name": "Ada", "punctuation": "!"}
     assert catalog == original
     with pytest.raises(ValueError):

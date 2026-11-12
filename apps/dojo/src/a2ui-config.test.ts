@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 import {
   AbstractAgent,
@@ -23,6 +26,7 @@ import {
 } from "../e2e/a2ui-crewai-fixtures";
 
 import { dynamicSchemaCatalog } from "./a2ui-catalog";
+import { RowApi, HotelCardApi } from "./a2ui-catalog/apis";
 import { DOJO_A2UI_MIDDLEWARE_CONFIG } from "./a2ui-config";
 
 class CaptureAgent extends AbstractAgent {
@@ -236,4 +240,110 @@ test("CrewAI fixed-schema Python tool reports still acknowledge the selected fli
     content:
       "You are booked on UA 123 from SFO to JFK for $289. Your itinerary is on its way.",
   });
+});
+
+test("Dojo 0.9 schemas bind template children with the renderer SDK", async () => {
+  const rendererRequire = createRequire(
+    realpathSync(
+      new URL(
+        "../node_modules/@copilotkit/a2ui-renderer/package.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  const { Catalog, MessageProcessor, ComponentContext, GenericBinder } =
+    await import(
+      pathToFileURL(rendererRequire.resolve("@a2ui/web_core/v0_9")).href
+    );
+  const catalog = new Catalog("test://dojo-compat", [RowApi, HotelCardApi], []);
+  const processor = new MessageProcessor([catalog]);
+  processor.processMessages([
+    {
+      version: "v0.9",
+      createSurface: { surfaceId: "hotels", catalogId: catalog.id },
+    },
+    {
+      version: "v0.9",
+      updateComponents: {
+        surfaceId: "hotels",
+        components: [
+          {
+            id: "root",
+            component: "Row",
+            children: { componentId: "card", path: "/items" },
+            gap: 16,
+          },
+          {
+            id: "card",
+            component: "HotelCard",
+            name: { path: "name" },
+            location: { path: "location" },
+            rating: { path: "rating" },
+            pricePerNight: { path: "price" },
+            action: { event: { name: "book_hotel" } },
+          },
+        ],
+      },
+    },
+    {
+      version: "v0.9",
+      updateDataModel: {
+        surfaceId: "hotels",
+        path: "/",
+        value: {
+          items: [
+            {
+              name: "The Ritz",
+              location: "Paris",
+              rating: 4.8,
+              price: "$450/night",
+            },
+            {
+              name: "Holiday Inn",
+              location: "Austin",
+              rating: 4.1,
+              price: "$180/night",
+            },
+          ],
+        },
+      },
+    },
+  ]);
+  const surface = processor.model.surfacesMap.get("hotels");
+  assert.ok(surface);
+  const row = new GenericBinder(
+    new ComponentContext(surface, "root"),
+    RowApi.schema,
+  );
+  const children = [
+    { id: "card", basePath: "/items/0" },
+    { id: "card", basePath: "/items/1" },
+  ];
+  assert.deepEqual(row.snapshot.children, children);
+  const expected = [
+    {
+      name: "The Ritz",
+      location: "Paris",
+      rating: 4.8,
+      pricePerNight: "$450/night",
+    },
+    {
+      name: "Holiday Inn",
+      location: "Austin",
+      rating: 4.1,
+      pricePerNight: "$180/night",
+    },
+  ];
+  for (const [index, child] of children.entries()) {
+    const card = new GenericBinder(
+      new ComponentContext(surface, child.id, child.basePath),
+      HotelCardApi.schema,
+    );
+    for (const [key, value] of Object.entries(expected[index])) {
+      assert.equal(card.snapshot[key], value);
+    }
+    assert.equal(typeof card.snapshot.action, "function");
+    card.dispose();
+  }
+  row.dispose();
 });
