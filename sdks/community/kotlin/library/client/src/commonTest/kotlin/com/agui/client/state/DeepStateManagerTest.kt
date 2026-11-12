@@ -1,6 +1,9 @@
 package com.agui.client.state
 
 import com.agui.core.types.*
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -195,5 +198,37 @@ class DeepStateManagerTest {
         assertEquals(2, emitted.size)
         assertEquals(JsonPrimitive(1), objectLeaf(emitted.last()))
         assertTrue(emitted.first() !== emitted.last())
+    }
+
+    @Test
+    fun returningToLastObservedStateDoesNotEmitAgain() = runTest {
+        fun state(n: Int) = JsonObject(mapOf("a" to JsonPrimitive(n)))
+        val manager = StateManager(initialState = state(0))
+        val emitted = mutableListOf<JsonElement>()
+        backgroundScope.launch { manager.currentState.collect { emitted += it } }
+        runCurrent()
+
+        manager.processEvent(StateSnapshotEvent(state(1)))
+        manager.processEvent(StateSnapshotEvent(state(0)))
+        runCurrent()
+
+        assertEquals(1, emitted.size)
+        assertEquals(state(0), emitted.single())
+    }
+
+    @Test
+    fun subscriptionHookRunsBeforeFirstValue() = runTest {
+        val manager = StateManager()
+        val seen = mutableListOf<String>()
+        val job = launch {
+            manager.currentState
+                .onSubscription { seen += "subscribed" }
+                .take(1)
+                .collect { seen += "value" }
+        }
+        runCurrent()
+        job.join()
+
+        assertEquals(listOf("subscribed", "value"), seen)
     }
 }

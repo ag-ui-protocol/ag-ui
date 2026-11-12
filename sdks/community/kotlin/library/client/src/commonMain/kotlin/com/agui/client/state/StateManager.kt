@@ -1,9 +1,9 @@
 package com.agui.client.state
 
 import com.agui.core.types.*
-import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.*
 import co.touchlab.kermit.Logger
 
@@ -23,38 +23,29 @@ class StateManager(
     private val handler: StateChangeHandler? = null,
     initialState: JsonElement = JsonObject(emptyMap())
 ) {
-    /**
-     * Publications are boxed so StateFlow never compares two JsonElements with ==: JsonObject and
-     * JsonArray equality recurses, so assigning a deeply nested state to a plain
-     * MutableStateFlow<JsonElement> overflows the stack while StateFlow checks whether the value
-     * changed (see #3318). The box itself compares by reference; [publish] decides with the
-     * iterative [jsonElementsEqual] whether a new document actually differs before publishing it,
-     * so collectors still see exactly one emission per distinct state, as with a plain
-     * MutableStateFlow<JsonElement>.
-     */
-    private class StatePublication(val state: JsonElement)
-
-    private val publications = MutableStateFlow(StatePublication(initialState))
+    // The stored document's top level compares iteratively (see
+    // withIterativeEquality), so StateFlow's own equality check never
+    // recurses into JsonObject/JsonArray equality and no longer overflows
+    // the stack on deeply nested states (see #3318). A plain StateFlow is
+    // used deliberately: its equality check conflates equal publications,
+    // its per-collector replay check suppresses a repeat emission when a
+    // round trip returns to a state that collector already observed, it
+    // preserves subscription actions (for example from onSubscription),
+    // and it serializes concurrent publications under its own monitor.
+    private val _currentState = MutableStateFlow(initialState.withIterativeEquality())
 
     /**
      * The current state as a StateFlow. Collectors receive the latest state on collection and one
      * emission per distinct published state; publishing a document equal to the current one emits
      * nothing, matching MutableStateFlow conflation.
      */
-    val currentState: StateFlow<JsonElement> = PublishedStateFlow()
-
-    private inner class PublishedStateFlow : StateFlow<JsonElement> {
-        override val replayCache: List<JsonElement> get() = listOf(value)
-        override val value: JsonElement get() = publications.value.state
-        override suspend fun collect(collector: FlowCollector<JsonElement>): Nothing {
-            publications.collect { collector.emit(it.state) }
-        }
-    }
+    val currentState: StateFlow<JsonElement> = _currentState.asStateFlow()
 
     private fun publish(newState: JsonElement) {
-        val current = publications.value.state
-        if (current === newState || jsonElementsEqual(current, newState)) return
-        publications.value = StatePublication(newState)
+        // Skip re-wrapping the state already stored (a no-op delta returns
+        // its input unchanged); wrapping it again would only add a layer.
+        if (newState === _currentState.value) return
+        _currentState.value = newState.withIterativeEquality()
     }
 
     /**
