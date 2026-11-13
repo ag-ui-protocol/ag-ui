@@ -660,3 +660,79 @@ jobs:
           name: published-report-${{ matrix.suite }}
           path: published-report/${{ matrix.suite }}.json
           retention-days: 30
+
+  codex-sdk-typescript:
+    name: dojo / codex-sdk-typescript
+    if: ${{ !inputs.published }}
+    needs: check-generated-files
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CODEX_TEST_MODE: "1"
+      CODEX_FIXTURE_DIR: /tmp/ag-ui-codex-fixture
+      BASE_URL: http://localhost:9999
+      PLAYWRIGHT_SUITE: codex-sdk-typescript
+      CODEX_FLUTTER_URL: http://127.0.0.1:8042
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version-file: ".node-version"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+        with:
+          version: 10.33.4
+
+      - name: Prepare Dojo and Codex server
+        run: |
+          pnpm install --frozen-lockfile
+          node apps/dojo/scripts/prep-dojo-everything.js --only dojo,codex-sdk-typescript
+
+      - name: Set up Flutter 3.47.1
+        run: |
+          git clone --depth 1 --branch 3.47.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Verify and build the Codex Flutter client
+        working-directory: sdks/community/dart/example
+        run: |
+          flutter pub get
+          flutter analyze lib/models/endpoint_config.dart test/codex_backend_test.dart test/codex_chat_contract_test.dart
+          flutter test
+          flutter build web --dart-define=AG_UI_BACKEND=codex --dart-define=AG_UI_BASE_URL=http://127.0.0.1:8032
+
+      - name: Install browser tests
+        working-directory: apps/dojo/e2e
+        run: |
+          pnpm install --ignore-scripts
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run Dojo and controlled Codex server
+        uses: JarvusInnovations/background-action@1f5e5fa2462e48a95f97b54b4842d076d1008e3b  # v2.0.0
+        with:
+          run: |
+            python3 -m http.server 8042 --bind 127.0.0.1 --directory sdks/community/dart/example/build/web &
+            node apps/dojo/scripts/run-dojo-everything.js --only dojo,codex-sdk-typescript
+          wait-on: http://localhost:9999,http-get://localhost:8032/health,http://127.0.0.1:8042
+          wait-for: 300000
+
+      - name: Verify text chat and isolated conversations
+        working-directory: apps/dojo/e2e
+        run: pnpm test tests/codexSdkTypescriptTests/
+
+      - name: Upload Codex browser traces
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codex-sdk-typescript-playwright-traces
+          path: |
+            apps/dojo/e2e/test-results/**
+            apps/dojo/e2e/playwright-report/**
+          retention-days: 7

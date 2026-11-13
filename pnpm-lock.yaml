@@ -924,6 +924,55 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
 
+  integrations/community/codex-sdk/typescript:
+    dependencies:
+      '@ag-ui/encoder':
+        specifier: workspace:*
+        version: link:../../../../sdks/typescript/packages/encoder
+      '@openai/codex':
+        specifier: 0.167.1
+        version: 0.167.1
+      '@openai/codex-sdk':
+        specifier: 0.167.1
+        version: 0.167.1
+      rxjs:
+        specifier: 7.8.1
+        version: 7.8.1
+    devDependencies:
+      '@ag-ui/client':
+        specifier: workspace:*
+        version: link:../../../../sdks/typescript/packages/client
+      '@ag-ui/core':
+        specifier: workspace:*
+        version: link:../../../../sdks/typescript/packages/core
+      '@arethetypeswrong/cli':
+        specifier: ^0.17.4
+        version: 0.17.4
+      '@types/node':
+        specifier: ^20.11.19
+        version: 20.19.21
+      '@vitest/coverage-istanbul':
+        specifier: ^4.0.18
+        version: 4.0.18(vitest@4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4))
+      eslint:
+        specifier: ^9.37.0
+        version: 9.37.0(jiti@2.6.1)
+      publint:
+        specifier: ^0.3.12
+        version: 0.3.17
+      tsdown:
+        specifier: ^0.20.1
+        version: 0.20.1(publint@0.3.17)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.20.6
+        version: 4.20.6
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
+
   integrations/community/omnara/typescript:
     dependencies:
       '@omnara/sdk':
@@ -5611,6 +5660,51 @@ packages:
     peerDependenciesMeta:
       '@tanstack/react-query':
         optional: true
+
+  '@openai/codex-sdk@0.167.1':
+    resolution: {integrity: sha512-EJHNG/bZ+/rptIIZMigTgnqrukDAgc/rmUBXLeDrFwOeunno7tQ4sWt/VPzeRXnKGq6yd4jprpgRlzgpYvayzQ==}
+    engines: {node: '>=18'}
+
+  '@openai/codex@0.167.1':
+    resolution: {integrity: sha512-39uApTRT9bkhE8tMXTIfZxaZ27oi7hPqWoF2Coyp+iQFAD3NVHgH838IYVUfJaX85leMSP2s4JOmVw0mMSCN5Q==}
+    engines: {node: '>=16'}
+    hasBin: true
+
+  '@openai/codex@0.167.1-darwin-arm64':
+    resolution: {integrity: sha512-IMUByWGPhdbJFZzuk18iIdF/mfd21cPwalRTp5vGYIsOCyv3SJGRY5snbzZd0zO37WGuNjfUvH/62LvQHqNT2A==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@openai/codex@0.167.1-darwin-x64':
+    resolution: {integrity: sha512-SwJf87Qtuktk8qHSDsbNkjVjOerqQRCBgdrqw6gvAlF3tO8UizEp/Vs8qQVznNI1aJfFc6GoJLvcgBGVWVylDg==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@openai/codex@0.167.1-linux-arm64':
+    resolution: {integrity: sha512-z13jj4X4GDk7CTd1kXHkhXC8Gj8zomd1jYsU2//0KjevbLelPxowWLSTqIcR1rarJCtzveBHsS8gR7B9pAWB0g==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@openai/codex@0.167.1-linux-x64':
+    resolution: {integrity: sha512-qZteglyvMCj1QVymMyPyKdtw38HaXCv5gvw8WN+N0+JJstu3k/d8xiYj9ciL7OwFLhcujgP8bCGJgaREeqrHkw==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [linux]
+
+  '@openai/codex@0.167.1-win32-arm64':
+    resolution: {integrity: sha512-KFUMwSMBlQmabCSbpfv7AgouF+kNJE8iNw/nYv+IgHbHCY0v1pAzLFdt3BscYRUD+KNOeJqnp6n4xwCteA5OcQ==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@openai/codex@0.167.1-win32-x64':
+    resolution: {integrity: sha512-yvUA7s46paDIT5I3Phz8KcoGpSGlWR3pOS0npqQ3LQMpjtTOBWoLPRdjuoKVreuKIuOLDMxwWCID4nwojbbrSA==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
 
   '@opentelemetry/api-logs@0.203.0':
     resolution: {integrity: sha512-9B9RU0H7Ya1Dx/Rkyc4stuBZSGVQF27WigitInx2QQoj6KUpEFYPKoWjdFTunJYxmXmh17HeBvbMa1EhGyPmqQ==}
@@ -20075,6 +20169,37 @@ snapshots:
   '@omnara/sdk@0.1.26':
     dependencies:
       zod: 4.4.3
+
+  '@openai/codex-sdk@0.167.1':
+    dependencies:
+      '@openai/codex': 0.167.1
+
+  '@openai/codex@0.167.1':
+    optionalDependencies:
+      '@openai/codex-darwin-arm64': '@openai/codex@0.167.1-darwin-arm64'
+      '@openai/codex-darwin-x64': '@openai/codex@0.167.1-darwin-x64'
+      '@openai/codex-linux-arm64': '@openai/codex@0.167.1-linux-arm64'
+      '@openai/codex-linux-x64': '@openai/codex@0.167.1-linux-x64'
+      '@openai/codex-win32-arm64': '@openai/codex@0.167.1-win32-arm64'
+      '@openai/codex-win32-x64': '@openai/codex@0.167.1-win32-x64'
+
+  '@openai/codex@0.167.1-darwin-arm64':
+    optional: true
+
+  '@openai/codex@0.167.1-darwin-x64':
+    optional: true
+
+  '@openai/codex@0.167.1-linux-arm64':
+    optional: true
+
+  '@openai/codex@0.167.1-linux-x64':
+    optional: true
+
+  '@openai/codex@0.167.1-win32-arm64':
+    optional: true
+
+  '@openai/codex@0.167.1-win32-x64':
+    optional: true
 
   '@opentelemetry/api-logs@0.203.0':
     dependencies:

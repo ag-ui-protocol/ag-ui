@@ -156,6 +156,11 @@ const ALL_TARGETS = {
     name: "Claude Agent SDK (Python)",
     cwd: path.join(integrationsRoot, "claude-agent-sdk/python/examples"),
   },
+  "codex-sdk-typescript": {
+    command: "pnpm install && pnpm exec nx run @ag-ui/codex-sdk:build",
+    name: "Codex SDK (TypeScript)",
+    cwd: gitRoot,
+  },
   "claude-agent-sdk-typescript": {
     command: "pnpm install",
     name: "Claude Agent SDK (TypeScript)",

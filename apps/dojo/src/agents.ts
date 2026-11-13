@@ -804,6 +804,12 @@ export const agentsIntegrations = {
       },
     ),
 
+  "codex-sdk-typescript": async () =>
+    mapAgents(
+      (path) => new HttpAgent({ url: `${envVars.codexSdkTypescriptUrl}/${path}` }),
+      { agentic_chat: "agentic_chat" },
+    ),
+
   "claude-agent-sdk-typescript": async () =>
     mapAgents(
       (path) =>

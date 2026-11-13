@@ -340,6 +340,21 @@ const ALL_SERVICES = {
       },
     },
   ],
+  "codex-sdk-typescript": [
+    {
+      command: "pnpm exec nx run @ag-ui/codex-sdk:start",
+      name: "Codex SDK (TypeScript)",
+      cwd: gitRoot,
+      env: {
+        PORT: 8032,
+        ...(process.env.CODEX_TEST_MODE === "1" && {
+          CODEX_TEST_MODE: "1",
+          CODEX_FIXTURE_DIR: process.env.CODEX_FIXTURE_DIR,
+          CODEX_PATH: path.join(integrationsRoot, "community/codex-sdk/typescript/examples/testing/codex-exec.mjs"),
+        }),
+      },
+    },
+  ],
   "claude-agent-sdk-typescript": [
     {
       command: "npx tsx examples/server.ts",
@@ -481,6 +496,7 @@ const ALL_SERVICES = {
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
+        CODEX_SDK_TYPESCRIPT_URL: process.env.CODEX_SDK_TYPESCRIPT_URL || "http://localhost:8032",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
@@ -526,6 +542,7 @@ const ALL_SERVICES = {
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
+        CODEX_SDK_TYPESCRIPT_URL: process.env.CODEX_SDK_TYPESCRIPT_URL || "http://localhost:8032",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
         CLAUDE_MANAGED_AGENTS_PYTHON_URL: "http://localhost:8025",
         CLAUDE_MANAGED_AGENTS_TYPESCRIPT_URL: "http://localhost:8024",
