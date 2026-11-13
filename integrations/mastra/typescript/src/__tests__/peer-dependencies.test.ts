@@ -62,8 +62,15 @@ describe("peer dependency floors (#2418)", () => {
   });
 
   it("uses the AG-UI 1.0 CopilotKit baseline for the integration and its tests", () => {
-    expect(pkg.peerDependencies["@copilotkit/runtime"]).toBe("^1.76.0");
+    // `@ag-ui/mastra/copilotkit` is for CopilotKit 1.x and
+    // `@ag-ui/mastra/copilotkit-2` for CopilotKit 2.x, so the peer takes both.
+    expect(pkg.peerDependencies["@copilotkit/runtime"]).toBe(
+      "^1.76.0 || >=2.0.0-rc.0 <3.0.0-0",
+    );
     expect(pkg.devDependencies["@copilotkit/runtime"]).toBe("1.76.0");
+    expect(pkg.devDependencies["@copilotkit/runtime-2"]).toBe(
+      "npm:@copilotkit/runtime@2.0.0-rc.46",
+    );
     expect(pkg.devDependencies["@copilotkit/shared"]).toBe("1.76.0");
   });
 
