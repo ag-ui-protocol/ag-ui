@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.0.16 — 2026-11-12
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 0.0.15 — 2026-11-10
+
+- Preserve exhausted recovery state after streaming completes.
+- Consume legacy approval before continuation to avoid duplicate handling.
+- Preserve action context identity across adapters.
+- Keep context visibility stable across serialization and event representations.
+- Protect private context so action context stays out of the public transcript.
+- Represent UI actions as user input in signed model history.
+- Settle malformed generation at stream termination.
+
+### Breaking changes
+
+- Action context is now excluded from the public transcript; re-verify any code reading it there.
+- UI actions appear as user input in signed model history; re-verify history consumers.
+- Context serialization and visibility behavior changed; re-verify serialized output.
+
 ## 0.0.14 — 2026-10-21
 
 - Completed SDK middleware tools.

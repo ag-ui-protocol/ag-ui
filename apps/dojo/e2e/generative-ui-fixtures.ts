@@ -30,7 +30,9 @@ const lastUserText = (req: ChatCompletionRequest) =>
  */
 const renderUITool = (req: ChatCompletionRequest) =>
   req.tools?.find(
-    (t) => t.function.name === "render_ui" || t.function.name.endsWith("__render_ui"),
+    (t) =>
+      t.function.name === "render_ui" ||
+      t.function.name.endsWith("__render_ui"),
   )?.function.name;
 
 /**
@@ -44,17 +46,21 @@ const asksForPlanPicker = (req: ChatCompletionRequest) =>
 /** The surface both transports render: a title, a seat slider and a bound total. */
 export const PLAN_PICKER_OPERATIONS = [
   {
-    version: "v1.0",
+    version: "1.0",
     createSurface: {
       surfaceId: "plan-picker",
       dataModel: { seats: 5 },
       components: [
-        { id: "root", component: "Column", children: ["title", "seats", "total"] },
+        {
+          id: "root",
+          component: "Column",
+          children: ["title", "seats", "total"],
+        },
       ],
     },
   },
   {
-    version: "v1.0",
+    version: "1.0",
     updateComponents: {
       surfaceId: "plan-picker",
       components: [
@@ -128,6 +134,8 @@ export function registerGenerativeUIFixtures(server: LLMock) {
         req.messages.at(-1)?.role === "tool" &&
         lastUserText(req).includes(GENERATIVE_UI_PROMPT),
     },
-    response: { content: "The plan picker is above: move the slider to pick seats." },
+    response: {
+      content: "The plan picker is above: move the slider to pick seats.",
+    },
   });
 }

@@ -174,20 +174,14 @@ When the user types "Alice" and clicks Submit, you'll receive: \`Context: {"user
 ### Handling User Interactions
 
 When a user interacts with a UI surface you rendered (clicks a button, submits a form, etc.),
-you will see a \`log_a2ui_event\` tool call in your conversation history followed by a tool result.
+you will receive a user message beginning with \`A2UI user action:\` followed by the complete action as JSON.
+The action includes its name, surfaceId, sourceComponentId, and any context or additional data provided by the UI.
 
-CRITICAL: If the conversation ends with a \`log_a2ui_event\` tool call followed by its tool result,
-this means THE USER JUST PERFORMED AN ACTION and you MUST respond to it immediately.
-
-The \`log_a2ui_event\` tool call is NOT something you initiated - it is automatically injected into
-the conversation to represent a real user interaction (like clicking a button) that just happened.
-
-When the last messages are a \`log_a2ui_event\` tool call + result:
-1. The user JUST performed the action described (e.g., clicked a button)
-2. You MUST acknowledge their action and respond appropriately
-3. Look at the action name to understand what they did
-4. Take the appropriate next step based on what that action means in context
-5. Do NOT simply describe what buttons exist - respond to what they clicked!
+This message represents a user interaction that just happened. Respond to it as user input:
+1. Acknowledge the action and respond appropriately
+2. Look at the action name to understand what they did
+3. Use the surface/source IDs and action context or data to determine the appropriate next step
+4. Do NOT simply describe what buttons exist - respond to what they clicked!
 
 ## JSON Schema Reference
 
@@ -832,6 +826,11 @@ const _REMOVED_V08_SCHEMA = `"accountCircle","warning"
  */
 export const A2UI_OPERATIONS_KEY = "a2ui_operations";
 
+/** True for a plain (non-array, non-null) object. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Parsed A2UI container result.
  */
@@ -868,10 +867,7 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
     // createA2UIActivityEvents) read properties off each op and would crash on
     // ``null``, primitives, or arrays sitting in the array.
     const rawOps = obj[A2UI_OPERATIONS_KEY] as Array<unknown>;
-    const operations = rawOps.filter(
-      (op): op is Record<string, unknown> =>
-        typeof op === "object" && op !== null && !Array.isArray(op),
-    );
+    const operations = rawOps.filter(isRecord);
     const result: A2UIParseResult = { operations };
 
     return result;
@@ -889,10 +885,7 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
       ) {
         const obj = inner as Record<string, unknown>;
         const rawOps = obj[A2UI_OPERATIONS_KEY] as Array<unknown>;
-        const operations = rawOps.filter(
-          (op): op is Record<string, unknown> =>
-            typeof op === "object" && op !== null && !Array.isArray(op),
-        );
+        const operations = rawOps.filter(isRecord);
         const result: A2UIParseResult = { operations };
         return result;
       }

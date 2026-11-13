@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import {
   BaseEvent,
+  AbstractAgent,
+  Message,
+  UserMessage,
+  defaultApplyEvents,
   EventType,
   RunAgentInput,
   Tool,
@@ -19,11 +23,14 @@ import {
 } from "../src/index";
 
 import { MockAgent, createRunAgentInput, collectEvents } from "./test-utils";
+import { from, firstValueFrom, toArray } from "rxjs";
 
 // OSS-162: the a2ui-surface activity now also carries pre-paint lifecycle
 // snapshots (`content.status` = "building" | "retrying" | "failed", no
 // a2ui_operations). Tests that assert PAINT behaviour filter to snapshots that
 // actually carry operations.
+const privateContextName = /^a2ui_action_context_[A-Za-z0-9_-]{43}$/;
+
 const isPaint = (e: BaseEvent): boolean =>
   e.type === EventType.ACTIVITY_SNAPSHOT && Array.isArray((e as any).content?.a2ui_operations);
 
@@ -101,42 +108,80 @@ describe("A2UIMiddleware", () => {
   });
 
   describe("user action processing", () => {
-    it("should prepend synthetic messages for user action", async () => {
-      const middleware = new A2UIMiddleware();
-      const mockAgent = new MockAgent([
+    const userAction = {
+      name: "book_restaurant",
+      surfaceId: "restaurant-card",
+      sourceComponentId: "book-btn",
+      context: {
+        restaurantName: "Xi'an Famous Foods",
+        guests: 0,
+        confirmed: false,
+      },
+      timestamp: "2026-11-07T12:00:00Z",
+      data: { dietary: ["vegetarian"], notes: null },
+    };
+
+    const createAgent = () =>
+      new MockAgent([
         { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
         { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
       ]);
 
+    it("appends the complete UI action as user input without fabricating tool calls", async () => {
+      const agent = createAgent();
       const input = createRunAgentInput({
-        forwardedProps: {
-          a2uiAction: {
-            userAction: {
-              name: "book_restaurant",
-              surfaceId: "restaurant-card",
-              sourceComponentId: "book-btn",
-              context: { restaurantName: "Xi'an Famous Foods" },
-            },
-          },
-        },
+        forwardedProps: { a2uiAction: { userAction } },
       });
+      await collectEvents(new A2UIMiddleware().run(input, agent));
 
-      await collectEvents(middleware.run(input, mockAgent));
+      const messages = agent.runCalls[0].messages;
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("user");
+      expect(messages[0]).toMatchObject({
+        name: expect.stringMatching(privateContextName),
+      });
+      const content = messages[0].content as string;
+      expect(content).toMatch(/^A2UI user action:\n/);
+      expect(JSON.parse(content.slice(content.indexOf("\n") + 1))).toEqual(
+        userAction,
+      );
+      expect(input.messages).toEqual([]);
+      expect(input.forwardedProps).toEqual({ a2uiAction: { userAction } });
+    });
 
-      const messages = mockAgent.runCalls[0].messages;
-      expect(messages.length).toBe(2);
-
-      // First message should be assistant with tool call
-      const assistantMsg = messages[0] as AssistantMessage;
-      expect(assistantMsg.role).toBe("assistant");
-      expect(assistantMsg.toolCalls).toHaveLength(1);
-      expect(assistantMsg.toolCalls![0].function.name).toBe(LOG_A2UI_EVENT_TOOL_NAME);
-
-      // Second message should be tool result
-      const toolMsg = messages[1] as ToolMessage;
-      expect(toolMsg.role).toBe("tool");
-      expect(toolMsg.content).toContain("book_restaurant");
-      expect(toolMsg.content).toContain("restaurant-card");
+    it("preserves genuine signed model history and its tool results", async () => {
+      const agent = createAgent();
+      const assistant: AssistantMessage = {
+        id: "model-message",
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "render-call",
+            type: "function",
+            function: { name: "render_a2ui", arguments: "{}" },
+            encryptedValue: "test-provider-signature",
+          },
+        ],
+      };
+      const result: ToolMessage = {
+        id: "render-result",
+        role: "tool",
+        toolCallId: "render-call",
+        content: "Rendered",
+      };
+      const input = createRunAgentInput({
+        messages: [assistant, result],
+        forwardedProps: { a2uiAction: { userAction } },
+      });
+      const original = structuredClone(input);
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      expect(agent.runCalls[0].messages).toEqual([
+        assistant,
+        result,
+        expect.objectContaining({ role: "user" }),
+      ]);
+      expect(input).toEqual(original);
     });
 
     it.each([
@@ -144,63 +189,1080 @@ describe("A2UIMiddleware", () => {
       { name: "256-byte ASCII", runId: "a".repeat(256) },
       { name: "256-byte Unicode", runId: "😀".repeat(64) },
     ])(
-      "keeps bounded action identities on retry of a $name run ID",
+      "deduplicates retries but retains separate clicks with a $name run ID",
       async ({ runId }) => {
-        const agent = new MockAgent([
-          { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-          { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
-        ]);
+        const agent = createAgent();
         const input = createRunAgentInput({
           runId,
-          forwardedProps: {
-            a2uiAction: {
-              userAction: {
-                name: "approve",
-                surfaceId: "form",
-                sourceComponentId: "submit",
-                context: {},
-              },
-            },
-          },
+          forwardedProps: { a2uiAction: { userAction } },
         });
         await collectEvents(new A2UIMiddleware().run(input, agent));
         await collectEvents(new A2UIMiddleware().run(input, agent));
+        const messages = agent.runCalls[0].messages;
         await collectEvents(
-          new A2UIMiddleware().run({ ...input, runId: "click-2" }, agent),
+          new A2UIMiddleware().run({ ...input, messages }, agent),
         );
-        expect(agent.runCalls[1].messages).toEqual(agent.runCalls[0].messages);
-        const firstIds = agent.runCalls[0].messages.map((message) => message.id);
-        expect(
-          agent.runCalls[2].messages.every(
-            (message) => !firstIds.includes(message.id),
+        await collectEvents(
+          new A2UIMiddleware().run(
+            { ...input, messages, runId: "click-2" },
+            agent,
           ),
-        ).toBe(true);
-        const first = agent.runCalls[0].messages[0] as AssistantMessage;
-        const next = agent.runCalls[2].messages[0] as AssistantMessage;
-        expect(next.toolCalls![0].id).not.toBe(first.toolCalls![0].id);
-        // Bedrock toolUseId is limited to 64 characters, unlike message IDs.
-        expect(first.toolCalls![0].id.length).toBeLessThanOrEqual(64);
-        expect(first.toolCalls![0].id).toMatch(/^[a-zA-Z0-9_.:-]+$/);
-        const identities = [...firstIds, first.toolCalls![0].id];
-        expect(new Set(identities).size).toBe(3);
-        for (const identity of identities) {
-          expect(Buffer.byteLength(identity, "utf8")).toBeLessThan(128);
-        }
+        );
+
+        expect(messages).toHaveLength(1);
+        expect(agent.runCalls[1].messages).toEqual(messages);
+        expect(agent.runCalls[2].messages).toEqual(messages);
+        expect(agent.runCalls[3].messages).toHaveLength(2);
+        const first = messages[0],
+          next = agent.runCalls[3].messages[1];
+        expect(next.id).not.toBe(first.id);
+        expect(next.content).toBe(first.content);
+        expect(Buffer.byteLength(first.id, "utf8")).toBeLessThan(128);
+        if (first.role !== "user" || next.role !== "user")
+          throw new Error("Expected user action context");
+        expect(first.name).toMatch(privateContextName);
+        expect(Buffer.byteLength(first.name!, "utf8")).toBe(63);
+        expect(first.name).toMatch(/^[A-Za-z0-9_-]+$/);
+        expect(next.name).not.toBe(first.name);
         expect(input.messages).toEqual([]);
       },
     );
 
-    it("should not modify messages when no user action present", async () => {
-      const middleware = new A2UIMiddleware();
-      const mockAgent = new MockAgent([
-        { type: EventType.RUN_STARTED, runId: "test", threadId: "test" },
-        { type: EventType.RUN_FINISHED, runId: "test", threadId: "test" },
+    it.each([undefined, {}, { a2uiAction: {} }])(
+      "leaves existing messages unchanged without a user action (%j)",
+      async (forwardedProps) => {
+        const agent = createAgent();
+        const input = createRunAgentInput({
+          messages: [{ id: "user-message", role: "user", content: "Hello" }],
+          forwardedProps,
+        });
+        await collectEvents(new A2UIMiddleware().run(input, agent));
+        expect(agent.runCalls[0].messages).toEqual(input.messages);
+      },
+    );
+  });
+
+  describe("private user action context", () => {
+    const action = {
+      name: "book_hotel",
+      surfaceId: "hotels",
+      sourceComponentId: "book",
+      context: { hotelName: "Holiday Inn" },
+    };
+    const user: Message = {
+      id: "original-user",
+      role: "user",
+      content: "Compare hotels",
+    };
+    const signed: Message = {
+      id: "signed-model",
+      role: "assistant",
+      toolCalls: [
+        {
+          id: "render",
+          type: "function",
+          function: { name: "render_a2ui", arguments: "{}" },
+          encryptedValue: "test-genuine-signature",
+        },
+      ],
+    };
+    const tool: Message = {
+      id: "render-result",
+      role: "tool",
+      toolCallId: "render",
+      content: "Rendered",
+    };
+    const reply: Message = {
+      id: "booking-reply",
+      role: "assistant",
+      content: "Booked at Holiday Inn.",
+    };
+    let retained: UserMessage;
+
+    class EchoAgent extends AbstractAgent {
+      inputs: RunAgentInput[] = [];
+      emitted: BaseEvent[] = [];
+      constructor(private eventsFor: (input: RunAgentInput) => BaseEvent[]) {
+        super();
+      }
+      run(input: RunAgentInput) {
+        this.inputs.push(input);
+        this.emitted = this.eventsFor(input);
+        return from(this.emitted);
+      }
+    }
+    const lifecycle = (
+      input: RunAgentInput,
+      events: BaseEvent[],
+    ): BaseEvent[] =>
+      [
+        {
+          type: EventType.RUN_STARTED,
+          runId: input.runId,
+          threadId: input.threadId,
+        },
+        ...events,
+        {
+          type: EventType.RUN_FINISHED,
+          runId: input.runId,
+          threadId: input.threadId,
+        },
+      ] as BaseEvent[];
+    const snapshot = (messages: Message[]): BaseEvent =>
+      ({ type: EventType.MESSAGES_SNAPSHOT, messages }) as BaseEvent;
+    const text = (message: Message, includeName = true): BaseEvent[] =>
+      [
+        {
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: message.id,
+          role: message.role,
+          name: includeName && "name" in message ? message.name : undefined,
+        },
+        {
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId: message.id,
+          delta: message.content,
+        },
+        { type: EventType.TEXT_MESSAGE_END, messageId: message.id },
+      ] as BaseEvent[];
+    async function clientMessages(input: RunAgentInput, events: BaseEvent[]) {
+      const client = new MockAgent();
+      client.messages = structuredClone(input.messages);
+      const mutations = await firstValueFrom(
+        defaultApplyEvents(input, from(events), client, []).pipe(toArray()),
+      );
+      return mutations.reduce(
+        (messages, mutation) => mutation.messages ?? messages,
+        input.messages,
+      );
+    }
+
+    beforeAll(async () => {
+      const capture = new EchoAgent((input) => lifecycle(input, []));
+      await collectEvents(
+        new A2UIMiddleware().run(
+          createRunAgentInput({
+            forwardedProps: { a2uiAction: { userAction: action } },
+          }),
+          capture,
+        ),
+      );
+      const context = capture.inputs[0].messages.at(-1)!;
+      if (context.role !== "user")
+        throw new Error("Expected an actual middleware user context");
+      retained = context;
+    });
+
+    it("keeps the complete action private while preserving signed history and the visible answer", async () => {
+      const input = createRunAgentInput({
+        messages: [user, signed, tool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const original = structuredClone(input);
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          ...text(reply),
+          snapshot([...nextInput.messages, reply]),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      const modelContext = agent.inputs[0].messages.at(-1)!;
+      expect(modelContext).toMatchObject({
+        name: expect.stringMatching(privateContextName),
+      });
+      expect(modelContext.content).toBe(
+        `A2UI user action:\n${JSON.stringify(action)}`,
+      );
+      expect(agent.inputs[0].messages.slice(0, -1)).toEqual([
+        user,
+        signed,
+        tool,
       ]);
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        signed,
+        tool,
+        reply,
+      ]);
+      expect(
+        events.filter((e) => e.type === EventType.RUN_FINISHED),
+      ).toHaveLength(1);
+      expect(input).toEqual(original);
+      const originalSnapshot = agent.emitted.find(
+        (e) => e.type === EventType.MESSAGES_SNAPSHOT,
+      ) as BaseEvent & { messages: Message[] };
+      expect(originalSnapshot.messages).toContainEqual(modelContext);
+    });
 
-      const input = createRunAgentInput();
-      await collectEvents(middleware.run(input, mockAgent));
+    it.each(["triplet", "chunk"])(
+      "suppresses a producer's echoed private user %s without orphan text events",
+      async (kind) => {
+        const input = createRunAgentInput({
+          messages: [user],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const echo =
+            kind === "triplet"
+              ? text(context, false)
+              : ([
+                  {
+                    type: EventType.TEXT_MESSAGE_CHUNK,
+                    messageId: context.id,
+                    role: "user",
+                    delta: context.content,
+                  },
+                ] as BaseEvent[]);
+          return lifecycle(nextInput, [...echo, ...text(reply)]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        const contextId = agent.inputs[0].messages.at(-1)!.id;
+        expect(
+          events.some((e) => "messageId" in e && e.messageId === contextId),
+        ).toBe(false);
+        expect(await clientMessages(input, events)).toEqual([user, reply]);
+      },
+    );
 
-      expect(mockAgent.runCalls[0].messages).toHaveLength(0);
+    it("recognizes owned context retained by a server on a later ordinary run", async () => {
+      const input = createRunAgentInput({ messages: [user] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          ...text(retained),
+          snapshot([user, retained, reply]),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(agent.inputs[0].messages).toEqual([user]);
+      expect(
+        events.some((e) => "messageId" in e && e.messageId === retained.id),
+      ).toBe(false);
+      expect(await clientMessages(input, events)).toEqual([user, reply]);
+    });
+
+    it("uses a server snapshot's explicit ownership for later unnamed echoes", async () => {
+      const input = createRunAgentInput({ messages: [user] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          snapshot([user, retained]),
+          ...text(retained, false),
+          ...text(reply),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(
+        events.some((e) => "messageId" in e && e.messageId === retained.id),
+      ).toBe(false);
+      expect(await clientMessages(input, events)).toEqual([user, reply]);
+    });
+
+    it("preserves unmarked lookalikes and genuine encrypted messages even with an ownership marker", async () => {
+      const lookalike: Message = { ...retained, name: undefined };
+      const encrypted: Message = {
+        ...retained,
+        id: `a2ui-action-user-${"b".repeat(64)}`,
+        name: "actual_user",
+        encryptedValue: "test-real-encrypted-value",
+      };
+      const differentId: Message = {
+        ...retained,
+        id: "ordinary-user-id",
+        name: "ordinary_named_user",
+      };
+      const ordinary: Message = {
+        ...retained,
+        id: `a2ui-action-user-${"c".repeat(64)}`,
+        content: "Ordinary user text",
+        name: "ordinary_named_user",
+      };
+      const messages = [
+        user,
+        lookalike,
+        encrypted,
+        differentId,
+        ordinary,
+        signed,
+        tool,
+      ];
+      const input = createRunAgentInput({ messages });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          snapshot(messages),
+          ...text(lookalike),
+          ...text(encrypted),
+          ...text(differentId),
+          ...text(ordinary),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(events).toEqual(agent.emitted);
+      expect(
+        (await clientMessages(input, events)).map((message) => message.id),
+      ).toEqual(messages.map((message) => message.id));
+    });
+
+    it.each([
+      ["snapshot", "string"],
+      ["snapshot", "text-parts"],
+      ["run-start", "string"],
+      ["run-start", "text-parts"],
+    ])(
+      "projects private context from %s with %s content",
+      async (channel, encoding) => {
+        const input = createRunAgentInput({
+          messages: [user, signed, tool],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const encoded: Message =
+            encoding === "text-parts"
+              ? ({
+                  ...context,
+                  content: [{ type: "text", text: context.content as string }],
+                } as Message)
+              : context;
+          const messages = [...nextInput.messages.slice(0, -1), encoded];
+          if (channel === "snapshot")
+            return lifecycle(nextInput, [snapshot(messages), ...text(reply)]);
+          return [
+            {
+              type: EventType.RUN_STARTED,
+              runId: nextInput.runId,
+              threadId: nextInput.threadId,
+              input: { ...nextInput, messages },
+            },
+            ...text(reply),
+            {
+              type: EventType.RUN_FINISHED,
+              runId: nextInput.runId,
+              threadId: nextInput.threadId,
+            },
+          ] as BaseEvent[];
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        expect(await clientMessages(input, events)).toEqual([
+          user,
+          signed,
+          tool,
+          reply,
+        ]);
+        const modelContext = agent.inputs[0].messages.at(-1)!;
+        expect(modelContext).toMatchObject({
+          role: "user",
+          name: expect.stringMatching(privateContextName),
+        });
+        const source = agent.emitted.find(
+          (e) =>
+            e.type ===
+            (channel === "snapshot"
+              ? EventType.MESSAGES_SNAPSHOT
+              : EventType.RUN_STARTED),
+        ) as BaseEvent & { messages?: Message[]; input?: RunAgentInput };
+        expect(
+          (source.messages ?? source.input!.messages).map(
+            (message) => message.id,
+          ),
+        ).toContain(modelContext.id);
+        if (channel === "run-start") {
+          const started = events[0] as BaseEvent & { input: RunAgentInput };
+          expect(started.input.forwardedProps).toEqual(
+            agent.inputs[0].forwardedProps,
+          );
+          expect(started.input.state).toEqual(agent.inputs[0].state);
+        }
+      },
+    );
+
+    it.each(["snapshot", "run-start"])(
+      "hides explicitly owned context on a later run regardless of its %s payload encoding",
+      async (channel) => {
+        const input = createRunAgentInput({ messages: [user] });
+        const encoded: Message = {
+          ...retained,
+          content: [
+            { type: "text", text: "Adapter re-encoded private context" },
+          ],
+        };
+        const agent = new EchoAgent((nextInput) =>
+          channel === "snapshot"
+            ? lifecycle(nextInput, [snapshot([user, encoded]), ...text(reply)])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages: [user, encoded] },
+                },
+                ...text(reply),
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]),
+        );
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        expect(await clientMessages(input, events)).toEqual([user, reply]);
+        expect(agent.inputs[0].messages).toEqual([user]);
+      },
+    );
+
+    it.each(["snapshot", "run-start"])(
+      "keeps a known genuine encrypted message visible when a later %s omits encryption",
+      async (channel) => {
+        const genuine: Message = {
+          ...retained,
+          name: "actual_user",
+          encryptedValue: "test-original-encrypted-value",
+        };
+        const stripped: Message = { ...retained };
+        const input = createRunAgentInput({
+          messages: [user, genuine, signed, tool],
+        });
+        const messages = [user, stripped, signed, tool];
+        const agent = new EchoAgent((nextInput) =>
+          channel === "snapshot"
+            ? lifecycle(nextInput, [
+                snapshot(messages),
+                ...text(stripped),
+                ...text(reply),
+              ])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages },
+                },
+                ...text(stripped),
+                ...text(reply),
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]),
+        );
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        const visible = await clientMessages(input, events);
+        expect(visible.map((message) => message.id)).toEqual([
+          user.id,
+          genuine.id,
+          signed.id,
+          tool.id,
+          reply.id,
+        ]);
+        expect(
+          events.some(
+            (event) => "messageId" in event && event.messageId === genuine.id,
+          ),
+        ).toBe(true);
+        expect(input.messages).toContainEqual(genuine);
+      },
+    );
+
+    it("never turns a known unmarked original into private context after a later marker appears", async () => {
+      const genuine: Message = { ...retained, name: undefined };
+      const input = createRunAgentInput({ messages: [user, genuine] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [snapshot([user, retained]), ...text(retained)]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(
+        (await clientMessages(input, events)).map((message) => message.id),
+      ).toContain(genuine.id);
+    });
+
+    it.each([
+      ["snapshot", "string"],
+      ["snapshot", "text-parts"],
+      ["run-start", "string"],
+      ["run-start", "text-parts"],
+    ])(
+      "keeps a proven private action hidden when a later %s adds encryption to %s content",
+      async (channel, encoding) => {
+        const input = createRunAgentInput({
+          messages: [user, signed, tool],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const encrypted: Message = {
+            ...context,
+            encryptedValue: "test-adapter-added-encryption",
+            ...(encoding === "text-parts"
+              ? { content: [{ type: "text", text: context.content as string }] }
+              : {}),
+          } as Message;
+          const messages = [...nextInput.messages.slice(0, -1), encrypted];
+          const rest = [
+            ...text(context, false),
+            ...text(reply),
+            snapshot([...messages, reply]),
+          ];
+          return channel === "snapshot"
+            ? lifecycle(nextInput, [snapshot(messages), ...rest])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages },
+                },
+                ...rest,
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        const context = agent.inputs[0].messages.at(-1)!;
+        expect(
+          events.some(
+            (event) => "messageId" in event && event.messageId === context.id,
+          ),
+        ).toBe(false);
+        expect(await clientMessages(input, events)).toEqual([
+          user,
+          signed,
+          tool,
+          reply,
+        ]);
+        expect(agent.inputs[0].messages).toContainEqual(context);
+        expect(input.messages).toEqual([user, signed, tool]);
+      },
+    );
+
+    it.each(["snapshot", "triplet", "chunk"])(
+      "keeps context proven private by a %s private after an adapter adds encryption",
+      async (firstCarrier) => {
+        const input = createRunAgentInput({ messages: [user, signed, tool] });
+        const encrypted: Message = {
+          ...retained,
+          encryptedValue: "test-adapter-added-encryption",
+        };
+        const agent = new EchoAgent((nextInput) => {
+          const announcement =
+            firstCarrier === "snapshot"
+              ? [snapshot([...nextInput.messages, retained])]
+              : firstCarrier === "triplet"
+                ? text(retained)
+                : ([
+                    {
+                      type: EventType.TEXT_MESSAGE_CHUNK,
+                      messageId: retained.id,
+                      role: "user",
+                      name: retained.name,
+                      delta: retained.content,
+                    },
+                  ] as BaseEvent[]);
+          return lifecycle(nextInput, [
+            ...announcement,
+            snapshot([...nextInput.messages, encrypted]),
+            ...text(retained, false),
+            ...text(reply),
+            snapshot([...nextInput.messages, encrypted, reply]),
+          ]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        expect(await clientMessages(input, events)).toEqual([
+          user,
+          signed,
+          tool,
+          reply,
+        ]);
+        expect(
+          events.some(
+            (event) => "messageId" in event && event.messageId === retained.id,
+          ),
+        ).toBe(false);
+        expect(agent.inputs[0].messages).toEqual([user, signed, tool]);
+      },
+    );
+
+    it.each([
+      ["triplet", "snapshot"],
+      ["triplet", "run-start"],
+      ["chunk", "snapshot"],
+      ["chunk", "run-start"],
+    ])(
+      "keeps an unmarked user %s visible after a later %s adds the private marker",
+      async (firstCarrier, laterCarrier) => {
+        const input = createRunAgentInput({ messages: [user, signed, tool] });
+        const publicMessage: Message = {
+          ...retained,
+          name: undefined,
+          content: "A genuine visible user choice",
+        };
+        const marked: Message = {
+          ...publicMessage,
+          name: retained.name,
+        };
+        const agent = new EchoAgent((nextInput) => {
+          const announcement =
+            firstCarrier === "triplet"
+              ? text(publicMessage)
+              : ([
+                  {
+                    type: EventType.TEXT_MESSAGE_CHUNK,
+                    messageId: publicMessage.id,
+                    role: "user",
+                    delta: publicMessage.content,
+                  },
+                ] as BaseEvent[]);
+          const messages = [...nextInput.messages, marked];
+          const rest = [
+            ...text(marked),
+            ...text(reply),
+            snapshot([...messages, reply]),
+          ];
+          if (laterCarrier === "snapshot")
+            return lifecycle(nextInput, [
+              ...announcement,
+              snapshot(messages),
+              ...rest,
+            ]);
+          const nextRunId = `${nextInput.runId}-next`;
+          return [
+            ...lifecycle(nextInput, announcement),
+            {
+              type: EventType.RUN_STARTED,
+              runId: nextRunId,
+              threadId: nextInput.threadId,
+              input: { ...nextInput, runId: nextRunId, messages },
+            },
+            ...rest,
+            {
+              type: EventType.RUN_FINISHED,
+              runId: nextRunId,
+              threadId: nextInput.threadId,
+            },
+          ] as BaseEvent[];
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        const visible = await clientMessages(input, events);
+        expect(visible.map((message) => message.id)).toEqual([
+          user.id,
+          signed.id,
+          tool.id,
+          publicMessage.id,
+          reply.id,
+        ]);
+        expect(visible.find((message) => message.id === signed.id)).toEqual(
+          signed,
+        );
+        expect(visible.find((message) => message.id === tool.id)).toEqual(tool);
+        expect(agent.inputs[0].messages).toEqual([user, signed, tool]);
+      },
+    );
+
+    it.each([
+      ["initial", "snapshot", "string"],
+      ["initial", "snapshot", "text-parts"],
+      ["initial", "run-start", "string"],
+      ["initial", "run-start", "text-parts"],
+      ["server-retained", "snapshot", "string"],
+      ["server-retained", "snapshot", "text-parts"],
+      ["server-retained", "run-start", "string"],
+      ["server-retained", "run-start", "text-parts"],
+    ])(
+      "treats %s reserved private identity as private in %s with encrypted %s content",
+      async (provenance, channel, encoding) => {
+        const encrypted: Message = {
+          ...retained,
+          encryptedValue: "test-private-provider-artifact",
+          ...(encoding === "text-parts"
+            ? { content: [{ type: "text", text: retained.content as string }] }
+            : {}),
+        } as Message;
+        const genuine: Message = {
+          ...retained,
+          id: "genuine-encrypted-user",
+          name: "actual_user",
+          content: "A real encrypted user message",
+          encryptedValue: "test-genuine-user-artifact",
+        };
+        const publicHistory = [user, genuine, signed, tool];
+        const modelMessages =
+          provenance === "initial"
+            ? [...publicHistory, encrypted]
+            : publicHistory;
+        const input = createRunAgentInput({ messages: modelMessages });
+        const privateHistory = [...publicHistory, encrypted];
+        const agent = new EchoAgent((nextInput) =>
+          channel === "snapshot"
+            ? lifecycle(nextInput, [snapshot(privateHistory), ...text(reply)])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages: privateHistory },
+                },
+                ...text(reply),
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]),
+        );
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        // The browser never had the server's internal action-history entries.
+        const clientInput = { ...input, messages: publicHistory };
+        expect(await clientMessages(clientInput, events)).toEqual([
+          ...publicHistory,
+          reply,
+        ]);
+        expect(agent.inputs[0].messages).toEqual(modelMessages);
+        const originalCarrier = agent.emitted.find(
+          (event) =>
+            event.type ===
+            (channel === "snapshot"
+              ? EventType.MESSAGES_SNAPSHOT
+              : EventType.RUN_STARTED),
+        ) as BaseEvent & { messages?: Message[]; input?: RunAgentInput };
+        expect(
+          originalCarrier.messages ?? originalCarrier.input!.messages,
+        ).toContainEqual(encrypted);
+      },
+    );
+
+    it.each(["snapshot", "run-start"])(
+      "keeps proven private identity hidden when a %s re-encodes it as assistant text",
+      async (channel) => {
+        const input = createRunAgentInput({
+          messages: [user, signed, tool],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const original = structuredClone(input);
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const reencoded = { ...context, role: "assistant" } as Message;
+          const messages = [...nextInput.messages.slice(0, -1), reencoded];
+          const rest = [
+            ...text(reencoded),
+            ...text(reply),
+            snapshot([...messages, reply]),
+          ];
+          return channel === "snapshot"
+            ? lifecycle(nextInput, [snapshot(messages), ...rest])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages },
+                },
+                ...rest,
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        const modelContext = agent.inputs[0].messages.at(-1)!;
+        expect(modelContext.role).toBe("user");
+        expect(
+          events.some(
+            (event) =>
+              "messageId" in event && event.messageId === modelContext.id,
+          ),
+        ).toBe(false);
+        expect(await clientMessages(input, events)).toEqual([
+          user,
+          signed,
+          tool,
+          reply,
+        ]);
+        expect(agent.inputs[0].messages.slice(0, -1)).toEqual([
+          user,
+          signed,
+          tool,
+        ]);
+        expect(input).toEqual(original);
+      },
+    );
+
+    it("deduplicates a retried action after nonempty genuine signed history", async () => {
+      const input = createRunAgentInput({
+        messages: [user, signed, tool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const original = structuredClone(input);
+      const agent = new EchoAgent((nextInput) => lifecycle(nextInput, []));
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      const first = agent.inputs[0].messages;
+      expect(first).toHaveLength(4);
+      const privateContext = first.at(-1)!;
+      await collectEvents(
+        new A2UIMiddleware().run({ ...input, messages: first }, agent),
+      );
+      expect(agent.inputs[1].messages).toEqual(first);
+      expect(
+        agent.inputs[1].messages.filter(
+          (message) => message.id === privateContext.id,
+        ),
+      ).toHaveLength(1);
+      await collectEvents(
+        new A2UIMiddleware().run(
+          { ...input, messages: first, runId: "distinct-click" },
+          agent,
+        ),
+      );
+      expect(agent.inputs[2].messages).toHaveLength(5);
+      expect(agent.inputs[2].messages.slice(0, 3)).toEqual([
+        user,
+        signed,
+        tool,
+      ]);
+      expect(agent.inputs[2].messages.at(-1)!.id).not.toBe(privateContext.id);
+      expect(input).toEqual(original);
+    });
+
+    it.each([
+      ["snapshot", "user"],
+      ["snapshot", "assistant"],
+      ["run-start", "user"],
+      ["run-start", "assistant"],
+    ])(
+      "hides re-identified private records from %s as %s and retains complete model context",
+      async (channel, role) => {
+        const input = createRunAgentInput({
+          messages: [user, signed, tool],
+          forwardedProps: { a2uiAction: { userAction: action } },
+        });
+        const agent = new EchoAgent((nextInput) => {
+          const context = nextInput.messages.at(-1)!;
+          const canonicalized = {
+            ...context,
+            id: "adapter-canonical-user",
+            role,
+          } as Message;
+          const messages = [...nextInput.messages.slice(0, -1), canonicalized];
+          const rest = [
+            ...text(canonicalized),
+            ...text(reply),
+            snapshot([...messages, reply]),
+          ];
+          return channel === "snapshot"
+            ? lifecycle(nextInput, [snapshot(messages), ...rest])
+            : ([
+                {
+                  type: EventType.RUN_STARTED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                  input: { ...nextInput, messages },
+                },
+                ...rest,
+                {
+                  type: EventType.RUN_FINISHED,
+                  runId: nextInput.runId,
+                  threadId: nextInput.threadId,
+                },
+              ] as BaseEvent[]);
+        });
+        const events = await collectEvents(
+          new A2UIMiddleware().run(input, agent),
+        );
+        expect(await clientMessages(input, events)).toEqual([
+          user,
+          signed,
+          tool,
+          reply,
+        ]);
+        expect(
+          events.some(
+            (event) =>
+              "messageId" in event &&
+              event.messageId === "adapter-canonical-user",
+          ),
+        ).toBe(false);
+        expect(agent.inputs[0].messages.at(-1)).toMatchObject({
+          role: "user",
+          content: `A2UI user action:\n${JSON.stringify(action)}`,
+        });
+      },
+    );
+
+    it("hides a retained named chunk when normalization defaults its role to assistant", async () => {
+      const input = createRunAgentInput({ messages: [user, signed, tool] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          {
+            type: EventType.TEXT_MESSAGE_CHUNK,
+            messageId: "adapter-retained-action",
+            name: retained.name,
+            delta: retained.content,
+          } as BaseEvent,
+          ...text(reply),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        signed,
+        tool,
+        reply,
+      ]);
+      expect(
+        events.some(
+          (event) =>
+            "messageId" in event &&
+            event.messageId === "adapter-retained-action",
+        ),
+      ).toBe(false);
+      expect(agent.inputs[0].messages).toEqual(input.messages);
+    });
+
+    it("preserves initially genuine signed assistant and tool history sharing the private transport tag", async () => {
+      const taggedSigned: Message = {
+        ...signed,
+        name: retained.name,
+      } as Message;
+      const taggedTool: Message = { ...tool, name: retained.name } as Message;
+      const input = createRunAgentInput({
+        messages: [user, taggedSigned, taggedTool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const original = structuredClone(input);
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [snapshot([...nextInput.messages, reply])]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(agent.inputs[0].messages).toHaveLength(4);
+      expect(agent.inputs[0].messages.slice(0, -1)).toEqual([
+        user,
+        taggedSigned,
+        taggedTool,
+      ]);
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        taggedSigned,
+        taggedTool,
+        reply,
+      ]);
+      expect(input).toEqual(original);
+    });
+
+    it("deduplicates retries by the emitted user transport tag after ID canonicalization", async () => {
+      const input = createRunAgentInput({
+        messages: [user, signed, tool],
+        forwardedProps: { a2uiAction: { userAction: action } },
+      });
+      const agent = new EchoAgent((nextInput) => lifecycle(nextInput, []));
+      await collectEvents(new A2UIMiddleware().run(input, agent));
+      const first = agent.inputs[0].messages;
+      const context = first.at(-1)!;
+      if (context.role !== "user")
+        throw new Error("Expected actual user context");
+      const canonicalized: Message = {
+        ...context,
+        id: "adapter-stable-action-id",
+      };
+      const retryMessages = [...first.slice(0, -1), canonicalized];
+      await collectEvents(
+        new A2UIMiddleware().run({ ...input, messages: retryMessages }, agent),
+      );
+      expect(agent.inputs[1].messages).toEqual(retryMessages);
+      await collectEvents(
+        new A2UIMiddleware().run(
+          { ...input, messages: retryMessages, runId: "another-click" },
+          agent,
+        ),
+      );
+      expect(agent.inputs[2].messages).toHaveLength(5);
+      const nextContext = agent.inputs[2].messages.at(-1)!;
+      expect(nextContext.content).toBe(context.content);
+      expect(nextContext).toMatchObject({
+        role: "user",
+        name: expect.stringMatching(privateContextName),
+      });
+      if (nextContext.role !== "user")
+        throw new Error("Expected second user context");
+      expect(nextContext.name).not.toBe(context.name);
+      expect(agent.inputs[2].messages.slice(0, 3)).toEqual([
+        user,
+        signed,
+        tool,
+      ]);
+    });
+
+    it("keeps visibility classification local to each subscription", async () => {
+      const input = createRunAgentInput({ messages: [user] });
+      let subscription = 0;
+      const agent = new EchoAgent((nextInput) => {
+        subscription += 1;
+        const context =
+          subscription === 1 ? { ...retained, name: undefined } : retained;
+        return lifecycle(nextInput, [snapshot([user, context])]);
+      });
+      const stream = new A2UIMiddleware().run(input, agent);
+      const first = await collectEvents(stream);
+      const second = await collectEvents(stream);
+      expect(
+        (await clientMessages(input, first)).map((message) => message.id),
+      ).toContain(retained.id);
+      expect(await clientMessages(input, second)).toEqual([user]);
+    });
+
+    it("passes ordinary runs and their output through unchanged", async () => {
+      const input = createRunAgentInput({ messages: [user, signed, tool] });
+      const agent = new EchoAgent((nextInput) =>
+        lifecycle(nextInput, [
+          ...text(reply),
+          snapshot([...nextInput.messages, reply]),
+        ]),
+      );
+      const events = await collectEvents(
+        new A2UIMiddleware().run(input, agent),
+      );
+      expect(events).toEqual(agent.emitted);
+      expect(agent.inputs[0].messages).toEqual(input.messages);
+      expect(await clientMessages(input, events)).toEqual([
+        user,
+        signed,
+        tool,
+        reply,
+      ]);
     });
   });
 

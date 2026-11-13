@@ -569,11 +569,12 @@ async def _stream_with_model_context(
 ) -> AsyncIterator[Any]:
     """Scope request context to one model-stream pull at a time.
 
-    The FastAPI endpoint deliberately runs every ``__anext__`` call in a fresh
-    task so disconnect cancellation cannot interrupt agent cleanup. A
-    ContextVar token therefore cannot be held across an adapter yield: the
-    later reset may run in a different task context. Set and restore around
-    each pull instead, before yielding the resulting event to the endpoint.
+    A consumer of ``run`` may pull successive events from different tasks,
+    and so from different contextvars Contexts. The FastAPI endpoint keeps a
+    run in one task, but other consumers need not. A ContextVar token
+    therefore cannot be held across an adapter yield: the later reset may run
+    in a different Context. Set and restore around each pull instead, before
+    yielding the resulting event to the consumer.
 
     This is also the one place both run loops pull the Strands stream through,
     which makes it the boundary between this adapter's code and everything the
@@ -1553,6 +1554,11 @@ from .session_reconcile import (
     reconcile_snapshot_tool_results,
     session_reconciliation_kind,
 )
+from .subagents import (
+    INNER_TOOL_ID_SEP as _INNER_TOOL_ID_SEP,
+    SubagentRuns,
+    strip_subagent_messages,
+)
 from .config import (
     StrandsAgentConfig,
     ToolCallContext,
@@ -1863,14 +1869,6 @@ def _coerce_text(content: Any) -> str:
 def _coerce_id(value: Any) -> str:
     """Return ``value`` if it is a non-empty string, else a fresh UUID."""
     return value if isinstance(value, str) and value else str(uuid.uuid4())
-
-
-# Separator for namespacing a sub-agent's tool call ids under the parent tool
-# call that owns them. Two agents mint toolUseIds independently, so an inner id
-# can be byte-identical to a parent one; without a namespace the inner result
-# would resolve the PARENT's tool card (and vice versa). "::" is not produced by
-# any Strands/Bedrock id generator, so the prefix is unambiguous.
-_INNER_TOOL_ID_SEP = "::"
 
 
 # Keys Strands' event loop injects into the *payload* of any event carrying a
@@ -2208,7 +2206,30 @@ def _carried_metadata(msg: Any) -> "Dict[str, Any] | None":
     return carried
 
 
-def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
+def _carried_subagent_run_id(msg: Any) -> "str | None":
+    """The message's subagent attribution, kept on the snapshot echo.
+
+    A snapshot replaces what the client assembled, so dropping the tag here
+    would ungroup every earlier turn's sub-agent work the moment a new turn
+    starts.
+    """
+    value = getattr(msg, "subagent_run_id", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _tool_description(strands_agent: Any, tool_name: str) -> "str | None":
+    """The registered tool's description, used to describe a subagent."""
+    try:
+        spec = strands_agent.tool_registry.registry[tool_name].tool_spec
+    except (AttributeError, KeyError, TypeError):
+        return None
+    description = spec.get("description") if isinstance(spec, dict) else None
+    return description if isinstance(description, str) and description else None
+
+
+def _build_snapshot_messages(
+    input_messages: List[Any], *, carry_subagent_run_id: bool = False
+) -> List[Any]:
     """Convert ``RunAgentInput.messages`` to AG-UI message objects.
 
     Used to seed the running ``MessagesSnapshotEvent`` payload so each
@@ -2231,6 +2252,9 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
                     role="user",
                     content=content,
                     metadata=_carried_metadata(msg),
+                    subagent_run_id=(
+                        _carried_subagent_run_id(msg) if carry_subagent_run_id else None
+                    ),
                 )
             )
         elif role == "assistant":
@@ -2269,6 +2293,9 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
                     # client assembled. Dropping metadata here erases the
                     # previous turn's citations the moment turn two starts.
                     metadata=_carried_metadata(msg),
+                    subagent_run_id=(
+                        _carried_subagent_run_id(msg) if carry_subagent_run_id else None
+                    ),
                 )
             )
         elif role == "tool":
@@ -2287,6 +2314,9 @@ def _build_snapshot_messages(input_messages: List[Any]) -> List[Any]:
                     error=getattr(msg, "error", None),
                     encrypted_value=getattr(msg, "encrypted_value", None),
                     metadata=_carried_metadata(msg),
+                    subagent_run_id=(
+                        _carried_subagent_run_id(msg) if carry_subagent_run_id else None
+                    ),
                 )
             )
     return out
@@ -4496,10 +4526,25 @@ class StrandsAgent:
             return
 
         self._active_runs_by_thread.add(thread_id)
+        # With attributed sub-agents, the sub-agent messages a client sends
+        # back never reach Strands, which persists only the parent
+        # conversation; the snapshot still echoes the client's full history,
+        # so the client keeps them.
+        snapshot_seed = input_data.messages
+        if self.config.subagent_visibility == "attributed":
+            parent_messages = strip_subagent_messages(snapshot_seed or [])
+            if parent_messages != list(snapshot_seed or []):
+                input_data = input_data.model_copy(
+                    update={"messages": parent_messages}
+                )
         # Close the delegate explicitly: an abandoned consumer would otherwise
         # leave the inner generator suspended until GC, so its teardown would
         # not have run by the time the slot is released.
-        events = self._run_raw(input_data, invocation_state=invocation_state)
+        events = self._run_raw(
+            input_data,
+            invocation_state=invocation_state,
+            snapshot_seed=snapshot_seed,
+        )
         try:
             async for event in events:
                 yield event
@@ -4514,8 +4559,12 @@ class StrandsAgent:
         input_data: RunAgentInput,
         *,
         invocation_state: dict[str, Any] | None = None,
+        snapshot_seed: List[Any] | None = None,
     ) -> AsyncIterator[Any]:
         """Body of :meth:`run`, without the same-thread concurrency guard."""
+        subagents = SubagentRuns(
+            self.config.subagent_visibility, _forward_inner_agent_events
+        )
 
         run_invocation_state = (
             dict(invocation_state) if invocation_state is not None else None
@@ -5342,7 +5391,11 @@ class StrandsAgent:
             session_msgs = getattr(strands_agent, "messages", None) or []
             is_delta_payload = (
                 bool(session_msgs)
-                and len(session_msgs) > len(input_data.messages or [])
+                and len(session_msgs)
+                > len(
+                    (input_data.messages if snapshot_seed is None else snapshot_seed)
+                    or []
+                )
             )
             emit_snapshots = (
                 self.config.emit_messages_snapshot and not is_delta_payload
@@ -5352,7 +5405,10 @@ class StrandsAgent:
             # full conversation history sent by the client. Each emitted
             # snapshot then carries prior turns + whatever this turn adds.
             snapshot_messages: List[Any] = (
-                _build_snapshot_messages(input_data.messages)
+                _build_snapshot_messages(
+                    input_data.messages if snapshot_seed is None else snapshot_seed,
+                    carry_subagent_run_id=subagents.attributed,
+                )
                 if emit_snapshots
                 else []
             )
@@ -6586,6 +6642,15 @@ class StrandsAgent:
                         _tse_tool_use = tool_stream.get("tool_use", {})
                         _tse_tool_name = _tse_tool_use.get("name", "")
                         _tse_tool_use_id = _tse_tool_use.get("toolUseId")
+                        _tse_behavior = self.config.tool_behaviors.get(_tse_tool_name) if _tse_tool_name else None
+
+                        # ``subagent_visibility="hidden"`` covers all a
+                        # sub-agent's wrapper yields, on every path below.
+                        # Only an explicit handler still claims its payloads.
+                        if subagents.conceals(_tse_tool_use, stream_data) and not (
+                            _tse_behavior and _tse_behavior.tool_stream_event_handler
+                        ):
+                            pass
 
                         # A2UI sub-agent streaming: re-emit the
                         # generate_a2ui tool's inner render_a2ui progress as
@@ -6596,7 +6661,7 @@ class StrandsAgent:
                         # This path is keyed off A2UI_STREAM_KEY in the
                         # payload, not the tool's toolUseId, so it must run
                         # even when toolUseId is absent.
-                        if (
+                        elif (
                             isinstance(stream_data, dict)
                             and isinstance(stream_data.get(A2UI_STREAM_KEY), dict)
                         ):
@@ -6627,8 +6692,6 @@ class StrandsAgent:
                                 "tool_stream_event missing toolUseId — skipping handler dispatch"
                             )
                         else:
-                            _tse_behavior = self.config.tool_behaviors.get(_tse_tool_name) if _tse_tool_name else None
-
                             if _tse_behavior and _tse_behavior.tool_stream_event_handler:
                                 _tse_ctx = ToolStreamEventContext(
                                     tool_use_id=_tse_tool_use_id,
@@ -6672,10 +6735,15 @@ class StrandsAgent:
                                 # sub-agent isn't an opaque black box (issue #2304).
                                 # Reached only when no explicit handler claimed the
                                 # payload and it is not a state snapshot.
-                                async for inner_agui_event in _forward_inner_agent_events(
+                                # How much of it reaches the client is
+                                # ``subagent_visibility``'s call.
+                                async for inner_agui_event in subagents.forward(
                                     stream_data,
                                     tool_stream.get("tool_use") or {},
                                     inner_tool_calls_seen,
+                                    description=_tool_description(
+                                        strands_agent, _tse_tool_name
+                                    ),
                                 ):
                                     yield inner_agui_event
 
@@ -6780,6 +6848,23 @@ class StrandsAgent:
                             tool_result_content = _serialize_tool_result_data(
                                 result_data
                             )
+
+                            # A sub-agent this call spawned ends with its
+                            # result, and its messages precede that result in
+                            # the snapshot.
+                            for _subagent_event in subagents.finish(
+                                result_tool_id,
+                                str(tool_result.get("status") or ""),
+                                tool_result_content,
+                            ):
+                                yield _subagent_event
+                            _subagent_messages = subagents.take_snapshot_messages(
+                                result_tool_id
+                            )
+                            if emit_snapshots and not (
+                                behavior and behavior.skip_messages_snapshot
+                            ):
+                                snapshot_messages.extend(_subagent_messages)
                             # A native resume re-emits the entire parked batch,
                             # including backend results completed before the
                             # interrupt. Keep the client's existing message (and
@@ -7831,6 +7916,30 @@ class StrandsAgent:
                     f"Strands interrupt detected: thread_id={input_data.thread_id}, "
                     "interrupt_ids="
                     f"{[i.id for i in pending_interrupt_outcome.interrupts]}"
+                )
+
+            # Every started subagent is closed before RUN_FINISHED. One still
+            # open here was never answered by its spawning call: the run paused
+            # on an interrupt, or the tool gave no result. No result will carry
+            # such a call's messages into the snapshot either, so they go now,
+            # each under its own spawning tool's policy.
+            for _subagent_event in subagents.close_all(
+                suspended=pending_interrupt_outcome is not None
+            ):
+                yield _subagent_event
+            _subagent_messages_published = False
+            for _spawning_tool, _subagent_messages in (
+                subagents.take_remaining_snapshot_messages()
+            ):
+                if self._will_emit_tool_snapshot(
+                    self.config.tool_behaviors.get(_spawning_tool), emit_snapshots
+                ):
+                    snapshot_messages.extend(_subagent_messages)
+                    _subagent_messages_published = True
+            if _subagent_messages_published:
+                yield MessagesSnapshotEvent(
+                    type=EventType.MESSAGES_SNAPSHOT,
+                    messages=list(snapshot_messages),
                 )
 
             # Always finish the run - frontend handles keeping action executing

@@ -2,10 +2,33 @@
 
 ## Unreleased
 
+- Add `StrandsAgentConfig.subagent_visibility` (`"inline"` default, `"attributed"`, `"hidden"`) for agents-as-tools (`Agent.as_tool()` or a generator tool re-yielding another agent's stream), Python only. `"attributed"` maps each invocation to an AG-UI subagent run: `SUBAGENT_STARTED` naming the spawning call as `parentToolCallId`, the sub-agent's text, reasoning and tool calls tagged with its `subagentRunId`, nested sub-agents linked by `parentSubagentRunId`, `SUBAGENT_FINISHED` or `SUBAGENT_ERROR` (code `STRANDS_SUBAGENT_ERROR`) before the spawning call's result, `SUBAGENT_ERROR` (code `STRANDS_SUBAGENT_ABANDONED`) for a sub-agent closed with no result before its loop ended, any tool call it left open ended first, and its messages in `MESSAGES_SNAPSHOT` attributed, under its own spawning tool's `skip_messages_snapshot`. In that mode, sub-agent messages a client sends back are kept out of the parent model's history and still echoed in the snapshot. `"inline"` keeps the existing behavior; `"hidden"` shows only the spawning call and its result.
 - Deliver user audio attachments as native Strands audio blocks, so they reach the model and persist in session history (file and snapshot sessions) byte for byte. Requires strands-agents 1.53.0+; on older SDKs the attachment is reported in `MediaDropped` with the reason `installed strands-agents does not support audio input (requires >= 1.53.0)`. Unsupported audio MIME types are reported as `unsupported media type`.
 - Deliver audio only when `StrandsAgentConfig.audio_input_supported` is `True`. It defaults to `False`: the adapter does not infer audio support from the provider class, since a Bedrock model id without audio input rejects the request at the service. Omitting the flag leaves audio disabled, and the attachment is reported in `MediaDropped` with the reason `configured model does not support audio input`, before a URL source is fetched and before anything reaches session history, on the live turn and on replayed history alike. A text turn with a dropped clip still completes, and an audio-only turn ends with `MEDIA_RESOLUTION_FAILED` without saving a turn.
 - Count delivered audio in `MediaDropped.delivered`.
 - Keep the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"]["attachments"]`, which Strands stores with the message and keeps out of provider requests. The model-visible document name stays neutral.
+
+## 1.0.4 — 2026-11-11
+
+- Fixed run handling so each run is driven from a single task, allowing OpenTelemetry spans to detach correctly.
+- Prevents OTel context token reset errors caused by spanning multiple contextvars Contexts.
+
+### Breaking changes
+
+None.
+
+## 1.0.3 — 2026-11-09
+
+- Add `StrandsAgentConfig.subagent_visibility` (`inline` default, `attributed`, `hidden`) controlling AG-UI subagent events for agents-as-tools.
+- With `attributed`, sub-agents emit `SUBAGENT_STARTED`/`SUBAGENT_FINISHED`/`SUBAGENT_ERROR` and carry `subagentRunId` on text, reasoning, and tool calls.
+- Allow opting out of forced A2UI tool choice; preserve forced choice for null config.
+- Fix closing of nested subagents and open inner tool calls at every depth.
+- Tighten subagent snapshot ownership so parallel sub-agents each follow their own snapshot and a sibling interrupt no longer loses finished history.
+- Pin openai below 3 in Python examples to keep the citations demo working.
+
+### Breaking changes
+
+None.
 
 ## 1.0.2 — 2026-10-15
 

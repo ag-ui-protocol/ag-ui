@@ -139,6 +139,7 @@ describe("the conformance fixture corpus", () => {
     "noWarnings",
     "messageCount",
     "messages",
+    "messageAbsentPaths",
     "state",
     "request",
     "requestAbsentPaths",
@@ -184,6 +185,7 @@ describe("the conformance fixture corpus", () => {
       case "warnings":
       case "eventTypesAbsent":
       case "eventAbsentPaths":
+      case "messageAbsentPaths":
       case "requestAbsentPaths":
         return Array.isArray(value) && value.length > 0;
       case "request":
@@ -256,6 +258,8 @@ describe("the conformance fixture corpus", () => {
     noWarnings: (v) => typeof v === "boolean",
     messageCount: (v) => typeof v === "number",
     messages: (v) => Array.isArray(v),
+    messageAbsentPaths: (v) =>
+      Array.isArray(v) && v.every((e) => typeof e === "string"),
     state: () => true,
     request: (v) => v !== null && typeof v === "object" && !Array.isArray(v),
     requestAbsentPaths: (v) =>

@@ -546,4 +546,22 @@ export const menuIntegrations = [
       "tool_based_generative_ui",
     ],
   },
+  {
+    id: "openai-agents-python",
+    name: "OpenAI Agents SDK (Python)",
+    features: [
+      "ag_ui_docs_copilot",
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "human_in_the_loop_approval",
+      "tool_based_generative_ui",
+      "subagents",
+      "custom_lifecycle_events",
+      "dynamic_system_prompt",
+    ],
+    // The example server runs locally (port 8031); nothing is deployed for
+    // the hosted Dojo yet.
+    localOnly: true,
+  },
 ] as const satisfies MenuIntegrationConfig[];
