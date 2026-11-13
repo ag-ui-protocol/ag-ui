@@ -302,10 +302,10 @@ async def test_each_create_gets_a_surface_of_its_own_without_a_host_default(vers
     )
     [first_id] = _created_surface_ids(first)
     [second_id] = _created_surface_ids(second)
-    # A client that keys surfaces by id shows two dashboards, not one.
-    assert first_id != second_id
-    assert first_id.startswith("dynamic-surface-")
-    assert second_id.startswith("dynamic-surface-")
+    # A client that keys surfaces by id shows two dashboards, not one. The id
+    # comes from the tool call, so a replayed run gets the same id.
+    assert first_id == "dynamic-surface-first-call"
+    assert second_id == "dynamic-surface-second-call"
 
 
 @pytest.mark.parametrize("version", ["v0.9", "1.0"])

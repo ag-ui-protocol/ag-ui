@@ -276,13 +276,17 @@ class A2UISubAgentTool(BaseTool):
         # Without a host default_surface_id, a new surface gets an id of its
         # own. A client that keys surfaces by id (CopilotKit 2.x) otherwise
         # replaces the previous dashboard with each new one, because every
-        # create shares the toolkit default. An update keeps the surface it
-        # targets; a host default_surface_id keeps its meaning.
-        surface_id = target_surface_id or (
-            f"{self._default_surface_id}-{uuid.uuid4().hex[:8]}"
-            if self._unique_surface_ids and intent != "update"
-            else self._default_surface_id
-        )
+        # create shares the toolkit default. The id comes from the tool call,
+        # so a replayed run (a recorded fixture) gets the same id. An update
+        # keeps the surface it targets; a host default_surface_id keeps its
+        # meaning.
+        if target_surface_id:
+            surface_id = target_surface_id
+        elif self._unique_surface_ids and intent != "update":
+            call_id = getattr(tool_context, "function_call_id", None)
+            surface_id = f"{self._default_surface_id}-{call_id or uuid.uuid4().hex[:8]}"
+        else:
+            surface_id = self._default_surface_id
 
         events = self._session_events(tool_context)
         # AG-UI messages drive prepare_a2ui_request's prior-surface lookup
