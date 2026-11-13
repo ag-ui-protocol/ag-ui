@@ -27,6 +27,15 @@ class TestCustomEventNamesValues(unittest.TestCase):
     def test_exit_name(self):
         assert CustomEventNames.Exit == "exit"
 
+    def test_copilotkit_emit_message_name(self):
+        assert CustomEventNames.CopilotKitEmitMessage == "copilotkit_manually_emit_message"
+
+    def test_copilotkit_emit_tool_call_name(self):
+        assert CustomEventNames.CopilotKitEmitToolCall == "copilotkit_manually_emit_tool_call"
+
+    def test_copilotkit_emit_state_name(self):
+        assert CustomEventNames.CopilotKitEmitState == "copilotkit_manually_emit_intermediate_state"
+
 
 class TestHandleSingleEventCustomEvents(unittest.IsolatedAsyncioTestCase):
     """Test that _handle_single_event correctly processes custom emit events.
@@ -221,3 +230,73 @@ class TestHandleSingleEventCustomEvents(unittest.IsolatedAsyncioTestCase):
             events.append(ev)
 
         assert any(e.type == EventType.STATE_SNAPSHOT for e in events)
+
+    @pytest.mark.asyncio
+    async def test_copilotkit_emit_message(self):
+        """CopilotKit's copilotkit_emit_message must surface as text events (#1364).
+
+        The CopilotKit Python SDK dispatches custom events named
+        "copilotkit_manually_emit_message" with the same payload shape as
+        "manually_emit_message" (message_id / message / role). Before this fix
+        the bridge only recognised the un-prefixed name, so the message only
+        reached the frontend as a generic CUSTOM event and was never rendered.
+        """
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": "copilotkit_manually_emit_message",
+            "data": {"message_id": "msg-ck-1", "message": "Step 1 of 10 complete", "role": "assistant"},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.TEXT_MESSAGE_START in event_types
+        assert EventType.TEXT_MESSAGE_CONTENT in event_types
+        assert EventType.TEXT_MESSAGE_END in event_types
+
+    @pytest.mark.asyncio
+    async def test_copilotkit_emit_tool_call(self):
+        """CopilotKit's copilotkit_emit_tool_call must surface as tool events (#1364).
+
+        The CopilotKit Python SDK dispatches custom events named
+        "copilotkit_manually_emit_tool_call" with the same payload shape as
+        "manually_emit_tool_call" (id / name / args).
+        """
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": "copilotkit_manually_emit_tool_call",
+            "data": {"id": "tc-ck-1", "name": "SearchTool", "args": {"steps": 10}},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.TOOL_CALL_START in event_types
+        assert EventType.TOOL_CALL_ARGS in event_types
+        assert EventType.TOOL_CALL_END in event_types
+
+    @pytest.mark.asyncio
+    async def test_copilotkit_emit_state(self):
+        """CopilotKit's copilotkit_emit_state must surface as a snapshot (#1364).
+
+        The CopilotKit Python SDK dispatches custom events named
+        "copilotkit_manually_emit_intermediate_state" (note "intermediate")
+        with the raw state as the payload.
+        """
+        agent = self._make_agent()
+        event = {
+            "event": LangGraphEventTypes.OnCustomEvent.value,
+            "name": "copilotkit_manually_emit_intermediate_state",
+            "data": {"progress": 3},
+        }
+        events = []
+        async for ev in agent._handle_single_event(event, {}):
+            events.append(ev)
+
+        event_types = [e.type for e in events]
+        assert EventType.STATE_SNAPSHOT in event_types
+        assert agent.active_run["manually_emitted_state"] == {"progress": 3}
