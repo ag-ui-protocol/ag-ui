@@ -39,7 +39,7 @@
     }
   },
   "devDependencies": {
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "esbuild": "^0.25.0",
     "@vitest/coverage-istanbul": "^4.0.18",
     "eslint": "^9.37.0",

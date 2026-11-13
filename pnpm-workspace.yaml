@@ -34,6 +34,12 @@ overrides:
   # Shared constructs its own middleware when replaying recorded A2UI events.
   "@copilotkit/shared@1.87.0>@ag-ui/a2ui-middleware": "0.0.16"
   zod: 3.25.76
+  # The SDK packages build and test on zod 4, the major most apps now
+  # install. Their published peer range is unchanged.
+  "@ag-ui/core>zod": ^4.6.7
+  "@ag-ui/client>zod": ^4.6.7
+  "@ag-ui/encoder>zod": ^4.6.7
+  "@ag-ui/proto>zod": ^4.6.7
   "@google/adk>zod": ^4.2.1
   "@strands-agents/sdk>zod": ^4.4.3
   "@ag-ui/aws-strands>zod": ^4.4.3
