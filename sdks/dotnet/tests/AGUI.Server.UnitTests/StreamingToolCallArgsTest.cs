@@ -290,4 +290,34 @@ public sealed class StreamingToolCallArgsTest
         Assert.Single(events.OfType<ToolCallStartEvent>(), e => e.ToolCallId == "call_a");
         Assert.Single(events.OfType<ToolCallEndEvent>(), e => e.ToolCallId == "call_a");
     }
+
+    // https://github.com/ag-ui-protocol/ag-ui/issues/3368
+    // With streamed arguments, each tool call still hangs off the text segment it followed when
+    // the provider stamps one MessageId on the whole response.
+    [Fact]
+    public async Task Fragments_AfterResumedText_ParentToLatestTextSegmentAsync()
+    {
+        static ChatResponseUpdate Text(string text) => new(ChatRole.Assistant, text) { MessageId = "m1" };
+        static ChatResponseUpdate WithId(ChatResponseUpdate u)
+        {
+            u.MessageId = "m1";
+            return u;
+        }
+
+        var events = await RunAsync(
+            Text("A"),
+            WithId(Fragment(0, "call_1", "search", "{}")),
+            WithId(Coalesced("call_1", "search")),
+            Text("B"),
+            WithId(Fragment(0, "call_2", "fetch", "{}")),
+            WithId(Coalesced("call_2", "fetch")),
+            Text("C"));
+
+        Assert.Equal(
+            ["m1", "m1-2", "m1-3"],
+            events.OfType<TextMessageStartEvent>().Select(e => e.MessageId).ToList());
+        Assert.Equal(
+            [("call_1", "m1"), ("call_2", "m1-2")],
+            events.OfType<ToolCallStartEvent>().Select(e => (e.ToolCallId, e.ParentMessageId)).ToList());
+    }
 }
