@@ -186,6 +186,36 @@ class HITLLangGraphAgent(LangGraphAgent):
 
 The base class still handles `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` ordering, legacy `CustomEvent(on_interrupt)` emission, the `prepare_stream` short-circuit, and `forwarded_props.command.resume` deprecation — your subclass only needs to care about the HITL-specific translation.
 
+## Frontend tools with `create_agent()`
+
+A `create_agent()` graph binds only the tools passed at construction time,
+so a frontend tool arriving in `RunAgentInput.tools` never reaches the LLM
+on its own ([#892](https://github.com/ag-ui-protocol/ag-ui/issues/892)):
+the integration merges those tools into `state["tools"]`, but a plain
+`create_agent()` graph's `AgentState` has no `tools` channel and LangGraph
+drops the unknown input key. Add `FrontendToolsMiddleware` to the agent so
+the tools are bound to the model call:
+
+```python
+from langchain.agents import create_agent
+from ag_ui_langgraph import FrontendToolsMiddleware
+
+graph = create_agent(
+    model=model,
+    tools=[backend_tool],
+    middleware=[FrontendToolsMiddleware()],
+    checkpointer=MemorySaver(),
+)
+```
+
+The middleware also keeps frontend tool calls off the backend tools node
+(otherwise the tools node answers with a fabricated
+`"<name> is not a valid tool"` error) and restores the intercepted calls
+into the checkpoint before the run ends, so the client's `ToolMessage`
+still matches the call it answers on the next turn. Hand-built graphs
+whose state schema carries tools (e.g. `CopilotKitState`) do not need it —
+their chat node already binds `state["tools"]`.
+
 ## To run the dojo examples
 
 ```bash
