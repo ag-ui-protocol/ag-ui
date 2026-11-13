@@ -1,14 +1,12 @@
 name: Publish Dart SDK to pub.dev
 
 on:
-  # Manual trigger only - no automatic publishing
+  # Must match the pub.dev automated publishing pattern: dart-v{{version}}.
+  push:
+    tags:
+      - 'dart-v*'
+  # Manual runs validate the package only; publishing requires a tag push.
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Run in dry-run mode (validate the package without publishing)'
-        required: false
-        type: boolean
-        default: false
 
 # SECURITY: Build/test and publish are split into separate jobs. The pub.dev
 # OIDC credential (`id-token: write`) is only granted to the publish job, never
@@ -42,6 +40,19 @@ jobs:
           lfs: true
           persist-credentials: false
 
+      - name: Check release tag matches package version
+        if: github.event_name == 'push'
+        working-directory: sdks/community/dart
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION=$(grep '^version:' pubspec.yaml | head -1 | awk '{print $2}')
+          if [ "$RELEASE_TAG" != "dart-v$VERSION" ]; then
+            echo "::error::Release tag $RELEASE_TAG must match dart-v$VERSION from pubspec.yaml."
+            exit 1
+          fi
+
       - name: Set up Dart
         uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260  # v1.7.2
         with:
@@ -71,8 +82,21 @@ jobs:
         working-directory: sdks/community/dart
         run: dart test --exclude-tags requires-server
 
+      # Keep existing analyzer warnings advisory, as in the Analyze step.
+      # Package validation errors still fail the dry-run.
+      - name: Validate package
+        working-directory: sdks/community/dart
+        run: dart pub publish --dry-run --ignore-warnings
+
+      - name: Validation summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "## Package validation complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "No package was uploaded. To publish, push a dart-v<version> tag matching pubspec.yaml." >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: Publish to pub.dev
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/dart-v')
     needs: build-and-test
     runs-on: ubuntu-latest
     environment: pub-dev
@@ -101,7 +125,6 @@ jobs:
       # regressed" check): pub.dev rejects re-publishing an existing version,
       # so fail early with a clear message instead of deep inside the publish.
       - name: Check version is publishable
-        if: inputs.dry_run == false
         working-directory: sdks/community/dart
         run: |
           set -euo pipefail
@@ -116,41 +139,25 @@ jobs:
           fi
           echo "$PKG $VERSION is not yet on pub.dev - OK to publish."
 
-      - name: Publish to pub.dev (dry-run)
-        if: inputs.dry_run == true
-        working-directory: sdks/community/dart
-        run: |
-          echo "🔍 Validating package without publishing..."
-          dart pub publish --dry-run
-
       - name: Publish to pub.dev
-        if: inputs.dry_run == false
         working-directory: sdks/community/dart
         run: |
           echo "🚀 Publishing to pub.dev..."
           dart pub publish --force
 
       - name: Summary
-        if: success() && inputs.dry_run == false
         working-directory: sdks/community/dart
         run: |
           VERSION=$(grep '^version:' pubspec.yaml | head -1 | awk '{print $2}')
-          echo "## ✅ Publishing Complete!" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The Dart SDK has been published to pub.dev." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Published Package" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`ag_ui:${VERSION}\` → https://pub.dev/packages/ag_ui/versions/${VERSION}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Next Steps" >> "$GITHUB_STEP_SUMMARY"
-          echo "1. Confirm the new version on https://pub.dev/packages/ag_ui" >> "$GITHUB_STEP_SUMMARY"
-          echo "2. pub.dev indexing and the package score update within a few minutes" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Dry-run Summary
-        if: success() && inputs.dry_run == true
-        run: |
-          echo "## ✅ Dry-run Complete!" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "The dry-run completed successfully. No package was uploaded." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Run without the dry-run flag to publish to pub.dev." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## ✅ Publishing Complete!"
+            echo ""
+            echo "The Dart SDK has been published to pub.dev."
+            echo ""
+            echo "### Published Package"
+            echo "- \`ag_ui:${VERSION}\` → https://pub.dev/packages/ag_ui/versions/${VERSION}"
+            echo ""
+            echo "### Next Steps"
+            echo "1. Confirm the new version on https://pub.dev/packages/ag_ui"
+            echo "2. pub.dev indexing and the package score update within a few minutes"
+          } >> "$GITHUB_STEP_SUMMARY"
