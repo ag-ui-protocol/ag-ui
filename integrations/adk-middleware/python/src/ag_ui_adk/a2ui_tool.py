@@ -206,6 +206,9 @@ class A2UISubAgentTool(BaseTool):
         self._model = cfg["model"]
         self._guidelines = cfg["guidelines"]
         self._default_surface_id = cfg["default_surface_id"]
+        # True when the host set no default_surface_id: then each new surface
+        # gets an id of its own (see run_async).
+        self._unique_surface_ids = cfg.get("unique_surface_ids", False)
         self._default_catalog_id = cfg["default_catalog_id"]
         self._catalog = cfg["catalog"]
         self._recovery = cfg["recovery"]
@@ -270,6 +273,16 @@ class A2UISubAgentTool(BaseTool):
         intent = args.get("intent", "create")
         target_surface_id = args.get("target_surface_id")
         changes = args.get("changes")
+        # Without a host default_surface_id, a new surface gets an id of its
+        # own. A client that keys surfaces by id (CopilotKit 2.x) otherwise
+        # replaces the previous dashboard with each new one, because every
+        # create shares the toolkit default. An update keeps the surface it
+        # targets; a host default_surface_id keeps its meaning.
+        surface_id = target_surface_id or (
+            f"{self._default_surface_id}-{uuid.uuid4().hex[:8]}"
+            if self._unique_surface_ids and intent != "update"
+            else self._default_surface_id
+        )
 
         events = self._session_events(tool_context)
         # AG-UI messages drive prepare_a2ui_request's prior-surface lookup
@@ -311,7 +324,7 @@ class A2UISubAgentTool(BaseTool):
                 processor = create_express_processor(
                     catalog_source,
                     default_catalog_id=self._default_catalog_id,
-                    surface_id=target_surface_id or self._default_surface_id,
+                    surface_id=surface_id,
                 )
                 guidelines = (
                     v1_guidelines(self._guidelines, direct_json=False)
@@ -349,7 +362,7 @@ class A2UISubAgentTool(BaseTool):
         if prep.get("prior"):
             try:
                 prior_version, creation_attributes = _prior_surface_configuration(
-                    messages, target_surface_id or self._default_surface_id
+                    messages, surface_id
                 )
                 if prior_version != version:
                     raise ValueError(
@@ -405,7 +418,7 @@ class A2UISubAgentTool(BaseTool):
                     processor,
                     prep,
                     activity_key,
-                    target_surface_id or self._default_surface_id,
+                    surface_id,
                     validation_catalog,
                 )
                 if is_express
@@ -431,7 +444,7 @@ class A2UISubAgentTool(BaseTool):
                 is_update=prep["is_update"],
                 target_surface_id=target_surface_id,
                 prior=prep.get("prior"),
-                default_surface_id=self._default_surface_id,
+                default_surface_id=surface_id,
                 default_catalog_id=catalog_id,
             )
 
@@ -1070,6 +1083,7 @@ def get_a2ui_tool(params: A2UIToolParams) -> BaseTool:
         An ADK ``BaseTool`` ready to add to an ``LlmAgent``'s ``tools`` list.
     """
     cfg = resolve_a2ui_tool_params(params)
+    cfg["unique_surface_ids"] = not params.get("default_surface_id")
     return A2UISubAgentTool(cfg)
 
 
