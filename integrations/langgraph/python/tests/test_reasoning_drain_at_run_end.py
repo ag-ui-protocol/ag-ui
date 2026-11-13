@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.types import interrupt
 
 from ag_ui_langgraph.agent import LangGraphAgent
 from tests._helpers import make_agent, _record_dispatch
@@ -192,6 +193,52 @@ class TestRunFinishesAfterDroppedReasoningStream(unittest.IsolatedAsyncioTestCas
             self.assertEqual(types.count(opener), 1)
             self.assertEqual(types.count(closer), 1)
         self.assertEqual(types[-1], EventType.RUN_FINISHED)
+        self.assertLess(types.index(EventType.REASONING_END), types.index(EventType.RUN_FINISHED))
+
+
+class TestInterruptAfterDroppedReasoningStream(unittest.IsolatedAsyncioTestCase):
+    """The interrupt path ends the run through its own tail; the span must be
+    closed there too, ahead of RUN_FINISHED(outcome=interrupt)."""
+
+    async def test_open_span_is_closed_before_interrupt_run_finished(self):
+        async def think(state, config):
+            try:
+                await _DroppedStreamModel().ainvoke(state["messages"], config)
+            except TimeoutError:
+                pass  # a node or middleware that tolerates a failed model call
+            interrupt({"question": "approve?"})
+            return {}
+
+        graph = StateGraph(MessagesState)
+        graph.add_node("think", think)
+        graph.add_edge(START, "think")
+        graph.add_edge("think", END)
+        agent = LangGraphAgent(
+            name="t",
+            graph=graph.compile(checkpointer=MemorySaver()),
+            emit_interrupt_outcome=True,
+        )
+        run_input = RunAgentInput(
+            thread_id="thread-reasoning-interrupt",
+            run_id="run-reasoning-interrupt",
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+            messages=[UserMessage(id="u1", role="user", content="hi")],
+        )
+
+        events = [e async for e in agent.run(run_input) if not isinstance(e, str)]
+        types = [e.type for e in events]
+
+        for opener, closer in (
+            (EventType.REASONING_START, EventType.REASONING_END),
+            (EventType.REASONING_MESSAGE_START, EventType.REASONING_MESSAGE_END),
+        ):
+            self.assertEqual(types.count(opener), 1)
+            self.assertEqual(types.count(closer), 1)
+        self.assertEqual(types[-1], EventType.RUN_FINISHED)
+        self.assertEqual(events[-1].outcome.type, "interrupt")
         self.assertLess(types.index(EventType.REASONING_END), types.index(EventType.RUN_FINISHED))
 
 
