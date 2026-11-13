@@ -6,6 +6,7 @@ import {
   TextBlock,
   type AgentConfig,
   type SystemContentBlock,
+  type SystemPromptData,
 } from "@strands-agents/sdk";
 import { EventType } from "@ag-ui/core";
 
@@ -64,6 +65,48 @@ async function run(adapter: StrandsAgent, threadId = "a") {
 }
 
 describe("system prompt preservation with the real SDK", () => {
+  it("rejects an unknown SDK block instead of dropping its prototype", () => {
+    class FutureSystemBlock {
+      readonly type = "futureSystemBlock";
+
+      toJSON() {
+        return { futureContent: "opaque" };
+      }
+    }
+
+    // Simulate a newer installed SDK than the one the adapter compiled with.
+    const prompt = [new FutureSystemBlock()] as unknown as SystemContentBlock[];
+    expect(() => setup(prompt)).toThrowError(
+      new TypeError(
+        "Unsupported Strands system prompt block type: futureSystemBlock",
+      ),
+    );
+  });
+
+  it("still snapshots plain prompt data from an Agent-like template", async () => {
+    const text = { text: "Original instructions" };
+    const prompt = [
+      text,
+      { cachePoint: { cacheType: "default" } },
+    ] satisfies SystemPromptData;
+    const model = new ScriptedModel([{ kind: "text", text: "ok" }]);
+    const template = new Agent({ model, printer: false });
+    // Agent-like templates may expose constructor data rather than SDK classes.
+    Object.assign(template, { systemPrompt: prompt });
+    const adapter = new StrandsAgent({ agent: template, name: "test" });
+    text.text = "Changed instructions";
+    prompt.push({ text: "Appended block" });
+
+    const thread = await run(adapter);
+
+    const expected = [
+      new TextBlock("Original instructions"),
+      new CachePointBlock({ cacheType: "default" }),
+    ];
+    expect(thread.systemPrompt).toEqual(expected);
+    expect(model.callOptions[0]?.systemPrompt).toEqual(expected);
+  });
+
   it.each([
     ["omitted", undefined],
     ["empty string", ""],

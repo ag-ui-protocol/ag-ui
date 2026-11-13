@@ -824,13 +824,22 @@ function _copySystemPrompt(
   // Keep data arrays as data and SDK block arrays as SDK instances.
   return prompt.map((block) => {
     if ("type" in block) {
-      switch (block.type) {
+      const type = block.type;
+      switch (type) {
         case "textBlock":
           return TextBlock.fromJSON(block.toJSON());
         case "cachePointBlock":
           return CachePointBlock.fromJSON(structuredClone(block.toJSON()));
         case "guardContentBlock":
           return GuardContentBlock.fromJSON(structuredClone(block.toJSON()));
+        default: {
+          // Fail at runtime for a newer SDK, and at compile time when its
+          // system block union gains a kind this adapter cannot yet copy.
+          const unsupported: never = type;
+          throw new TypeError(
+            `Unsupported Strands system prompt block type: ${String(unsupported)}`,
+          );
+        }
       }
     }
     return structuredClone(block);
