@@ -131,8 +131,8 @@ func (e *Emitter) ReasoningEnd(id string)        { e.write(events.NewReasoningEn
 
 // --- tool calls ---
 
-func (e *Emitter) ToolStart(toolCallID, name string) {
-	e.write(events.NewToolCallStartEvent(toolCallID, name))
+func (e *Emitter) ToolStart(toolCallID, name, parentMessageID string) {
+	e.write(events.NewToolCallStartEvent(toolCallID, name, events.WithParentMessageID(parentMessageID)))
 }
 
 func (e *Emitter) ToolArgs(toolCallID, delta string) {

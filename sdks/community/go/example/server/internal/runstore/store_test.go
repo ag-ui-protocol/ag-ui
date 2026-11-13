@@ -5,17 +5,51 @@ import (
 	"testing"
 	"time"
 
+	aguitypes "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 	"github.com/cloudwego/eino/schema"
 )
 
 func testSaved(content string) *Saved {
 	return &Saved{
-		Messages: []*schema.Message{schema.UserMessage(content)},
+		Messages:     []*schema.Message{schema.UserMessage(content)},
+		WireMessages: []aguitypes.Message{{ID: "wire-1", Role: aguitypes.RoleUser, Content: content}},
 		Pending: []schema.ToolCall{{
 			ID:       "c1",
 			Function: schema.FunctionCall{Name: "file_read", Arguments: `{}`},
 		}},
 		State: map[string]any{"status": "awaiting_approval"},
+	}
+}
+
+func TestWireMessagesHaveIndependentSaveAndLoadOwnership(t *testing.T) {
+	s := New()
+	saved := testSaved("hi")
+	source := &aguitypes.InputContentSource{Type: "data", Value: "original"}
+	metadata := map[string]any{"nested": []any{map[string]any{"value": "original"}}}
+	saved.WireMessages[0].Content = []aguitypes.InputContent{{Type: "image", Source: source, Metadata: metadata}}
+	s.Save("k", saved)
+	saved.WireMessages[0].ID = "caller-mutated"
+	source.Value = "caller-mutated"
+	metadata["nested"].([]any)[0].(map[string]any)["value"] = "caller-mutated"
+
+	first, _ := s.Load("k")
+	if first.WireMessages[0].ID != "wire-1" {
+		t.Fatalf("save aliased caller wire transcript: %q", first.WireMessages[0].ID)
+	}
+	firstPart := first.WireMessages[0].Content.([]aguitypes.InputContent)[0]
+	if firstPart.Source.Value != "original" || firstPart.Metadata.(map[string]any)["nested"].([]any)[0].(map[string]any)["value"] != "original" {
+		t.Fatalf("save aliased nested wire content: %#v", firstPart)
+	}
+	first.WireMessages[0].ID = "load-mutated"
+	firstPart.Source.Value = "load-mutated"
+	firstPart.Metadata.(map[string]any)["nested"].([]any)[0].(map[string]any)["value"] = "load-mutated"
+	second, _ := s.Load("k")
+	if second.WireMessages[0].ID != "wire-1" {
+		t.Fatalf("load exposed stored wire transcript: %q", second.WireMessages[0].ID)
+	}
+	secondPart := second.WireMessages[0].Content.([]aguitypes.InputContent)[0]
+	if secondPart.Source.Value != "original" || secondPart.Metadata.(map[string]any)["nested"].([]any)[0].(map[string]any)["value"] != "original" {
+		t.Fatalf("load exposed nested stored content: %#v", secondPart)
 	}
 }
 

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/example/server/internal/wireclone"
 	"io"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	aguitypes "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
@@ -101,8 +103,9 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 
 	key := runstore.Key(threadID, runID)
 	var (
-		st       *State
-		messages []*schema.Message
+		st           *State
+		messages     []*schema.Message
+		wireMessages []aguitypes.Message
 	)
 
 	// Resume path: rehydrate a paused run and settle the pending tool calls.
@@ -152,6 +155,7 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 		}
 		st = StateFromSnapshot(saved.State)
 		messages = saved.Messages
+		wireMessages = saved.WireMessages
 		emit.StateSnapshot(st.Snapshot())
 
 		emit.StepStarted("tools")
@@ -159,9 +163,9 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 		// rendering tool cards has the call to attach the result to — the original
 		// proposal was emitted in the prior (interrupted) response, not this one.
 		for _, tc := range saved.Pending {
-			emitToolProposal(emit, tc)
+			emitToolProposal(emit, tc, toolOwnerID(wireMessages, tc.ID))
 		}
-		settlePendingToolCalls(ctx, emit, deps, saved.Pending, &messages, st, approvals)
+		settlePendingToolCalls(ctx, emit, deps, saved.Pending, &messages, &wireMessages, st, approvals)
 		emit.StepFinished("tools")
 	}
 
@@ -170,6 +174,7 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 		st = NewState()
 		st.Seed(in.State)
 		messages = ensureSystemPrompt(toEinoMessages(in.Messages, deps.Provider), cfg.SystemPrompt)
+		wireMessages = wireclone.Messages(in.Messages)
 		emit.StateSnapshot(st.Snapshot())
 	}
 
@@ -190,7 +195,7 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 		}
 
 		emit.StepStarted("llm")
-		assistant, err := streamTurn(ctx, emit, cm, messages, cfg.StreamToolCalls)
+		turn, err := streamTurn(ctx, emit, cm, messages, cfg.StreamToolCalls)
 		emit.StepFinished("llm")
 		if err != nil {
 			// A canceled context or an already-gated emitter means the client
@@ -207,12 +212,15 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 			emit.RunError("the agent failed to generate a response")
 			return
 		}
+		assistant := turn.Assistant
 		messages = append(messages, assistant)
 
 		// Validate model-emitted tool calls before proposing or executing them.
 		// actionable is the subset worth running; assistant.ToolCalls is narrowed to
 		// the calls kept on the message (each retaining a matching tool response).
-		actionable := validateToolCalls(emit, deps.Logger, assistant, &messages)
+		wireMessages = append(wireMessages, turn.WireMessages...)
+		actionable := validateToolCalls(emit, deps.Logger, assistant, &messages, &wireMessages)
+		wireMessages = setWireToolCalls(wireMessages, turn.ToolOwnerID, assistant.ToolCalls)
 
 		if len(assistant.ToolCalls) == 0 {
 			converged = true
@@ -239,22 +247,23 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 				// sequence validators reject. (Only reachable if the model hallucinates
 				// an unknown tool alongside a real client call — a narrow case.)
 				for _, sc := range serverCalls {
-					messages = append(messages, schema.ToolMessage(
-						`{"error":"not executed: a client tool in this turn took priority"}`, sc.ID))
+					content := `{"error":"not executed: a client tool in this turn took priority"}`
+					messages = append(messages, schema.ToolMessage(content, sc.ID))
+					wireMessages = append(wireMessages, aguitypes.Message{ID: aguievents.GenerateMessageID(), Role: aguitypes.RoleTool, Content: content, ToolCallID: sc.ID})
 				}
-				emit.MessagesSnapshot(toAGUIMessages(messages))
+				emit.MessagesSnapshot(wireMessages)
 				emit.RunFinishedSuccess()
 				return
 			}
 			// Server-only this turn: execute (emits TOOL_CALL_RESULT only; START/ARGS/END
 			// already streamed) and continue the loop. No interrupt on this track.
-			settlePendingToolCalls(ctx, emit, deps, serverCalls, &messages, st, nil)
+			settlePendingToolCalls(ctx, emit, deps, serverCalls, &messages, &wireMessages, st, nil)
 			continue
 		}
 
 		emit.StepStarted("tools")
 		for _, tc := range actionable {
-			emitToolProposal(emit, tc)
+			emitToolProposal(emit, tc, turn.ToolOwnerID)
 		}
 
 		if !deps.AutoApprove && !cfg.NeverInterrupt {
@@ -283,18 +292,19 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 			// would regress the client back to the pre-pause status.
 			emit.StateDelta(st.SetStatus("awaiting_approval"))
 			deps.Store.Save(key, &runstore.Saved{
-				Messages: messages,
-				Pending:  actionable,
-				State:    st.Snapshot(),
+				Messages:     messages,
+				WireMessages: wireMessages,
+				Pending:      actionable,
+				State:        st.Snapshot(),
 			})
 			emit.StepFinished("tools")
-			emit.MessagesSnapshot(toAGUIMessages(messages))
+			emit.MessagesSnapshot(wireMessages)
 			emit.RunFinishedInterrupt(interrupts)
 			return
 		}
 
 		// Auto-approve: execute immediately and continue the loop.
-		settlePendingToolCalls(ctx, emit, deps, actionable, &messages, st, nil)
+		settlePendingToolCalls(ctx, emit, deps, actionable, &messages, &wireMessages, st, nil)
 		emit.StepFinished("tools")
 	}
 
@@ -303,7 +313,7 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 		// produced a final answer, so this is an error, not a successful run.
 		deps.Logger.Warn("agent did not converge within iteration budget",
 			"thread", threadID, "run", runID, "maxIterations", maxIter)
-		emit.MessagesSnapshot(toAGUIMessages(messages))
+		emit.MessagesSnapshot(wireMessages)
 		emit.RunError(fmt.Sprintf("agent did not converge within %d iterations", maxIter))
 		return
 	}
@@ -312,7 +322,7 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 	// agent_complete is emitted only on the converged (success) path; the error and
 	// interrupt terminal paths intentionally omit it.
 	emit.Custom("agent_complete", map[string]any{"toolCalls": st.ToolCalls, "filesRead": st.FilesRead})
-	emit.MessagesSnapshot(toAGUIMessages(messages))
+	emit.MessagesSnapshot(wireMessages)
 	emit.RunFinishedSuccess()
 }
 
@@ -328,7 +338,20 @@ func Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAgentInput, deps *
 // opened call at stream EOF. Callers that stream MUST NOT also emitToolProposal
 // for the same calls (that double-emits). When false, tool calls are left for the
 // caller to surface post-turn.
-func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatModel, messages []*schema.Message, streamToolCalls bool) (*schema.Message, error) {
+type streamTurnResult struct {
+	Assistant    *schema.Message
+	WireMessages []aguitypes.Message
+	ToolOwnerID  string
+	toolOwner    int
+}
+
+func (r *streamTurnResult) setToolCalls(calls []schema.ToolCall) {
+	if r.toolOwner >= 0 {
+		r.WireMessages[r.toolOwner].ToolCalls = toAGUIToolCalls(calls)
+	}
+}
+
+func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatModel, messages []*schema.Message, streamToolCalls bool) (*streamTurnResult, error) {
 	sr, err := cm.Stream(ctx, messages)
 	if err != nil {
 		return nil, err
@@ -336,18 +359,22 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 	defer sr.Close()
 
 	var chunks []*schema.Message
+	result := &streamTurnResult{toolOwner: -1}
 	var textID string      // assigned a fresh id each time a text block opens
 	var reasoningID string // assigned a fresh id each time a reasoning block opens
+	var text, reasoning strings.Builder
 	textOpen, reasoningOpen := false, false
 
 	// Streaming tool-call tap state, keyed by tool-call identity (Index, stable per
 	// call across OPEN/delta/CLOSE chunks).
 	type tcStream struct {
 		started  bool
+		invalid  bool
 		id, name string
 		buffered []string // arg fragments held until id+name are known
 	}
 	tcs := map[string]*tcStream{}
+	toolCallKeysByID := map[string]string{}
 	var tcOrder []string
 
 	closeReasoning := func() {
@@ -355,12 +382,16 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 			emit.ReasoningMessageEnd(reasoningID)
 			emit.ReasoningEnd(reasoningID)
 			reasoningOpen = false
+			result.WireMessages = append(result.WireMessages, aguitypes.Message{ID: reasoningID, Role: aguitypes.RoleReasoning, Content: reasoning.String()})
+			reasoning.Reset()
 		}
 	}
 	closeText := func() {
 		if textOpen {
 			emit.TextEnd(textID)
 			textOpen = false
+			result.WireMessages = append(result.WireMessages, aguitypes.Message{ID: textID, Role: aguitypes.RoleAssistant, Content: text.String()})
+			text.Reset()
 		}
 	}
 	// streamToolCallChunk surfaces one chunk's tool-call fragments live.
@@ -371,6 +402,11 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 		// A tool call ends any open text/reasoning block so blocks never overlap.
 		closeReasoning()
 		closeText()
+		if result.ToolOwnerID == "" {
+			result.ToolOwnerID = aguievents.GenerateMessageID()
+			result.toolOwner = len(result.WireMessages)
+			result.WireMessages = append(result.WireMessages, aguitypes.Message{ID: result.ToolOwnerID, Role: aguitypes.RoleAssistant})
+		}
 		for _, tc := range chunk.ToolCalls {
 			key := toolCallKey(tc)
 			st := tcs[key]
@@ -378,6 +414,20 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 				st = &tcStream{}
 				tcs[key] = st
 				tcOrder = append(tcOrder, key)
+			}
+			if tc.ID != "" && tc.ID != st.id {
+				if st.id != "" {
+					// A provider changing the identity assigned to one stream index is
+					// ambiguous. Do not redirect later argument chunks to another call.
+					st.invalid = true
+				} else if ownerKey, exists := toolCallKeysByID[tc.ID]; exists && ownerKey != key {
+					st.invalid = true
+				} else {
+					toolCallKeysByID[tc.ID] = key
+				}
+			}
+			if st.invalid {
+				continue
 			}
 			if tc.Function.Name != "" {
 				st.name = tc.Function.Name
@@ -390,7 +440,7 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 			case st.started:
 				emit.ToolArgs(st.id, frag) // emitter skips empty
 			case st.id != "" && st.name != "":
-				emit.ToolStart(st.id, st.name)
+				emit.ToolStart(st.id, st.name, result.ToolOwnerID)
 				st.started = true
 				for _, b := range st.buffered {
 					emit.ToolArgs(st.id, b)
@@ -446,10 +496,7 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 		if chunk.ReasoningContent != "" {
 			// Reasoning after text has started (a future provider may interleave):
 			// close the open TEXT block first so blocks never overlap on the wire.
-			if textOpen {
-				emit.TextEnd(textID)
-				textOpen = false
-			}
+			closeText()
 			if !reasoningOpen {
 				// Fresh id per block so a reasoning span that reopens after text is
 				// never a re-opened same-id block.
@@ -459,6 +506,7 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 				reasoningOpen = true
 			}
 			emit.ReasoningContent(reasoningID, chunk.ReasoningContent)
+			reasoning.WriteString(chunk.ReasoningContent)
 		}
 		if chunk.Content != "" {
 			closeReasoning() // reasoning precedes the visible answer
@@ -470,6 +518,14 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 				textOpen = true
 			}
 			emit.TextContent(textID, chunk.Content)
+			text.WriteString(chunk.Content)
+		}
+		if !streamToolCalls && len(chunk.ToolCalls) > 0 && result.ToolOwnerID == "" {
+			closeReasoning()
+			closeText()
+			result.ToolOwnerID = aguievents.GenerateMessageID()
+			result.toolOwner = len(result.WireMessages)
+			result.WireMessages = append(result.WireMessages, aguitypes.Message{ID: result.ToolOwnerID, Role: aguitypes.RoleAssistant})
 		}
 		if streamToolCalls {
 			streamToolCallChunk(chunk)
@@ -481,7 +537,13 @@ func streamTurn(ctx context.Context, emit *Emitter, cm model.ToolCallingChatMode
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("empty model stream")
 	}
-	return schema.ConcatMessages(chunks)
+	assistant, err := schema.ConcatMessages(chunks)
+	if err != nil {
+		return nil, err
+	}
+	result.Assistant = assistant
+	result.setToolCalls(assistant.ToolCalls)
+	return result, nil
 }
 
 // toolCallKey identifies a streaming tool call stably across its OPEN/delta/CLOSE
@@ -508,8 +570,8 @@ func toolCallKey(tc schema.ToolCall) string {
 // assistant message entirely. This stops an empty toolCallName from reaching the SDK
 // encoder, which rejects it — a rejection the emitter would otherwise misread as a
 // client disconnect, silently killing the run with no RUN_ERROR.
-func validateToolCalls(emit *Emitter, logger *slog.Logger, assistant *schema.Message, messages *[]*schema.Message) []schema.ToolCall {
-	return validateToolCallsOpt(emit, logger, assistant, messages, true)
+func validateToolCalls(emit *Emitter, logger *slog.Logger, assistant *schema.Message, messages *[]*schema.Message, wireMessages *[]aguitypes.Message) []schema.ToolCall {
+	return validateToolCallsOpt(emit, logger, assistant, messages, wireMessages, true)
 }
 
 // validateToolCallsQuiet behaves like validateToolCalls but does NOT emit a
@@ -517,29 +579,41 @@ func validateToolCalls(emit *Emitter, logger *slog.Logger, assistant *schema.Mes
 // tool-role message back into the conversation. Routes whose contract forbids
 // tool-call events on the wire (e.g. /shared_state, /predictive_state_updates) use
 // this so a malformed model call can't leak a TOOL_CALL_RESULT.
-func validateToolCallsQuiet(logger *slog.Logger, assistant *schema.Message, messages *[]*schema.Message) []schema.ToolCall {
-	return validateToolCallsOpt(nil, logger, assistant, messages, false)
+func validateToolCallsQuiet(logger *slog.Logger, assistant *schema.Message, messages *[]*schema.Message, wireMessages *[]aguitypes.Message) []schema.ToolCall {
+	return validateToolCallsOpt(nil, logger, assistant, messages, wireMessages, false)
 }
 
-func validateToolCallsOpt(emit *Emitter, logger *slog.Logger, assistant *schema.Message, messages *[]*schema.Message, emitResults bool) []schema.ToolCall {
+func validateToolCallsOpt(emit *Emitter, logger *slog.Logger, assistant *schema.Message, messages *[]*schema.Message, wireMessages *[]aguitypes.Message, emitResults bool) []schema.ToolCall {
 	kept := make([]schema.ToolCall, 0, len(assistant.ToolCalls))
 	actionable := make([]schema.ToolCall, 0, len(assistant.ToolCalls))
+	seenIDs := make(map[string]bool, len(assistant.ToolCalls))
 	corrective := func(tc schema.ToolCall, result string) {
+		messageID := aguievents.GenerateMessageID()
 		if emitResults {
-			emit.ToolResult(aguievents.GenerateMessageID(), tc.ID, result)
+			emit.ToolResult(messageID, tc.ID, result)
 		}
 		*messages = append(*messages, schema.ToolMessage(result, tc.ID))
+		*wireMessages = append(*wireMessages, aguitypes.Message{ID: messageID, Role: aguitypes.RoleTool, Content: result, ToolCallID: tc.ID})
 		kept = append(kept, tc)
 	}
 	for _, tc := range assistant.ToolCalls {
 		switch {
 		case tc.ID == "":
 			logger.Warn("dropping tool call with empty id", "name", tc.Function.Name)
+		case seenIDs[tc.ID]:
+			// The ID is the correlation identity for proposals, interrupts and
+			// results. Keeping a second call would make ownership ambiguous and can
+			// execute an unintended operation. Drop it without threading a second
+			// result under the same ID.
+			logger.Warn("dropping duplicate tool call id", "id", tc.ID, "name", tc.Function.Name)
 		case tc.Function.Name == "":
+			seenIDs[tc.ID] = true
 			corrective(tc, `{"error":"tool call had an empty function name"}`)
 		case !json.Valid([]byte(tc.Function.Arguments)):
+			seenIDs[tc.ID] = true
 			corrective(tc, fmt.Sprintf(`{"error":"tool arguments for %q were not valid JSON"}`, tc.Function.Name))
 		default:
+			seenIDs[tc.ID] = true
 			kept = append(kept, tc)
 			actionable = append(actionable, tc)
 		}
@@ -550,8 +624,8 @@ func validateToolCallsOpt(emit *Emitter, logger *slog.Logger, assistant *schema.
 
 // emitToolProposal surfaces a proposed tool call (start/args/end), independent of
 // whether it will be executed now or after an approval interrupt.
-func emitToolProposal(emit *Emitter, tc schema.ToolCall) {
-	emit.ToolStart(tc.ID, tc.Function.Name)
+func emitToolProposal(emit *Emitter, tc schema.ToolCall, parentMessageID string) {
+	emit.ToolStart(tc.ID, tc.Function.Name, parentMessageID)
 	emit.ToolArgs(tc.ID, tc.Function.Arguments)
 	emit.ToolEnd(tc.ID)
 }
@@ -559,7 +633,7 @@ func emitToolProposal(emit *Emitter, tc schema.ToolCall) {
 // settlePendingToolCalls executes (or, when denied, records a denial for) each
 // tool call, emitting the result and threading a role=tool message back into the
 // conversation. A nil approvals map means "approve all" (auto-approve path).
-func settlePendingToolCalls(ctx context.Context, emit *Emitter, deps *Deps, calls []schema.ToolCall, messages *[]*schema.Message, st *State, approvals map[string]bool) {
+func settlePendingToolCalls(ctx context.Context, emit *Emitter, deps *Deps, calls []schema.ToolCall, messages *[]*schema.Message, wireMessages *[]aguitypes.Message, st *State, approvals map[string]bool) {
 	for _, tc := range calls {
 		approved := approvals == nil || approvals[tc.ID]
 		var result string
@@ -580,9 +654,46 @@ func settlePendingToolCalls(ctx context.Context, emit *Emitter, deps *Deps, call
 		} else {
 			result = `{"denied":true,"reason":"user did not approve this tool call"}`
 		}
-		emit.ToolResult(aguievents.GenerateMessageID(), tc.ID, result)
+		messageID := aguievents.GenerateMessageID()
+		emit.ToolResult(messageID, tc.ID, result)
 		*messages = append(*messages, schema.ToolMessage(result, tc.ID))
+		*wireMessages = append(*wireMessages, aguitypes.Message{ID: messageID, Role: aguitypes.RoleTool, Content: result, ToolCallID: tc.ID})
 	}
+}
+
+func toolOwnerID(messages []aguitypes.Message, toolCallID string) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		for _, tc := range messages[i].ToolCalls {
+			if tc.ID == toolCallID {
+				return messages[i].ID
+			}
+		}
+	}
+	return ""
+}
+
+func setWireToolCalls(messages []aguitypes.Message, ownerID string, calls []schema.ToolCall) []aguitypes.Message {
+	if ownerID == "" {
+		return messages
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].ID == ownerID {
+			if len(calls) == 0 && messages[i].Content == nil {
+				return append(messages[:i], messages[i+1:]...)
+			}
+			messages[i].ToolCalls = toAGUIToolCalls(calls)
+			for j := range messages[i].ToolCalls {
+				if messages[i].ToolCalls[j].Function.Name == "" {
+					// Keep the wire snapshot decoder-valid while retaining the ID that
+					// owns the corrective tool result. The provider transcript keeps
+					// the original malformed call so the model can repair it.
+					messages[i].ToolCalls[j].Function.Name = "invalid_tool_call"
+				}
+			}
+			return messages
+		}
+	}
+	return messages
 }
 
 // approvalsFromResume maps resume entries to per-tool-call approval. An entry is

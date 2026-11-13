@@ -47,7 +47,7 @@ func TestStreamTurnEmitsReasoningThenText(t *testing.T) {
 		{Role: schema.Assistant, Content: " world"},
 	}}
 
-	msg, err := streamTurn(context.Background(), emit, fm, nil, false)
+	turn, err := streamTurn(context.Background(), emit, fm, nil, false)
 	if err != nil {
 		t.Fatalf("streamTurn: %v", err)
 	}
@@ -71,8 +71,8 @@ func TestStreamTurnEmitsReasoningThenText(t *testing.T) {
 	if strings.Index(out, `"type":"REASONING_END"`) > strings.Index(out, `"type":"TEXT_MESSAGE_START"`) {
 		t.Errorf("reasoning block must close before text starts")
 	}
-	if msg.Content != "Hello world" {
-		t.Errorf("merged content = %q, want %q", msg.Content, "Hello world")
+	if turn.Assistant.Content != "Hello world" {
+		t.Errorf("merged content = %q, want %q", turn.Assistant.Content, "Hello world")
 	}
 }
 

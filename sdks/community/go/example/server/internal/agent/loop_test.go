@@ -220,13 +220,13 @@ func TestStreamTurnConcurrentSharedModel(t *testing.T) {
 			var buf bytes.Buffer
 			w := bufio.NewWriter(&buf)
 			emit := NewEmitter(context.Background(), w, sse.NewSSEWriter(), "t", "r", nil)
-			msg, err := streamTurn(context.Background(), emit, shared, nil, false)
+			turn, err := streamTurn(context.Background(), emit, shared, nil, false)
 			if err != nil {
 				t.Errorf("streamTurn: %v", err)
 				return
 			}
-			if msg.Content != "hello" {
-				t.Errorf("content = %q, want hello", msg.Content)
+			if turn.Assistant.Content != "hello" {
+				t.Errorf("content = %q, want hello", turn.Assistant.Content)
 			}
 		}()
 	}

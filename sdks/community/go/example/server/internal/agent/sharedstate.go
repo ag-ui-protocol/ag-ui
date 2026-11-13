@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/example/server/internal/wireclone"
 	"sort"
 
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
@@ -52,6 +53,7 @@ func (s SharedState) Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAg
 	// servings, ingredients, or steps it is supposed to collaborate on (it would answer
 	// questions blind and could not compute edits like "double the servings").
 	messages := ensureSystemPrompt(toEinoMessages(in.Messages, s.Deps.Provider), sharedStateSystemPrompt+currentRecipeContext(doc))
+	wireMessages := wireclone.Messages(in.Messages)
 
 	maxIter := s.Deps.MaxIterations
 	if maxIter <= 0 {
@@ -67,7 +69,7 @@ func (s SharedState) Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAg
 			return
 		}
 		emit.StepStarted("llm")
-		assistant, err := streamTurn(ctx, emit, cm, messages, false) // tap off: edit-tool calls are suppressed
+		turn, err := streamTurn(ctx, emit, cm, messages, false) // tap off: edit-tool calls are suppressed
 		emit.StepFinished("llm")
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || emit.Err() != nil {
@@ -77,14 +79,17 @@ func (s SharedState) Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAg
 			emit.RunError("the agent failed to generate a response")
 			return
 		}
+		assistant := turn.Assistant
 		messages = append(messages, assistant)
 
 		// Quiet validation: this route's contract is STATE_* only, no tool-call
 		// events — so a malformed call must not leak a TOOL_CALL_RESULT.
-		actionable := validateToolCallsQuiet(s.Deps.Logger, assistant, &messages)
+		wireMessages = append(wireMessages, turn.WireMessages...)
+		actionable := validateToolCallsQuiet(s.Deps.Logger, assistant, &messages, &wireMessages)
+		wireMessages = setWireToolCalls(wireMessages, turn.ToolOwnerID, assistant.ToolCalls)
 		if len(assistant.ToolCalls) == 0 {
 			// Final text answer.
-			emit.MessagesSnapshot(toAGUIMessages(messages))
+			emit.MessagesSnapshot(wireMessages)
 			emit.RunFinishedSuccess()
 			return
 		}
@@ -96,10 +101,11 @@ func (s SharedState) Run(ctx context.Context, emit *Emitter, in *aguitypes.RunAg
 		for _, tc := range actionable {
 			result := applyRecipeChanges(emit, doc, tc)
 			messages = append(messages, schema.ToolMessage(result, tc.ID))
+			wireMessages = append(wireMessages, aguitypes.Message{ID: events.GenerateMessageID(), Role: aguitypes.RoleTool, Content: result, ToolCallID: tc.ID})
 		}
 	}
 
-	emit.MessagesSnapshot(toAGUIMessages(messages))
+	emit.MessagesSnapshot(wireMessages)
 	emit.RunError(fmt.Sprintf("agent did not converge within %d iterations", maxIter))
 }
 
