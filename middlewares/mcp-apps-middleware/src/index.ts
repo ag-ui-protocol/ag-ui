@@ -16,7 +16,8 @@ import {
 import { Observable, Subscription, from, switchMap } from "rxjs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { randomUUID, createHash } from "crypto";
+import { md5 } from "@noble/hashes/legacy";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 import { createTrustedFetch } from "./trusted-fetch";
 
 /**
@@ -92,7 +93,9 @@ export function getServerHash(config: MCPClientConfig): string {
     type: config.type,
     url: config.url,
   });
-  return createHash("md5").update(serialized).digest("hex");
+  // Stored threads send this hash back, so it must stay byte-identical to the
+  // MD5 hex that node:crypto produced. Web Crypto has no MD5.
+  return bytesToHex(md5(utf8ToBytes(serialized)));
 }
 
 /**
@@ -581,7 +584,7 @@ export class MCPAppsMiddleware extends Middleware {
                   // Emit tool result event
                   const resultEvent: ToolCallResultEvent = {
                     type: EventType.TOOL_CALL_RESULT,
-                    messageId: randomUUID(),
+                    messageId: globalThis.crypto.randomUUID(),
                     toolCallId: toolCall.id,
                     content: this.extractTextContent(mcpResult),
                     ...(toolError !== undefined
@@ -606,7 +609,7 @@ export class MCPAppsMiddleware extends Middleware {
                     // Emit activity snapshot with MCP result and resourceUri (frontend fetches resource)
                     const activityEvent: ActivitySnapshotEvent = {
                       type: EventType.ACTIVITY_SNAPSHOT,
-                      messageId: randomUUID(),
+                      messageId: globalThis.crypto.randomUUID(),
                       activityType: MCPAppsActivityType,
                       content: {
                         result: mcpResult,
@@ -627,7 +630,7 @@ export class MCPAppsMiddleware extends Middleware {
                   // Emit error result
                   const errorResult: ToolCallResultEvent = {
                     type: EventType.TOOL_CALL_RESULT,
-                    messageId: randomUUID(),
+                    messageId: globalThis.crypto.randomUUID(),
                     toolCallId: toolCall.id,
                     content: JSON.stringify({ error: String(error) }),
                     metadata: { "ag-ui:tool-result": { error: "" } },
@@ -661,7 +664,7 @@ export class MCPAppsMiddleware extends Middleware {
                 );
                 const nextInput = {
                   ...continuation.input,
-                  runId: randomUUID(),
+                  runId: globalThis.crypto.randomUUID(),
                   resume: undefined,
                   messages,
                   state: heldRunFinished.state,

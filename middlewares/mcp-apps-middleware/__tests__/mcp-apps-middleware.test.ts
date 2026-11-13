@@ -89,17 +89,6 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   },
 }));
 
-// Mock crypto.randomUUID but keep createHash real
-vi.mock("crypto", async () => {
-  const actual = await vi.importActual<typeof import("crypto")>("crypto");
-  return {
-    ...actual,
-    randomUUID: vi.fn(
-      () => `mock-uuid-${Math.random().toString(36).substr(2, 9)}`,
-    ),
-  };
-});
-
 describe("MCPAppsMiddleware", () => {
   beforeEach(() => {
     // Reset all mocks before each test
