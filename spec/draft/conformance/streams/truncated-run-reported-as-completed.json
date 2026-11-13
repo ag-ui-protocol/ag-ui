@@ -1,0 +1,45 @@
+{
+  "name": "truncated-run-reported-as-completed",
+  "area": "lifecycle",
+  "description": "ADMITTED GAP: a well-formed stream that simply stops is consumed without complaint — the TypeScript client resolves `runAgent()` with a settlement a completed run is indistinguishable from, and the .NET converter iterates to the end and throws nothing — where the specification says a truncated run has no outcome and MUST NOT be reported as having succeeded; this pins what both reference clients do today, silently, so the gap cannot change unnoticed",
+  "specPage": "/spec/draft/basic/transports#truncation",
+  "kill": "give either client an end-of-stream check that requires a terminal event — one of the two surfacings the spec permits, the other being to leave the run unresolved — and it makes this fixture fail. That is deliberate: this fixture pins today's gap, not the rule. Anyone landing that check MUST update this fixture in the same change, on the lane that landed it: `outcome` to `failed` with an `errorContains` where the client raises a synthetic failure, or an `expectOverrides.<lane>` block with an `intentional` reason where the other client still consumes the stream quietly — flipping the base alone reddens the lane that has no check, and #2354, the open fix, is TypeScript-only. `messageCount` and `messages` stay either way, because the same spec sentence that forbids reporting success also says everything the run delivered before the break remains delivered: a client that starts failing the run must not also lose the message, and this fixture is where that is caught. Verified rather than asserted — with #2354's check ported onto main this fixture goes red on `outcome` alone, and the replacement block prescribed above then passes. The stream around the missing terminator is otherwise flawless — the producer declares 1.0, and the message is opened, filled and CLOSED — so the absent terminal event is the ONLY thing that can fail this run. The three other fixtures whose streams carry no terminal event each fail for a different reason the verifier already catches (`first-event-not-run-started-fatal`, `nested-run-started-fatal`, `step-finished-without-start-fatal`), which is why none of them pins this one.",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-truncated-run",
+      "runId": "r-truncated-run",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m-truncated-run",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m-truncated-run",
+      "delta": "this message is complete; "
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m-truncated-run",
+      "delta": "the run that carried it is not"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m-truncated-run"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 1,
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "this message is complete; the run that carried it is not"
+      }
+    ]
+  }
+}
