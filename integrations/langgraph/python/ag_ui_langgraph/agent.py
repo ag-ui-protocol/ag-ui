@@ -708,6 +708,12 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
+    # Page size for the paged state-history walk in
+    # get_checkpoint_before_message (#3342). The old code materialized the
+    # whole thread history into one list; every LangGraph checkpoint stores
+    # the full ``messages`` channel, so a long thread OOM'd before any LLM
+    # call. One page at a time keeps peak memory bounded by the page.
+    _CHECKPOINT_HISTORY_PAGE_SIZE = 25
     def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
         self.name = name
         self.description = description
@@ -4060,39 +4066,82 @@ class LangGraphAgent:
         else:
             history_config = {"configurable": {"thread_id": thread_id}}
 
-        history_list = []
-        async for snapshot in self.graph.aget_state_history(history_config):
-            history_list.append(snapshot)
+        # Walk the history newest-first, one page at a time (#3342). The old
+        # code appended every snapshot to a single list; every checkpoint
+        # stores the full ``messages`` channel, so a thread with thousands of
+        # checkpoints OOM'd before any LLM call. ``aget_state_history``
+        # honors ``limit`` / ``before`` (newest-first, ``before`` exclusive
+        # on checkpoint_id), so each page is fetched and held on its own.
+        #
+        # Semantics match the old full-list walk: ``candidate`` is the
+        # oldest snapshot containing ``message_id`` and ``candidate_older``
+        # the snapshot immediately older than it. Messages are only appended
+        # to the channel, so once a candidate is set, the first snapshot
+        # that no longer contains the message is exactly that older
+        # neighbor and the walk can stop there.
+        candidate = None
+        candidate_older = None
+        scanned = 0
+        before = None
+        while True:
+            page = [
+                snapshot
+                async for snapshot in self.graph.aget_state_history(
+                    history_config,
+                    before=before,
+                    limit=self._CHECKPOINT_HISTORY_PAGE_SIZE,
+                )
+            ]
+            if not page:
+                break
+            if before is not None and page[-1].config == before:
+                # The checkpointer ignored `before` and re-returned the
+                # same page; treat history as exhausted rather than
+                # looping forever. A conforming checkpointer never returns
+                # the `before` checkpoint itself (`before` is exclusive).
+                break
+            boundary_found = False
+            for snapshot in page:
+                scanned += 1
+                messages = snapshot.values.get("messages", [])
+                if any(getattr(m, "id", None) == message_id for m in messages):
+                    candidate = snapshot
+                    candidate_older = None
+                elif candidate is not None:
+                    candidate_older = snapshot
+                    boundary_found = True
+                    break
+            if boundary_found:
+                break
+            # Next page starts before the oldest snapshot of this one.
+            before = page[-1].config
 
-        history_list.reverse()
-        for idx, snapshot in enumerate(history_list):
-            messages = snapshot.values.get("messages", [])
-            if any(getattr(m, "id", None) == message_id for m in messages):
-                if idx == 0:
-                    # No snapshot before this.
-                    # Return a synthetic "empty before" snapshot whose
-                    # values share no structure with the original:
-                    # assigning back into ``snapshot.values["messages"]``
-                    # mutated the real checkpoint in place (StateSnapshot
-                    # is an alias, not a copy), which bled into callers
-                    # and any cached history entries.
-                    empty_values = snapshot.values.copy()
-                    empty_values["messages"] = []
-                    return snapshot._replace(values=empty_values)
+        if candidate is None:
+            raise ValueError(
+                f"Message ID {message_id!r} not found in history "
+                f"(thread_id={thread_id!r}, snapshots_scanned={scanned})"
+            )
 
-                snapshot_values_without_messages = snapshot.values.copy()
-                del snapshot_values_without_messages["messages"]
-                checkpoint = history_list[idx - 1]
+        if candidate_older is None:
+            # No snapshot before this.
+            # Return a synthetic "empty before" snapshot whose
+            # values share no structure with the original:
+            # assigning back into ``snapshot.values["messages"]``
+            # mutated the real checkpoint in place (StateSnapshot
+            # is an alias, not a copy), which bled into callers
+            # and any cached history entries.
+            empty_values = candidate.values.copy()
+            empty_values["messages"] = []
+            return candidate._replace(values=empty_values)
 
-                merged_values = {**checkpoint.values, **snapshot_values_without_messages}
-                checkpoint = checkpoint._replace(values=merged_values)
+        snapshot_values_without_messages = candidate.values.copy()
+        del snapshot_values_without_messages["messages"]
+        checkpoint = candidate_older
 
-                return checkpoint
+        merged_values = {**checkpoint.values, **snapshot_values_without_messages}
+        checkpoint = checkpoint._replace(values=merged_values)
 
-        raise ValueError(
-            f"Message ID {message_id!r} not found in history "
-            f"(thread_id={thread_id!r}, snapshots_scanned={len(history_list)})"
-        )
+        return checkpoint
 
     def _get_or_pin_text_message_id(self, fallback_id: str, node: Optional[str] = None) -> str:
         """Returns the message_id to use for a TEXT_MESSAGE_START emission,
