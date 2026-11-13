@@ -9,10 +9,11 @@ argument is authoritative over any value in the supplied config.
 """
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
 
+from ag_ui_langgraph.agent import LangGraphAgent
 from tests._helpers import make_agent
 
 
@@ -45,7 +46,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         snapshot = MagicMock()
         snapshot.values = {"messages": [MagicMock(id="msg-1")]}
 
-        def _capture(history_config):
+        def _capture(history_config, **_kwargs):
             nonlocal captured_config
             captured_config = history_config
             return _async_iter([snapshot])
@@ -71,7 +72,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         snapshot = MagicMock()
         snapshot.values = {"messages": [MagicMock(id="msg-1")]}
 
-        def _capture(history_config):
+        def _capture(history_config, **_kwargs):
             nonlocal captured_config
             captured_config = history_config
             return _async_iter([snapshot])
@@ -120,7 +121,7 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
 
         # aget_state_history yields newest-first; the adapter reverses
         # internally to walk chronologically.
-        agent.graph.aget_state_history = lambda _cfg: _async_iter(
+        agent.graph.aget_state_history = lambda _cfg, **_kwargs: _async_iter(
             [target_snapshot, prev_snapshot]
         )
 
@@ -138,6 +139,122 @@ class TestGetCheckpointBeforeMessage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.id for m in merged_values["messages"]], ["older"])
 
 
+class TestGetCheckpointBeforeMessagePaging(unittest.IsolatedAsyncioTestCase):
+    """#3342: the history walk pages newest-first (limit/before) instead of
+    materializing the whole thread, and stops at the first snapshot older
+    than the oldest one containing the message. Results must match the old
+    full-list walk exactly."""
+
+    def _make_snapshots(self, count, containing_upto):
+        """Snapshots newest-first (index 0 = newest). Snapshots with index
+        <= ``containing_upto`` hold the target message; older ones do not.
+        Each snapshot carries a distinct ``.config`` so the paging mock can
+        key ``before`` off identity, like a real checkpointer keys off
+        checkpoint_id."""
+        snapshots = []
+        for idx in range(count):
+            snapshot = MagicMock()
+            messages = (
+                [MagicMock(id="target-msg")]
+                if idx <= containing_upto
+                else [MagicMock(id="other")]
+            )
+            snapshot.values = {"messages": messages, "seq": idx}
+            snapshot.config = {"configurable": {"checkpoint_id": f"ckpt-{idx:03d}"}}
+            snapshots.append(snapshot)
+        return snapshots
+
+    def _paging_mock(self, snapshots, calls):
+        """Simulate a real checkpointer: newest-first, ``before`` exclusive
+        (starts after the snapshot whose config was passed), ``limit`` caps
+        the page. Records every call's (before, limit)."""
+
+        def _history(history_config, *, before=None, limit=None):
+            calls.append((before, limit))
+            start = 0
+            if before is not None:
+                for idx, snap in enumerate(snapshots):
+                    if snap.config is before:
+                        start = idx + 1
+                        break
+            page = snapshots[start : start + limit] if limit is not None else snapshots[start:]
+            return _async_iter(page)
+
+        return _history
+
+    async def test_pages_and_matches_unpaged_result(self):
+        """60 snapshots, page size 10: the target lives in the 30 newest,
+        so the oldest containing snapshot is index 29 and its older
+        neighbor is index 30. The paged walk must return the same merged
+        checkpoint the old full-list walk returned."""
+        agent = make_agent()
+        snapshots = self._make_snapshots(60, containing_upto=29)
+        # Distinguish the pair the merge must combine.
+        snapshots[29].values = {"messages": [MagicMock(id="target-msg")], "bar": 2}
+        snapshots[30].values = {"messages": [MagicMock(id="older")], "foo": 1}
+        snapshots[30]._replace = MagicMock(return_value="merged-checkpoint")
+
+        calls = []
+        agent.graph.aget_state_history = self._paging_mock(snapshots, calls)
+
+        with patch.object(LangGraphAgent, "_CHECKPOINT_HISTORY_PAGE_SIZE", 10):
+            result = await agent.get_checkpoint_before_message(
+                "target-msg", "thread-xyz"
+            )
+
+        self.assertEqual(result, "merged-checkpoint")
+        snapshots[30]._replace.assert_called_once()
+        merged_values = snapshots[30]._replace.call_args.kwargs["values"]
+        self.assertEqual(merged_values["foo"], 1)
+        self.assertEqual(merged_values["bar"], 2)
+        self.assertEqual([m.id for m in merged_values["messages"]], ["older"])
+        # 4 pages: [0..9], [10..19], [20..29], [30..39] — the boundary is
+        # found in the 4th page, so no 5th page is fetched.
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([limit for _, limit in calls], [10, 10, 10, 10])
+        self.assertIsNone(calls[0][0])
+        self.assertIs(calls[1][0], snapshots[9].config)
+        self.assertIs(calls[2][0], snapshots[19].config)
+        self.assertIs(calls[3][0], snapshots[29].config)
+
+    async def test_stops_fetching_once_boundary_found(self):
+        """When the boundary sits inside the first page, no further page is
+        fetched at all — the walk does not drain the whole history."""
+        agent = make_agent()
+        snapshots = self._make_snapshots(60, containing_upto=1)
+        calls = []
+        agent.graph.aget_state_history = self._paging_mock(snapshots, calls)
+
+        with patch.object(LangGraphAgent, "_CHECKPOINT_HISTORY_PAGE_SIZE", 10):
+            await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
+
+        self.assertEqual(len(calls), 1)
+
+    async def test_first_page_passes_limit_and_no_before(self):
+        """The first page is requested with limit=page size and no before;
+        the config still carries the thread_id."""
+        agent = make_agent()
+        snapshots = self._make_snapshots(3, containing_upto=0)
+        calls = []
+        captured_configs = []
+
+        def _history(history_config, *, before=None, limit=None):
+            captured_configs.append(history_config)
+            return self._paging_mock(snapshots, calls)(history_config, before=before, limit=limit)
+
+        agent.graph.aget_state_history = _history
+
+        with patch.object(LangGraphAgent, "_CHECKPOINT_HISTORY_PAGE_SIZE", 7):
+            await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIsNone(calls[0][0])
+        self.assertEqual(calls[0][1], 7)
+        self.assertEqual(
+            captured_configs[0]["configurable"]["thread_id"], "thread-xyz"
+        )
+
+
 class TestGetCheckpointBeforeMessageEmptyHistoryBranch(unittest.IsolatedAsyncioTestCase):
     """When the target message lives in the oldest snapshot (idx == 0
     after the chronological reverse) there is no predecessor to hand
@@ -153,7 +270,7 @@ class TestGetCheckpointBeforeMessageEmptyHistoryBranch(unittest.IsolatedAsyncioT
         snapshot.values = {"messages": original_messages, "other": 1}
 
         agent = make_agent()
-        agent.graph.aget_state_history = lambda _cfg: _async_iter([snapshot])
+        agent.graph.aget_state_history = lambda _cfg, **_kwargs: _async_iter([snapshot])
 
         result = await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
 
@@ -183,7 +300,7 @@ class TestGetCheckpointBeforeMessageEmptyHistoryBranch(unittest.IsolatedAsyncioT
         snapshot.values = original_values
 
         agent = make_agent()
-        agent.graph.aget_state_history = lambda _cfg: _async_iter([snapshot])
+        agent.graph.aget_state_history = lambda _cfg, **_kwargs: _async_iter([snapshot])
 
         await agent.get_checkpoint_before_message("target-msg", "thread-xyz")
 

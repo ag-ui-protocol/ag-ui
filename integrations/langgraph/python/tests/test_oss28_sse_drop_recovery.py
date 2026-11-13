@@ -157,7 +157,7 @@ class TestOSS28SSEDropRecovery(unittest.IsolatedAsyncioTestCase):
 
         snapshot = MagicMock()
         snapshot.values = {"messages": [HumanMessage(id="h1", content="real")]}
-        agent.graph.aget_state_history = lambda cfg: _async_iter([snapshot])
+        agent.graph.aget_state_history = lambda cfg, **_kwargs: _async_iter([snapshot])
 
         with self.assertRaisesRegex(ValueError, "not found in history"):
             await agent.get_checkpoint_before_message(
