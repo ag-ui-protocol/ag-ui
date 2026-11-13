@@ -36,6 +36,25 @@ subscribing to `run()`. These producer failures no longer reject the `runAgent()
 promise or invoke the Observable's `error` callback. Consumer and client-side
 validation failures retain their existing error behavior.
 
+## State keys outside the output schema
+
+`STATE_SNAPSHOT` only carries the keys in the graph's output schema. If the graph
+is compiled with a narrower output schema, for example
+`StateGraph(State, output_schema=Output)`, list the extra keys the frontend needs
+under `schema_keys` in the agent's `config`:
+
+```python
+agent = LangGraphAgent(
+    name="demo",
+    graph=graph,
+    config={"schema_keys": {"output": ["steps"]}},
+)
+```
+
+The `input`, `output`, `config` and `context` buckets each take a list of strings.
+Configured keys are added to the keys the graph declares and never replace them.
+A malformed value or an unknown bucket name is logged as a warning and ignored.
+
 ## Installation
 
 ```bash
