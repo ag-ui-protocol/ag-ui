@@ -86,6 +86,18 @@ final client = AgUiClient(
 );
 ```
 
+### Relative base URLs on the web
+
+For same-origin or reverse-proxied Flutter Web deployments, `baseUrl` can be
+`api/agui` or `/api/agui`. With `<base href="/my-app/">`, the first resolves to
+`/my-app/api/agui`, while the leading-slash form resolves to `/api/agui` at the
+origin root. Resolution uses the current document's `baseURI`, including when
+running inside an iframe, rather than the parent page's location.
+
+Native platforms require an absolute HTTP(S) base URL. Absolute URLs retain
+strict validation. Relative bases must be paths without query strings or
+fragments; empty and scheme-relative (`//host/path`) values are rejected.
+
 ### Stream Agent Responses
 
 ```dart
