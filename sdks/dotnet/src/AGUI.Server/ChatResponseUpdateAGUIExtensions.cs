@@ -373,7 +373,7 @@ public static class ChatResponseUpdateAGUIExtensions
                             yield return reasonCloseEvt;
                         }
 
-                        yield return ToolCallStartEvent.Create(rawToolCallId, fragment.FunctionName!, chatResponse.MessageId, raw);
+                        yield return ToolCallStartEvent.Create(rawToolCallId, fragment.FunctionName!, messageTracker.ParentIdFor(chatResponse.MessageId), raw);
                     }
 
                     if (fragment.ArgumentsDelta.Length > 0)
@@ -507,7 +507,7 @@ public static class ChatResponseUpdateAGUIExtensions
                             yield return reasonFccCloseEvt;
                         }
 
-                        yield return ToolCallStartEvent.Create(fcc.CallId, fcc.Name, chatResponse.MessageId, raw);
+                        yield return ToolCallStartEvent.Create(fcc.CallId, fcc.Name, messageTracker.ParentIdFor(chatResponse.MessageId), raw);
 
                         var args = JsonSerializer.Serialize(fcc.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
                         yield return ToolCallArgsEvent.Create(fcc.CallId, args, raw);
@@ -588,7 +588,7 @@ public static class ChatResponseUpdateAGUIExtensions
                         }
 
                         // Emit the tool call events so spec-compliant clients can see the proposal
-                        yield return ToolCallStartEvent.Create(toolCall.CallId, toolCall.Name, chatResponse.MessageId, raw);
+                        yield return ToolCallStartEvent.Create(toolCall.CallId, toolCall.Name, messageTracker.ParentIdFor(chatResponse.MessageId), raw);
 
                         var approvalArgs = JsonSerializer.Serialize(toolCall.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
                         yield return ToolCallArgsEvent.Create(toolCall.CallId, approvalArgs, raw);
