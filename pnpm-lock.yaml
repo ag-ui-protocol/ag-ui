@@ -13,6 +13,10 @@ overrides:
   '@copilotkit/runtime@1.87.0>@ag-ui/a2ui-middleware': 0.0.16
   '@copilotkit/shared@1.87.0>@ag-ui/a2ui-middleware': 0.0.16
   zod: 3.25.76
+  '@ag-ui/core>zod': ^4.6.7
+  '@ag-ui/client>zod': ^4.6.7
+  '@ag-ui/encoder>zod': ^4.6.7
+  '@ag-ui/proto>zod': ^4.6.7
   '@google/adk>zod': ^4.2.1
   '@strands-agents/sdk>zod': ^4.4.3
   '@ag-ui/aws-strands>zod': ^4.4.3
@@ -1837,8 +1841,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   sdks/typescript/packages/core:
     devDependencies:
@@ -1867,8 +1871,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   sdks/typescript/packages/encoder:
     dependencies:
@@ -1901,8 +1905,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   sdks/typescript/packages/proto:
     dependencies:
@@ -1944,8 +1948,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   spec:
     devDependencies:
@@ -2030,7 +2034,7 @@ packages:
   '@ag-ui/core@1.0.1':
     resolution: {integrity: sha512-Q6pxgI7gcey/0pHfM37S7GNrsYqTrrjjFLpi1dckHNGX2l9VTL0CjnyNc44lwPfHIzFmmEvQfbrAeEPINGGg/Q==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
     peerDependenciesMeta:
       zod:
         optional: true
@@ -2038,7 +2042,7 @@ packages:
   '@ag-ui/core@1.0.2':
     resolution: {integrity: sha512-lb0YfvHY4eTHcXthTWzXjsElLqycGWDhaXGTejwMkUV5TtJVZircRS12/tMpqzd32sL+WZ2PWQ4m0+ThKrGF8A==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
     peerDependenciesMeta:
       zod:
         optional: true
@@ -5760,6 +5764,7 @@ packages:
   '@opentelemetry/sdk-trace-base@2.0.1':
     resolution: {integrity: sha512-xYLlvk/xdScGx1aEqvxLwf6sXQLXCjk3/1SQT9X9AoN5rXRhkdvIFShuNNmtTEPRBqcsMbS4p/gJLNI2wXaDuQ==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
@@ -14315,6 +14320,9 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
@@ -14394,8 +14402,8 @@ snapshots:
 
   '@ag-ui/client@1.0.1':
     dependencies:
-      '@ag-ui/core': 1.0.1(zod@3.25.76)
-      '@ag-ui/encoder': 1.0.1(zod@3.25.76)
+      '@ag-ui/core': 1.0.1(zod@4.6.7)
+      '@ag-ui/encoder': 1.0.1(zod@4.6.7)
       '@ag-ui/proto': 1.0.1
       '@types/uuid': 10.0.0
       compare-versions: 6.1.1
@@ -14403,12 +14411,12 @@ snapshots:
       rxjs: 7.8.1
       untruncate-json: 0.0.1
       uuid: 11.1.0
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/client@1.0.2':
     dependencies:
-      '@ag-ui/core': 1.0.2(zod@3.25.76)
-      '@ag-ui/encoder': 1.0.2(zod@3.25.76)
+      '@ag-ui/core': 1.0.2(zod@4.6.7)
+      '@ag-ui/encoder': 1.0.2(zod@4.6.7)
       '@ag-ui/proto': 1.0.2
       '@types/uuid': 10.0.0
       compare-versions: 6.1.1
@@ -14416,15 +14424,23 @@ snapshots:
       rxjs: 7.8.1
       untruncate-json: 0.0.1
       uuid: 11.1.0
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/core@1.0.1(zod@3.25.76)':
     optionalDependencies:
       zod: 3.25.76
 
+  '@ag-ui/core@1.0.1(zod@4.6.7)':
+    optionalDependencies:
+      zod: 4.6.7
+
   '@ag-ui/core@1.0.2(zod@3.25.76)':
     optionalDependencies:
       zod: 3.25.76
+
+  '@ag-ui/core@1.0.2(zod@4.6.7)':
+    optionalDependencies:
+      zod: 4.6.7
 
   '@ag-ui/encoder@1.0.1(zod@3.25.76)':
     dependencies:
@@ -14433,9 +14449,23 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
+  '@ag-ui/encoder@1.0.1(zod@4.6.7)':
+    dependencies:
+      '@ag-ui/core': 1.0.1(zod@4.6.7)
+      '@ag-ui/proto': 1.0.1
+    transitivePeerDependencies:
+      - zod
+
   '@ag-ui/encoder@1.0.2(zod@3.25.76)':
     dependencies:
       '@ag-ui/core': 1.0.2(zod@3.25.76)
+      '@ag-ui/proto': 1.0.2
+    transitivePeerDependencies:
+      - zod
+
+  '@ag-ui/encoder@1.0.2(zod@4.6.7)':
+    dependencies:
+      '@ag-ui/core': 1.0.2(zod@4.6.7)
       '@ag-ui/proto': 1.0.2
     transitivePeerDependencies:
       - zod
@@ -14528,17 +14558,17 @@ snapshots:
 
   '@ag-ui/proto@1.0.1':
     dependencies:
-      '@ag-ui/core': 1.0.1(zod@3.25.76)
+      '@ag-ui/core': 1.0.1(zod@4.6.7)
       '@bufbuild/protobuf': 2.9.0
       '@protobuf-ts/protoc': 2.11.1
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/proto@1.0.2':
     dependencies:
-      '@ag-ui/core': 1.0.2(zod@3.25.76)
+      '@ag-ui/core': 1.0.2(zod@4.6.7)
       '@bufbuild/protobuf': 2.9.0
       '@protobuf-ts/protoc': 2.11.1
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ai-sdk/anthropic@2.0.74(zod@3.25.76)':
     dependencies:
@@ -30487,5 +30517,7 @@ snapshots:
   zod@3.25.76: {}
 
   zod@4.4.3: {}
+
+  zod@4.6.7: {}
 
   zwitch@2.0.4: {}
