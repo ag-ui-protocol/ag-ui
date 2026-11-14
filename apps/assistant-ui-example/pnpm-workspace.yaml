@@ -1,0 +1,4 @@
+# Standalone app, kept out of the repository workspace (see the root
+# pnpm-workspace.yaml) so it installs the published packages on its own.
+packages:
+  - "."

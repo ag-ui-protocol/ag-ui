@@ -1,0 +1,33 @@
+{
+  "name": "assistant-ui-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ag-ui/client": "^1.0.3",
+    "@assistant-ui/react": "^0.15.32",
+    "@assistant-ui/react-ag-ui": "^0.1.1",
+    "@assistant-ui/react-markdown": "^0.14.24",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5",
+    "vite": "^8.3.5"
+  },
+  "packageManager": "pnpm@10.33.4"
+}

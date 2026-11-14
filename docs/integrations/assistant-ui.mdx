@@ -1,0 +1,130 @@
+---
+title: assistant-ui quickstart
+description: Connect an assistant-ui React chat to any AG-UI agent.
+---
+
+[assistant-ui](https://www.assistant-ui.com) is an open-source React library for
+chat interfaces. Its `@assistant-ui/react-ag-ui` package is a runtime that
+connects those components to an AG-UI agent through `HttpAgent` from
+`@ag-ui/client`.
+
+## Prerequisites
+
+- React 18 or 19
+- An AG-UI agent endpoint, for example one served by Pydantic AI, Agno, Mastra,
+  LangGraph or any other integration on this site
+- `@ag-ui/client` 1.x
+
+## Add assistant-ui to an application
+
+Scaffold a Next.js app that already uses the AG-UI runtime:
+
+```bash
+npx assistant-ui@latest create my-app -e with-ag-ui
+```
+
+Or add it to an existing React app that uses shadcn/ui. `add thread` copies the
+`Thread` component into your project:
+
+```bash
+npx assistant-ui@latest add thread
+npm install @assistant-ui/react @assistant-ui/react-ag-ui @ag-ui/client
+```
+
+In an app without shadcn/ui, run `npx shadcn@latest init` first.
+
+Create an `HttpAgent` for your endpoint and pass it to `useAgUiRuntime`:
+
+```tsx
+"use client"
+
+import { HttpAgent } from "@ag-ui/client"
+import { AssistantRuntimeProvider } from "@assistant-ui/react"
+import { useAgUiRuntime } from "@assistant-ui/react-ag-ui"
+import { useMemo } from "react"
+import { Thread } from "@/components/assistant-ui/elements/thread.aui"
+
+export function Chat() {
+  const agent = useMemo(
+    () => new HttpAgent({ url: "http://localhost:8000/" }),
+    [],
+  )
+  const runtime = useAgUiRuntime({ agent })
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <Thread />
+    </AssistantRuntimeProvider>
+  )
+}
+```
+
+The runtime streams `TEXT_MESSAGE_*`, `TOOL_CALL_*` and reasoning events into
+the thread, and sends the conversation back as `messages` on each run.
+
+## Tools
+
+Register tools in a toolkit and pass it to the provider's `config`. A `frontend`
+tool is sent to the agent in the run's `tools` and runs in the browser. A
+`human` tool renders UI and waits for the user to answer. A `backend` entry only
+renders calls to a tool the agent runs itself:
+
+```tsx
+import { AuiConfig, Tools, defineToolkit } from "@assistant-ui/react"
+
+const toolkit = defineToolkit({
+  change_background: {
+    type: "frontend",
+    description: "Change the page background to a CSS color.",
+    parameters: {
+      type: "object",
+      properties: { background: { type: "string" } },
+      required: ["background"],
+    },
+    execute: async ({ background }) => {
+      document.body.style.background = background
+      return { status: "changed" }
+    },
+  },
+  get_weather: {
+    type: "backend",
+    render: ({ args, result }) => <WeatherCard args={args} result={result} />,
+  },
+})
+
+// in the component that renders AssistantRuntimeProvider
+const config = AuiConfig({ tools: Tools({ toolkit }) })
+// <AssistantRuntimeProvider runtime={runtime} config={config}>
+```
+
+When the agent calls a frontend or human tool, the run ends with the call
+pending. The runtime adds the result and starts the next run.
+
+## Shared state
+
+`useAgUiState` returns the agent state built from `STATE_SNAPSHOT` and
+`STATE_DELTA` events. `useAgUiSetState` updates it locally, and the runtime
+sends the new value as `state` on the next run:
+
+```tsx
+import { useAgUiSetState, useAgUiState } from "@assistant-ui/react-ag-ui"
+
+const state = useAgUiState<{ tasks: string[] }>()
+const setState = useAgUiSetState<{ tasks: string[] }>()
+```
+
+Some agents only stream state back when the run input carries some, so set an
+initial value with `useAgUiSetState` before the first run.
+
+## Example
+
+[`apps/assistant-ui-example`](https://github.com/ag-ui-protocol/ag-ui/tree/main/apps/assistant-ui-example)
+runs one Vite frontend against a Pydantic AI agent and an Agno agent that serve
+the same tools. It shows streaming text, a backend tool rendered as a card, a
+frontend tool, a human-in-the-loop plan approval and a task list kept in shared
+state.
+
+See the
+[assistant-ui AG-UI docs](https://www.assistant-ui.com/docs/runtimes/ag-ui/overview)
+for interrupts, thread lists, history loading and the full list of supported
+events.
