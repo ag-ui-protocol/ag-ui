@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -79,6 +80,9 @@ const agent = new CodexAgentAdapter({codexOptions:{codexPathOverride:process.env
 agent.addMessage({id:'user',role:'user',content:'My name is Alice'});
 await agent.runAgent();
 if(!agent.messages.some(m=>m.role==='assistant' && m.content.includes('Alice'))) throw Error('Packed adapter did not run');
+agent.addMessage({id:'followup',role:'user',content:'What is my name?'});
+await agent.runAgent();
+if(!agent.messages.some(m=>m.role==='assistant' && m.content==='Your name is Alice.')) throw Error('Packed adapter did not resume');
 `;
   await writeFile(
     join(consumer, "esm.mjs"),
@@ -88,13 +92,36 @@ if(!agent.messages.some(m=>m.role==='assistant' && m.content.includes('Alice')))
     join(consumer, "commonjs.cjs"),
     `const { CodexAgentAdapter } = require('@ag-ui/codex-sdk');\n(async()=>{${run}})().catch(e=>{console.error(e);process.exitCode=1;});`,
   );
-  for (const script of ["esm.mjs", "commonjs.cjs"])
-    execFileSync(process.execPath, [script], {
-      cwd: consumer,
-      env,
-      stdio: "pipe",
-      timeout: 15000,
-    });
+  for (const scope of ["normal", "esm"]) {
+    const temporaryRoot = join(directory, `tmp-${scope}`);
+    await mkdir(temporaryRoot);
+    if (scope === "esm") {
+      await writeFile(
+        join(temporaryRoot, "package.json"),
+        JSON.stringify({ type: "module" }),
+      );
+    }
+    for (const script of ["esm.mjs", "commonjs.cjs"]) {
+      execFileSync(process.execPath, [script], {
+        cwd: consumer,
+        env: {
+          ...env,
+          TMPDIR: temporaryRoot,
+          TMP: temporaryRoot,
+          TEMP: temporaryRoot,
+        },
+        stdio: "pipe",
+        timeout: 15000,
+      });
+      assert.equal(
+        (await readdir(temporaryRoot)).some((name) =>
+          name.startsWith("ag-ui-codex-process-"),
+        ),
+        false,
+        "Packed adapter must clean its process directory",
+      );
+    }
+  }
   server = spawn(
     process.execPath,
     ["node_modules/@ag-ui/codex-sdk/dist/examples/server.js"],

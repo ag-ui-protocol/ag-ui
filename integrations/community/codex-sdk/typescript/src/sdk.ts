@@ -47,7 +47,7 @@ export async function createCodex(options: CodexOptions): Promise<CodexClient> {
   const directory = await mkdtemp(join(tmpdir(), "ag-ui-codex-process-"));
   const record = join(directory, "process.json");
   const config = join(directory, "launch.json");
-  const launcher = join(directory, "codex-launch");
+  const launcher = join(directory, "codex-launch.cjs");
   const source = await readFile(
     join(packageRoot, "dist/process-launcher.js"),
     "utf8",
