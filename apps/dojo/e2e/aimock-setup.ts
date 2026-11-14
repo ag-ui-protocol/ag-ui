@@ -1795,7 +1795,9 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         if (hasScheduleMeetingTool(req)) return false;
         // The watsonx suite asserts its own closing turn after the tool ran.
         if (isWatsonxToolResultTurn(req)) return false;
-        // Same for the Cloudflare Agents Worker's tool-result turns.
+        // Same for every Cloudflare Agents demo's tool-result turns: its
+        // approval, human-in-the-loop and predictive-state specs assert
+        // replies that depend on the tool's result.
         if (isCloudflareAgentsToolResultTurn(req)) return false;
         // The A2A middleware spec asserts the orchestrator relays the reply
         // that came back over A2A.
