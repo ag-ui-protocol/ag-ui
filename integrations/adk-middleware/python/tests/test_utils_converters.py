@@ -136,14 +136,37 @@ class TestConvertAGUIMessagesToADK:
         {"data": "invalid base64"},
         {"url": "https://example.com/image.png"},
         {"id": "stored-image"},
-        {"data": "aW1hZ2U=", "url": "https://example.com/image.png"},
-        {"data": "aW1hZ2U=", "id": "stored-image"},
     ])
     def test_legacy_sdk_binary_content_preserves_unsupported_inputs(self, fields, caplog):
         item = BinaryInputContent(mime_type="image/png", **fields)
 
         assert convert_message_content_to_parts([item]) == []
         assert caplog.records  # Existing validation still warns about invalid parts.
+
+    @pytest.mark.parametrize("fields", [
+        {"data": "aW1hZ2U=", "url": "https://example.com/image.png"},
+        {"data": "aW1hZ2U=", "id": "stored-image"},
+        {
+            "data": "aW1hZ2U=",
+            "url": "https://example.com/image.png",
+            "id": "stored-image",
+        },
+    ])
+    def test_legacy_sdk_binary_content_prefers_inline_data(self, fields, caplog):
+        # Regression test for #2241: a url/id reference must not discard
+        # valid inline data carried by the same item.
+        item = BinaryInputContent(
+            mime_type="image/png", filename="kept.png", **fields
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        blob = parts[0].inline_data
+        assert blob.data == b"image"
+        assert blob.mime_type == "image/png"
+        assert blob.display_name == "kept.png"
+        assert caplog.records  # The ignored url/id fields are still warned about.
 
     def test_convert_user_message_multimodal_id_only_ignored(self):
         """Test that BinaryInputContent with id only is ignored."""
