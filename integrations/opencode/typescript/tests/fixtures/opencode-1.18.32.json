@@ -1,0 +1,1837 @@
+[
+  {
+    "id": "evt_1",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "info": {
+        "id": "msg_3",
+        "role": "user",
+        "sessionID": "ses_2",
+        "time": {
+          "created": 1790639872938
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_4",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "part": {
+        "type": "text",
+        "text": "[text] Say hello",
+        "messageID": "msg_3",
+        "sessionID": "ses_2",
+        "id": "prt_5"
+      },
+      "time": 1790639874181
+    }
+  },
+  {
+    "id": "evt_6",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_2",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_7",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "info": {
+        "id": "msg_8",
+        "parentID": "msg_3",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639874210
+        },
+        "sessionID": "ses_2"
+      }
+    }
+  },
+  {
+    "id": "evt_9",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639872938
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "id": "msg_3",
+        "sessionID": "ses_2",
+        "summary": {
+          "diffs": []
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_10",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_2",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_11",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "part": {
+        "id": "prt_12",
+        "messageID": "msg_8",
+        "sessionID": "ses_2",
+        "type": "step-start"
+      },
+      "time": 1790639875567
+    }
+  },
+  {
+    "id": "evt_13",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "part": {
+        "id": "prt_14",
+        "messageID": "msg_8",
+        "sessionID": "ses_2",
+        "type": "text",
+        "text": "",
+        "time": {
+          "start": 1790639875573
+        }
+      },
+      "time": 1790639875573
+    }
+  },
+  {
+    "id": "evt_15",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_2",
+      "messageID": "msg_8",
+      "partID": "prt_14",
+      "field": "text",
+      "delta": "Hello "
+    }
+  },
+  {
+    "id": "evt_16",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_2",
+      "messageID": "msg_8",
+      "partID": "prt_14",
+      "field": "text",
+      "delta": "from live OpenCode."
+    }
+  },
+  {
+    "id": "evt_17",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "part": {
+        "id": "prt_14",
+        "messageID": "msg_8",
+        "sessionID": "ses_2",
+        "type": "text",
+        "text": "Hello from live OpenCode.",
+        "time": {
+          "start": 1790639875573,
+          "end": 1790639875583
+        }
+      },
+      "time": 1790639875583
+    }
+  },
+  {
+    "id": "evt_18",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "part": {
+        "id": "prt_19",
+        "reason": "stop",
+        "messageID": "msg_8",
+        "sessionID": "ses_2",
+        "type": "step-finish",
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "cost": 0
+      },
+      "time": 1790639875598
+    }
+  },
+  {
+    "id": "evt_20",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_2",
+      "info": {
+        "id": "msg_8",
+        "parentID": "msg_3",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639874210,
+          "completed": 1790639875616
+        },
+        "sessionID": "ses_2",
+        "finish": "stop"
+      }
+    }
+  },
+  {
+    "id": "evt_21",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "id": "msg_23",
+        "role": "user",
+        "sessionID": "ses_22",
+        "time": {
+          "created": 1790639875804
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_24",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "type": "text",
+        "text": "[permission] Print fixture",
+        "messageID": "msg_23",
+        "sessionID": "ses_22",
+        "id": "prt_25"
+      },
+      "time": 1790639875818
+    }
+  },
+  {
+    "id": "evt_26",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_22",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_27",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "id": "msg_28",
+        "parentID": "msg_23",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639875867
+        },
+        "sessionID": "ses_22"
+      }
+    }
+  },
+  {
+    "id": "evt_29",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639875804
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "id": "msg_23",
+        "sessionID": "ses_22",
+        "summary": {
+          "diffs": []
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_30",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_22",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_31",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_32",
+        "messageID": "msg_28",
+        "sessionID": "ses_22",
+        "type": "step-start"
+      },
+      "time": 1790639876000
+    }
+  },
+  {
+    "id": "evt_33",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_34",
+        "messageID": "msg_28",
+        "sessionID": "ses_22",
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_35",
+        "state": {
+          "status": "pending",
+          "input": {},
+          "raw": ""
+        }
+      },
+      "time": 1790639876006
+    }
+  },
+  {
+    "id": "evt_36",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_35",
+        "state": {
+          "status": "running",
+          "input": {
+            "command": "printf fixture",
+            "description": "Print fixture"
+          },
+          "time": {
+            "start": 1790639876023
+          }
+        },
+        "id": "prt_34",
+        "sessionID": "ses_22",
+        "messageID": "msg_28"
+      },
+      "time": 1790639876023
+    }
+  },
+  {
+    "id": "evt_37",
+    "type": "permission.asked",
+    "properties": {
+      "id": "per_38",
+      "sessionID": "ses_22",
+      "permission": "bash",
+      "patterns": ["printf fixture"],
+      "metadata": {
+        "command": "printf fixture"
+      },
+      "always": ["printf *"],
+      "tool": {
+        "messageID": "msg_28",
+        "callID": "call_35"
+      }
+    }
+  },
+  {
+    "id": "evt_39",
+    "type": "permission.replied",
+    "properties": {
+      "sessionID": "ses_22",
+      "requestID": "per_38",
+      "reply": "once"
+    }
+  },
+  {
+    "id": "evt_40",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_35",
+        "state": {
+          "metadata": {
+            "output": ""
+          },
+          "status": "running",
+          "input": {
+            "command": "printf fixture",
+            "description": "Print fixture"
+          },
+          "time": {
+            "start": 1790639876023
+          }
+        },
+        "id": "prt_34",
+        "sessionID": "ses_22",
+        "messageID": "msg_28"
+      },
+      "time": 1790639876230
+    }
+  },
+  {
+    "id": "evt_41",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_35",
+        "state": {
+          "metadata": {
+            "output": "fixture"
+          },
+          "status": "running",
+          "input": {
+            "command": "printf fixture",
+            "description": "Print fixture"
+          },
+          "time": {
+            "start": 1790639876023
+          }
+        },
+        "id": "prt_34",
+        "sessionID": "ses_22",
+        "messageID": "msg_28"
+      },
+      "time": 1790639876263
+    }
+  },
+  {
+    "id": "evt_42",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_35",
+        "state": {
+          "status": "completed",
+          "input": {
+            "command": "printf fixture",
+            "description": "Print fixture"
+          },
+          "output": "fixture",
+          "metadata": {
+            "output": "fixture",
+            "exit": 0,
+            "truncated": false
+          },
+          "title": "printf fixture",
+          "time": {
+            "start": 1790639876023,
+            "end": 1790639876275
+          }
+        },
+        "id": "prt_34",
+        "sessionID": "ses_22",
+        "messageID": "msg_28"
+      },
+      "time": 1790639876275
+    }
+  },
+  {
+    "id": "evt_43",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_44",
+        "reason": "tool-calls",
+        "messageID": "msg_28",
+        "sessionID": "ses_22",
+        "type": "step-finish",
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "cost": 0
+      },
+      "time": 1790639876280
+    }
+  },
+  {
+    "id": "evt_45",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "id": "msg_28",
+        "parentID": "msg_23",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639875867,
+          "completed": 1790639876287
+        },
+        "sessionID": "ses_22",
+        "finish": "tool-calls"
+      }
+    }
+  },
+  {
+    "id": "evt_46",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "id": "msg_28",
+        "parentID": "msg_23",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639875867,
+          "completed": 1790639876287
+        },
+        "sessionID": "ses_22",
+        "finish": "tool-calls"
+      }
+    }
+  },
+  {
+    "id": "evt_47",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_22",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_48",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "id": "msg_49",
+        "parentID": "msg_23",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639876294
+        },
+        "sessionID": "ses_22"
+      }
+    }
+  },
+  {
+    "id": "evt_50",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639875804
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_23",
+        "sessionID": "ses_22"
+      }
+    }
+  },
+  {
+    "id": "evt_51",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_22",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_52",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_53",
+        "messageID": "msg_49",
+        "sessionID": "ses_22",
+        "type": "step-start"
+      },
+      "time": 1790639876483
+    }
+  },
+  {
+    "id": "evt_54",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_55",
+        "messageID": "msg_49",
+        "sessionID": "ses_22",
+        "type": "text",
+        "text": "",
+        "time": {
+          "start": 1790639876491
+        }
+      },
+      "time": 1790639876492
+    }
+  },
+  {
+    "id": "evt_56",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_22",
+      "messageID": "msg_49",
+      "partID": "prt_55",
+      "field": "text",
+      "delta": "Hello "
+    }
+  },
+  {
+    "id": "evt_57",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_22",
+      "messageID": "msg_49",
+      "partID": "prt_55",
+      "field": "text",
+      "delta": "from live OpenCode."
+    }
+  },
+  {
+    "id": "evt_58",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_55",
+        "messageID": "msg_49",
+        "sessionID": "ses_22",
+        "type": "text",
+        "text": "Hello from live OpenCode.",
+        "time": {
+          "start": 1790639876491,
+          "end": 1790639876502
+        }
+      },
+      "time": 1790639876502
+    }
+  },
+  {
+    "id": "evt_59",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "part": {
+        "id": "prt_60",
+        "reason": "stop",
+        "messageID": "msg_49",
+        "sessionID": "ses_22",
+        "type": "step-finish",
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "cost": 0
+      },
+      "time": 1790639876509
+    }
+  },
+  {
+    "id": "evt_61",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_22",
+      "info": {
+        "id": "msg_49",
+        "parentID": "msg_23",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639876294,
+          "completed": 1790639876516
+        },
+        "sessionID": "ses_22",
+        "finish": "stop"
+      }
+    }
+  },
+  {
+    "id": "evt_62",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_63",
+      "info": {
+        "id": "msg_64",
+        "role": "user",
+        "sessionID": "ses_63",
+        "time": {
+          "created": 1790639876650
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_65",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_63",
+      "part": {
+        "type": "text",
+        "text": "[permission] Print fixture",
+        "messageID": "msg_64",
+        "sessionID": "ses_63",
+        "id": "prt_66"
+      },
+      "time": 1790639876665
+    }
+  },
+  {
+    "id": "evt_67",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_63",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_68",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_63",
+      "info": {
+        "id": "msg_69",
+        "parentID": "msg_64",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639876707
+        },
+        "sessionID": "ses_63"
+      }
+    }
+  },
+  {
+    "id": "evt_70",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_63",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639876650
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "id": "msg_64",
+        "sessionID": "ses_63",
+        "summary": {
+          "diffs": []
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_71",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_63",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_72",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_63",
+      "part": {
+        "id": "prt_73",
+        "messageID": "msg_69",
+        "sessionID": "ses_63",
+        "type": "step-start"
+      },
+      "time": 1790639876836
+    }
+  },
+  {
+    "id": "evt_74",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_63",
+      "part": {
+        "id": "prt_75",
+        "messageID": "msg_69",
+        "sessionID": "ses_63",
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_76",
+        "state": {
+          "status": "pending",
+          "input": {},
+          "raw": ""
+        }
+      },
+      "time": 1790639876840
+    }
+  },
+  {
+    "id": "evt_77",
+    "type": "permission.asked",
+    "properties": {
+      "id": "per_78",
+      "sessionID": "ses_63",
+      "permission": "bash",
+      "patterns": ["printf fixture"],
+      "metadata": {
+        "command": "printf fixture"
+      },
+      "always": ["printf *"],
+      "tool": {
+        "messageID": "msg_69",
+        "callID": "call_76"
+      }
+    }
+  },
+  {
+    "id": "evt_79",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "id": "msg_81",
+        "role": "user",
+        "sessionID": "ses_80",
+        "time": {
+          "created": 1790639877133
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_82",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "type": "text",
+        "text": "[question] Ask which color",
+        "messageID": "msg_81",
+        "sessionID": "ses_80",
+        "id": "prt_83"
+      },
+      "time": 1790639877145
+    }
+  },
+  {
+    "id": "evt_84",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_80",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_85",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "id": "msg_86",
+        "parentID": "msg_81",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639877192
+        },
+        "sessionID": "ses_80"
+      }
+    }
+  },
+  {
+    "id": "evt_87",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639877133
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "id": "msg_81",
+        "sessionID": "ses_80",
+        "summary": {
+          "diffs": []
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_88",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_80",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_89",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_90",
+        "messageID": "msg_86",
+        "sessionID": "ses_80",
+        "type": "step-start"
+      },
+      "time": 1790639877418
+    }
+  },
+  {
+    "id": "evt_91",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_92",
+        "messageID": "msg_86",
+        "sessionID": "ses_80",
+        "type": "tool",
+        "tool": "question",
+        "callID": "call_93",
+        "state": {
+          "status": "pending",
+          "input": {},
+          "raw": ""
+        }
+      },
+      "time": 1790639877423
+    }
+  },
+  {
+    "id": "evt_94",
+    "type": "question.asked",
+    "properties": {
+      "id": "que_95",
+      "sessionID": "ses_80",
+      "questions": [
+        {
+          "question": "Which color?",
+          "header": "Color",
+          "options": [
+            {
+              "label": "Blue",
+              "description": "Blue"
+            }
+          ]
+        }
+      ],
+      "tool": {
+        "messageID": "msg_86",
+        "callID": "call_93"
+      }
+    }
+  },
+  {
+    "id": "evt_96",
+    "type": "question.replied",
+    "properties": {
+      "sessionID": "ses_80",
+      "requestID": "que_95",
+      "answers": [["Blue"]]
+    }
+  },
+  {
+    "id": "evt_97",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "type": "tool",
+        "tool": "question",
+        "callID": "call_93",
+        "state": {
+          "status": "completed",
+          "input": {
+            "questions": [
+              {
+                "question": "Which color?",
+                "header": "Color",
+                "options": [
+                  {
+                    "label": "Blue",
+                    "description": "Blue"
+                  }
+                ]
+              }
+            ]
+          },
+          "output": "User has answered your questions: \"Which color?\"=\"Blue\". You can now continue with the user's answers in mind.",
+          "metadata": {
+            "answers": [["Blue"]],
+            "truncated": false
+          },
+          "title": "Asked 1 question",
+          "time": {
+            "start": 1790639877437,
+            "end": 1790639877613
+          }
+        },
+        "id": "prt_92",
+        "sessionID": "ses_80",
+        "messageID": "msg_86"
+      },
+      "time": 1790639877613
+    }
+  },
+  {
+    "id": "evt_98",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_99",
+        "reason": "tool-calls",
+        "messageID": "msg_86",
+        "sessionID": "ses_80",
+        "type": "step-finish",
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "cost": 0
+      },
+      "time": 1790639877617
+    }
+  },
+  {
+    "id": "evt_100",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "id": "msg_86",
+        "parentID": "msg_81",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639877192,
+          "completed": 1790639877626
+        },
+        "sessionID": "ses_80",
+        "finish": "tool-calls"
+      }
+    }
+  },
+  {
+    "id": "evt_101",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "id": "msg_86",
+        "parentID": "msg_81",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639877192,
+          "completed": 1790639877626
+        },
+        "sessionID": "ses_80",
+        "finish": "tool-calls"
+      }
+    }
+  },
+  {
+    "id": "evt_102",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_80",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_103",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "id": "msg_104",
+        "parentID": "msg_81",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639877637
+        },
+        "sessionID": "ses_80"
+      }
+    }
+  },
+  {
+    "id": "evt_105",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639877133
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_81",
+        "sessionID": "ses_80"
+      }
+    }
+  },
+  {
+    "id": "evt_106",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_80",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_107",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_108",
+        "messageID": "msg_104",
+        "sessionID": "ses_80",
+        "type": "step-start"
+      },
+      "time": 1790639877793
+    }
+  },
+  {
+    "id": "evt_109",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_110",
+        "messageID": "msg_104",
+        "sessionID": "ses_80",
+        "type": "text",
+        "text": "",
+        "time": {
+          "start": 1790639877796
+        }
+      },
+      "time": 1790639877796
+    }
+  },
+  {
+    "id": "evt_111",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_80",
+      "messageID": "msg_104",
+      "partID": "prt_110",
+      "field": "text",
+      "delta": "Hello "
+    }
+  },
+  {
+    "id": "evt_112",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_80",
+      "messageID": "msg_104",
+      "partID": "prt_110",
+      "field": "text",
+      "delta": "from live OpenCode."
+    }
+  },
+  {
+    "id": "evt_113",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_110",
+        "messageID": "msg_104",
+        "sessionID": "ses_80",
+        "type": "text",
+        "text": "Hello from live OpenCode.",
+        "time": {
+          "start": 1790639877796,
+          "end": 1790639877801
+        }
+      },
+      "time": 1790639877801
+    }
+  },
+  {
+    "id": "evt_114",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "part": {
+        "id": "prt_115",
+        "reason": "stop",
+        "messageID": "msg_104",
+        "sessionID": "ses_80",
+        "type": "step-finish",
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "cost": 0
+      },
+      "time": 1790639877805
+    }
+  },
+  {
+    "id": "evt_116",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_80",
+      "info": {
+        "id": "msg_104",
+        "parentID": "msg_81",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639877637,
+          "completed": 1790639877812
+        },
+        "sessionID": "ses_80",
+        "finish": "stop"
+      }
+    }
+  },
+  {
+    "id": "evt_117",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_118",
+      "info": {
+        "id": "msg_119",
+        "role": "user",
+        "sessionID": "ses_118",
+        "time": {
+          "created": 1790639877947
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_120",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_118",
+      "part": {
+        "type": "text",
+        "text": "[error]",
+        "messageID": "msg_119",
+        "sessionID": "ses_118",
+        "id": "prt_121"
+      },
+      "time": 1790639877956
+    }
+  },
+  {
+    "id": "evt_122",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_118",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_123",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_118",
+      "info": {
+        "id": "msg_124",
+        "parentID": "msg_119",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639877983
+        },
+        "sessionID": "ses_118"
+      }
+    }
+  },
+  {
+    "id": "evt_125",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_118",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639877947
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "id": "msg_119",
+        "sessionID": "ses_118",
+        "summary": {
+          "diffs": []
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_126",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_118",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_127",
+    "type": "session.error",
+    "properties": {
+      "sessionID": "ses_118",
+      "error": {
+        "name": "APIError",
+        "data": {
+          "message": "fixture model authentication failed",
+          "statusCode": 401,
+          "isRetryable": false,
+          "responseHeaders": {
+            "connection": "keep-alive",
+            "content-type": "application/json",
+            "date": "Mon, 28 Sep 2026 23:57:58 GMT",
+            "keep-alive": "timeout=5",
+            "transfer-encoding": "chunked"
+          },
+          "responseBody": "{\"error\":{\"message\":\"fixture model authentication failed\",\"type\":\"authentication_error\"}}",
+          "metadata": {
+            "url": "http://127.0.0.1:40857/v1/chat/completions"
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_128",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_129",
+      "info": {
+        "id": "msg_130",
+        "role": "user",
+        "sessionID": "ses_129",
+        "time": {
+          "created": 1790639878201
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_131",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_129",
+      "part": {
+        "type": "text",
+        "text": "[abort]",
+        "messageID": "msg_130",
+        "sessionID": "ses_129",
+        "id": "prt_132"
+      },
+      "time": 1790639878210
+    }
+  },
+  {
+    "id": "evt_133",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_129",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_134",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_129",
+      "info": {
+        "id": "msg_135",
+        "parentID": "msg_130",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/disposable-project",
+          "root": "/"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "mock",
+        "providerID": "fixture",
+        "time": {
+          "created": 1790639878239
+        },
+        "sessionID": "ses_129"
+      }
+    }
+  },
+  {
+    "id": "evt_136",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_129",
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1790639878201
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "fixture",
+          "modelID": "mock"
+        },
+        "id": "msg_130",
+        "sessionID": "ses_129",
+        "summary": {
+          "diffs": []
+        }
+      }
+    }
+  },
+  {
+    "id": "evt_137",
+    "type": "session.status",
+    "properties": {
+      "sessionID": "ses_129",
+      "status": {
+        "type": "busy"
+      }
+    }
+  },
+  {
+    "id": "evt_138",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_129",
+      "part": {
+        "id": "prt_139",
+        "messageID": "msg_135",
+        "sessionID": "ses_129",
+        "type": "step-start"
+      },
+      "time": 1790639878308
+    }
+  },
+  {
+    "id": "evt_140",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_129",
+      "part": {
+        "id": "prt_141",
+        "messageID": "msg_135",
+        "sessionID": "ses_129",
+        "type": "text",
+        "text": "",
+        "time": {
+          "start": 1790639878311
+        }
+      },
+      "time": 1790639878311
+    }
+  },
+  {
+    "id": "evt_142",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_129",
+      "messageID": "msg_135",
+      "partID": "prt_141",
+      "field": "text",
+      "delta": "Waiting"
+    }
+  }
+]

@@ -564,4 +564,5 @@ export const menuIntegrations = [
     // the hosted Dojo yet.
     localOnly: true,
   },
+  { id: "opencode", name: "OpenCode", features: ["agentic_chat", "interrupt"] },
 ] as const satisfies MenuIntegrationConfig[];

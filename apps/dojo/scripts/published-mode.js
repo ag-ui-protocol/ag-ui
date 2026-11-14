@@ -222,6 +222,9 @@ const LANES = {
     // Once published, this becomes a `python` entry with that producer.
     note: "ag-ui-openai-agents is not on PyPI yet; the server runs it from this checkout",
   },
+  opencode: {
+    npm: ["@ag-ui/opencode"],
+  },
   "claude-managed-agents-dotnet": {
     dotnet: {
       csproj: "integrations/claude-managed-agents/dotnet/examples/AGUIDojoServer/AGUIDojoServer.csproj",
