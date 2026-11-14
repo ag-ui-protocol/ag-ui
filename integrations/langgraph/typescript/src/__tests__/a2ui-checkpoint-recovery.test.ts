@@ -106,7 +106,13 @@ describe("PNI-568 native continuation boundary", () => {
       },
       [...STREAM_MODE],
     );
-    const repaired = streamCalls[0].input.messages.__overwrite__;
+    const update = streamCalls[0].input.messages;
+    expect(update[0]).toEqual({
+      type: "remove",
+      id: "__remove_all__",
+      content: "",
+    });
+    const repaired = update.slice(1);
     expect(
       repaired.filter((m: any) => m.id !== "recovery" && m.id !== "new-user"),
     ).toEqual(fixture);

@@ -68,6 +68,15 @@ const result = await agent.runAgent({
 - **Interrupt handling** – Human-in-the-loop workflow support
 - **Step tracking** – Real-time node execution progress
 
+## Recovering late A2UI tool results
+
+When an A2UI tool result arrives after a later user turn has been saved, the
+connector sends one `messages` update that clears the existing history and
+then applies the repaired history in order. The standard Python
+`add_messages` and JavaScript `messagesStateReducer` handle this update.
+If your graph uses a custom messages reducer, support a remove message with
+ID `__remove_all__` followed by the replacement messages in the same update.
+
 ## Resuming via AG-UI standard `resume[]`
 
 When a client uses `RunAgentInput.resume = [ResumeEntry, ...]` instead of
