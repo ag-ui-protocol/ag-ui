@@ -323,3 +323,26 @@ async def test_invalid_version_in_unusable_catalog_cannot_fall_back(
     result = await tool.run_async(args={}, tool_context=_context())
     assert "protocol" in result.get("error", "").lower(), result
     assert not _calls(model)
+
+
+@pytest.mark.parametrize("inference_format", FORMATS)
+async def test_configured_catalog_id_is_used_without_a_client_catalog(
+    inference_format,
+):
+    """#2869: with no client catalog, both formats fall back to the basic catalog
+    and stamp the configured default_catalog_id, which must match the host
+    renderer's registration."""
+    host_id = "https://example.com/host/basic_catalog.json"
+    model = _model(inference_format)
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "default_catalog_id": host_id,
+            "inference_format": inference_format,
+            "default_surface_id": "s",
+        }
+    )
+    tool.event_queue = asyncio.Queue()
+    result = await tool.run_async(args={}, tool_context=_context())
+    assert "a2ui_operations" in result, result
+    assert result["a2ui_operations"][0]["createSurface"]["catalogId"] == host_id
