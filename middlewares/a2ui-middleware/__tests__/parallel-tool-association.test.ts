@@ -279,3 +279,97 @@ describe("parallel A2UI tool association", () => {
     ).toBe("a2ui-surface-failed");
   });
 });
+
+describe("render attempts of a generation tool", () => {
+  // What @ag-ui/mastra sends for generate_a2ui: each render attempt of the
+  // subagent, then the result of the outer call. The bridge answers each
+  // render call itself.
+  const attempts = (renderParent: (attempt: number) => string): BaseEvent[] => {
+    const attempt = (n: number, components: unknown[]): BaseEvent[] => [
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: `a2ui-render-${n}`,
+        toolCallName: "render_a2ui",
+        parentMessageId: renderParent(n),
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: `a2ui-render-${n}`,
+        delta: JSON.stringify({ surfaceId: "report", components }),
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_END,
+        toolCallId: `a2ui-render-${n}`,
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId: `a2ui-render-${n}`,
+        messageId: `a2ui-render-${n}-result`,
+        content: JSON.stringify({ status: "rendered" }),
+      } as BaseEvent,
+    ];
+    const valid = [{ id: "root", component: "Text", text: "Q2" }];
+    return [
+      { type: EventType.RUN_STARTED, threadId: "test", runId: "test" },
+      {
+        type: EventType.TOOL_CALL_START,
+        toolCallId: "outer",
+        toolCallName: "generate_a2ui",
+        parentMessageId: "assistant",
+      } as BaseEvent,
+      {
+        type: EventType.TOOL_CALL_ARGS,
+        toolCallId: "outer",
+        delta: "{}",
+      } as BaseEvent,
+      { type: EventType.TOOL_CALL_END, toolCallId: "outer" } as BaseEvent,
+      ...attempt(1, [
+        { id: "root", component: "Column", children: ["missing"] },
+      ]),
+      ...attempt(2, valid),
+      {
+        type: EventType.TOOL_CALL_RESULT,
+        toolCallId: "outer",
+        messageId: "outer-result",
+        content: JSON.stringify({
+          a2ui_operations: [
+            {
+              version: "v0.9",
+              createSurface: {
+                surfaceId: "report",
+                catalogId: "copilotkit://app-dashboard-catalog",
+              },
+            },
+            {
+              version: "v0.9",
+              updateComponents: { surfaceId: "report", components: valid },
+            },
+          ],
+        }),
+      } as BaseEvent,
+      { type: EventType.RUN_FINISHED, threadId: "test", runId: "test" },
+    ];
+  };
+  const failed = (snapshots: ActivitySnapshotEvent[]) =>
+    snapshots.filter(
+      (event) => (event.content as { status?: string }).status === "failed",
+    );
+
+  it("belong to the outer call when each has a message of its own", async () => {
+    const snapshots = await paint(attempts((n) => `a2ui-render-${n}-message`));
+    // The second attempt painted, so no attempt reports a failed render.
+    expect(failed(snapshots)).toEqual([]);
+    expect(
+      snapshots.every((event) => event.messageId === "a2ui-surface-outer"),
+    ).toBe(true);
+  });
+
+  it("are siblings of the outer call in the outer call's message", async () => {
+    const snapshots = await paint(attempts(() => "assistant"));
+    // Shared message ids prove siblings, so the invalid attempt is its own
+    // failed render.
+    expect(failed(snapshots).map((event) => event.messageId)).toEqual([
+      "a2ui-surface-a2ui-render-1",
+    ]);
+  });
+});
