@@ -1,4 +1,8 @@
-import { defaultApplyEvents, keepToolResultsWithCalls } from "@/apply/default";
+import {
+  type ApplyEventsOptions,
+  defaultApplyEvents,
+  keepToolResultsWithCalls,
+} from "@/apply/default";
 import {
   Message,
   State,
@@ -562,12 +566,18 @@ export abstract class AbstractAgent {
     });
   }
 
+  /**
+   * Applies events to this agent's messages and state. `options` is passed to
+   * {@link defaultApplyEvents}; `coalesce` merges the updates of events that
+   * arrive together, such as a replayed thread history.
+   */
   protected apply(
     input: RunAgentInput,
     events$: Observable<BaseEvent>,
     subscribers: AgentSubscriber[],
+    options?: ApplyEventsOptions,
   ): Observable<AgentStateMutation> {
-    return defaultApplyEvents(input, events$, this, subscribers, this.debugLogger);
+    return defaultApplyEvents(input, events$, this, subscribers, this.debugLogger, options);
   }
 
   protected processApplyEvents(
