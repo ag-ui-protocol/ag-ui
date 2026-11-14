@@ -1,12 +1,23 @@
 [package]
 name = "ag-ui-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Core type library for the AG-UI protocol."
 license = "MIT"
+repository = "https://github.com/ag-ui-protocol/ag-ui"
+homepage = "https://docs.ag-ui.com"
+documentation = "https://docs.rs/ag-ui-core"
+keywords = ["ag-ui", "agents", "ai", "protocol"]
+categories = ["api-bindings"]
+exclude = ["tests/**"]
 
 [dependencies]
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+json-patch = "4"
+
+[dev-dependencies]
+jsonschema = { version = "0.33", default-features = false }

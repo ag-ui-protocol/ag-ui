@@ -17,6 +17,24 @@ pub struct AgentSubscriberParams<'a, StateT: AgentState, FwdPropsT: FwdProps> {
 
 /// Subscriber trait for hooking into Agent run lifecycle events.
 /// Currently makes use of the [`async_trait`] crate.
+/// Chunk events are expanded before delivery. Implement the corresponding
+/// start/content/end (or tool-call start/args/end) callbacks instead of the
+/// removed chunk callbacks. Overriding an obsolete hook now fails to compile.
+///
+/// ```compile_fail
+/// use ag_ui_client::{subscriber::{AgentSubscriber, AgentSubscriberParams},
+///     agent::{AgentError, AgentStateMutation}, core::event::TextMessageChunkEvent};
+/// struct Observer;
+/// #[async_trait::async_trait]
+/// impl AgentSubscriber for Observer {
+///     async fn on_text_message_chunk_event(
+///         &self, event: &TextMessageChunkEvent,
+///         params: AgentSubscriberParams<'async_trait, serde_json::Value, serde_json::Value>,
+///     ) -> Result<AgentStateMutation, AgentError> {
+///         Ok(AgentStateMutation::default())
+///     }
+/// }
+/// ```
 #[async_trait::async_trait]
 pub trait AgentSubscriber<StateT = JsonValue, FwdPropsT = JsonValue>: Send + Sync
 where
@@ -44,6 +62,16 @@ where
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
+    }
+
+    /// Structured application/reducer diagnostics. Transport normalization
+    /// diagnostics are available from the HttpAgent diagnostic handler.
+    async fn on_diagnostic(
+        &self,
+        diagnostic: &crate::core::processing::Diagnostic,
+        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<(), AgentError> {
+        Ok(())
     }
 
     // Events
@@ -198,57 +226,89 @@ where
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_text_message_chunk_event(
+    async fn on_activity_snapshot_event(
         &self,
-        event: &TextMessageChunkEvent,
+        event: &ActivitySnapshotEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_thinking_text_message_start_event(
+    async fn on_activity_delta_event(
         &self,
-        event: &ThinkingTextMessageStartEvent,
+        event: &ActivityDeltaEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_thinking_text_message_content_event(
+    async fn on_reasoning_start_event(
         &self,
-        event: &ThinkingTextMessageContentEvent,
+        event: &ReasoningStartEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_thinking_text_message_end_event(
+    async fn on_reasoning_message_start_event(
         &self,
-        event: &ThinkingTextMessageEndEvent,
+        event: &ReasoningMessageStartEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_tool_call_chunk_event(
+    async fn on_reasoning_message_content_event(
         &self,
-        event: &ToolCallChunkEvent,
+        event: &ReasoningMessageContentEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_thinking_start_event(
+    async fn on_reasoning_message_end_event(
         &self,
-        event: &ThinkingStartEvent,
+        event: &ReasoningMessageEndEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_thinking_end_event(
+    async fn on_reasoning_end_event(
         &self,
-        event: &ThinkingEndEvent,
+        event: &ReasoningEndEvent,
+        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_reasoning_encrypted_value_event(
+        &self,
+        event: &ReasoningEncryptedValueEvent,
+        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_subagent_started_event(
+        &self,
+        event: &SubagentStartedEvent,
+        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_subagent_finished_event(
+        &self,
+        event: &SubagentFinishedEvent,
+        params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
+    ) -> Result<AgentStateMutation<StateT>, AgentError> {
+        Ok(AgentStateMutation::default())
+    }
+
+    async fn on_subagent_error_event(
+        &self,
+        event: &SubagentErrorEvent,
         params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         Ok(AgentStateMutation::default())

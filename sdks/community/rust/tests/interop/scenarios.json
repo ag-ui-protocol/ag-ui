@@ -1,0 +1,1119 @@
+{
+  "ordinary": [
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "ordinary-1",
+        "messages": [
+          {
+            "id": "replace",
+            "role": "user",
+            "content": "Old text"
+          },
+          {
+            "id": "drop",
+            "role": "assistant",
+            "content": "Delete me"
+          },
+          {
+            "id": "local-activity",
+            "role": "activity",
+            "activityType": "progress",
+            "content": {
+              "percent": 0
+            },
+            "metadata": {
+              "local": true
+            }
+          }
+        ],
+        "state": {},
+        "tools": [],
+        "context": [
+          {
+            "description": "locale",
+            "value": "ja-JP"
+          }
+        ],
+        "forwardedProps": {
+          "opaque": {
+            "null": null
+          },
+          "array": [
+            1,
+            null
+          ]
+        }
+      },
+      "carryHistory": false,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "ordinary-1",
+        "messages": [
+          {
+            "id": "replace",
+            "role": "user",
+            "content": "Old text"
+          },
+          {
+            "id": "drop",
+            "role": "assistant",
+            "content": "Delete me"
+          }
+        ],
+        "state": {},
+        "tools": [],
+        "context": [
+          {
+            "description": "locale",
+            "value": "ja-JP"
+          }
+        ],
+        "forwardedProps": {
+          "opaque": {
+            "null": null
+          },
+          "array": [
+            1,
+            null
+          ]
+        },
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {},
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "ordinary-1"
+        },
+        {
+          "type": "MESSAGES_SNAPSHOT",
+          "messages": [
+            {
+              "id": "replace",
+              "role": "developer",
+              "content": "Revised instructions",
+              "metadata": {
+                "retainedNull": null
+              }
+            },
+            {
+              "id": "media",
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "An image, retained without downloading."
+                },
+                {
+                  "type": "image",
+                  "source": {
+                    "type": "url",
+                    "value": "https://example.invalid/fixture.png",
+                    "mimeType": "image/png"
+                  }
+                }
+              ],
+              "encryptedValue": "opaque-provider-value",
+              "metadata": {
+                "nested": {
+                  "null": null
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "STATE_SNAPSHOT",
+          "snapshot": {
+            "phase": 1,
+            "nested": null
+          }
+        },
+        {
+          "type": "TEXT_MESSAGE_START",
+          "messageId": "unicode",
+          "role": "assistant"
+        },
+        {
+          "type": "TEXT_MESSAGE_CONTENT",
+          "messageId": "unicode",
+          "delta": "Hello 🌍 — café 日本語\nnext line"
+        },
+        {
+          "type": "TEXT_MESSAGE_END",
+          "messageId": "unicode"
+        },
+        {
+          "type": "SUBAGENT_STARTED",
+          "subagentRunId": "outer",
+          "name": "worker",
+          "parentMessageId": "unicode"
+        },
+        {
+          "type": "SUBAGENT_STARTED",
+          "subagentRunId": "child",
+          "parentSubagentRunId": "outer",
+          "name": "nested"
+        },
+        {
+          "type": "SUBAGENT_STARTED",
+          "subagentRunId": "peer",
+          "name": "peer"
+        },
+        {
+          "type": "TEXT_MESSAGE_START",
+          "messageId": "delegated",
+          "role": "assistant",
+          "subagentRunId": "child"
+        },
+        {
+          "type": "TEXT_MESSAGE_CONTENT",
+          "messageId": "delegated",
+          "delta": "Nested result",
+          "subagentRunId": "child"
+        },
+        {
+          "type": "TEXT_MESSAGE_END",
+          "messageId": "delegated",
+          "subagentRunId": "child"
+        },
+        {
+          "type": "SUBAGENT_FINISHED",
+          "subagentRunId": "peer",
+          "result": {
+            "opaque": [
+              null,
+              7
+            ]
+          }
+        },
+        {
+          "type": "SUBAGENT_FINISHED",
+          "subagentRunId": "child"
+        },
+        {
+          "type": "SUBAGENT_FINISHED",
+          "subagentRunId": "outer"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "ordinary-1",
+          "result": {
+            "ok": true
+          }
+        }
+      ],
+      "expectedMessages": [
+        {
+          "id": "replace",
+          "role": "developer",
+          "content": "Revised instructions",
+          "metadata": {
+            "retainedNull": null
+          }
+        },
+        {
+          "id": "local-activity",
+          "role": "activity",
+          "activityType": "progress",
+          "content": {
+            "percent": 0
+          },
+          "metadata": {
+            "local": true
+          }
+        },
+        {
+          "id": "media",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "An image, retained without downloading."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "value": "https://example.invalid/fixture.png",
+                "mimeType": "image/png"
+              }
+            }
+          ],
+          "encryptedValue": "opaque-provider-value",
+          "metadata": {
+            "nested": {
+              "null": null
+            }
+          }
+        },
+        {
+          "id": "unicode",
+          "role": "assistant",
+          "content": "Hello 🌍 — café 日本語\nnext line"
+        },
+        {
+          "id": "delegated",
+          "role": "assistant",
+          "content": "Nested result",
+          "subagentRunId": "child"
+        }
+      ],
+      "expectedState": {
+        "phase": 1,
+        "nested": null
+      }
+    },
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "ordinary-2",
+        "messages": [
+          {
+            "id": "replace",
+            "role": "developer",
+            "content": "Revised instructions",
+            "metadata": {
+              "retainedNull": null
+            }
+          },
+          {
+            "id": "local-activity",
+            "role": "activity",
+            "activityType": "progress",
+            "content": {
+              "percent": 0
+            },
+            "metadata": {
+              "local": true
+            }
+          },
+          {
+            "id": "media",
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "An image, retained without downloading."
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "value": "https://example.invalid/fixture.png",
+                  "mimeType": "image/png"
+                }
+              }
+            ],
+            "encryptedValue": "opaque-provider-value",
+            "metadata": {
+              "nested": {
+                "null": null
+              }
+            }
+          },
+          {
+            "id": "unicode",
+            "role": "assistant",
+            "content": "Hello 🌍 — café 日本語\nnext line"
+          },
+          {
+            "id": "delegated",
+            "role": "assistant",
+            "content": "Nested result",
+            "subagentRunId": "child"
+          }
+        ],
+        "state": {
+          "phase": 1,
+          "nested": null
+        },
+        "tools": [],
+        "context": [
+          {
+            "description": "locale",
+            "value": "ja-JP"
+          }
+        ],
+        "forwardedProps": {
+          "opaque": {
+            "null": null
+          },
+          "array": [
+            1,
+            null
+          ]
+        },
+        "parentRunId": "ordinary-1"
+      },
+      "carryHistory": true,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "ordinary-2",
+        "messages": [
+          {
+            "id": "replace",
+            "role": "developer",
+            "content": "Revised instructions",
+            "metadata": {
+              "retainedNull": null
+            }
+          },
+          {
+            "id": "media",
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "An image, retained without downloading."
+              },
+              {
+                "type": "image",
+                "source": {
+                  "type": "url",
+                  "value": "https://example.invalid/fixture.png",
+                  "mimeType": "image/png"
+                }
+              }
+            ],
+            "encryptedValue": "opaque-provider-value",
+            "metadata": {
+              "nested": {
+                "null": null
+              }
+            }
+          },
+          {
+            "id": "unicode",
+            "role": "assistant",
+            "content": "Hello 🌍 — café 日本語\nnext line"
+          },
+          {
+            "id": "delegated",
+            "role": "assistant",
+            "content": "Nested result",
+            "subagentRunId": "child"
+          }
+        ],
+        "state": {
+          "phase": 1,
+          "nested": null
+        },
+        "tools": [],
+        "context": [
+          {
+            "description": "locale",
+            "value": "ja-JP"
+          }
+        ],
+        "forwardedProps": {
+          "opaque": {
+            "null": null
+          },
+          "array": [
+            1,
+            null
+          ]
+        },
+        "parentRunId": "ordinary-1",
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {
+        "phase": 1,
+        "nested": null
+      },
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "ordinary-2",
+          "parentRunId": "ordinary-1"
+        },
+        {
+          "type": "STATE_DELTA",
+          "delta": [
+            {
+              "op": "replace",
+              "path": "/phase",
+              "value": 2,
+              "extension": {
+                "kept": null
+              }
+            }
+          ]
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "ordinary-2",
+          "result": {
+            "ok": true
+          }
+        }
+      ],
+      "expectedMessages": [
+        {
+          "id": "replace",
+          "role": "developer",
+          "content": "Revised instructions",
+          "metadata": {
+            "retainedNull": null
+          }
+        },
+        {
+          "id": "local-activity",
+          "role": "activity",
+          "activityType": "progress",
+          "content": {
+            "percent": 0
+          },
+          "metadata": {
+            "local": true
+          }
+        },
+        {
+          "id": "media",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "An image, retained without downloading."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "value": "https://example.invalid/fixture.png",
+                "mimeType": "image/png"
+              }
+            }
+          ],
+          "encryptedValue": "opaque-provider-value",
+          "metadata": {
+            "nested": {
+              "null": null
+            }
+          }
+        },
+        {
+          "id": "unicode",
+          "role": "assistant",
+          "content": "Hello 🌍 — café 日本語\nnext line"
+        },
+        {
+          "id": "delegated",
+          "role": "assistant",
+          "content": "Nested result",
+          "subagentRunId": "child"
+        }
+      ],
+      "expectedState": {
+        "phase": 2,
+        "nested": null
+      }
+    }
+  ],
+  "null_restart": [
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "null-1",
+        "messages": [],
+        "state": {},
+        "tools": [],
+        "context": [],
+        "forwardedProps": {}
+      },
+      "carryHistory": false,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "null-1",
+        "messages": [],
+        "state": {},
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {},
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "null-1"
+        },
+        {
+          "type": "STATE_SNAPSHOT",
+          "snapshot": null
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "null-1"
+        }
+      ],
+      "expectedMessages": [],
+      "expectedState": null
+    },
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "null-2",
+        "messages": [],
+        "state": null,
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "parentRunId": "null-1"
+      },
+      "carryHistory": true,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "null-2",
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "parentRunId": "null-1",
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {},
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "null-2",
+          "parentRunId": "null-1"
+        },
+        {
+          "type": "STATE_SNAPSHOT",
+          "snapshot": null
+        },
+        {
+          "type": "STATE_DELTA",
+          "delta": [
+            {
+              "op": "replace",
+              "path": "",
+              "value": [
+                null,
+                {
+                  "restored": true
+                }
+              ],
+              "extension": {
+                "preserved": true
+              }
+            }
+          ]
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "null-2"
+        }
+      ],
+      "expectedMessages": [],
+      "expectedState": [
+        null,
+        {
+          "restored": true
+        }
+      ]
+    }
+  ],
+  "frontend": [
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "frontend-1",
+        "messages": [],
+        "state": {},
+        "tools": [],
+        "context": [],
+        "forwardedProps": {}
+      },
+      "carryHistory": false,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "frontend-1",
+        "messages": [],
+        "state": {},
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {},
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "frontend-1"
+        },
+        {
+          "type": "TOOL_CALL_START",
+          "toolCallId": "tool-a",
+          "toolCallName": "ask_one",
+          "parentMessageId": "tools"
+        },
+        {
+          "type": "TOOL_CALL_ARGS",
+          "toolCallId": "tool-a",
+          "delta": "{}"
+        },
+        {
+          "type": "TOOL_CALL_END",
+          "toolCallId": "tool-a"
+        },
+        {
+          "type": "TOOL_CALL_START",
+          "toolCallId": "tool-b",
+          "toolCallName": "ask_two",
+          "parentMessageId": "tools"
+        },
+        {
+          "type": "TOOL_CALL_ARGS",
+          "toolCallId": "tool-b",
+          "delta": "{}"
+        },
+        {
+          "type": "TOOL_CALL_END",
+          "toolCallId": "tool-b"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "frontend-1",
+          "outcome": {
+            "type": "success",
+            "pendingToolCallIds": [
+              "tool-a",
+              "tool-b"
+            ]
+          }
+        }
+      ],
+      "expectedMessages": [
+        {
+          "id": "tools",
+          "role": "assistant",
+          "toolCalls": [
+            {
+              "id": "tool-a",
+              "type": "function",
+              "function": {
+                "name": "ask_one",
+                "arguments": "{}"
+              }
+            },
+            {
+              "id": "tool-b",
+              "type": "function",
+              "function": {
+                "name": "ask_two",
+                "arguments": "{}"
+              }
+            }
+          ]
+        }
+      ],
+      "expectedState": {}
+    },
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "frontend-2",
+        "messages": [
+          {
+            "id": "tools",
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "tool-a",
+                "type": "function",
+                "function": {
+                  "name": "ask_one",
+                  "arguments": "{}"
+                }
+              },
+              {
+                "id": "tool-b",
+                "type": "function",
+                "function": {
+                  "name": "ask_two",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          {
+            "id": "result-a",
+            "role": "tool",
+            "toolCallId": "tool-a",
+            "content": "Approved",
+            "metadata": {
+              "source": "frontend"
+            }
+          },
+          {
+            "id": "result-b",
+            "role": "tool",
+            "toolCallId": "tool-b",
+            "content": "The user declined",
+            "error": "permission_denied",
+            "metadata": {
+              "source": "frontend"
+            }
+          }
+        ],
+        "state": {},
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "parentRunId": "frontend-1"
+      },
+      "carryHistory": true,
+      "appendMessages": [
+        {
+          "id": "result-a",
+          "role": "tool",
+          "toolCallId": "tool-a",
+          "content": "Approved",
+          "metadata": {
+            "source": "frontend"
+          }
+        },
+        {
+          "id": "result-b",
+          "role": "tool",
+          "toolCallId": "tool-b",
+          "content": "The user declined",
+          "error": "permission_denied",
+          "metadata": {
+            "source": "frontend"
+          }
+        }
+      ],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "frontend-2",
+        "messages": [
+          {
+            "id": "tools",
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "tool-a",
+                "type": "function",
+                "function": {
+                  "name": "ask_one",
+                  "arguments": "{}"
+                }
+              },
+              {
+                "id": "tool-b",
+                "type": "function",
+                "function": {
+                  "name": "ask_two",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          },
+          {
+            "id": "result-a",
+            "role": "tool",
+            "toolCallId": "tool-a",
+            "content": "Approved",
+            "metadata": {
+              "source": "frontend"
+            }
+          },
+          {
+            "id": "result-b",
+            "role": "tool",
+            "toolCallId": "tool-b",
+            "content": "The user declined",
+            "error": "permission_denied",
+            "metadata": {
+              "source": "frontend"
+            }
+          }
+        ],
+        "state": {},
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "parentRunId": "frontend-1",
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {},
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "frontend-2",
+          "parentRunId": "frontend-1"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "frontend-2",
+          "result": {
+            "accepted": 2,
+            "failed": 1
+          }
+        }
+      ],
+      "expectedMessages": [
+        {
+          "id": "tools",
+          "role": "assistant",
+          "toolCalls": [
+            {
+              "id": "tool-a",
+              "type": "function",
+              "function": {
+                "name": "ask_one",
+                "arguments": "{}"
+              }
+            },
+            {
+              "id": "tool-b",
+              "type": "function",
+              "function": {
+                "name": "ask_two",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "id": "result-a",
+          "role": "tool",
+          "toolCallId": "tool-a",
+          "content": "Approved",
+          "metadata": {
+            "source": "frontend"
+          }
+        },
+        {
+          "id": "result-b",
+          "role": "tool",
+          "toolCallId": "tool-b",
+          "content": "The user declined",
+          "error": "permission_denied",
+          "metadata": {
+            "source": "frontend"
+          }
+        }
+      ],
+      "expectedState": {}
+    }
+  ],
+  "interrupt": [
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "interrupt-1",
+        "messages": [],
+        "state": {
+          "opaque": [
+            null,
+            true
+          ]
+        },
+        "tools": [],
+        "context": [],
+        "forwardedProps": {}
+      },
+      "carryHistory": false,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "interrupt-1",
+        "messages": [],
+        "state": {
+          "opaque": [
+            null,
+            true
+          ]
+        },
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {
+        "opaque": [
+          null,
+          true
+        ]
+      },
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "interrupt-1"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "interrupt-1",
+          "outcome": {
+            "type": "interrupt",
+            "interrupts": [
+              {
+                "id": "approval-a",
+                "reason": "approval",
+                "message": "Allow fixture step?"
+              },
+              {
+                "id": "approval-b",
+                "reason": "input",
+                "metadata": {
+                  "question": "Choose",
+                  "nested": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expectedMessages": [],
+      "expectedState": {
+        "opaque": [
+          null,
+          true
+        ]
+      }
+    },
+    {
+      "input": {
+        "threadId": "interop-thread",
+        "runId": "interrupt-2",
+        "messages": [],
+        "state": {
+          "opaque": [
+            null,
+            true
+          ]
+        },
+        "tools": [],
+        "context": [
+          {
+            "description": "resume",
+            "value": "fixture"
+          }
+        ],
+        "forwardedProps": [
+          null,
+          {
+            "opaque": 7
+          }
+        ],
+        "parentRunId": "interrupt-1",
+        "resume": [
+          {
+            "interruptId": "approval-a",
+            "status": "resolved",
+            "payload": {
+              "approved": true,
+              "nested": null
+            }
+          },
+          {
+            "interruptId": "approval-b",
+            "status": "cancelled",
+            "metadata": {
+              "why": "test"
+            }
+          }
+        ]
+      },
+      "carryHistory": true,
+      "appendMessages": [],
+      "expectedRequest": {
+        "threadId": "interop-thread",
+        "runId": "interrupt-2",
+        "messages": [],
+        "state": {
+          "opaque": [
+            null,
+            true
+          ]
+        },
+        "tools": [],
+        "context": [
+          {
+            "description": "resume",
+            "value": "fixture"
+          }
+        ],
+        "forwardedProps": [
+          null,
+          {
+            "opaque": 7
+          }
+        ],
+        "parentRunId": "interrupt-1",
+        "resume": [
+          {
+            "interruptId": "approval-a",
+            "status": "resolved",
+            "payload": {
+              "approved": true,
+              "nested": null
+            }
+          },
+          {
+            "interruptId": "approval-b",
+            "status": "cancelled",
+            "metadata": {
+              "why": "test"
+            }
+          }
+        ],
+        "protocolVersion": "1.0"
+      },
+      "expectedEffectiveState": {
+        "opaque": [
+          null,
+          true
+        ]
+      },
+      "response": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "interop-thread",
+          "runId": "interrupt-2",
+          "parentRunId": "interrupt-1"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "interop-thread",
+          "runId": "interrupt-2",
+          "result": {
+            "resumed": true
+          }
+        }
+      ],
+      "expectedMessages": [],
+      "expectedState": {
+        "opaque": [
+          null,
+          true
+        ]
+      }
+    }
+  ]
+}
