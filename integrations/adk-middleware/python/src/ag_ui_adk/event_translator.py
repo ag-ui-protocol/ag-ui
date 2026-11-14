@@ -1657,8 +1657,16 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
                     if isinstance(author, str) and author != "model"
                     else None
                 )
+                # A text-less tool-call step is keyed by its first tool call id
+                # in the live stream (no parent message id), so history must
+                # use the same id for the client to join the step with the
+                # answer that follows (#3254). Events with text keep the
+                # event id.
+                message_id = event_id
+                if not text_content and tool_calls:
+                    message_id = tool_calls[0].id
                 assistant_message = AssistantMessage(
-                    id=event_id,
+                    id=message_id,
                     role="assistant",
                     name=assistant_name,
                     content=text_content if text_content else None,
