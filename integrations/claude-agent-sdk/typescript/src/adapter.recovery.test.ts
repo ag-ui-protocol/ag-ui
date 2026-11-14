@@ -229,6 +229,63 @@ for (const eviction of ["clear", "ttl", "capacity"] as const)
     }
   });
 
+it("resumes the session of the adapter it was cloned from", async () => {
+  const resumes: (string | undefined)[] = [];
+  sdk.query.mockImplementation(({ options }) =>
+    (async function* () {
+      resumes.push(options.resume);
+      const sessionId = options.resume ?? "session-1";
+      yield { type: "system", subtype: "init", session_id: sessionId };
+      yield {
+        type: "result",
+        subtype: "success",
+        session_id: sessionId,
+        is_error: false,
+      };
+    })(),
+  );
+  const adapter = new ClaudeAgentAdapter();
+  const initial = { ...request(), state: null };
+
+  await collect(adapter.clone(), initial);
+  const events = await collect(adapter.clone(), initial);
+
+  expect(events[events.length - 1]).toMatchObject({ type: "RUN_FINISHED" });
+  expect(resumes).toEqual([undefined, "session-1"]);
+});
+
+it("refuses a run on a clone while the same thread runs on another clone", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  sdk.query.mockImplementation(() =>
+    (async function* () {
+      yield { type: "system", subtype: "init", session_id: "session-1" };
+      await held;
+      yield {
+        type: "result",
+        subtype: "success",
+        session_id: "session-1",
+        is_error: false,
+      };
+    })(),
+  );
+  const adapter = new ClaudeAgentAdapter();
+  const initial = { ...request(), state: null };
+
+  const first = collect(adapter.clone(), initial);
+  await vi.waitFor(() => expect(sdk.query).toHaveBeenCalled());
+  const second = await collect(adapter.clone(), initial);
+  release();
+  await first;
+
+  expect(second).toEqual([
+    expect.objectContaining({
+      type: "RUN_ERROR",
+      message: "A run is already active for this thread.",
+    }),
+  ]);
+});
+
 for (const isError of [false, true])
   for (const fullHistory of [false, true])
     it(`reconciles frontend snapshot echo: error=${isError}, history=${fullHistory}`, async () => {

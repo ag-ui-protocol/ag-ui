@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.16 — 2026-11-12
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
 ## 0.0.15 — 2026-11-10
 
 - Preserve exhausted recovery state after streaming completes.

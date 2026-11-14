@@ -287,6 +287,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.13.0 — 2026-11-12
+
+- Express update activities now include creation state.
+- Native A2UI template data paths are validated.
+- A2UI generation follows catalog protocol versions.
+
+### Breaking changes
+
+- Native A2UI template data paths are now validated; previously accepted invalid paths may be rejected.
+
 ## 0.12.0 — 2026-11-03
 
 - Added opt-in A2UI Express inference path alongside Direct JSON, selectable per run for injected and explicitly owned render tools.

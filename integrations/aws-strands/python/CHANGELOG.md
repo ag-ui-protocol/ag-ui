@@ -8,6 +8,15 @@
 - Count delivered audio in `MediaDropped.delivered`.
 - Keep the client's original attachment filenames (`metadata.filename` or `metadata.fileName`) in native persistence: the user message records each named image, document, video and delivered audio block under `metadata.custom["ag-ui"]["attachments"]`, which Strands stores with the message and keeps out of provider requests. The model-visible document name stays neutral.
 
+## 1.0.4 — 2026-11-11
+
+- Fixed run handling so each run is driven from a single task, allowing OpenTelemetry spans to detach correctly.
+- Prevents OTel context token reset errors caused by spanning multiple contextvars Contexts.
+
+### Breaking changes
+
+None.
+
 ## 1.0.3 — 2026-11-09
 
 - Add `StrandsAgentConfig.subagent_visibility` (`inline` default, `attributed`, `hidden`) controlling AG-UI subagent events for agents-as-tools.

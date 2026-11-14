@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.4 — 2026-11-11
+
+- Stopped sending `threadId`/`runId` on `TEXT_MESSAGE_*` and `TOOL_CALL_*` events, which the AG-UI 1.0 schema rejects; avoids `[ag-ui][enforce]` strip warnings.
+- Task tool calls now open an `ActivitySnapshotEvent`/`ActivityDeltaEvent` activity so frontends can render dispatched subagents distinctly; activities close on teardown and matching tool results.
+- Preserve raw frontend outcomes and replay saved tool results during native recovery after executor failure.
+- Preserve final assistant identity when not streaming.
+- Reconcile superseded recovery deliveries and accept public interrupt answers and saved-result retries.
+- Recover child dependency graphs, internal state, parallel root results, and native child approvals across restarts.
+- Clear completed diagnostics after child results; keep recovery guards across interrupted bridges.
+
+### Breaking changes
+
+- `TEXT_MESSAGE_*` and `TOOL_CALL_*` events no longer include `threadId`/`runId`; consumers relying on those fields must read them from `RUN_STARTED` or other run-level events.
+
 ## 0.2.3 — 2026-10-21
 
 - Clear completed tool batches before later failures to avoid stale state.

@@ -826,6 +826,11 @@ const _REMOVED_V08_SCHEMA = `"accountCircle","warning"
  */
 export const A2UI_OPERATIONS_KEY = "a2ui_operations";
 
+/** True for a plain (non-array, non-null) object. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Parsed A2UI container result.
  */
@@ -862,10 +867,7 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
     // createA2UIActivityEvents) read properties off each op and would crash on
     // ``null``, primitives, or arrays sitting in the array.
     const rawOps = obj[A2UI_OPERATIONS_KEY] as Array<unknown>;
-    const operations = rawOps.filter(
-      (op): op is Record<string, unknown> =>
-        typeof op === "object" && op !== null && !Array.isArray(op),
-    );
+    const operations = rawOps.filter(isRecord);
     const result: A2UIParseResult = { operations };
 
     return result;
@@ -883,10 +885,7 @@ export function tryParseA2UIOperations(text: string): A2UIParseResult | null {
       ) {
         const obj = inner as Record<string, unknown>;
         const rawOps = obj[A2UI_OPERATIONS_KEY] as Array<unknown>;
-        const operations = rawOps.filter(
-          (op): op is Record<string, unknown> =>
-            typeof op === "object" && op !== null && !Array.isArray(op),
-        );
+        const operations = rawOps.filter(isRecord);
         const result: A2UIParseResult = { operations };
         return result;
       }

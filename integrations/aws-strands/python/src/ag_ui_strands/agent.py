@@ -569,11 +569,12 @@ async def _stream_with_model_context(
 ) -> AsyncIterator[Any]:
     """Scope request context to one model-stream pull at a time.
 
-    The FastAPI endpoint deliberately runs every ``__anext__`` call in a fresh
-    task so disconnect cancellation cannot interrupt agent cleanup. A
-    ContextVar token therefore cannot be held across an adapter yield: the
-    later reset may run in a different task context. Set and restore around
-    each pull instead, before yielding the resulting event to the endpoint.
+    A consumer of ``run`` may pull successive events from different tasks,
+    and so from different contextvars Contexts. The FastAPI endpoint keeps a
+    run in one task, but other consumers need not. A ContextVar token
+    therefore cannot be held across an adapter yield: the later reset may run
+    in a different Context. Set and restore around each pull instead, before
+    yielding the resulting event to the consumer.
 
     This is also the one place both run loops pull the Strands stream through,
     which makes it the boundary between this adapter's code and everything the
