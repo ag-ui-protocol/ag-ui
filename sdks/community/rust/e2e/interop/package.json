@@ -1,0 +1,8 @@
+{
+  "name": "ag-ui-protocol-semantic-interop",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node verify.mjs" },
+  "dependencies": { "@ag-ui/core": "0.0.59", "zod": "3.25.76" }
+}

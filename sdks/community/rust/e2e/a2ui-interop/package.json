@@ -1,0 +1,8 @@
+{
+  "name": "ag-ui-rust-official-a2ui-interop",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": { "test": "node verify.mjs" },
+  "dependencies": { "@a2ui/web_core": "0.11.0" }
+}
