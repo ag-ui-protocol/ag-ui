@@ -16,6 +16,7 @@ from ag_ui.core import (
     StateDeltaEvent, StateSnapshotEvent, CustomEvent
 )
 from google.adk.events import Event as ADKEvent
+from google.genai import types
 from ag_ui_adk.event_translator import EventTranslator
 
 
@@ -269,19 +270,27 @@ class TestEventTranslatorComprehensive:
         assert set(event.snapshot.keys()) == {"user_name", "custom_state", "timezone"}
 
     @pytest.mark.asyncio
-    async def test_translate_custom_event(self, translator, mock_adk_event):
-        """Test custom event creation."""
-        mock_adk_event.custom_data = {"custom_key": "custom_value"}
+    async def test_custom_metadata_not_emitted_as_custom_event(self, translator, caplog):
+        """A real ADK event's custom_metadata does not reach the client.
+
+        ADK's Runner copies run_config.custom_metadata into the events it
+        yields, and ADKAgent puts the request context there as ag_ui_context.
+        """
+        adk_event = ADKEvent(
+            author="model",
+            content=types.Content(role="model", parts=[types.Part(text="Hello")]),
+            custom_metadata={"ag_ui_context": [{"description": "user", "value": "Ann"}]},
+        )
 
         events = []
-        async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
+        async for event in translator.translate(adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        assert len(events) == 1
-        assert isinstance(events[0], CustomEvent)
-        assert events[0].type == EventType.CUSTOM
-        assert events[0].name == "adk_metadata"
-        assert events[0].value == {"custom_key": "custom_value"}
+        # translate() logs and swallows its own errors, so a clean run is what
+        # makes the missing CUSTOM event mean anything.
+        assert "Error translating ADK event" not in caplog.text
+        assert TextMessageContentEvent in [type(event) for event in events]
+        assert not any(isinstance(event, CustomEvent) for event in events)
 
     @pytest.mark.asyncio
     async def test_translate_exception_handling(self, translator, mock_adk_event):
@@ -1066,7 +1075,7 @@ class TestEventTranslatorComprehensive:
 
     @pytest.mark.asyncio
     async def test_complex_event_with_multiple_features(self, translator, mock_adk_event):
-        """Test complex event with text, function calls, state delta, and custom data."""
+        """Test complex event with text, function calls, and state delta."""
         # Set up complex event
         mock_content = MagicMock()
         mock_part = MagicMock()
@@ -1079,15 +1088,12 @@ class TestEventTranslatorComprehensive:
         mock_actions.state_delta = {"state_key": "state_value"}
         mock_adk_event.actions = mock_actions
 
-        # Add custom data
-        mock_adk_event.custom_data = {"custom_key": "custom_value"}
-
         events = []
         async for event in translator.translate(mock_adk_event, "thread_1", "run_1"):
             events.append(event)
 
-        # Should have text events, state delta, state snapshot, and custom event
-        assert len(events) == 6  # START, CONTENT, STATE_DELTA, STATE_SNAPSHOT, CUSTOM, END
+        # Should have text events, state delta, and state snapshot
+        assert len(events) == 5  # START, CONTENT, STATE_DELTA, STATE_SNAPSHOT, END
 
         # Check event types
         event_types = [type(event) for event in events]
@@ -1095,7 +1101,6 @@ class TestEventTranslatorComprehensive:
         assert TextMessageContentEvent in event_types
         assert StateDeltaEvent in event_types
         assert StateSnapshotEvent in event_types
-        assert CustomEvent in event_types
         assert TextMessageEndEvent in event_types
 
     @pytest.mark.asyncio
