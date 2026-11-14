@@ -37,6 +37,10 @@ export const parseSSEStream = (
   // Create TextDecoder with stream option set to true to handle split UTF-8 characters
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let buffer = "";
+  // How much of `buffer` has already been searched for a boundary. A read
+  // that finds none leaves its last character unscanned, because the "\n\n"
+  // it starts can be completed by the read that follows.
+  let scanned = 0;
 
   // Subscribe to the source once and multicast to all subscribers
   source$.subscribe({
@@ -50,14 +54,23 @@ export const parseSSEStream = (
         const text = decoder.decode(event.data, { stream: true });
         buffer += text;
 
-        // Process complete events (separated by double newlines)
-        const events = buffer.split(/\n\n/);
-        // Keep the last potentially incomplete event in buffer
-        buffer = events.pop() || "";
-
-        for (const event of events) {
-          processSSEEvent(event);
+        // Search only the part that has not been searched before. Splitting
+        // the whole buffer on every read examines everything already held
+        // again, so one event arriving over many reads costs time quadratic
+        // in its size rather than linear.
+        let eventStart = 0;
+        let boundary = buffer.indexOf("\n\n", scanned);
+        while (boundary !== -1) {
+          processSSEEvent(buffer.slice(eventStart, boundary));
+          eventStart = boundary + 2;
+          boundary = buffer.indexOf("\n\n", eventStart);
         }
+
+        // Keep the last potentially incomplete event in buffer
+        if (eventStart > 0) {
+          buffer = buffer.slice(eventStart);
+        }
+        scanned = Math.max(0, buffer.length - 1);
 
         // Measured on the tail that is left once completed events have been
         // taken out, because that tail is the only thing here that can grow
