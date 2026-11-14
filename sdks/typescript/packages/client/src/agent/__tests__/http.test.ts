@@ -76,6 +76,16 @@ describe("HttpAgent", () => {
     expect(runHttpRequest).toHaveBeenCalledWith(expect.any(Function));
   });
 
+  it("hands maxBufferSize to the stream parser and keeps it on a clone", () => {
+    (runHttpRequest as Mock).mockReturnValue(
+      of({ type: HttpEventType.HEADERS, status: 200, headers: new Headers() }),
+    );
+    const agent = new HttpAgent({ url: "https://api.example.com/v1/chat", maxBufferSize: 64 });
+    expect(agent.maxBufferSize).toBe(64);
+    expect(agent.clone().maxBufferSize).toBe(64);
+    expect(new HttpAgent({ url: "https://api.example.com/v1/chat" }).maxBufferSize).toBeUndefined();
+  });
+
   it("should abort the request when abortRun is called", () => {
     // Setup mock implementation
     (runHttpRequest as Mock).mockReturnValue(of());
@@ -168,7 +178,9 @@ describe("HttpAgent", () => {
 
     // Verify that transformHttpEventStream was called with the mock observable and debugLogger
     // When debug is off (default), createDebugLogger returns undefined
-    expect(transformHttpEventStream).toHaveBeenCalledWith(mockObservable, undefined);
+    expect(transformHttpEventStream).toHaveBeenCalledWith(mockObservable, undefined, {
+      maxBufferSize: undefined,
+    });
   });
 
   it("should process HTTP response data end-to-end", async () => {
