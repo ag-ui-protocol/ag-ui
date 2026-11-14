@@ -185,6 +185,44 @@ describe("enforceEvents (unit)", () => {
     });
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  it("preserves a supported RUN_FINISHED outcome, strips an unrecognised string variant, and rejects missing or non-string outcome types", async () => {
+    const supported = await lastValueFrom(
+      of({ ...FINISH, outcome: { type: "success" } } as unknown as BaseEvent).pipe(
+        enforceEvents(),
+        toArray(),
+      ),
+    );
+    expect(supported).toEqual([{ ...FINISH, outcome: { type: "success" } }]);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    const future = await lastValueFrom(
+      of({ ...FINISH, outcome: { type: "future" } } as unknown as BaseEvent).pipe(
+        enforceEvents(),
+        toArray(),
+      ),
+    );
+    expect(future).toEqual([FINISH]);
+    expect(warnSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes("/outcome"))).toBe(
+      true,
+    );
+
+    warnSpy.mockClear();
+    await expect(
+      lastValueFrom(
+        of({ ...FINISH, outcome: { type: 1 } } as unknown as BaseEvent).pipe(
+          enforceEvents(),
+          toArray(),
+        ),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      lastValueFrom(
+        of({ ...FINISH, outcome: {} } as unknown as BaseEvent).pipe(enforceEvents(), toArray()),
+      ),
+    ).rejects.toThrow();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("enforceEvents (nested required union member)", () => {

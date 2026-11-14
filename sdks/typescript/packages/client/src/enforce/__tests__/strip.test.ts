@@ -40,6 +40,9 @@ describe("a wrong-typed value in a discriminated-union slot", () => {
       [{ type: "interrupt", interrupts: [{ id: "i1", reason: "why" }] }],
       "received array",
     ],
+    ["an object missing its discriminator", {}, '"type"'],
+    ["an object with a numeric discriminator", { type: 1 }, '"type"'],
+    ["an object with a null discriminator", { type: null }, '"type"'],
   ];
 
   for (const [label, outcome, received] of cases) {
@@ -58,6 +61,22 @@ describe("a wrong-typed value in a discriminated-union slot", () => {
       expect(() => RUN_FINISHED.parse(value)).toThrow(received);
     });
   }
+
+  it("still strips an object whose string discriminator names an unrecognised variant", () => {
+    const event = {
+      type: EventType.RUN_FINISHED,
+      threadId: "t1",
+      runId: "r1",
+      outcome: { type: "future" },
+    };
+    const { value, stripped } = stripUnknown(event, RUN_FINISHED);
+    expect(stripped).toEqual(["/outcome"]);
+    expect(value).toEqual({
+      type: EventType.RUN_FINISHED,
+      threadId: "t1",
+      runId: "r1",
+    });
+  });
 });
 
 describe("the reported paths", () => {

@@ -236,7 +236,13 @@ function stripAgainst(
       // the field quietly gone. It is a malformed VALUE on a described field,
       // which is the one deviation that stays fatal.
       if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-      const tag = (value as Record<string, unknown>)[discriminator];
+      const tag = Object.prototype.hasOwnProperty.call(value, discriminator)
+        ? (value as Record<string, unknown>)[discriminator]
+        : undefined;
+      // Only a string tag can name a union variant (recognised or future). A
+      // missing or non-string discriminator is a malformed value on a field the
+      // protocol describes, so it stays in place for the validator to reject.
+      if (typeof tag !== "string") return value;
       for (const option of options) {
         const unwrapped = unwrap(option);
         if (!(unwrapped instanceof z.ZodObject)) continue;
