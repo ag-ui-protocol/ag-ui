@@ -3,7 +3,7 @@ import type { Message } from "@langchain/langgraph-sdk";
 /**
  * Insert a supplied A2UI outcome next to its saved call. LangGraph's message
  * reducer only appends new IDs, so an outcome arriving after a persisted user
- * turn needs an atomic channel overwrite. Every saved message is retained.
+ * turn needs a single history replacement. Every saved message is retained.
  * This never invents results or completes an approval: the middleware/caller
  * must supply the actual outcome first.
  */
