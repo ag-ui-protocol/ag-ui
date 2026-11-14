@@ -4465,15 +4465,20 @@ class ADKAgent:
                 else:
                     # LongRunning Tool events are usually emitted in final response
 
-                    # CRITICAL FIX (GitHub #906): Process text content BEFORE LRO tool calls
-                    # In non-streaming mode, text and tool calls may arrive in the same event.
-                    # We must emit TEXT_MESSAGE events before TOOL_CALL events.
-                    if has_content:
-                        async for ag_ui_event in event_translator.translate_text_only(
-                            adk_event, input.thread_id, input.run_id
-                        ):
-                            await event_queue.put(ag_ui_event)
-                            logger.debug(f"Event queued (LRO text): {type(ag_ui_event).__name__} (thread {input.thread_id})")
+                    # FIX (GitHub #3300): an event can carry a backend tool call
+                    # alongside a long-running (client) call. The old code only
+                    # ran translate_text_only + translate_lro_function_calls
+                    # here, so the backend call was never emitted and its later
+                    # TOOL_CALL_RESULT arrived for a toolCallId the client
+                    # never saw. translate() emits the text AND the non-LRO
+                    # calls (it already filters LRO ids out), so run it first
+                    # and then translate_lro_function_calls for the LRO calls.
+                    # Text still precedes every tool call (GitHub #906).
+                    async for ag_ui_event in event_translator.translate(
+                        adk_event, input.thread_id, input.run_id
+                    ):
+                        await event_queue.put(ag_ui_event)
+                        logger.debug(f"Event queued (LRO event): {type(ag_ui_event).__name__} (thread {input.thread_id})")
 
                     # Ensure any active streaming text message is closed BEFORE tool calls
                     async for end_event in event_translator.force_close_streaming_message():

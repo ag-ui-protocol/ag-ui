@@ -368,8 +368,12 @@ class TestADKAgent:
                 emitted_events.append(event)
 
         # Assert streaming translator was used for the first event
-        assert translate_spy.call_count == 1
+        # (GitHub #3300: translate() is now also called for the LRO event so
+        # any non-LRO call in the same event is emitted; this LRO event has
+        # none, so the second call emits nothing extra.)
+        assert translate_spy.call_count == 2
         assert translate_spy.adk_events[0] is streaming_event
+        assert translate_spy.adk_events[1] is lro_event
 
         # Confirm streaming content flowed through as expected
         text_events = [event for event in emitted_events if isinstance(event, TextMessageContentEvent)]
