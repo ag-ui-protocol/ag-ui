@@ -3,7 +3,7 @@
   "cases": [
     {
       "name": "full_every_group_populated",
-      "producedBy": ["typescript", "python", "dotnet"],
+      "producedBy": ["typescript", "python", "dotnet", "rust"],
       "note": "Every group and every field, including the two open-JSON members that .NET used to type as dictionaries (identity.metadata, custom) and the one-word subagents key.",
       "input": {
         "identity": {
@@ -224,14 +224,14 @@
     },
     {
       "name": "minimal_nothing_declared",
-      "producedBy": ["typescript", "python", "dotnet"],
+      "producedBy": ["typescript", "python", "dotnet", "rust"],
       "note": "A declaration that says nothing is conforming. Omitted means undeclared, not unsupported, so no SDK may fill anything in.",
       "input": {},
       "expected": {}
     },
     {
       "name": "partial_as_a_real_producer_declares",
-      "producedBy": ["typescript", "python", "dotnet"],
+      "producedBy": ["typescript", "python", "dotnet", "rust"],
       "note": "The langgraph integration's actual declaration: four groups, everything else silent. Unset members must stay absent on the way out.",
       "input": {
         "identity": {
@@ -272,7 +272,7 @@
     },
     {
       "name": "open_values_may_be_null",
-      "producedBy": ["typescript", "python", "dotnet"],
+      "producedBy": ["typescript", "python", "dotnet", "rust"],
       "note": "A null VALUE under an open-by-key member (identity.metadata, custom) is data and MUST be preserved \u2014 it is only a null standing in for a whole absent field that the protocol forbids. Every SDK must carry these through unchanged.",
       "input": {
         "identity": {

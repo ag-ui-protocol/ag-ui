@@ -5,6 +5,7 @@ use std::error::Error;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 enum EventType {
     Ping,
     Update,
@@ -31,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            Err(err) => eprintln!("Error: {}", err),
+            Err(err) => eprintln!("Error: {err}"),
         }
     }
     Ok(())

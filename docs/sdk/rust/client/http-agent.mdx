@@ -1,25 +1,29 @@
 ---
 title: "HttpAgent"
-description: "HTTP-based Agent implementation for connecting to remote AI agents"
+description:
+  "HTTP-based Agent implementation for connecting to remote AI agents"
 ---
 
 # HttpAgent
 
-The HttpAgent implements the Agent trait to provide HTTP-based connectivity to remote AI agents. It sends a POST request with a RunAgentInput payload and consumes a Server-Sent Events (SSE) stream of core events.
+The HttpAgent implements the Agent trait to provide HTTP-based connectivity to
+remote AI agents. It sends a POST request with a RunAgentInput payload and
+consumes a Server-Sent Events (SSE) stream of core events.
 
 ```rust
-use ag_ui_client::HttpAgent
+use ag_ui_client::HttpAgent;
 ```
 
 ## Installation
 
-```bash
-cargo add ag-ui-client
-```
+Use the immutable, same-revision Git dependency recipe in the
+[client overview](/sdk/rust/client/overview). Local path dependencies remain
+useful for checkout development.
 
 ## Creating an HttpAgent
 
-Use the builder to configure the base URL, headers, timeouts and optional Agent ID.
+Use the builder to configure the base URL, headers, timeouts and optional Agent
+ID.
 
 ```rust
 use ag_ui_client::HttpAgent;
@@ -45,46 +49,119 @@ let agent = HttpAgent::builder()
 HttpAgent exposes a fluent builder with the following options:
 
 - `with_url(url: Url)` – Set the endpoint URL
-- `with_url_str(url: &str) -> Result<Self, AgentError>` – Parse and validate a string URL
+- `with_url_str(url: &str) -> Result<Self, AgentError>` – Parse and validate a
+  string URL
 - `with_headers(headers: HeaderMap)` – Replace all headers
-- `with_header(name: &str, value: &str) -> Result<Self, AgentError>` – Add a single header
+- `with_header(name: &str, value: &str) -> Result<Self, AgentError>` – Add a
+  single header
 - `with_header_typed(name: HeaderName, value: HeaderValue)` – Add a typed header
-- `with_bearer_token(token: &str) -> Result<Self, AgentError>` – Add Authorization: Bearer …
+- `with_bearer_token(token: &str) -> Result<Self, AgentError>` – Add
+  Authorization: Bearer …
 - `with_http_client(client: reqwest::Client)` – Provide a custom reqwest client
-- `with_timeout(seconds: u64)` – Configure a request timeout on an internal client
-- `with_agent_id(agent_id: AgentId)` – Attach an optional AgentId reported via Agent::agent_id()
+- `with_timeout(seconds: u64)` – Configure a whole-run deadline, including the streamed response
+- `with_agent_id(agent_id: AgentId)` – Attach an optional AgentId reported via
+  Agent::agent_id()
+- `with_diagnostic_handler(handler)` – Receive structured processing diagnostics
+  without opaque payload contents
+- `with_sse_limits(limits)` – Override bounded unfinished SSE line/frame sizes
+- `with_error_body_limits(limits)` – Override non-success body capture byte/time
+  bounds
 
-Note: The builder enforces http/https schemes and returns an AgentError::Config for invalid inputs.
+Note: The builder enforces http/https schemes and returns an AgentError::Config
+for invalid inputs.
+
+## Inspecting HTTP errors
+
+Non-success responses capture up to 64 KiB for at most 2 seconds by default.
+The body is omitted from normal `Display` and `Debug` output. Inspect it explicitly
+with `error.http_error_body()`, then `bytes()` or UTF-8 `text()`. Use `stop_reason()`
+and `is_truncated()` to distinguish a complete body from a bounded prefix, read
+failure or timeout. Reaching the byte cap is conservatively reported as truncated.
+Set `ErrorBodyLimits.max_bytes` to zero to disable capture. Body contents may contain
+secrets returned by a server; redact them before logging or forwarding.
+
 
 ## Running an agent over HTTP
 
-Use Agent::run_agent with your parameters (messages, tools, state, etc.). The HttpAgent takes care of sending the request and streaming events.
+Use `Agent::run_input` for explicit identity and complete-history continuation,
+or `run_agent` for a convenience input builder. Both apply chunk expansion,
+lifecycle verification, reduction, and subscribers. The
+[Agent reference](/sdk/rust/client/agent-trait) shows a two-turn example.
 
 ```rust
-use ag_ui_client::{Agent, HttpAgent};
+use ag_ui_client::{Agent, HttpAgent, RunTerminalStatus};
 use ag_ui_client::agent::RunAgentParams;
-use ag_ui_client::core::types::Message;
+use std::error::Error;
 
-let params = RunAgentParams::new()
-    .user("Tell me a short joke about Rust.");
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let agent = HttpAgent::builder()
+        .with_url_str("http://127.0.0.1:3001/agentic_chat")?
+        .build()?;
+    let params = RunAgentParams::new()
+        .user("Tell me a short joke about Rust.");
 
-let result = agent.run_agent(&params, None).await?;
-println!("Final result: {}", result.result);
-println!("New messages: {}", result.new_messages.len());
+    let result = agent.run_agent(&params, ()).await?;
+    if let RunTerminalStatus::ProducerError(error) = &result.terminal_status {
+        return Err(format!("producer failure: {}", error.message).into());
+    }
+    println!("Result: {:?}", result.result);
+    println!("Complete history: {} messages", result.messages.len());
+    println!("Outcome: {:?}, usage: {:?}", result.outcome, result.usage);
+    Ok(())
+}
 ```
 
 ## Errors
 
-HttpAgent surfaces a few structured error types through AgUiClientError (aliased as AgentError):
+HttpAgent surfaces a few structured error types through AgUiClientError (aliased
+as AgentError):
 
 - HttpTransport(reqwest::Error) – network and transport errors
-- HttpStatus { status, context } – non-success HTTP status with a snippet of the response body
+- HttpStatus { status, context } – non-success HTTP status with bounded receipt
+  byte counts and stopping reasons; body contents are omitted
 - Config { message } – invalid configuration inputs (e.g., malformed URL/header)
 
-Use AgUiClientError::is_retryable() to determine if an error can be retried (timeouts, 5xx, 429).
+`AgUiClientError::is_retryable()` identifies connection errors and HTTP 5xx/429
+statuses. It does not mark arbitrary timeouts retryable; applications must still
+consider idempotency before starting another remote run.
 
 ## Implementation notes
 
-- Requests are sent as JSON with Content-Type: application/json; responses are handled as text/event-stream SSE.
+- Requests are sent as JSON with Content-Type: application/json; responses are
+  handled as text/event-stream SSE.
 - The response stream is decoded into Event<StateT> items defined in ag-ui-core.
 - Agent::agent_id() returns the optional AgentId configured on the builder.
+
+## AG-UI 1.0 compatibility
+
+The client processes current AG-UI 1.0 reasoning, activity, subagent, and
+multimodal events. The compatibility boundary translates deprecated
+`THINKING_*` events and legacy binary content with diagnostics. Unknown variants
+are dropped with structured diagnostics available through
+`with_diagnostic_handler`. New producers should emit current `REASONING_*` events.
+
+The request declares the consumer's 1.0 version, normalizes its wire history,
+and enforces JSON Content-Type and SSE Accept. Responses must have a valid
+`text/event-stream` media type. Incremental decoding handles arbitrary byte
+partitions, UTF-8, LF/CRLF/CR and comments; incomplete terminal frames fail.
+
+Non-success response bodies are received for at most 64 KiB or two seconds by
+default and are never included in errors. `with_error_body_limits` changes
+receipt bounds. `with_sse_limits` changes unfinished line/frame limits. Dropping
+a stream releases local resources; it does not establish remote cancellation.
+
+SSE byte limits are not process-memory limits. Parsed JSON, typed events,
+subscriber delivery, and retained application state/history can coexist in
+memory and use substantially more than the wire payload. Choose lower limits
+for untrusted producers and budget for application history separately.
+
+### Timeouts and retries
+
+`with_timeout` limits the whole run, including streamed response delivery. A
+server pause after `RUN_STARTED` can therefore exhaust the deadline. Configure
+connection and idle-read timeouts on a `reqwest::Client` supplied through
+`with_http_client` when those limits are needed. `is_retryable` conservatively
+recognizes connection errors and HTTP 429/5xx statuses, not arbitrary timeouts.
+Retrying a streamed request can start a second remote run, so use application
+idempotency rather than automatically replaying a partially delivered run.

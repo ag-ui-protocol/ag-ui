@@ -13,17 +13,12 @@ use ag_ui_client::core::types::Message;
 use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
 use ag_ui_client::{Agent, HttpAgent};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum StepStatus {
+    #[default]
     Pending,
     Completed,
-}
-
-impl Default for StepStatus {
-    fn default() -> Self {
-        StepStatus::Pending
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -50,6 +45,7 @@ pub struct Plan {
 
 impl AgentState for Plan {}
 
+#[derive(Default)]
 pub struct GenerativeUiSubscriber;
 
 impl GenerativeUiSubscriber {
@@ -85,6 +81,7 @@ impl AgentSubscriber<Plan, ()> for GenerativeUiSubscriber {
     ) -> Result<AgentStateMutation<Plan>, AgentError> {
         info!("State delta received:");
         for patch in &event.delta {
+            let patch = serde_json::to_value(patch)?;
             match patch.get("op").and_then(|v| v.as_str()) {
                 Some("replace") => {
                     if let (Some(path), Some(value)) = (
@@ -98,7 +95,7 @@ impl AgentSubscriber<Plan, ()> for GenerativeUiSubscriber {
                                 "pending" => "[ ]",
                                 _ => "[?]",
                             };
-                            info!("   {} Step status updated to: {}", status_icon, status);
+                            info!("   {status_icon} Step status updated to: {status}");
                         } else if path.contains("/description") {
                             info!(
                                 "   Step description updated to: {}",
@@ -107,7 +104,7 @@ impl AgentSubscriber<Plan, ()> for GenerativeUiSubscriber {
                         }
                     }
                 }
-                Some(op) => info!("   Operation: {}", op),
+                Some(op) => info!("   Operation: {op}"),
                 None => info!("   Unknown operation"),
             }
         }
@@ -164,7 +161,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let result = agent.run_agent(&params, [subscriber]).await?;
 
     info!("Agent run completed successfully!");
-    info!("Final result: {}", result.result);
+    info!("Final result: {:?}", result.result);
     info!("Generated {} new messages", result.new_messages.len());
     info!("Final state: {:#?}", result.new_state);
 

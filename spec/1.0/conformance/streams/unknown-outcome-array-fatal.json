@@ -36,6 +36,11 @@
     "dotnet": {
       "intentional": "the two clients reject this for the same reason but say it in their own words, and the base string is zod's. .NET's converter names the union type it could not build; the `Path: $.outcome` and `LineNumber`/`BytePositionInLine` that System.Text.Json appends are deliberately not pinned — the byte offset moves with any edit to the stream above, and matching on `outcome` alone would pass on that decoration rather than on the converter having refused the value",
       "errorContains": "could not be converted to AGUI.Abstractions.RunFinishedOutcome"
+    },
+    "rust": {
+      "intentional": "Rust exposes a structured InvalidValue category and JSON-pointer path instead of the TypeScript validator's English text. The same malformed known value must fail before delivery.",
+      "errorContains": "InvalidValue at /outcome",
+      "eventTypes": ["RUN_STARTED"]
     }
   }
 }

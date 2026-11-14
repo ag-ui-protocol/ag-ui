@@ -1,101 +1,74 @@
 ---
 title: "Types"
-description: "Core data types used by the Rust SDK"
+description: "AG-UI 1.0 core data types in Rust"
 ---
 
 # Types
 
-Core types live in ag_ui_core::types and are re-exported by ag-ui-client under ag_ui_client::core::types.
+`ag_ui_core::types` defines the wire model; `ag_ui_client::core::types` re-exports it.
+
+## IDs and messages
+
+`AgentId`, `ThreadId`, `RunId`, `MessageId`, and `ToolCallId` are opaque string IDs. Use `::random()` or convert an existing string with `::from(...)`. Wire IDs can be arbitrary strings, not just UUIDs.
+
+`Role` has seven values: `Developer`, `System`, `Assistant`, `User`, `Tool`, `Activity`, and `Reasoning`. `Message` has a variant for each. `Message::new_user`, `new_system`, `new_developer`, and `new_assistant` are useful for text. `Message::content()` returns `Option<&str>`: multimodal user or tool content is not flattened to text.
+
+User and tool messages use `MessageContent::Text(String)` or `MessageContent::Parts(Vec<ContentPart>)`. Parts are `Text`, `Image`, `Audio`, `Video`, and `Document`. Media parts carry a `PartSource::Data`, `Url`, or `File`; a text part carries text. Parts may have IDs and metadata. Tool messages also carry a tool call ID. Activity messages carry an activity type and structured content; reasoning messages carry reasoning text.
+
+## Run input and control
+
+`RunAgentInput<StateT, FwdPropsT>` carries `thread_id`, `run_id`, state, messages, optional tools/context, forwarded props, and optional `protocol_version`, `parent_run_id`, and `resume`. `Agent::run_agent` constructs this from `RunAgentParams` and sets protocol version `1.0`. `RunAgentParams::with_resume(Vec<ResumeEntry>)` answers pending interrupts; each entry has an interrupt ID, `ResumeStatus::Resolved` or `Cancelled`, and optional payload and metadata.
+
+`RunFinishedOutcome` models success, interrupt, and cancellation. `SubagentFinishedOutcome` models success or suspension. `TokenUsage` reports optional token counts and provider/model. `AgentCapabilities` describes optional identity, transport, tool, output, state, multi-agent, reasoning, multimodal, execution, and human-in-the-loop support.
+
+## State patches
+
+`StateDeltaEvent::delta` and `ActivityDeltaEvent::patch` use `Vec<JsonPatchOperation>`, with add, remove, replace, move, copy, and test operations. `JsonPointer` represents patch paths. `StateSnapshotEvent<StateT>` contains typed state; your `StateT` implements `AgentState` (`Serialize`, `Deserialize`, `Clone`, `Debug`, `Default`, `Send`, `Sync`, and `'static`).
+
+See [events](/sdk/rust/core/events) and [the agent API](/sdk/rust/client/agent-trait).
+
+## Constructing an input
 
 ```rust
-use ag_ui_client::core::types as types;
-```
-
-## Identifiers
-
-- MessageId, ToolCallId – unique IDs for messages and tool calls
-- ThreadId, RunId – correlate runs and threads
-- AgentId – identifies the agent implementation
-
-```rust
-use ag_ui_client::core::types::{MessageId, ToolCallId, ThreadId, RunId};
-
-let mid = MessageId::random();
-let rid = RunId::random();
-let tid = ThreadId::random();
-let tcid = ToolCallId::random();
-```
-
-## Messages
-
-Message is an enum covering different roles. Helpers exist to create messages.
-
-```rust
-use ag_ui_client::core::types::{Message, MessageId};
-
-let user = Message::new_user("Hello");
-let system = Message::new_system("You are a helpful assistant");
-let dev = Message::new_developer("internal instruction");
-let tool = Message::new_tool("result", ag_ui_client::core::types::ToolCallId::random());
-```
-
-Each variant also has a builder form; see crate docs for full fields (name, error, tool call reference, etc.).
-
-## Tools and context
-
-```rust
-use ag_ui_client::core::types::{Tool, Context};
-use serde_json::json;
-
-let tool = Tool::new(
-    "search".into(),
-    "Perform a keyword search".into(),
-    json!({
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"]
-    }),
-);
-
-let ctx = Context::new("trace_id".into(), "abc-123".into());
-```
-
-## RunAgentInput
-
-The payload sent to an agent, typically over HTTP by HttpAgent. Constructed internally by Agent::run_agent but also available directly.
-
-```rust
-use ag_ui_client::core::types::{RunAgentInput, ThreadId, RunId};
+use ag_ui_core::types::{Message, RunAgentInput, RunId, ThreadId};
 use serde_json::json;
 
 let input = RunAgentInput::new(
     ThreadId::random(),
     RunId::random(),
-    serde_json::json!({}),      // state
-    vec![],                     // messages
-    vec![],                     // tools
-    vec![],                     // context
-    json!({}),                  // forwarded_props
+    json!({}),
+    vec![Message::new_user("Hello")],
+    vec![], // Tool definitions
+    vec![], // Context entries
+    json!({}), // forwarded props
 );
 ```
 
-Type parameters allow strongly-typed state and forwarded_props when desired.
+`Tool` supplies a name, description, and JSON Schema parameters. `Context` supplies a description and value. The client builder has `add_tool`, `add_context`, `with_state`, `with_forwarded_props`, `add_message`, and `user` helpers. Typed state and forwarded props can be supplied with `RunAgentParams::<State, Props>::new_typed()`.
 
-## Traits: AgentState and FwdProps
+## Extensible record construction
 
-The client uses trait bounds instead of concrete types for state and forwarded props.
-
-- AgentState – blanket trait implemented for types that are Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync + 'static
-- FwdProps – similar to AgentState, for forwarded properties
+Protocol record structs are non-exhaustive. Use their required-field `new(...)`
+constructors instead of struct literals, then assign optional public fields.
+All-optional payloads such as `TokenUsage` and capability records implement
+`Default`. This includes nested records such as `FunctionCall`, `Interrupt`,
+`ResumeEntry`, and `SubagentInfo`. Existing message, tool, context, and run-input
+constructors remain available. Struct destructuring must include `..`.
 
 ```rust
-use ag_ui_client::core::AgentState;
+use ag_ui_core::types::{AgentCapabilities, ExecutionCapabilities, ResumeEntry, ResumeStatus};
+use serde_json::json;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
-struct MyState { count: u32 }
-impl ag_ui_client::core::AgentState for MyState {}
+let mut execution = ExecutionCapabilities::default();
+execution.code_execution = Some(true);
+let mut capabilities = AgentCapabilities::default();
+capabilities.execution = Some(execution);
+
+let mut resume = ResumeEntry::new("approval".into(), ResumeStatus::Resolved);
+resume.payload = Some(json!({"approved": true}));
 ```
 
-## Convenience helpers
-
-RunAgentParams in the client crate provides ergonomic builders for creating inputs. See /sdk/rust/client/agent-trait
+To migrate, replace literals (including `..Default::default()` updates) with
+`new(...)` or `default()` followed by field assignments. Optional fields start
+absent, except where an existing constructor explicitly supplies a value (for
+example `RunAgentInput::new` supplies the passed tools and context arrays).

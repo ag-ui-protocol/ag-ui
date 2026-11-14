@@ -1,87 +1,55 @@
 ---
 title: "Overview"
-description: "Client package overview for the Rust SDK"
+description: "AG-UI 1.0 Rust HTTP client"
 ---
 
 # `ag-ui-client`
 
-The Agent User Interaction Protocol Client SDK provides agent connectivity
-options for AI systems. This package builds on the core types and events to
-deliver flexible connection methods to agent implementations.
+`ag-ui-client` 0.2.0 provides `Agent`, `HttpAgent`, and `AgentSubscriber` over
+the 1.0 model in `ag-ui-core` 0.2.0.
 
-```bash
-cargo add ag-ui-client
+## Installation and delivery
+
+Use the same reachable, immutable 40-hex Git commit for all three crates.
+Replace every `FULL_40_HEX_COMMIT` below with one revision qualified by the
+repository's
+[independent Git consumer gate](https://github.com/ag-ui-protocol/ag-ui/blob/main/sdks/community/rust/tests/external-consumer/README.md).
+A branch name or unpushed local hash is not an immutable pin.
+
+```toml
+[dependencies]
+ag-ui-core = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-client = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+ag-ui-encoder = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "FULL_40_HEX_COMMIT" }
+
 ```
 
-## Agent Trait
+The crates use path-and-version dependencies, so Git consumers share one core
+type identity without Cargo patches. Retain your consumer lock and test with
+`--locked`. The CI packaging lane verifies all workspace crates together on
+stable Cargo (1.90 or later).
 
-`Agent` is the trait to implement for custom agent
-connectivity. Implementing `run()` lets you bridge your
-own service or agent implementation to AG-UI.
+## Running and continuing
 
-- [Configuration](/sdk/rust/client/agent-trait#configuration) - Setup with
-  agent ID, messages, and state
-- [Core Methods](/sdk/rust/client/agent-trait#core-methods) - Run, abort, and
-  clone functionality
-- [Protected Methods](/sdk/rust/client/agent-trait#protected-methods) -
-  Extensible hooks for custom implementations
-- [Properties](/sdk/rust/client/agent-trait#properties) - State and message
-  tracking
+Use [Agent::run_input](/sdk/rust/client/agent-trait) with explicit thread/run
+identities for the complete lifecycle. Inspect `terminal_status` and `outcome`;
+an `Ok` result can contain a producer `RUN_ERROR`. The optional `result` is
+only populated for success; missing or whole-null output becomes `None`. Carry the complete `messages` and `new_state` into the next turn,
+retaining the thread ID and choosing a new run ID. `new_messages` alone cannot
+preserve snapshot replacements or deletions.
 
-<Card
-  title="Agent Trait Reference"
-  icon="cube"
-  href="/sdk/rust/client/agent-trait"
-  color="#3B82F6"
-  iconType="solid"
->
-  Trait for creating custom agent connections
-</Card>
+[HttpAgent](/sdk/rust/client/http-agent) sends JSON and receives bounded SSE.
+[AgentSubscriber](/sdk/rust/client/subscriber) exposes lifecycle, structured
+diagnostics, and typed hooks for activity, reasoning, subagents, state,
+messages, and tools. `Agent::run` is a raw event stream without lifecycle
+reduction or completion verification; `run_agent` constructs an input and
+creates a fresh thread unless explicitly supplied one.
 
-## HttpAgent
+## Compatibility
 
-Agent implementation for HTTP-based agent connectivity:
-
-- [Configuration](/sdk/rust/client/http-agent#configuration) - URL and header
-  setup
-- [Methods](/sdk/rust/client/http-agent#methods) - HTTP-specific execution and
-  cancellation
-- [Protected Methods](/sdk/rust/client/http-agent#protected-methods) -
-  Customizable HTTP request handling
-- [Properties](/sdk/rust/client/http-agent#properties) - Connection management
-
-<Card
-  title="HttpAgent Reference"
-  icon="cube"
-  href="/sdk/rust/client/http-agent"
-  color="#3B82F6"
-  iconType="solid"
->
-  Ready-to-use HTTP implementation for agent connectivity, using a highly
-  efficient event encoding format
-</Card>
-
-## AgentSubscriber
-
-Event-driven subscriber system for handling agent lifecycle events and state
-mutations during agent execution:
-
-- [Event Handlers](/sdk/rust/client/subscriber#event-handlers) - Lifecycle,
-  message, tool call, and state events
-- [State Management](/sdk/rust/client/subscriber#state-management) - Mutation
-  control and propagation handling
-- [Usage Examples](/sdk/rust/client/subscriber#usage-examples) - Logging,
-  persistence, and error handling patterns
-- [Integration](/sdk/rust/client/subscriber#integration-with-agents) - Registering
-  and using subscribers with agents
-
-<Card
-  title="AgentSubscriber Reference"
-  icon="bolt"
-  href="/sdk/rust/client/subscriber"
-  color="#3B82F6"
-  iconType="solid"
->
-  Comprehensive event system for reactive agent interaction and middleware-style
-  functionality
-</Card>
+The compatibility boundary translates deprecated `THINKING_*` events and
+legacy binary content to current AG-UI 1.0 shapes with diagnostics. Unknown
+variants are dropped; structured processing diagnostics are available through
+`HttpAgentBuilder::with_diagnostic_handler`. New servers should emit current
+`REASONING_*` events directly. Non-success HTTP response bodies are omitted from errors;
+bounded receipt metadata records byte counts and stopping reasons.

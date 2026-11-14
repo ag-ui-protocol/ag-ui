@@ -46,8 +46,11 @@ mod tests {
     fn test_message_serialization() {
         let user_msg = Message::User {
             id: MessageId::random(),
-            content: "Hello".to_string(),
+            content: "Hello".to_string().into(),
             name: None,
+            metadata: None,
+            encrypted_value: None,
+            subagent_run_id: None,
         };
 
         let json = serde_json::to_string(&user_msg).unwrap();
@@ -58,10 +61,7 @@ mod tests {
 
     #[test]
     fn test_tool_call_creation() {
-        let function_call = FunctionCall {
-            name: "test_function".to_string(),
-            arguments: "{}".to_string(),
-        };
+        let function_call = FunctionCall::new("test_function".to_string(), "{}".to_string());
 
         let tool_call = ToolCall::new(ToolCallId::random(), function_call);
         assert_eq!(tool_call.call_type, "function");
@@ -172,6 +172,7 @@ mod tests {
                 content,
                 name,
                 tool_calls,
+                ..
             } => {
                 assert_eq!(id.to_string(), "00000000-0000-0000-0000-000000000000");
                 assert_eq!(
@@ -215,9 +216,11 @@ mod tests {
         assert_eq!(messages.len(), 3);
 
         match &messages[0] {
-            Message::User { id, content, name } => {
+            Message::User {
+                id, content, name, ..
+            } => {
                 assert_eq!(id.to_string(), "00000000-0000-0000-0000-000000000000");
-                assert_eq!(content, "Hello!");
+                assert_eq!(content.as_text(), Some("Hello!"));
                 assert_eq!(*name, Some("Alice".to_string()));
             }
             _ => panic!("Wrong message type"),
@@ -260,18 +263,18 @@ mod tests {
 
         let input: RunAgentInput = serde_json::from_str(json_str).unwrap();
         assert_eq!(input.messages.len(), 1);
-        assert_eq!(input.tools.len(), 1);
-        assert_eq!(input.context.len(), 1);
+        assert_eq!(input.tools.as_ref().unwrap().len(), 1);
+        assert_eq!(input.context.as_ref().unwrap().len(), 1);
     }
 
     #[test]
     fn test_complex_run_agent_input_deserialization_custom_state() {
-        #[derive(Debug, Deserialize, Serialize)]
+        #[derive(Debug, Default, Deserialize, Serialize)]
         struct CustomState {
             counter: u32,
         }
 
-        #[derive(Debug, Deserialize, Serialize)]
+        #[derive(Debug, Default, Deserialize, Serialize)]
         struct OtherState {
             document: String,
         }
@@ -310,8 +313,8 @@ mod tests {
 
         let input: RunAgentInput<CustomState> = serde_json::from_str(json_str).unwrap();
         assert_eq!(input.messages.len(), 1);
-        assert_eq!(input.tools.len(), 1);
-        assert_eq!(input.context.len(), 1);
+        assert_eq!(input.tools.as_ref().unwrap().len(), 1);
+        assert_eq!(input.context.as_ref().unwrap().len(), 1);
 
         let wrong_input: serde_json::Result<RunAgentInput<OtherState>> =
             serde_json::from_str(json_str);

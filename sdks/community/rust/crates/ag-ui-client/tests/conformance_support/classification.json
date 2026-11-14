@@ -1,0 +1,410 @@
+[
+  {
+    "file": "activity-delta-missing-target-tolerated.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/activity",
+    "reason": "an ACTIVITY_DELTA naming a message that was never created is skipped and MUST NOT fail the run, and it invents no message either \u2014 the specification's SHOULD-warn is not asserted because no client emits one today"
+  },
+  {
+    "file": "activity-replace-false-preserves.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/activity",
+    "reason": "an ACTIVITY_SNAPSHOT with `replace: false` for an existing activity leaves it as it stands \u2014 its content and its activityType both"
+  },
+  {
+    "file": "activity-snapshot-then-delta.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/activity",
+    "reason": "an ACTIVITY_SNAPSHOT creates the activity message and an ACTIVITY_DELTA patches its content in place"
+  },
+  {
+    "file": "chunk-conflicting-role-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "a continuation chunk repeating role with a value its opener did not establish is fatal \u2014 the producer has said two incompatible things about one message"
+  },
+  {
+    "file": "chunk-conflicting-tool-name-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "a continuation chunk renaming the call its opener established is fatal, not a late correction"
+  },
+  {
+    "file": "chunk-expansion-assembles.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "chunks expand into the triad \u2014 the opener carries the id, the continuation omits it, and the run terminal closes the stream"
+  },
+  {
+    "file": "chunk-repeat-identical-accepted.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "a continuation chunk MAY repeat toolCallName and parentMessageId as long as the values agree with the opener"
+  },
+  {
+    "file": "conformant-run-is-quiet.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0",
+    "reason": "a fully conformant 1.0 stream completes without a single warning"
+  },
+  {
+    "file": "content-without-start-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "a content event for an identifier that is not open is a protocol violation, not a message the consumer invents"
+  },
+  {
+    "file": "current-peer-declares-protocol-version.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "a client talking to a current peer declares the protocol version it speaks"
+  },
+  {
+    "file": "custom-closes-chunk-stream-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "CUSTOM ends an open chunk stream, so the id-less continuation that follows has no referent and is fatal"
+  },
+  {
+    "file": "encrypted-value-unknown-entity-tolerated.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/reasoning",
+    "reason": "a REASONING_ENCRYPTED_VALUE naming an entity the consumer does not know must not fail the run; the spec lets a consumer drop it, so delivery is deliberately not required"
+  },
+  {
+    "file": "era-0-0-39-flattens-content.json",
+    "classification": "out_of_scope",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "Optional legacy 0.0.39 outgoing media flattening is outside the 1.0-only scope."
+  },
+  {
+    "file": "era-0-0-45-thinking-translated.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "Always-on inbound thinking and outbound binary compatibility preserve the shared corpus expectation."
+  },
+  {
+    "file": "era-0-0-47-upgrades-binary-content.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "Always-on inbound thinking and outbound binary compatibility preserve the shared corpus expectation."
+  },
+  {
+    "file": "era-0-0-57-subagent-dropped-with-warning.json",
+    "classification": "out_of_scope",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "Optional 0.0.57 subagent downgrade is outside the 1.0-only scope."
+  },
+  {
+    "file": "era-current-peer-keeps-modern-content.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "Always-on inbound thinking and outbound binary compatibility preserve the shared corpus expectation."
+  },
+  {
+    "file": "era-pinned-peer-omits-protocol-version.json",
+    "classification": "out_of_scope",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "Old-peer declaration omission requires excluded maxProtocolVersion compatibility configuration."
+  },
+  {
+    "file": "event-after-run-finished-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "an ordinary event after RUN_FINISHED is fatal \u2014 only RUN_STARTED and RUN_ERROR may follow a closed run"
+  },
+  {
+    "file": "first-chunk-missing-id-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "a first TEXT_MESSAGE_CHUNK without a messageId is a violation \u2014 a consumer must not invent an identifier"
+  },
+  {
+    "file": "first-event-not-run-started-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "a stream that opens with anything but RUN_STARTED or RUN_ERROR is a protocol violation"
+  },
+  {
+    "file": "first-tool-chunk-missing-name-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "a first TOOL_CALL_CHUNK must carry both toolCallId and toolCallName; an id alone cannot open a call"
+  },
+  {
+    "file": "late-run-error-after-finished-run-continues.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "RUN_ERROR after RUN_FINISHED is admitted \u2014 a failure that surfaced after the run reported success \u2014 the failure is delivered to the application as an event, and everything applied before it is kept"
+  },
+  {
+    "file": "malformed-known-field-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "a known field carrying a wrong-typed value is fatal, never coerced or ignored"
+  },
+  {
+    "file": "messages-snapshot-reconciles-by-id.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/state#messages_snapshot",
+    "reason": "MESSAGES_SNAPSHOT reconciles by id: a message it carries replaces the consumer's copy, and one the consumer holds that it omits is dropped"
+  },
+  {
+    "file": "metadata-merges-last-write-wins.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/metadata",
+    "reason": "metadata from every event of a text message merges into it key by key, last write winning, and the merge does not recurse"
+  },
+  {
+    "file": "nested-run-started-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "a second RUN_STARTED while a run is still active is fatal \u2014 a producer must close the current run before opening the next"
+  },
+  {
+    "file": "open-message-at-run-finished-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "RUN_FINISHED while a text message is still open is fatal \u2014 everything the run opened must be closed first"
+  },
+  {
+    "file": "open-metadata-preserved.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "metadata is open by key: vendor-prefixed keys the protocol has never heard of survive untouched and draw no warning, and a null under a key is data rather than an absence"
+  },
+  {
+    "file": "open-object-patch-op-extras.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "where the schema deliberately leaves an object open, an undescribed member is not unrecognised material: a JSON Patch remove carrying a leftover value arrives whole, applies, and draws no warning"
+  },
+  {
+    "file": "producer-declares-newer-version-warns.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "a producer declaring a newer minor of the line this client implements is served, not rejected \u2014 the consumer proceeds under the processing model and warns"
+  },
+  {
+    "file": "producer-declares-same-version-quiet.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "a producer declaring the version this client speaks is the ordinary case and must pass in silence \u2014 the negotiation only speaks up on a difference"
+  },
+  {
+    "file": "producer-declares-uninterpretable-version-warns.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/versioning",
+    "reason": "a declaration that is not a MAJOR.MINOR identifier cannot be compared, and is handled like a newer one: proceed, and warn"
+  },
+  {
+    "file": "raw-and-custom-pass-through.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/passthrough",
+    "reason": "RAW and an unrecognised CUSTOM name are protocol-legal traffic, not unrecognised material: the run completes and nothing warns"
+  },
+  {
+    "file": "raw-does-not-close-chunk-stream.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "RAW stands aside from chunk assembly, so an id-less continuation after one still continues the open stream"
+  },
+  {
+    "file": "reasoning-discipline-verified.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/reasoning",
+    "reason": "a REASONING_MESSAGE_CONTENT with no opener is a streaming-discipline violation and is rejected, exactly as the same shape is for a text message: reasoning messages and spans are bracketed like every other streamed entity, and the consumer does not invent the message an orphaned fragment names"
+  },
+  {
+    "file": "reasoning-message-wrong-role-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/reasoning",
+    "reason": "REASONING_MESSAGE_START carrying role 'assistant' is fatal: the schema pins the role to 'reasoning', so any other value is a malformed known value rather than an unrecognised member"
+  },
+  {
+    "file": "reasoning-span-and-message.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/reasoning",
+    "reason": "a span bracketing one reasoning message assembles into a reasoning-role message in history, alongside the answer it preceded"
+  },
+  {
+    "file": "reopen-closed-message-appends.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/text-messages",
+    "reason": "a closed message is closed, not sealed \u2014 a second TEXT_MESSAGE_START for the same id continues it and further content appends"
+  },
+  {
+    "file": "run-error-first-run-continues.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "a stream may OPEN with RUN_ERROR \u2014 the spec admits it, because a run can fail before it begins \u2014 so the client raises no first-event violation; the failure is delivered to the application as an event, and consuming the stream is not itself a failure"
+  },
+  {
+    "file": "run-error-then-new-run-continues.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "RUN_ERROR does not end the stream: a RUN_STARTED after it begins a new run in the same stream, and everything the second run produces is applied and delivered"
+  },
+  {
+    "file": "run-finished-cancelled-outcome-accepted.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "a cancelled outcome on RUN_FINISHED is described 1.0 material, not something to strip or reject: it survives enforcement without a warning, closes the run rather than failing it, and reaches the application intact, so a consumer can tell a run that was stopped from one that completed \u2014 everything delivered before the stop stays delivered"
+  },
+  {
+    "file": "run-finished-interrupt-outcome-accepted.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "an interrupt outcome on RUN_FINISHED is described 1.0 material, not something to strip or reject: it survives enforcement without a warning, and it closes the run rather than failing it"
+  },
+  {
+    "file": "run-finished-with-active-subagent-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/subagents",
+    "reason": "a run must not finish while an announced invocation is still open \u2014 either it ended and was not reported, or the run is not over"
+  },
+  {
+    "file": "state-delta-applies.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/state",
+    "reason": "a STATE_DELTA amends the snapshot that preceded it, applying its RFC 6902 operations in order"
+  },
+  {
+    "file": "state-delta-unappliable-warns-and-keeps.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/snapshots",
+    "reason": "a well-formed patch whose path does not resolve warns, applies nothing at all, and does not fail the run"
+  },
+  {
+    "file": "state-delta-unknown-op-dropped.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/snapshots",
+    "reason": "an operation whose `op` RFC 6902 does not define is an unrecognised union member: the element is dropped from the patch with a warning and the rest of the patch applies"
+  },
+  {
+    "file": "state-falsy-snapshot-applies.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/state",
+    "reason": "a STATE_SNAPSHOT of `0` replaces the state like any other \u2014 state is any JSON value, and a falsy one is not an absent one"
+  },
+  {
+    "file": "state-null-snapshot-applies.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/state",
+    "reason": "a STATE_SNAPSHOT of `null` replaces the state too \u2014 the companion falsy case, where an `?? {}` fallback would silently restore an object"
+  },
+  {
+    "file": "state-snapshot-replaces.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/state",
+    "reason": "a second STATE_SNAPSHOT replaces the state wholesale \u2014 nothing of the first survives, and state is any JSON value"
+  },
+  {
+    "file": "step-finished-without-start-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "STEP_FINISHED for a step that was never opened is fatal"
+  },
+  {
+    "file": "subagent-attribution-mismatch-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/subagents",
+    "reason": "a continuation whose subagentRunId disagrees with its opener's is fatal, because appending one producer's content into another's is undetectable afterwards"
+  },
+  {
+    "file": "subagent-finished-unstarted-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/subagents",
+    "reason": "SUBAGENT_FINISHED for an invocation never announced is fatal: a lifecycle event closes something, and there is nothing here to close"
+  },
+  {
+    "file": "subagent-started-missing-name-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/subagents",
+    "reason": "SUBAGENT_STARTED without a name is fatal: the schema requires it, so its absence is a missing required field, not an optional a consumer may fill in"
+  },
+  {
+    "file": "subagent-terminal-closes-open-chunk-stream.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/subagents",
+    "reason": "a subagent's terminal closes the chunk stream still open in its own lane, so the run completes cleanly with the delegated message assembled"
+  },
+  {
+    "file": "subagent-unannounced-attribution-accepted.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/subagents",
+    "reason": "attribution without any SUBAGENT_STARTED is legal: a producer may tag work without being able to report the lifecycle, and a consumer must accept it"
+  },
+  {
+    "file": "tool-call-metadata-lands-on-the-call.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/metadata",
+    "reason": "TOOL_CALL_* metadata accumulates on the tool call itself, not on the assistant message that owns it"
+  },
+  {
+    "file": "tool-call-triad-assembles.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "start/args/args/end assembles one tool call on its parent assistant message, arguments concatenated in arrival order"
+  },
+  {
+    "file": "tool-result-file-source-passes-through.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/tool-calls",
+    "reason": "a TOOL_CALL_RESULT whose content carries a part sourced from a provider-held file mints a tool message holding that source unchanged \u2014 type, handle, provider and mimeType \u2014 with no warning; the handle is opaque, so a client may neither rewrite it as a URL nor drop the part for carrying a source arm it does not itself resolve"
+  },
+  {
+    "file": "tool-result-parts-mint-tool-message.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/tool-calls",
+    "reason": "a TOOL_CALL_RESULT whose content is a list of parts mints a tool message carrying those parts unchanged, placed after the assistant message that made the call, with no warning; asserted on the assembled messages, because the two clients deliver a different event granularity to application code"
+  },
+  {
+    "file": "triad-assembles-message.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/patterns/streaming",
+    "reason": "start/content/content/end assembles one message whose content is the deltas concatenated in arrival order"
+  },
+  {
+    "file": "two-sequential-runs-accumulate.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/events/lifecycle",
+    "reason": "one stream may carry two runs in sequence, and messages accumulate across the run boundary in order"
+  },
+  {
+    "file": "unknown-enum-value-role-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "Reject unknown present text roles, matching the canonical TypeScript and Python SDKs and the shared reference expectation."
+  },
+  {
+    "file": "unknown-event-dropped.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "an event type the client does not recognise is dropped with a warning and the run survives"
+  },
+  {
+    "file": "unknown-outcome-array-fatal.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "an ARRAY in the RUN_FINISHED outcome slot is a malformed value on a described field, so it is fatal \u2014 never treated as an unrecognised union member and stripped, which would report success for a run that was paused and lose the interrupt with it"
+  },
+  {
+    "file": "unknown-outcome-stripped.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "an unrecognised RUN_FINISHED outcome member is stripped from its optional position with a warning, leaving the run to end exactly as an outcome-less RUN_FINISHED does"
+  },
+  {
+    "file": "unknown-part-in-message-list.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "an unrecognised element inside a list is dropped and the list survives: a user message whose content array carries a future part kind between two text parts keeps both text parts"
+  },
+  {
+    "file": "unknown-property-stripped.json",
+    "classification": "normative",
+    "specPage": "/spec/1.0/basic/processing",
+    "reason": "an undescribed property on a known event is stripped with a warning naming its path, and the event itself survives intact"
+  }
+]

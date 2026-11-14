@@ -1,7 +1,11 @@
 #![doc = include_str!("../README.md")]
 
+pub mod compatibility;
 pub mod error;
 pub mod event;
+pub mod history;
+pub mod patch;
+pub mod processing;
 mod state;
 pub mod types;
 

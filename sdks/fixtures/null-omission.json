@@ -6,7 +6,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "parentRunId and input are both optional and unset.",
       "input": {
@@ -25,7 +26,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "RunAgentInput's own optional fields (parentRunId, resume) drop out too.",
       "input": {
@@ -82,7 +84,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "The state contract: optional, absent means no state, and a bare null reads as absent. All three SDKs re-emit it as omission \u2014 the one spelling every representation shares. Contrast with state_snapshot_that_is_entirely_null_stays_null: STATE_SNAPSHOT.snapshot is required, so its null is a value.",
       "input": {
@@ -118,7 +121,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Baseline: timestamp and rawEvent are optional on every event and unset here.",
       "input": {
@@ -135,7 +139,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "TEXT_MESSAGE_START",
@@ -153,7 +158,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "TEXT_MESSAGE_CONTENT",
@@ -171,7 +177,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "TEXT_MESSAGE_END",
@@ -187,7 +194,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Every field is optional; nothing may be written for any of them.",
       "input": {
@@ -202,7 +210,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "The original break: a .NET adapter emitted parentMessageId as null and TypeScript clients aborted on the first tool call.",
       "input": {
@@ -221,7 +230,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "TOOL_CALL_ARGS",
@@ -239,7 +249,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "TOOL_CALL_END",
@@ -255,7 +266,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Second tolerance patch site.",
       "input": {
@@ -274,7 +286,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "TOOL_CALL_RESULT",
@@ -294,7 +307,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "A null inside the state payload is a value, not an absent field, and must survive.",
       "input": {
@@ -329,7 +343,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "snapshot is required by the contract, so a null snapshot is a value the producer is asserting, not an absent field. Omitting it would drop a required key. Distinct from the omission cases above, and the reason the rule keys off optionality rather than off the value being null.",
       "input": {
@@ -346,7 +361,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Same point for RAW.event, which is also required.",
       "input": {
@@ -363,7 +379,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "RFC 6902 replace-with-null is how a field gets cleared; dropping it would change the patch.",
       "input": {
@@ -392,7 +409,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Each message leaves its unset optional fields out: name, encryptedValue, toolCalls, error.",
       "input": {
@@ -463,7 +481,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Reaches one level deeper: ToolCall.encryptedValue is optional and unset.",
       "input": {
@@ -510,7 +529,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "replace is stated explicitly: the SDKs disagree on whether an absent replace defaults to true on the wire, which is a separate question from null omission.",
       "input": {
@@ -539,7 +559,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "ACTIVITY_DELTA",
@@ -571,7 +592,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Both fields are optional; nothing may be written for them.",
       "input": {
@@ -586,7 +608,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "A null nested inside the opaque raw payload survives; the absent source does not appear.",
       "input": {
@@ -609,7 +632,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "CUSTOM",
@@ -631,7 +655,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "RUN_ERROR",
@@ -647,7 +672,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Third tolerance patch site: the Python SDK used to serialize this as outcome: null.",
       "input": {
@@ -666,7 +692,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "input": {
         "type": "RUN_FINISHED",
@@ -690,7 +717,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "The interrupt leaves message, toolCallId, responseSchema and expiresAt out, while the null it carries inside metadata stays.",
       "input": {
@@ -733,7 +761,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "description and all three parent links are optional and unset. The subagent surface postdates the omission fix, so unlike the three legacy tolerances nothing may write null here.",
       "input": {
@@ -752,7 +781,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Control: values that ARE set all survive.",
       "input": {
@@ -779,7 +809,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Omitted outcome is the legacy success spelling; it must stay omitted, never null.",
       "input": {
@@ -796,7 +827,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "interruptIds is optional inside the suspended variant.",
       "input": {
@@ -819,7 +851,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "code is optional and unset.",
       "input": {
@@ -838,7 +871,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Interrupt.subagentRunId set on one interrupt and unset on the other: the set one survives, the unset one is omitted rather than null.",
       "input": {
@@ -885,7 +919,8 @@
       "producedBy": [
         "typescript",
         "python",
-        "dotnet"
+        "dotnet",
+        "rust"
       ],
       "note": "Whole optional null fields are omitted; a null value inside metadata remains application data.",
       "input": {

@@ -4,9 +4,8 @@ use ag_ui_client::core::event::{
     CustomEvent, Event, MessagesSnapshotEvent, RawEvent, RunErrorEvent, RunFinishedEvent,
     RunStartedEvent, StateDeltaEvent, StateSnapshotEvent, StepFinishedEvent, StepStartedEvent,
     TextMessageChunkEvent, TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent,
-    ThinkingEndEvent, ThinkingStartEvent, ThinkingTextMessageContentEvent,
-    ThinkingTextMessageEndEvent, ThinkingTextMessageStartEvent, ToolCallArgsEvent,
-    ToolCallChunkEvent, ToolCallEndEvent, ToolCallResultEvent, ToolCallStartEvent,
+    ToolCallArgsEvent, ToolCallChunkEvent, ToolCallEndEvent, ToolCallResultEvent,
+    ToolCallStartEvent,
 };
 use ag_ui_client::http::HttpAgent;
 use ag_ui_client::subscriber::{AgentSubscriber, AgentSubscriberParams};
@@ -51,7 +50,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Agent run completed with {} new messages",
         result.new_messages.len()
     );
-    info!("Result: {}", result.result);
+    info!("Result: {:?}", result.result);
 
     Ok(())
 }
@@ -68,9 +67,9 @@ impl LoggingSubscriber {
 
     fn log_event<T: Debug>(&self, event_name: &str, event: &T) {
         if self.verbose {
-            info!("Event: {} - {:?}", event_name, event);
+            info!("Event: {event_name} - {event:?}");
         } else {
-            info!("Event: {}", event_name);
+            info!("Event: {event_name}");
         }
     }
 }
@@ -94,7 +93,7 @@ where
         error: &AgentError,
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        info!("Run failed: {:?}", error);
+        info!("Run failed: {error:?}");
         Ok(AgentStateMutation::default())
     }
 
@@ -176,7 +175,7 @@ where
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("TextMessageContent", event);
-        info!("Current buffer: {}", text_message_buffer);
+        info!("Current buffer: {text_message_buffer}");
         Ok(AgentStateMutation::default())
     }
 
@@ -187,7 +186,7 @@ where
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("TextMessageEnd", event);
-        info!("Final message: {}", text_message_buffer);
+        info!("Final message: {text_message_buffer}");
         Ok(AgentStateMutation::default())
     }
 
@@ -209,11 +208,8 @@ where
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("ToolCallArgs", event);
-        info!(
-            "Tool call: {} with args: {}",
-            tool_call_name, tool_call_buffer
-        );
-        info!("Partial args: {:?}", partial_tool_call_args);
+        info!("Tool call: {tool_call_name} with args: {tool_call_buffer}");
+        info!("Partial args: {partial_tool_call_args:?}");
         Ok(AgentStateMutation::default())
     }
 
@@ -225,10 +221,7 @@ where
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("ToolCallEnd", event);
-        info!(
-            "Tool call completed: {} with args: {:?}",
-            tool_call_name, tool_call_args
-        );
+        info!("Tool call completed: {tool_call_name} with args: {tool_call_args:?}");
         Ok(AgentStateMutation::default())
     }
 
@@ -295,57 +288,12 @@ where
         Ok(AgentStateMutation::default())
     }
 
-    async fn on_thinking_text_message_start_event(
-        &self,
-        event: &ThinkingTextMessageStartEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingTextMessageStart", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_text_message_content_event(
-        &self,
-        event: &ThinkingTextMessageContentEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingTextMessageContent", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_text_message_end_event(
-        &self,
-        event: &ThinkingTextMessageEndEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingTextMessageEnd", event);
-        Ok(AgentStateMutation::default())
-    }
-
     async fn on_tool_call_chunk_event(
         &self,
         event: &ToolCallChunkEvent,
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<AgentStateMutation<StateT>, AgentError> {
         self.log_event("ToolCallChunk", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_start_event(
-        &self,
-        event: &ThinkingStartEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingStart", event);
-        Ok(AgentStateMutation::default())
-    }
-
-    async fn on_thinking_end_event(
-        &self,
-        event: &ThinkingEndEvent,
-        _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
-    ) -> Result<AgentStateMutation<StateT>, AgentError> {
-        self.log_event("ThinkingEnd", event);
         Ok(AgentStateMutation::default())
     }
 
@@ -370,7 +318,7 @@ where
         message: &Message,
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<(), AgentError> {
-        info!("New message: {:?}", message);
+        info!("New message: {message:?}");
         Ok(())
     }
 
@@ -379,7 +327,7 @@ where
         tool_call: &ToolCall,
         _params: AgentSubscriberParams<'async_trait, StateT, FwdPropsT>,
     ) -> Result<(), AgentError> {
-        info!("New tool call: {:?}", tool_call);
+        info!("New tool call: {tool_call:?}");
         Ok(())
     }
 }

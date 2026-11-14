@@ -149,13 +149,14 @@ export interface StreamFixture {
   expectOverrides?: {
     typescript?: StreamExpectationOverride;
     dotnet?: StreamExpectationOverride;
+    rust?: StreamExpectationOverride;
   };
 }
 
 /** The expectation one lane must satisfy: the base, with its overrides applied. */
 export function resolveExpectation(
   fixture: StreamFixture,
-  lane: "typescript" | "dotnet",
+  lane: "typescript" | "dotnet" | "rust",
 ): StreamExpectation {
   const override = fixture.expectOverrides?.[lane];
   if (!override) return fixture.expect;
