@@ -157,6 +157,10 @@ class TestHandleReasoningEventCanonicalId(unittest.TestCase):
         self.assertIsNone(
             (self.agent.active_run.get("pending_reasoning_ids") or {}).get("__root__")
         )
+        self.assertNotIn(
+            "__root__",
+            self.agent.active_run.get("pending_reasoning_parent_ids") or {},
+        )
 
     def test_subsequent_deltas_join_the_canonical_message(self):
         self._events({"type": "text", "text": "", "index": 0, "id": "rs-canonical"})

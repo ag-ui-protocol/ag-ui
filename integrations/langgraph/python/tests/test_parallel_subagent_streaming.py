@@ -38,6 +38,7 @@ def _fresh_active_run(run_id: str = "run-1") -> dict:
         "mode": "start",
         "reasoning_processes": {},
         "pending_reasoning_ids": {},
+        "pending_reasoning_parent_ids": {},
         "current_text_message_ids": {},
         "current_text_message_nodes": {},
         "node_name": "agent",

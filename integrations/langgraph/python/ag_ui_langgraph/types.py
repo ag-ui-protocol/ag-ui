@@ -79,12 +79,14 @@ ThinkingProcess = TypedDict("ThinkingProcess", {
     "message_id": NotRequired[str],
     "type": NotRequired[Optional[str]],
     "signature": NotRequired[Optional[str]],
+    "parent_ids": NotRequired[List[str]],
 })
 
 MessageInProgress = TypedDict("MessageInProgress", {
     "id": str,
     "tool_call_id": NotRequired[Optional[str]],
-    "tool_call_name": NotRequired[Optional[str]]
+    "tool_call_name": NotRequired[Optional[str]],
+    "parent_ids": NotRequired[List[str]],
 })
 
 RunMetadata = TypedDict("RunMetadata", {
@@ -130,6 +132,10 @@ RunMetadata = TypedDict("RunMetadata", {
     # Canonical pending reasoning id (from a text-less reasoning chunk), keyed
     # per lane like reasoning_processes.
     "pending_reasoning_ids": NotRequired[Dict[str, str]],
+    # Ancestry captured with each pending id. A failed tool can interrupt the
+    # model before a reasoning process exists, so cleanup cannot recover this
+    # provenance from reasoning_processes.
+    "pending_reasoning_parent_ids": NotRequired[Dict[str, List[str]]],
     # Pinned text message id per (lane, node). Set on the first auto-streamed
     # text chunk from a lane's node (from the chunk's id) and reused for every
     # subsequent TEXT_MESSAGE_START from the same lane while that lane's node is
