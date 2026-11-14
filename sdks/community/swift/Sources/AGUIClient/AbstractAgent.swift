@@ -6,6 +6,7 @@ import Foundation
 // MARK: - AgentStorage
 
 internal actor AgentStorage {
+    var threadId: String = UUID().uuidString
     var messages: [any Message] = []
     var currentState: State = Data("{}".utf8)
     var rawEvents: [RawEvent] = []
@@ -17,6 +18,7 @@ internal actor AgentStorage {
 // MARK: - AgentStorage Mutation Helpers
 
 internal extension AgentStorage {
+    func setThreadId(_ threadId: String) { self.threadId = threadId }
     func setMessages(_ messages: [any Message]) { self.messages = messages }
     func setState(_ state: State) { self.currentState = state }
     func setRawEvents(_ rawEvents: [RawEvent]) { self.rawEvents = rawEvents }
@@ -73,9 +75,19 @@ public final class AbstractAgent: Sendable {
         parameters: RunAgentParameters? = nil,
         subscriber: (any AgentSubscriber)? = nil
     ) async throws {
+        try await runAgent(input: await buildInput(from: parameters), subscriber: subscriber)
+    }
+
+    /// Runs the full processing pipeline with an explicit wire input.
+    public func runAgent(
+        input: RunAgentInput,
+        subscriber: (any AgentSubscriber)? = nil
+    ) async throws {
         guard await !storage.isDisposed else { return }
 
-        let input = buildInput(from: parameters)
+        await storage.setThreadId(input.threadId)
+        await storage.setMessages(input.messages)
+        await storage.setState(input.state)
 
         let registeredSubscribers = await subscriberManager.allSubscribers()
         var allSubscribers = registeredSubscribers
@@ -92,7 +104,15 @@ public final class AbstractAgent: Sendable {
         if let msgs = initMutation.messages { await storage.setMessages(msgs) }
         if let st = initMutation.state { await storage.setState(st) }
 
+        let effectiveInput = RunAgentInput(
+            threadId: input.threadId, runId: input.runId,
+            protocolVersion: input.protocolVersion, parentRunId: input.parentRunId,
+            state: await storage.currentState, messages: await storage.messages,
+            tools: input.tools, context: input.context,
+            forwardedProps: input.forwardedProps, resume: input.resume
+        )
         let task = Task<Void, Error> {
+            let input = effectiveInput
             do {
                 let eventStream = self.run(input: input)
                 let processedStream = eventStream
@@ -104,6 +124,7 @@ public final class AbstractAgent: Sendable {
                     await self.applyAgentState(agentState, input: input, subscribers: allSubscribers)
                 }
 
+                try Task.checkCancellation()
                 let finalMessages = await self.storage.messages
                 let finalState = await self.storage.currentState
                 _ = await runSubscribersWithMutation(
@@ -130,7 +151,11 @@ public final class AbstractAgent: Sendable {
         }
 
         await storage.setCurrentTask(task)
-        let result = await task.result
+        let result = await withTaskCancellationHandler {
+            await task.result
+        } onCancel: {
+            task.cancel()
+        }
         await storage.setCurrentTask(nil)
         try result.get()
     }
@@ -149,6 +174,7 @@ public final class AbstractAgent: Sendable {
 
     public func dispose() async {
         await storage.setDisposed(true)
+        await abortRun()
     }
 
     public func subscribe(_ subscriber: any AgentSubscriber) async -> any AgentSubscription {
@@ -160,10 +186,12 @@ public final class AbstractAgent: Sendable {
 
     // MARK: - Internal helpers
 
-    internal func buildInput(from parameters: RunAgentParameters?) -> RunAgentInput {
+    internal func buildInput(from parameters: RunAgentParameters?) async -> RunAgentInput {
         RunAgentInput(
-            threadId: "default",
+            threadId: await storage.threadId,
             runId: parameters?.runId ?? "run_\(UUID().uuidString)",
+            state: await storage.currentState,
+            messages: await storage.messages,
             tools: parameters?.tools ?? [],
             context: parameters?.context ?? [],
             forwardedProps: parameters?.forwardedProps ?? Data("{}".utf8)

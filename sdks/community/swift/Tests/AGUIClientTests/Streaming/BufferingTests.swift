@@ -420,31 +420,30 @@ final class BufferingTests: XCTestCase {
         // The core bug was: buffered() accumulated all elements and only yielded
         // after upstream finished. For an SSE stream that never closes, this means
         // no events ever arrive. This test verifies elements flow through immediately.
-        let firstArrived = expectation(description: "first element arrives before upstream finishes")
-        firstArrived.assertForOverFulfill = false
-
-        let source = AsyncThrowingStream<Int, Error> { continuation in
-            Task {
-                continuation.yield(1)
-                // Pause before yielding second element — consumer must receive 1 before this
-                try await Task.sleep(for: .milliseconds(200))
-                continuation.yield(2)
-                continuation.yield(3)
-                continuation.finish()
-            }
-        }
+        let firstArrived = expectation(description: "first element arrives while upstream is open")
+        let consumptionFinished = expectation(description: "all elements consumed")
+        let (source, upstream) = AsyncThrowingStream<Int, Error>.makeStream()
 
         let buffered = source.buffered(limit: 10, strategy: .dropOldest)
-        var received: [Int] = []
-
-        for try await element in buffered {
-            received.append(element)
-            if element == 1 {
-                firstArrived.fulfill()
+        let consumer = Task { () throws -> [Int] in
+            defer { consumptionFinished.fulfill() }
+            var received: [Int] = []
+            for try await element in buffered {
+                received.append(element)
+                if element == 1 { firstArrived.fulfill() }
             }
+            return received
         }
 
+        upstream.yield(1)
+        // This assertion happens before upstream is allowed to finish. A
+        // buffer that waits for completion cannot satisfy it.
         await fulfillment(of: [firstArrived], timeout: 1.0)
+        upstream.yield(2)
+        upstream.yield(3)
+        upstream.finish()
+        await fulfillment(of: [consumptionFinished], timeout: 1.0)
+        let received = try await consumer.value
         XCTAssertEqual(received, [1, 2, 3])
     }
 

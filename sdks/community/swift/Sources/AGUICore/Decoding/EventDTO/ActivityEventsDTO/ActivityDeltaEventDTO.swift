@@ -30,7 +30,7 @@ struct ActivityDeltaEventDTO {
             )
         }
 
-        guard let patchValue = jsonObject["patch"] else {
+        guard let patchValue = try EventJSONField.value("patch", from: data) else {
             throw DecodingError.keyNotFound(
                 CodingKeys.patch,
                 DecodingError.Context(codingPath: [], debugDescription: "Missing patch field")
@@ -41,14 +41,14 @@ struct ActivityDeltaEventDTO {
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
 
         // Convert patch value to JSON data (must be an array)
-        guard patchValue is [Any] else {
+        guard case .array = patchValue else {
             throw DecodingError.typeMismatch(
                 [Any].self,
                 DecodingError.Context(codingPath: [], debugDescription: "Patch must be a JSON array")
             )
         }
 
-        let patchData = try JSONSerialization.data(withJSONObject: patchValue, options: [])
+        let patchData = try patchValue.encoded()
 
         return ActivityDeltaEventDTO(
             messageId: messageId,

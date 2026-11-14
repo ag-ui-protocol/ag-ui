@@ -73,6 +73,10 @@ public final class HttpAgent: Sendable {
         try await abstractAgent.runAgent(parameters: parameters, subscriber: subscriber)
     }
 
+    public func runAgent(input: RunAgentInput, subscriber: (any AgentSubscriber)? = nil) async throws {
+        try await abstractAgent.runAgent(input: input, subscriber: subscriber)
+    }
+
     public func runAgentObservable(
         input: RunAgentInput
     ) -> AsyncThrowingStream<any AGUIEvent, Error> {

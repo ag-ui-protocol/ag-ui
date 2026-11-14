@@ -13,7 +13,9 @@ struct MessagesSnapshotEventDTO {
             )
         }
 
-        guard let messagesValue = jsonObject["messages"] as? [[String: Any]] else {
+        guard let messagesValue = try EventJSONField.value("messages", from: data),
+              case .array(let messageValues) = messagesValue,
+              messageValues.allSatisfy({ $0.object != nil }) else {
             throw DecodingError.keyNotFound(
                 CodingKeys.messages,
                 DecodingError.Context(codingPath: [], debugDescription: "Missing or non-array messages field")
@@ -23,8 +25,8 @@ struct MessagesSnapshotEventDTO {
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
 
         let messageDecoder = MessageDecoder()
-        let messages: [any Message] = try messagesValue.compactMap { dict in
-            let msgData = try JSONSerialization.data(withJSONObject: dict)
+        let messages: [any Message] = try messageValues.compactMap { message in
+            let msgData = try message.encoded()
             return try? messageDecoder.decode(msgData)
         }
 

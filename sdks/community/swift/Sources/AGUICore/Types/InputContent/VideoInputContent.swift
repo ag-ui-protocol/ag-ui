@@ -2,47 +2,34 @@
 
 import Foundation
 
-/// Represents video content in multimodal user input.
-///
-/// `VideoInputContent` carries video data either as a URL reference or as
-/// base64-encoded bytes.
-///
-/// - SeeAlso: ``InputContent``, ``UserMessage``
-public struct VideoInputContent: InputContent, Hashable, Sendable {
+/// A video part using the AG-UI 1.0 source representation.
+public struct VideoInputContent: InputContent, Hashable, Sendable, MediaInputContent {
+    public let type = "video"
+    public let source: InputContentSource
+    public let id: String?
+    /// Optional metadata as raw JSON bytes (including scalar and array values).
+    public let metadata: Data?
 
-    /// The content type discriminator (always `"video"`).
-    public let type: String
+    /// Compatibility accessor for URL-backed content.
+    public var url: String? { source.type == "url" ? source.value : nil }
+    /// Compatibility accessor for inline content.
+    public var data: String? { source.type == "data" ? source.value : nil }
+    public var mimeType: String? { source.mimeType }
 
-    /// Optional URL pointing to the video file.
-    public let url: String?
-
-    /// Optional base64-encoded video data.
-    public let data: String?
-
-    /// Optional MIME type of the video (e.g., `"video/mp4"`, `"video/webm"`).
-    public let mimeType: String?
-
-    /// Creates video content from a URL.
-    ///
-    /// - Parameters:
-    ///   - url: URL pointing to the video file
-    ///   - mimeType: Optional MIME type (e.g., `"video/mp4"`)
-    public init(url: String, mimeType: String? = nil) {
-        self.type = "video"
-        self.url = url
-        self.data = nil
-        self.mimeType = mimeType
+    public init(source: InputContentSource, id: String? = nil, metadata: Data? = nil) {
+        self.source = source
+        self.id = id
+        self.metadata = metadata
     }
 
-    /// Creates video content from base64-encoded data.
-    ///
-    /// - Parameters:
-    ///   - data: Base64-encoded video bytes
-    ///   - mimeType: Optional MIME type (e.g., `"video/webm"`)
+    /// Creates URL-backed content. Legacy hints are carried in metadata.
+    public init(url: String, mimeType: String? = nil) {
+        self.init(source: .url(value: url, mimeType: mimeType))
+    }
+
+    /// Creates inline content. If omitted, the MIME type defaults to application/octet-stream.
+    /// Supply the actual MIME type whenever known.
     public init(data: String, mimeType: String? = nil) {
-        self.type = "video"
-        self.url = nil
-        self.data = data
-        self.mimeType = mimeType
+        self.init(source: .data(value: data, mimeType: mimeType ?? "application/octet-stream"))
     }
 }

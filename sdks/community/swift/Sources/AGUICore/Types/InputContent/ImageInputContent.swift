@@ -2,57 +2,43 @@
 
 import Foundation
 
-/// Represents an image in multimodal user input.
-///
-/// `ImageInputContent` carries image data either as a URL reference or as
-/// base64-encoded bytes. The optional `detail` field controls how agents
-/// with vision capabilities process the image (e.g., `"high"`, `"low"`, `"auto"`).
-///
-/// - SeeAlso: ``InputContent``, ``UserMessage``
-public struct ImageInputContent: InputContent, Hashable, Sendable {
+/// A image part using the AG-UI 1.0 source representation.
+public struct ImageInputContent: InputContent, Hashable, Sendable, MediaInputContent {
+    public let type = "image"
+    public let source: InputContentSource
+    public let id: String?
+    /// Optional metadata as raw JSON bytes (including scalar and array values).
+    public let metadata: Data?
 
-    /// The content type discriminator (always `"image"`).
-    public let type: String
+    /// Compatibility accessor for URL-backed content.
+    public var url: String? { source.type == "url" ? source.value : nil }
+    /// Compatibility accessor for inline content.
+    public var data: String? { source.type == "data" ? source.value : nil }
+    public var mimeType: String? { source.mimeType }
 
-    /// Optional URL pointing to the image.
-    public let url: String?
-
-    /// Optional base64-encoded image data.
-    public let data: String?
-
-    /// Optional detail level hint for vision-capable agents.
-    ///
-    /// Common values: `"high"`, `"low"`, `"auto"`.
-    public let detail: String?
-
-    /// Optional MIME type of the image (e.g., `"image/png"`, `"image/jpeg"`).
-    public let mimeType: String?
-
-    /// Creates an image content from a URL.
-    ///
-    /// - Parameters:
-    ///   - url: URL pointing to the image
-    ///   - detail: Optional detail level (`"high"`, `"low"`, `"auto"`)
-    ///   - mimeType: Optional MIME type (e.g., `"image/png"`)
-    public init(url: String, detail: String? = nil, mimeType: String? = nil) {
-        self.type = "image"
-        self.url = url
-        self.data = nil
-        self.detail = detail
-        self.mimeType = mimeType
+    /// Legacy hint, carried in metadata on the 1.0 wire.
+    public var detail: String? {
+        guard let metadata,
+              let object = try? JSONSerialization.jsonObject(with: metadata) as? [String: Any] else { return nil }
+        return object["detail"] as? String
     }
 
-    /// Creates an image content from base64-encoded data.
-    ///
-    /// - Parameters:
-    ///   - data: Base64-encoded image bytes
-    ///   - detail: Optional detail level (`"high"`, `"low"`, `"auto"`)
-    ///   - mimeType: Optional MIME type (e.g., `"image/jpeg"`)
+    public init(source: InputContentSource, id: String? = nil, metadata: Data? = nil) {
+        self.source = source
+        self.id = id
+        self.metadata = metadata
+    }
+
+    /// Creates URL-backed content. Legacy hints are carried in metadata.
+    public init(url: String, detail: String? = nil, mimeType: String? = nil) {
+        let metadata = detail.flatMap { try? JSONSerialization.data(withJSONObject: ["detail": $0], options: .sortedKeys) }
+        self.init(source: .url(value: url, mimeType: mimeType), metadata: metadata)
+    }
+
+    /// Creates inline content. If omitted, the MIME type defaults to application/octet-stream.
+    /// Supply the actual MIME type whenever known.
     public init(data: String, detail: String? = nil, mimeType: String? = nil) {
-        self.type = "image"
-        self.url = nil
-        self.data = data
-        self.detail = detail
-        self.mimeType = mimeType
+        let metadata = detail.flatMap { try? JSONSerialization.data(withJSONObject: ["detail": $0], options: .sortedKeys) }
+        self.init(source: .data(value: data, mimeType: mimeType ?? "application/octet-stream"), metadata: metadata)
     }
 }

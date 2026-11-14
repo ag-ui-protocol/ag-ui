@@ -177,20 +177,42 @@ final class URLSessionHTTPClientTests: XCTestCase {
 
         StallingURLProtocol.reset()
 
+        let firstByte = expectation(description: "first response byte consumed")
         let consumingTask = Task {
             let request = URLRequest(url: URL(string: "https://stall.test/stream")!)
             let response = try await client.execute(request)
-            // Start consuming — the stream body never arrives, so this suspends.
-            for try await _ in response.bytes { break }
+            var consumed = 0
+            do {
+                for try await _ in response.bytes {
+                    consumed += 1
+                    if consumed == 1 { firstByte.fulfill() }
+                }
+            } catch is CancellationError {
+                // Cancellation of the consumer also cancels URLSession.AsyncBytes.
+            } catch let error as URLError where error.code == .cancelled {
+                // URLSession may report its own cancellation error first.
+            }
+            return consumed
         }
 
-        // Wait for the URLProtocol to signal it has started serving the body.
+        // The protocol sends one byte and stalls with the connection open.
         await StallingURLProtocol.waitUntilStarted()
-        // Cancel the consumer — this should trigger onTermination → task.cancel().
+        await fulfillment(of: [firstByte], timeout: 2)
         consumingTask.cancel()
 
         let cancelled = await StallingURLProtocol.waitUntilCancelledOrTimeout()
-        XCTAssertTrue(cancelled, "URLSession task must be cancelled when consumer cancels the stream")
+        guard cancelled else {
+            XCTFail("URLSession task did not stop within 2 seconds of consumer cancellation")
+            return
+        }
+        let consumed = try await consumingTask.value
+        XCTAssertEqual(consumed, 1, "no bytes may be consumed after cancellation")
+    }
+
+    func test_cancellationWaitTimesOutWhenNetworkDoesNotStop() async {
+        StallingURLProtocol.reset()
+        let cancelled = await StallingURLProtocol.waitUntilCancelledOrTimeout(timeout: 0.05)
+        XCTAssertFalse(cancelled)
     }
 
     // MARK: - Mid-stream errors
@@ -241,6 +263,7 @@ final class StallingURLProtocol: URLProtocol, @unchecked Sendable {
     private static let startedContinuations = NSLock()
     private static var _startedContinuation: CheckedContinuation<Void, Never>?
     private static var _cancelledContinuation: CheckedContinuation<Bool, Never>?
+    private static var _cancelledWaiterID: UUID?
     private static var _started = false
     private static var _cancelled = false
 
@@ -248,6 +271,7 @@ final class StallingURLProtocol: URLProtocol, @unchecked Sendable {
         startedContinuations.lock(); defer { startedContinuations.unlock() }
         _startedContinuation = nil
         _cancelledContinuation = nil
+        _cancelledWaiterID = nil
         _started = false
         _cancelled = false
     }
@@ -259,10 +283,29 @@ final class StallingURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    static func waitUntilCancelledOrTimeout() async -> Bool {
+    static func waitUntilCancelledOrTimeout(timeout: TimeInterval = 2) async -> Bool {
         await withCheckedContinuation { cont in
-            startedContinuations.lock(); defer { startedContinuations.unlock() }
-            if _cancelled { cont.resume(returning: true) } else { _cancelledContinuation = cont }
+            let id = UUID()
+            startedContinuations.lock()
+            if _cancelled {
+                startedContinuations.unlock()
+                cont.resume(returning: true)
+                return
+            }
+            _cancelledContinuation = cont
+            _cancelledWaiterID = id
+            startedContinuations.unlock()
+
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                startedContinuations.lock()
+                let timedOut = _cancelledWaiterID == id
+                if timedOut {
+                    _cancelledContinuation = nil
+                    _cancelledWaiterID = nil
+                }
+                startedContinuations.unlock()
+                if timedOut { cont.resume(returning: false) }
+            }
         }
     }
 
@@ -274,10 +317,13 @@ final class StallingURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     private static func signalCancelled() {
-        startedContinuations.lock(); defer { startedContinuations.unlock() }
+        startedContinuations.lock()
         _cancelled = true
-        _cancelledContinuation?.resume(returning: true)
+        let continuation = _cancelledContinuation
         _cancelledContinuation = nil
+        _cancelledWaiterID = nil
+        startedContinuations.unlock()
+        continuation?.resume(returning: true)
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -291,7 +337,8 @@ final class StallingURLProtocol: URLProtocol, @unchecked Sendable {
             headerFields: ["Content-Type": "text/event-stream"]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        // Signal that headers were sent — body never arrives (intentional stall).
+        client?.urlProtocol(self, didLoad: Data([0x41]))
+        // Leave the body open after one byte so the consumer suspends mid-stream.
         StallingURLProtocol.signalStarted()
     }
 

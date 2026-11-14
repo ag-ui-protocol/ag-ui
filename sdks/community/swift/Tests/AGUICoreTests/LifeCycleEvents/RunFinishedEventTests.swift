@@ -161,7 +161,7 @@ final class RunFinishedEventTests: XCTestCase,
         XCTAssertNotNil(runFinished.result)
     }
 
-    func test_decodeRunFinished_withNullResult_treatedAsAbsent() throws {
+    func test_decodeRunFinished_withNullResult_preservesExplicitNull() throws {
         let data = jsonData("""
         {
           "type": "RUN_FINISHED",
@@ -172,7 +172,7 @@ final class RunFinishedEventTests: XCTestCase,
         """)
         let event = try makeStrictDecoder().decode(data)
         let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
-        XCTAssertNil(runFinished.result, "null result should be treated as absent")
+        XCTAssertEqual(runFinished.result, Data("null".utf8))
     }
 
     func test_decodeRunFinished_withObjectResult_decodesSuccessfully() throws {
@@ -310,7 +310,7 @@ final class RunFinishedEventTests: XCTestCase,
           "type": "RUN_FINISHED",
           "threadId": "\(EventTestData.threadId)",
           "runId": "\(EventTestData.runId)",
-          "outcome": { "type": "interrupt", "interrupts": [] }
+          "outcome": { "type": "interrupt", "interrupts": [{ "id": "i1", "reason": "approval" }] }
         }
         """)
         let decoder = makeStrictDecoder()
@@ -321,13 +321,13 @@ final class RunFinishedEventTests: XCTestCase,
         // Then
         let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
         if case .interrupt(let interrupts) = runFinished.outcome {
-            XCTAssertTrue(interrupts.isEmpty)
+            XCTAssertEqual(interrupts.map(\.id), ["i1"])
         } else {
             XCTFail("Expected .interrupt, got \(String(describing: runFinished.outcome))")
         }
     }
 
-    func test_decodeRunFinished_missingOutcome_defaultsToSuccess() throws {
+    func test_decodeRunFinished_missingOutcome_preservesAbsence() throws {
         // Given – no "outcome" key in JSON; legacy producers omit it
         let data = jsonData("""
         {
@@ -343,10 +343,10 @@ final class RunFinishedEventTests: XCTestCase,
 
         // Then: DTO falls back to .success for missing outcome
         let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
-        XCTAssertEqual(runFinished.outcome, .success)
+        XCTAssertNil(runFinished.outcome)
     }
 
-    func test_decodeRunFinished_unknownOutcomeType_defaultsToSuccess() throws {
+    func test_decodeRunFinished_unknownOutcomeType_preservesAbsence() throws {
         // Given – unknown "type" string inside the outcome object; forward-compat fallback
         let data = jsonData("""
         {
@@ -363,10 +363,10 @@ final class RunFinishedEventTests: XCTestCase,
 
         // Then
         let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
-        XCTAssertEqual(runFinished.outcome, .success)
+        XCTAssertNil(runFinished.outcome)
     }
 
-    func test_decodeRunFinished_outcomePlainString_defaultsToSuccess() throws {
+    func test_decodeRunFinished_outcomePlainString_preservesAbsence() throws {
         // Given – legacy plain-string outcome (e.g. "success"); DTO expects an object
         // so plain strings fall through to the .success default.
         let data = jsonData("""
@@ -384,7 +384,7 @@ final class RunFinishedEventTests: XCTestCase,
 
         // Then: non-object outcome falls back to .success
         let runFinished = try XCTUnwrap(event as? RunFinishedEvent)
-        XCTAssertEqual(runFinished.outcome, .success)
+        XCTAssertNil(runFinished.outcome)
     }
 
     // MARK: - Feature: Model behaviors

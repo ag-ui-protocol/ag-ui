@@ -124,22 +124,8 @@ public enum EventType: String, Codable, CaseIterable, Sendable {
     /// Incremental activity update received
     case activityDelta = "ACTIVITY_DELTA"
 
-    // MARK: - Subagent Events (3)
-
-    /// A subagent invocation has started within this run.
-    ///
-    /// Carried by AG-UI 1.0 streams that include subagent orchestration. Decoded as
-    /// ``UnknownEvent`` until full subagent support is implemented.
     case subagentStarted = "SUBAGENT_STARTED"
-
-    /// A subagent invocation's segment of this run has ended.
-    ///
-    /// Decoded as ``UnknownEvent`` until full subagent support is implemented.
     case subagentFinished = "SUBAGENT_FINISHED"
-
-    /// A subagent invocation failed without terminating the enclosing run.
-    ///
-    /// Decoded as ``UnknownEvent`` until full subagent support is implemented.
     case subagentError = "SUBAGENT_ERROR"
 
     // MARK: - Internal Sentinel (1)
@@ -152,4 +138,36 @@ public enum EventType: String, Codable, CaseIterable, Sendable {
     /// - Note: This case is an implementation detail. Consumer code should check `event is UnknownEvent`
     ///   rather than switching on `.unknown` directly.
     case unknown = "__UNKNOWN__"
+
+    /// Wire-level event types defined by version 1.0. The unknown sentinel is not a protocol value.
+    public static var protocolCases: [EventType] { allCases }
+
+    public static var allCases: [EventType] {
+        [.runStarted, .runFinished, .runError, .stepStarted, .stepFinished,
+         .textMessageStart, .textMessageContent, .textMessageEnd, .textMessageChunk,
+         .toolCallStart, .toolCallArgs, .toolCallEnd, .toolCallResult, .toolCallChunk,
+         .stateSnapshot, .stateDelta, .messagesSnapshot,
+         .reasoningStart, .reasoningMessageStart, .reasoningMessageContent,
+         .reasoningMessageEnd, .reasoningMessageChunk, .reasoningEnd,
+         .reasoningEncryptedValue, .raw, .custom, .activitySnapshot,
+         .activityDelta, .subagentStarted, .subagentFinished, .subagentError]
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let value = EventType(rawValue: raw), value != .unknown else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "Not an AG-UI 1.0 event type: \(raw)"))
+        }
+        self = value
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard self != .unknown else {
+            throw EncodingError.invalidValue(self, .init(codingPath: encoder.codingPath,
+                                                          debugDescription: "UnknownEvent is not a wire event type"))
+        }
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }

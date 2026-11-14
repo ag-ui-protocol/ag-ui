@@ -14,7 +14,7 @@ struct StateDeltaEventDTO {
             )
         }
 
-        guard let deltaValue = jsonObject["delta"] else {
+        guard let deltaValue = try EventJSONField.value("delta", from: data) else {
             throw DecodingError.keyNotFound(
                 CodingKeys.delta,
                 DecodingError.Context(codingPath: [], debugDescription: "Missing delta field")
@@ -39,13 +39,12 @@ struct StateDeltaEventDTO {
     /// - Parameter deltaValue: The delta value from the JSON object
     /// - Returns: JSON data representation of the delta
     /// - Throws: `DecodingError.typeMismatch` if delta is not an array or NSNull
-    private static func serializeDelta(_ deltaValue: Any) throws -> Data {
-        if deltaValue is NSNull {
+    private static func serializeDelta(_ deltaValue: AGUIJSON) throws -> Data {
+        if deltaValue == .null {
             // NSNull needs special handling - encode as null JSON
             return Data("null".utf8)
-        } else if deltaValue is [Any] {
-            // Array can use JSONSerialization
-            return try JSONSerialization.data(withJSONObject: deltaValue, options: [])
+        } else if case .array = deltaValue {
+            return try deltaValue.encoded()
         } else {
             // Delta must be an array per RFC 6902
             throw DecodingError.typeMismatch(

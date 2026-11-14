@@ -35,7 +35,7 @@ enum EventTestData {
 
     /// Alternative timestamp for tests requiring multiple timestamps.
     static let timestamp2: Int64 = 1704067200001
-    
+
     /// Creates a JSON dictionary for event testing
     /// - Parameters:
     ///   - type: The event type string (e.g., "RUN_STARTED", "RUN_FINISHED", "RUN_ERROR")
@@ -54,7 +54,7 @@ enum EventTestData {
         var json: [String: Any] = [
             "type": type
         ]
-        
+
         // Use additionalFields if provided, otherwise use threadId/runId
         if let additionalFields = additionalFields {
             json.merge(additionalFields) { _, new in new }
@@ -62,7 +62,7 @@ enum EventTestData {
             json["threadId"] = threadId
             json["runId"] = runId
         }
-        
+
         if let timestamp = timestamp {
             json["timestamp"] = timestamp
         }

@@ -24,8 +24,8 @@ final class UnknownEventTests: XCTestCase, AGUIEventDecoderTestHelpers {
         XCTAssertFalse(knownRawValues.contains("__UNKNOWN__"))
     }
 
-    func test_unknownEventType_isInAllCases() {
-        XCTAssertTrue(EventType.allCases.contains(.unknown))
+    func test_unknownEventType_isNotAProtocolCase() {
+        XCTAssertFalse(EventType.allCases.contains(.unknown))
     }
 
     // MARK: - Feature: UnknownEvent.eventType returns .unknown
@@ -108,7 +108,7 @@ final class UnknownEventTests: XCTestCase, AGUIEventDecoderTestHelpers {
     // in strict mode threw EventDecodingError.unknownEventType and killed the stream.
     // The default decoder now uses .returnUnknown so streams survive these events.
 
-    func test_subagentStarted_defaultDecoder_returnsUnknownEvent() throws {
+    func test_subagentStarted_defaultDecoder_returnsTypedEvent() throws {
         // Given: an AG-UI 1.0 SUBAGENT_STARTED event
         let data = jsonData("""
         {
@@ -122,12 +122,12 @@ final class UnknownEventTests: XCTestCase, AGUIEventDecoderTestHelpers {
         // When
         let event = try decoder.decode(data)
 
-        // Then: stream continues; event is surfaced as UnknownEvent
-        XCTAssertTrue(event is UnknownEvent, "Expected UnknownEvent, got \(type(of: event))")
-        XCTAssertEqual((event as? UnknownEvent)?.typeRaw, "SUBAGENT_STARTED")
+        // Then: stream continues; event is surfaced as SubagentEvent
+        XCTAssertTrue(event is SubagentEvent, "Expected SubagentEvent, got \(type(of: event))")
+        XCTAssertEqual((event as? SubagentEvent)?.eventType.rawValue, "SUBAGENT_STARTED")
     }
 
-    func test_subagentFinished_defaultDecoder_returnsUnknownEvent() throws {
+    func test_subagentFinished_defaultDecoder_returnsTypedEvent() throws {
         // Given: an AG-UI 1.0 SUBAGENT_FINISHED event
         let data = jsonData("""
         {
@@ -141,11 +141,11 @@ final class UnknownEventTests: XCTestCase, AGUIEventDecoderTestHelpers {
         let event = try decoder.decode(data)
 
         // Then
-        XCTAssertTrue(event is UnknownEvent)
-        XCTAssertEqual((event as? UnknownEvent)?.typeRaw, "SUBAGENT_FINISHED")
+        XCTAssertTrue(event is SubagentEvent)
+        XCTAssertEqual((event as? SubagentEvent)?.eventType.rawValue, "SUBAGENT_FINISHED")
     }
 
-    func test_subagentError_defaultDecoder_returnsUnknownEvent() throws {
+    func test_subagentError_defaultDecoder_returnsTypedEvent() throws {
         // Given: an AG-UI 1.0 SUBAGENT_ERROR event
         let data = jsonData("""
         {
@@ -160,7 +160,7 @@ final class UnknownEventTests: XCTestCase, AGUIEventDecoderTestHelpers {
         let event = try decoder.decode(data)
 
         // Then
-        XCTAssertTrue(event is UnknownEvent)
-        XCTAssertEqual((event as? UnknownEvent)?.typeRaw, "SUBAGENT_ERROR")
+        XCTAssertTrue(event is SubagentEvent)
+        XCTAssertEqual((event as? SubagentEvent)?.eventType.rawValue, "SUBAGENT_ERROR")
     }
 }

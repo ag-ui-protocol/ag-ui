@@ -17,7 +17,7 @@ enum ToolCallEventRegistry {
                 try decoder.decode(ToolCallEndEventDTO.self, from: data).toDomain(rawEvent: data)
             },
             .toolCallResult: { data, decoder in
-                try decoder.decode(ToolCallResultEventDTO.self, from: data).toDomain(rawEvent: data)
+                try ToolCallResultEventDTO.decode(from: data, decoder: decoder).toDomain(rawEvent: data)
             },
             .toolCallChunk: { data, decoder in
                 try decoder.decode(ToolCallChunkEventDTO.self, from: data).toDomain(rawEvent: data)

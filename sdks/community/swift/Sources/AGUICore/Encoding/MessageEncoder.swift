@@ -292,33 +292,8 @@ private func encodeUserMessage(_ message: any Message, encoder: JSONEncoder) thr
                     binaryDict["filename"] = filename
                 }
                 contentArray.append(binaryDict)
-            } else if let imagePart = part as? ImageInputContent {
-                var d: [String: Any] = ["type": "image"]
-                if let url = imagePart.url { d["url"] = url }
-                if let data = imagePart.data { d["data"] = data }
-                if let detail = imagePart.detail { d["detail"] = detail }
-                if let mimeType = imagePart.mimeType { d["mimeType"] = mimeType }
-                contentArray.append(d)
-            } else if let audioPart = part as? AudioInputContent {
-                var d: [String: Any] = ["type": "audio"]
-                if let url = audioPart.url { d["url"] = url }
-                if let data = audioPart.data { d["data"] = data }
-                if let format = audioPart.format { d["format"] = format }
-                if let mimeType = audioPart.mimeType { d["mimeType"] = mimeType }
-                contentArray.append(d)
-            } else if let videoPart = part as? VideoInputContent {
-                var d: [String: Any] = ["type": "video"]
-                if let url = videoPart.url { d["url"] = url }
-                if let data = videoPart.data { d["data"] = data }
-                if let mimeType = videoPart.mimeType { d["mimeType"] = mimeType }
-                contentArray.append(d)
-            } else if let docPart = part as? DocumentInputContent {
-                var d: [String: Any] = ["type": "document"]
-                if let url = docPart.url { d["url"] = url }
-                if let data = docPart.data { d["data"] = data }
-                if let mimeType = docPart.mimeType { d["mimeType"] = mimeType }
-                if let title = docPart.title { d["title"] = title }
-                contentArray.append(d)
+            } else if let mediaPart = part as? any MediaInputContent {
+                contentArray.append(try mediaPart.wireObject)
             }
         }
         dict["content"] = contentArray
@@ -360,7 +335,23 @@ private func encodeAssistantMessage(_ message: any Message, encoder: JSONEncoder
     if let encryptedValue = assistantMsg.encryptedValue {
         dict["encryptedValue"] = encryptedValue
     }
-    return try JSONSerialization.data(withJSONObject: dict)
+    if let subagentRunId = assistantMsg.subagentRunId {
+        dict["subagentRunId"] = subagentRunId
+    }
+    var fields = try AGUIJSON.foundation(dict).object ?? [:]
+    if let metadata = assistantMsg.metadata {
+        fields["metadata"] = try AGUIJSON.parse(metadata)
+    }
+    if let calls = assistantMsg.toolCalls, var rawCalls = fields["toolCalls"]?.array {
+        for (index, call) in calls.enumerated() where index < rawCalls.count {
+            if let metadata = call.metadata, var callFields = rawCalls[index].object {
+                callFields["metadata"] = try AGUIJSON.parse(metadata)
+                rawCalls[index] = .object(callFields)
+            }
+        }
+        fields["toolCalls"] = .array(rawCalls)
+    }
+    return try AGUIJSON.object(fields).encoded()
 }
 
 /// Encodes a ToolMessage to JSON data.
@@ -384,7 +375,11 @@ private func encodeToolMessage(_ message: any Message, encoder: JSONEncoder) thr
     if let encryptedValue = toolMsg.encryptedValue {
         dict["encryptedValue"] = encryptedValue
     }
-    return try JSONSerialization.data(withJSONObject: dict)
+    var fields = try AGUIJSON.foundation(dict).object ?? [:]
+    if let parts = toolMsg.contentParts {
+        fields["content"] = try AGUIJSON.parse(parts)
+    }
+    return try AGUIJSON.object(fields).encoded()
 }
 
 /// Encodes an ActivityMessage to JSON data.

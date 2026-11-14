@@ -10,6 +10,7 @@ let package = Package(
         .macOS(.v13),
     ],
     products: [
+        .executable(name: "agui-dojo-chat", targets: ["agui-dojo-chat"]),
         .library(
             name: "AGUICore",
             targets: ["AGUICore"]),
@@ -27,6 +28,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.0.0"),
     ],
     targets: [
+        .executableTarget(name: "agui-dojo-chat", dependencies: ["AGUICore", "AGUIClient"]),
         .target(
             name: "AGUICore",
             dependencies: []),
@@ -44,7 +46,7 @@ let package = Package(
             dependencies: ["AGUICore"]),
         .testTarget(
             name: "AGUIClientTests",
-            dependencies: ["AGUIClient"]),
+            dependencies: ["AGUIClient", "AGUICore"]),
         .testTarget(
             name: "AGUIAgentSDKTests",
             dependencies: ["AGUIAgentSDK", "AGUIClient", "AGUITools"]),
@@ -53,4 +55,3 @@ let package = Package(
             dependencies: ["AGUITools"]),
     ]
 )
-
