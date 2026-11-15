@@ -4,7 +4,7 @@
 
 import asyncio
 import time
-from typing import Optional, Set
+from typing import Any, List, Optional, Set
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ class ExecutionState:
         thread_id: str,
         event_queue: asyncio.Queue,
         long_running_tool_ids: Optional[Set[str]] = None,
+        interrupts: Optional[List[Any]] = None,
     ):
         """Initialize execution state.
 
@@ -38,6 +39,9 @@ class ExecutionState:
                 TOOL_CALL_END is enqueued, so the consumer can distinguish
                 HITL tool calls from in-stream backend tool calls and skip
                 session-state writes for the latter. See issue #1652.
+            interrupts: Shared list the producer fills with the AG-UI
+                ``Interrupt`` objects the run paused on; the consumer reports
+                them in ``RUN_FINISHED.outcome``.
         """
         self.task = task
         self.thread_id = thread_id
@@ -48,6 +52,7 @@ class ExecutionState:
         self.long_running_tool_ids: Set[str] = (
             long_running_tool_ids if long_running_tool_ids is not None else set()
         )
+        self.interrupts: List[Any] = interrupts if interrupts is not None else []
 
         logger.debug(f"Created execution state for thread {thread_id}")
 

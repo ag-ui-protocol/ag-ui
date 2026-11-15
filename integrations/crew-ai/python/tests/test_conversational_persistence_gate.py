@@ -306,7 +306,8 @@ def test_overlay_leaves_a_conversational_flow_conversational():
     _overlay(flow, AbandonmentSignal())
 
     assert isinstance(flow, flow_type)
-    assert type(flow)._is_conversational() is True
+    assert flow.conversational is True
+    assert callable(flow.stream_turn)
     assert type(flow).flow_definition() is definition
     assert callable(flow.stream_turn)
 

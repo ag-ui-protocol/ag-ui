@@ -28,18 +28,33 @@ export type LangChainResponse =
   | IterableReadableStream<AIMessageChunk>;
 
 /**
- * Helper type guards
+ * Helper type guards.
+ *
+ * These read LangChain's own message type tag (`_getType()`, or `type` on
+ * newer cores) and duck-type chunks by their `concat` method, rather than
+ * comparing `constructor.name`: a minifying bundler (e.g. a Next.js production
+ * server build) renames the classes, which silently dropped every streamed
+ * tool call.
  */
+function messageType(obj: any): string | undefined {
+  if (typeof obj?._getType === "function") return obj._getType();
+  return typeof obj?.type === "string" ? obj.type : undefined;
+}
+
+function isMessageChunk(obj: any): boolean {
+  return messageType(obj) !== undefined && typeof obj.concat === "function";
+}
+
 function isAIMessage(obj: any): obj is AIMessage {
-  return obj?.constructor?.name === "AIMessage";
+  return messageType(obj) === "ai" && !isMessageChunk(obj);
 }
 
 function isAIMessageChunk(obj: any): obj is AIMessageChunk {
-  return obj?.constructor?.name === "AIMessageChunk";
+  return messageType(obj) === "ai" && isMessageChunk(obj);
 }
 
 function isBaseMessageChunk(obj: any): obj is BaseMessageChunk {
-  return obj?.constructor?.name === "BaseMessageChunk";
+  return isMessageChunk(obj) && messageType(obj) !== "ai";
 }
 
 function isStream(obj: any): obj is IterableReadableStream<any> {

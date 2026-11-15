@@ -17,6 +17,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         type: "RUN_STARTED",
         runId: "id-1",
         threadId: "id-2",
+        protocolVersion: "1.0",
       },
       {
         type: "TOOL_CALL_START",
@@ -42,6 +43,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         type: "RUN_STARTED",
         runId: "id-5",
         threadId: "id-2",
+        protocolVersion: "1.0",
       },
       {
         type: "TEXT_MESSAGE_START",
@@ -62,6 +64,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         type: "RUN_STARTED",
         runId: "id-7",
         threadId: "id-2",
+        protocolVersion: "1.0",
       },
       {
         type: "TOOL_CALL_START",
@@ -87,6 +90,7 @@ export const agenticChatDeterministicEventTrace = defineEventTrace(
         type: "RUN_STARTED",
         runId: "id-5",
         threadId: "id-2",
+        protocolVersion: "1.0",
       },
       {
         type: "TEXT_MESSAGE_START",

@@ -13,6 +13,8 @@ import type {
   ToolCall,
   Message,
   InputContent,
+  ToolMessage,
+  ContentPart,
 } from "@ag-ui/core";
 import type {
   SDKAssistantMessage,
@@ -48,26 +50,10 @@ export function extractToolNames(tools: Tool[]): string[] {
   return tools.map((t) => t.name).filter(Boolean);
 }
 
-/**
- * Strip mcp__servername__ prefix from Claude SDK tool names.
- *
- * Claude SDK prefixes all MCP tools: mcp__weather__get_weather, mcp__ag_ui__generate_haiku
- * Frontend registers unprefixed: get_weather, generate_haiku
- *
- * @example
- * stripMcpPrefix("mcp__weather__get_weather") // "get_weather"
- * stripMcpPrefix("mcp__ag_ui__generate_haiku") // "generate_haiku"
- * stripMcpPrefix("local_tool") // "local_tool" (unchanged)
- */
+/** Only the adapter-owned MCP server maps to unprefixed frontend names. */
 export function stripMcpPrefix(toolName: string): string {
-  if (toolName.startsWith("mcp__")) {
-    const parts = toolName.split("__");
-    if (parts.length >= 3) {
-      // mcp__servername__toolname -- keep just toolname (handles double underscores in names)
-      return parts.slice(2).join("__");
-    }
-  }
-  return toolName;
+  const prefix = "mcp__ag_ui__";
+  return toolName.startsWith(prefix) ? toolName.slice(prefix.length) : toolName;
 }
 
 /**
@@ -180,6 +166,25 @@ function documentBlock(source: unknown, field: string): ContentBlockParam {
   const mediaType = normalizedMediaType(value.mimeType);
 
   if (value.type === "data") {
+    if (mediaType === "text/plain") {
+      const encoded = requireString(value.value, `${field}.value`);
+      if (
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+          encoded,
+        )
+      )
+        throw new Error(`${field}.value must be base64`);
+      return {
+        type: "document",
+        source: {
+          type: "text",
+          media_type: "text/plain",
+          data: new TextDecoder("utf-8", { fatal: true }).decode(
+            Buffer.from(encoded, "base64"),
+          ),
+        },
+      };
+    }
     if (mediaType !== "application/pdf") {
       throw new Error(
         `[ClaudeAdapter] ${field}.mimeType must be application/pdf`,
@@ -213,8 +218,18 @@ function documentBlock(source: unknown, field: string): ContentBlockParam {
   throw new Error(`[ClaudeAdapter] ${field}.type must be data or url`);
 }
 
+// Older callers can still send binary blocks to this adapter even though the
+// canonical protocol now uses image/document content with an explicit source.
+type LegacyBinaryContent = {
+  type: "binary";
+  mimeType: string;
+  data?: string;
+  url?: string;
+  id?: string;
+};
+
 function legacyBinaryBlock(
-  block: Extract<InputContent, { type: "binary" }>,
+  block: LegacyBinaryContent,
   index: number,
 ): ContentBlockParam {
   const mediaType = normalizedMediaType(block.mimeType);
@@ -240,8 +255,21 @@ function legacyBinaryBlock(
   );
 }
 
+/**
+ * Whether a media part's source is the `file` arm: a handle the model provider
+ * issued for bytes it already holds. Read defensively, because the source
+ * arrives off the wire and nothing validates it at this boundary.
+ */
+function isFileSource(source: unknown): boolean {
+  return (
+    !!source &&
+    typeof source === "object" &&
+    (source as { type?: unknown }).type === "file"
+  );
+}
+
 function convertContentBlock(
-  block: InputContent,
+  block: InputContent | LegacyBinaryContent,
   index: number,
 ): ContentBlockParam | undefined {
   if (!block || typeof block !== "object" || typeof block.type !== "string") {
@@ -260,16 +288,41 @@ function convertContentBlock(
       };
     }
     case "image":
-      return imageBlock(block.source, `content[${index}].source`);
-    case "document":
-      return documentBlock(block.source, `content[${index}].source`);
+    case "document": {
+      // A `file` source names bytes already held by a model provider, under a
+      // handle only that provider can resolve — it is NOT a URL and MUST NOT be
+      // fetched or parsed. This adapter has no provider-handle path in 1.0, and
+      // the specification's rule for a part a producer cannot use is to skip it
+      // and continue: "A producer that cannot use a content part MUST NOT fail
+      // the run because of it; it skips the part and continues, and SHOULD
+      // warn." Caught HERE rather than inside the block builders, so their
+      // `must be data or url` throws keep meaning what they say — a source that
+      // is genuinely malformed, not one this adapter simply cannot carry.
+      if (isFileSource(block.source)) {
+        console.warn(
+          `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: a provider file handle cannot be forwarded by this adapter`,
+        );
+        return undefined;
+      }
+      if (block.type === "image")
+        return imageBlock(block.source, `content[${index}].source`);
+      const document = documentBlock(block.source, `content[${index}].source`);
+      const filename = block.metadata?.filename;
+      return typeof filename === "string"
+        ? ({ ...document, title: filename } as ContentBlockParam)
+        : document;
+    }
     case "binary":
       return legacyBinaryBlock(block, index);
     case "audio":
     case "video":
-      throw new Error(
-        `[ClaudeAdapter] content[${index}] type ${block.type} is not supported`,
+      // Claude takes neither audio nor video input. Per the spec a producer
+      // that cannot use a content part MUST NOT fail the run because of it:
+      // it skips the part and SHOULD warn.
+      console.warn(
+        `[ClaudeAdapter] Dropping content[${index}] of type ${block.type}: Claude does not accept ${block.type} input`,
       );
+      return undefined;
     default:
       throw new Error(
         `[ClaudeAdapter] content[${index}] has an unsupported type`,
@@ -289,12 +342,54 @@ async function* structuredUserMessage(
   };
 }
 
+function emptyToolResultPrompt(
+  messages: RunAgentInput["messages"],
+  toolCallId: string | undefined,
+): string {
+  const id = toolCallId ?? "unknown";
+  let toolName: string | undefined;
+  for (const msg of messages) {
+    const toolCalls = (msg as { toolCalls?: ToolCall[] }).toolCalls;
+    const match = toolCalls?.find((call) => call.id === toolCallId);
+    if (match) toolName = match.function.name;
+  }
+  return toolName
+    ? `The client completed the "${toolName}" tool call (id ${id}) and returned no result.`
+    : `The client completed tool call ${id} and returned no result.`;
+}
+
 /**
  * Process and validate all messages from RunAgentInput.
  *
  * Similar to AWS Strands pattern: validates full message history even though
  * Claude SDK manages conversation via session_id.
  */
+/** User input after the deferred assistant call is new; earlier prompts are history.
+ * A request containing only new messages has no assistant boundary.
+ */
+export function recoveryUserMessages(
+  input: RunAgentInput,
+  pendingId: string,
+): Message[] {
+  const messages = input.messages ?? [];
+  let boundary = messages.findIndex(
+    (message) =>
+      message.role === "assistant" &&
+      message.toolCalls?.some((call) => call.id === pendingId),
+  );
+  if (boundary < 0) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        boundary = i;
+        break;
+      }
+    }
+  }
+  return messages
+    .slice(boundary + 1)
+    .filter((message) => message.role === "user");
+}
+
 export function processMessages(input: RunAgentInput): ProcessMessagesResult {
   const messages = input.messages ?? [];
 
@@ -339,6 +434,23 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
         );
         hasUserContent = true;
       }
+    }
+
+    // A display-only frontend tool (for example CopilotKit's useComponent)
+    // returns an empty result, and the automatic follow-up then resumes the
+    // session with it. The model API rejects an empty user turn, so describe
+    // the completed call instead. The session already holds the stub
+    // tool_result from the ag_ui MCP server, so this must be plain text.
+    if (
+      lastMsg.role === "tool" &&
+      (!hasUserContent ||
+        (typeof userMessage === "string" && userMessage.trim() === ""))
+    ) {
+      userMessage = emptyToolResultPrompt(
+        messages,
+        (lastMsg as { toolCallId?: string }).toolCallId,
+      );
+      hasUserContent = true;
     }
   }
 
@@ -392,59 +504,119 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
   return parts.join("\n");
 }
 
+type JsonSchema = Record<string, unknown>;
+
+function isJsonSchema(value: unknown): value is JsonSchema {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function unionOf(options: z.ZodTypeAny[]): z.ZodTypeAny {
+  if (options.length === 0) return z.any();
+  if (options.length === 1) return options[0];
+  return z.union(options as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+}
+
+function enumToZod(values: unknown[]): z.ZodTypeAny {
+  if (values.every((value) => typeof value === "string"))
+    return z.enum(values as [string, ...string[]]);
+  if (
+    values.every(
+      (value) =>
+        value === null ||
+        ["string", "number", "boolean"].includes(typeof value),
+    )
+  )
+    return unionOf(
+      values.map((value) =>
+        z.literal(value as string | number | boolean | null),
+      ),
+    );
+  return z.any();
+}
+
+function objectToZod(schema: JsonSchema): z.ZodTypeAny {
+  const shape = jsonSchemaPropertiesToZod(schema);
+  if (Object.keys(shape).length > 0) {
+    // Never strip undeclared keys: the parsed args must equal the model's
+    // original tool input. Reject them only when the schema forbids them.
+    return schema.additionalProperties === false
+      ? z.object(shape).strict()
+      : z.object(shape).passthrough();
+  }
+  return z.record(
+    z.string(),
+    isJsonSchema(schema.additionalProperties)
+      ? jsonSchemaTypeToZod(schema.additionalProperties)
+      : z.any(),
+  );
+}
+
+function jsonSchemaNodeToZod(schema: JsonSchema): z.ZodTypeAny {
+  if (Array.isArray(schema.enum) && schema.enum.length > 0)
+    return enumToZod(schema.enum);
+  if ("const" in schema) return enumToZod([schema.const]);
+  const variants = schema.anyOf ?? schema.oneOf;
+  if (Array.isArray(variants))
+    return unionOf(variants.map((variant) => jsonSchemaTypeToZod(variant)));
+  if (Array.isArray(schema.type))
+    return unionOf(
+      schema.type.map((type) => jsonSchemaNodeToZod({ ...schema, type })),
+    );
+
+  switch (schema.type) {
+    case "string":
+      return z.string();
+    case "number":
+      return z.number();
+    case "integer":
+      return z.number().int();
+    case "boolean":
+      return z.boolean();
+    case "null":
+      return z.null();
+    case "array":
+      return z.array(
+        isJsonSchema(schema.items)
+          ? jsonSchemaTypeToZod(schema.items)
+          : z.any(),
+      );
+    case "object":
+      return objectToZod(schema);
+    case undefined:
+      return isJsonSchema(schema.properties) ? objectToZod(schema) : z.any();
+    default:
+      return z.any();
+  }
+}
+
 /**
- * Convert a basic JSON Schema type string to a Zod type.
- * Falls back to z.any() for complex or unknown types.
+ * Convert a JSON Schema node to a Zod type, keeping nested object properties,
+ * array item schemas, required fields, enums and descriptions so the model
+ * sees the frontend tool's full parameter schema. Constructs that cannot be
+ * represented (e.g. $ref, allOf, tuple items) fall back to z.any().
  */
-function jsonSchemaTypeToZod(prop: Record<string, unknown>): z.ZodTypeAny {
-  const type = prop.type as string | undefined;
-  const description = prop.description as string | undefined;
+function jsonSchemaTypeToZod(prop: unknown): z.ZodTypeAny {
+  if (!isJsonSchema(prop)) return z.any();
 
   let zodType: z.ZodTypeAny;
-
-  switch (type) {
-    case "string":
-      zodType = prop.enum
-        ? z.enum(prop.enum as [string, ...string[]])
-        : z.string();
-      break;
-    case "number":
-    case "integer":
-      zodType = z.number();
-      break;
-    case "boolean":
-      zodType = z.boolean();
-      break;
-    case "array":
-      zodType = z.array(z.any());
-      break;
-    case "object":
-      zodType = z.record(z.string(), z.any());
-      break;
-    default:
-      zodType = z.any();
+  try {
+    zodType = jsonSchemaNodeToZod(prop);
+  } catch {
+    zodType = z.any();
   }
 
-  if (description) {
-    zodType = zodType.describe(description);
+  if (typeof prop.description === "string") {
+    zodType = zodType.describe(prop.description);
   }
 
   return zodType;
 }
 
-/**
- * Convert a JSON Schema properties object to a Zod raw shape.
- * This is a pragmatic conversion for stub tools -- handles basic types
- * with z.any() fallback for complex nested schemas.
- */
-function jsonSchemaToZodShape(
-  schema: Record<string, unknown>,
+function jsonSchemaPropertiesToZod(
+  schema: JsonSchema,
 ): Record<string, z.ZodTypeAny> {
-  const properties = (schema.properties ?? {}) as Record<
-    string,
-    Record<string, unknown>
-  >;
-  const required = (schema.required ?? []) as string[];
+  const properties = isJsonSchema(schema.properties) ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const [key, prop] of Object.entries(properties)) {
@@ -454,6 +626,18 @@ function jsonSchemaToZodShape(
     }
     shape[key] = zodType;
   }
+
+  return shape;
+}
+
+/**
+ * Convert a JSON Schema properties object to a Zod raw shape for the SDK's
+ * tool() function.
+ */
+function jsonSchemaToZodShape(
+  schema: Record<string, unknown>,
+): Record<string, z.ZodTypeAny> {
+  const shape = jsonSchemaPropertiesToZod(schema);
 
   // If no properties were defined, use a catch-all
   if (Object.keys(shape).length === 0) {
@@ -466,11 +650,18 @@ function jsonSchemaToZodShape(
 /**
  * Convert an AG-UI tool definition to a Claude SDK MCP tool.
  *
- * Creates a proxy tool that Claude can "see" and call, but with stub implementation
- * since actual execution happens on the client side.
+ * Creates a proxy that returns the matched client result to the original SDK call.
  */
+export type FrontendToolResult =
+  | ToolMessage["content"]
+  | Pick<ToolMessage, "content" | "error">;
+
 export function convertAguiToolToClaudeSdk(
   toolDef: Tool,
+  resolveFrontendResult?: (
+    name: string,
+    input: Record<string, unknown>,
+  ) => FrontendToolResult | Promise<FrontendToolResult>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
   const toolName = toolDef.name ?? "unknown";
@@ -480,10 +671,34 @@ export function convertAguiToolToClaudeSdk(
   // Convert JSON Schema to Zod shape for the TS SDK's tool() function
   const zodShape = jsonSchemaToZodShape(toolParameters);
 
-  // Create stub tool with empty implementation (execution happens client-side)
-  return tool(toolName, toolDescription, zodShape, async () => ({
-    content: [{ type: "text" as const, text: "Tool call forwarded to client" }],
-  }));
+  // Complete only with the matched result supplied by the recovery lifecycle.
+  return tool(toolName, toolDescription, zodShape, async (args) => {
+    if (!resolveFrontendResult) {
+      throw new Error(
+        "Frontend tool result requires a matched deferred tool call",
+      );
+    }
+    const result = await resolveFrontendResult(toolName, args);
+    const envelope: Pick<ToolMessage, "content" | "error"> =
+      typeof result === "string" || Array.isArray(result)
+        ? { content: result }
+        : result;
+    const content = frontendResultBlocks(envelope.content);
+    const error = envelope.error;
+    if (error) {
+      if (
+        content.length === 1 &&
+        content[0].type === "text" &&
+        content[0].text === ""
+      )
+        content.pop();
+      if (
+        !content.some((block) => block.type === "text" && block.text === error)
+      )
+        content.push({ type: "text", text: error });
+    }
+    return { content, ...(error != null ? { isError: true } : {}) };
+  });
 }
 
 /**
@@ -496,7 +711,7 @@ export function convertAguiToolToClaudeSdk(
 export function createStateManagementTool(): any {
   return tool(
     "ag_ui_update_state",
-    "Update the shared application state. Use this to persist changes that should be visible in the UI. Pass the complete updated state object.",
+    "Update the shared application state. Use this to persist changes that should be visible in the UI. Pass a partial object: keys are shallow-merged into current state; nested values replace existing values. The emitted snapshot contains the full merged state.",
     { state_updates: z.record(z.string(), z.unknown()) },
     async () => ({
       content: [{ type: "text" as const, text: "State updated successfully" }],
@@ -621,41 +836,194 @@ export function buildAguiAssistantMessage(
   return msg;
 }
 
-/**
- * Build an AG-UI ToolMessage from a Claude SDK tool result block.
- *
- * Extracts the text content from the SDK's content block format and
- * normalises it into a simple string for the AG-UI message.
- */
+/** Preserve rich blocks as JSON; unwrap only a single plain text block. */
+export function serializeToolResult(content: unknown, isError = false): string {
+  let value = content ?? "";
+  if (Array.isArray(value) && value.length === 1) {
+    const block = value[0];
+    if (
+      block?.type === "text" &&
+      typeof block.text === "string" &&
+      Object.keys(block).every((key) => key === "type" || key === "text")
+    ) {
+      value = block.text;
+    }
+  }
+  if (isError) {
+    let parsed = value;
+    if (typeof value === "string") {
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        /* Plain text remains text. */
+      }
+    }
+    value =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? { ...parsed, error: true }
+        : { error: true, content: value };
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 export function buildAguiToolMessage(
   toolUseId: string,
   content: unknown,
-): Message {
-  let resultStr = "";
-  try {
-    if (Array.isArray(content) && content.length > 0) {
-      const firstBlock = content[0] as Record<string, unknown>;
-      if (firstBlock?.type === "text") {
-        const text = (firstBlock.text as string) ?? "";
-        try {
-          resultStr = JSON.stringify(JSON.parse(text));
-        } catch {
-          resultStr = text;
-        }
-      } else {
-        resultStr = JSON.stringify(content);
-      }
-    } else if (content != null) {
-      resultStr = JSON.stringify(content);
-    }
-  } catch {
-    resultStr = String(content ?? "");
-  }
-
+  isError = false,
+): ToolMessage {
   return {
     id: `${toolUseId}-result`,
-    role: "tool" as const,
-    content: resultStr,
+    role: "tool",
+    content: nativeToolContent(content, isError),
     toolCallId: toolUseId,
+    ...(isError ? { error: "Tool execution failed" } : {}),
   };
+}
+
+/** Tool updates shallow-merge object keys; run input.state is a full snapshot. */
+export function mergeStateUpdate(
+  currentState: unknown,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  let updates = Object.prototype.hasOwnProperty.call(input, "state_updates")
+    ? input.state_updates
+    : input;
+  if (typeof updates === "string") updates = JSON.parse(updates);
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
+    throw new Error("state_updates must be an object");
+  }
+  const prior =
+    currentState &&
+    typeof currentState === "object" &&
+    !Array.isArray(currentState)
+      ? currentState
+      : {};
+  return { ...prior, ...updates };
+}
+
+/** Preserve original blocks alongside the standard AG-UI projection. */
+export function nativeToolContent(
+  content: unknown,
+  isError = false,
+): ToolMessage["content"] {
+  if (
+    !Array.isArray(content) ||
+    (content.length === 1 &&
+      content[0]?.type === "text" &&
+      Object.keys(content[0]).every((k) => k === "type" || k === "text"))
+  ) {
+    return serializeToolResult(content, isError);
+  }
+  return content.map((block): ContentPart => {
+    const metadata = { claude: { block, isError } };
+    if (block?.type === "text" && typeof block.text === "string")
+      return { type: "text", text: block.text, metadata };
+    const source = block?.source;
+    if (["image", "audio", "video", "document"].includes(block?.type)) {
+      if (
+        source?.type === "base64" &&
+        typeof source.data === "string" &&
+        typeof source.media_type === "string"
+      ) {
+        return {
+          type: block.type,
+          source: {
+            type: "data",
+            value: source.data,
+            mimeType: source.media_type,
+          },
+          metadata,
+        };
+      }
+      if (source?.type === "url" && typeof source.url === "string") {
+        return {
+          type: block.type,
+          source: {
+            type: "url",
+            value: source.url,
+            ...(source.media_type ? { mimeType: source.media_type } : {}),
+          },
+          metadata,
+        };
+      }
+      if (
+        typeof block.data === "string" &&
+        typeof block.mimeType === "string"
+      ) {
+        return {
+          type: block.type,
+          source: { type: "data", value: block.data, mimeType: block.mimeType },
+          metadata,
+        };
+      }
+    }
+    // The raw payload survives even when AG-UI has no equivalent part type.
+    return {
+      type: "text",
+      text: JSON.stringify(block),
+      metadata: {
+        claude: { block, isError, unsupportedType: block?.type ?? "unknown" },
+      },
+    };
+  });
+}
+
+/** Convert a matched frontend result to MCP content without a placeholder. */
+export function frontendResultBlocks(result: ToolMessage["content"]) {
+  if (typeof result === "string")
+    return [{ type: "text" as const, text: result }];
+  return result.map((part) => {
+    if (part.type === "text") return { type: "text" as const, text: part.text };
+    const source = part.source;
+    if (
+      source.type === "data" &&
+      (part.type === "image" || part.type === "audio")
+    ) {
+      return { type: part.type, data: source.value, mimeType: source.mimeType };
+    }
+    if (source.type === "url") {
+      return {
+        type: "resource_link" as const,
+        uri: source.value,
+        name: part.metadata?.filename ?? source.value,
+        ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+      };
+    }
+    if (source.type === "data") {
+      return {
+        type: "resource" as const,
+        resource: {
+          uri: `data:${source.mimeType};base64,${source.value}`,
+          mimeType: source.mimeType,
+          blob: source.value,
+        },
+      };
+    }
+    throw new Error(
+      `Cannot return unresolved provider file ${source.value} as an SDK tool result`,
+    );
+  });
+}
+
+export function unsupportedInputParts(input: RunAgentInput) {
+  const message = input.messages?.[input.messages.length - 1];
+  if (!message || !Array.isArray(message.content)) return [];
+  return message.content.flatMap((part, index) => {
+    const reason =
+      part.type === "audio" || part.type === "video"
+        ? `Claude does not accept ${part.type} input`
+        : "source" in part && part.source.type === "file"
+          ? "Provider file handles cannot be resolved by this adapter"
+          : undefined;
+    return reason
+      ? [
+          {
+            messageId: message.id,
+            contentIndex: index,
+            contentType: part.type,
+            reason,
+          },
+        ]
+      : [];
+  });
 }

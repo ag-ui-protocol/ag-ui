@@ -46,6 +46,13 @@ fi
 echo "Installing SDK pinned in $global_json -> $repo_dotnet_root"
 "$install_script" --jsonfile "$global_json" --install-dir "$repo_dotnet_root"
 
+# The test projects multi-target net8.0/net9.0/net10.0 ($(TargetFrameworksCore)), and the
+# pinned SDK only carries the 10.0 runtime, so the older runtimes are installed alongside it.
+for runtime_channel in 8.0 9.0; do
+    echo "Installing .NET $runtime_channel runtime -> $repo_dotnet_root"
+    "$install_script" --runtime dotnet --channel "$runtime_channel" --install-dir "$repo_dotnet_root"
+done
+
 if [[ -n "$extra_version" ]]; then
     echo "Installing additional SDK version $extra_version -> $repo_dotnet_root"
     "$install_script" --version "$extra_version" --install-dir "$repo_dotnet_root"

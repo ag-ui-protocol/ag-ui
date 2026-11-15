@@ -5,7 +5,41 @@
 
 import { describe, it, expect } from "vitest";
 import type { Message as AguiMessage } from "@ag-ui/core";
-import { convertMessagesForStrandsSeed, buildStrandsSeed } from "../agent";
+import { Agent as StrandsAgentCore, type Model } from "@strands-agents/sdk";
+import {
+  StrandsAgent,
+  convertMessagesForStrandsSeed,
+  buildStrandsSeed,
+} from "../agent";
+import {
+  InstalledAudioBlock,
+  bedrockConverseModel,
+  bedrockModelWithoutAudio,
+  collect,
+  expectCompletedRun,
+  minimalRunInput,
+  openAIChatModel,
+  threadAgent,
+} from "./helpers";
+
+const SEED_CLIP = Buffer.from(
+  Array.from({ length: 300 }, (_, i) => (i * 7) % 256),
+).toString("base64");
+
+/** A user turn carrying text and a WAV clip. */
+function turnWithClip(): AguiMessage {
+  return {
+    id: "u",
+    role: "user",
+    content: [
+      { type: "text", text: "transcribe" },
+      {
+        type: "audio",
+        source: { type: "data", mimeType: "audio/wav", value: SEED_CLIP },
+      },
+    ],
+  } as unknown as AguiMessage;
+}
 
 describe("convertMessagesForStrandsSeed", () => {
   it("seeds only real text from a content array", async () => {
@@ -271,6 +305,106 @@ describe("convertMessagesForStrandsSeed", () => {
       (c: unknown) => c && typeof c === "object" && "image" in (c as object),
     );
     expect(images.length).toBe(1);
+  });
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "seeds an audio clip with its exact bytes and format",
+    async () => {
+      const seed = await convertMessagesForStrandsSeed(
+        [turnWithClip()],
+        undefined,
+        { audioInputSupported: true },
+      );
+      expect(seed).toEqual([
+        {
+          role: "user",
+          content: [
+            { text: "transcribe" },
+            { audio: { format: "wav", source: { bytes: SEED_CLIP } } },
+          ],
+        },
+      ]);
+    },
+  );
+
+  it.each([
+    ["no capability given", undefined],
+    ["a model that cannot take audio", { audioInputSupported: false }],
+  ])("leaves the clip out of the seed with %s", async (_label, options) => {
+    const seed = await convertMessagesForStrandsSeed(
+      [turnWithClip()],
+      undefined,
+      options,
+    );
+    expect(seed).toEqual([{ role: "user", content: [{ text: "transcribe" }] }]);
+  });
+});
+
+describe("the construction seed and audioInputSupported", () => {
+  // Replay is off so the per-thread agent keeps exactly what it was seeded
+  // with, and the only model call is the live turn.
+  async function seededThread(
+    template: Model,
+    options: { audioInputSupported?: boolean; threadModel?: Model } = {},
+  ): Promise<unknown[]> {
+    const { audioInputSupported, threadModel } = options;
+    const agent = new StrandsAgent({
+      agent: new StrandsAgentCore({ model: template }),
+      name: "seed-audio",
+      config: {
+        replayHistoryIntoStrands: false,
+        ...(audioInputSupported === undefined ? {} : { audioInputSupported }),
+        ...(threadModel
+          ? { threadAgentConfig: () => ({ model: threadModel }) }
+          : {}),
+      },
+    });
+    const events = await collect(
+      agent,
+      minimalRunInput({
+        messages: [
+          turnWithClip(),
+          { id: "a1", role: "assistant", content: "done" },
+          { id: "u2", role: "user", content: "again" },
+        ],
+      }),
+    );
+    expectCompletedRun(events);
+    const first = threadAgent(agent)!.messages[0]!;
+    return first.content.map((block) => (block as { type: string }).type);
+  }
+
+  it.runIf(InstalledAudioBlock !== undefined)(
+    "seeds the clip once configured to",
+    async () => {
+      expect(
+        await seededThread(bedrockConverseModel().model, {
+          audioInputSupported: true,
+        }),
+      ).toEqual(["textBlock", "audioBlock"]);
+    },
+  );
+
+  it("leaves the clip out by default for a Bedrock model without audio input", async () => {
+    expect(await seededThread(bedrockModelWithoutAudio().model)).toEqual([
+      "textBlock",
+    ]);
+  });
+
+  it("leaves the clip out by default when the thread's model is Bedrock", async () => {
+    expect(
+      await seededThread(openAIChatModel().model, {
+        threadModel: bedrockModelWithoutAudio().model,
+      }),
+    ).toEqual(["textBlock"]);
+  });
+
+  it("leaves the clip out when configured as unable to take audio", async () => {
+    expect(
+      await seededThread(bedrockConverseModel().model, {
+        audioInputSupported: false,
+      }),
+    ).toEqual(["textBlock"]);
   });
 });
 

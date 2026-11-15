@@ -5,9 +5,9 @@ description: "Every definition of the draft schema, one anchor each — generate
 
 {/* @generated from https://ag-ui.com/spec/draft/schema.json — DO NOT EDIT. Change the schema and regenerate. */}
 
-import DraftBanner from "/snippets/spec-draft-banner.mdx";
+import DraftNotice from "/snippets/draft-notice.mdx";
 
-<DraftBanner />
+<DraftNotice />
 
 This page is generated from the machine-readable schema at
 [`/spec/draft/schema.json`](/spec/draft/schema.json) — the source of truth for
@@ -191,6 +191,7 @@ Carries what a tool returned. Mints a tool message rather than appending to an e
 - `toolCallId` — `string`, **required**. The call being answered.
 - `content` — `string` | array of [`ContentPart`](#contentpart), **required**. What the tool returned: either plain text, or an ordered list of parts, exactly as on the tool message this event mints. A tool returning structured data serialises it into text; media travel as parts of their own.
 - `role` — `"tool"`, optional. Present only for symmetry with the message it mints; the value is fixed, so a producer may leave it out.
+- `error` — `string`, optional. Why the tool failed, when it did. A string marks the tool call as failed, not the run. A producer MUST NOT send an empty one; a consumer that receives one anyway still reads a failure, which is why the schema accepts it. The tool message this event mints carries the same value as its own error. Absent means the producer reported no failure on this event, not that the call succeeded. Present alongside content rather than instead of it, so a partial result survives a failure.
 
 Closed object: the schema rejects members not listed here.
 
@@ -532,6 +533,7 @@ Carries a provider's opaque, encrypted reasoning artefact, which a consumer stor
 - `subtype` — [`ReasoningEncryptedValueSubtype`](#reasoningencryptedvaluesubtype), **required**. What kind of thing entityId names, which decides where the value is stored.
 - `entityId` — `string`, **required**. What the value belongs to: a message id or a tool call id, according to subtype.
 - `encryptedValue` — `string`, **required**. The provider's opaque artefact.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is, so the producer can restore it as the right provider block. An open string: the producer defines the values, and a consumer stores and returns it with the value without interpreting it.
 
 Closed object: the schema rejects members not listed here.
 
@@ -657,6 +659,7 @@ Instructions from the application developer.
 - `role` — `"developer"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string`, **required**. The instructions. Required: a developer message with nothing in it says nothing.
 
@@ -675,6 +678,7 @@ Instructions from the system.
 - `role` — `"system"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string`, **required**. The instructions. Required.
 
@@ -693,6 +697,7 @@ A message from the agent. Content is optional because a turn may consist only of
 - `role` — `"assistant"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string`, optional. What the agent said, if it said anything.
 - `toolCalls` — array of [`ToolCall`](#toolcall), optional. The tool calls this turn made.
@@ -712,6 +717,7 @@ A message from the person using the application.
 - `role` — `"user"`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 - `content` — `string` | array of [`ContentPart`](#contentpart), **required**. What the person sent: either plain text, or an ordered list of parts for a multimodal message.
 
@@ -732,6 +738,7 @@ What a tool returned, as a message in the conversation. Stands alone rather than
 - `toolCallId` — `string`, **required**. The call this answers.
 - `error` — `string`, optional. Why the tool failed, when it did. Present alongside content rather than instead of it, so a partial result survives a failure.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 
 Closed object: the schema rejects members not listed here.
@@ -766,6 +773,7 @@ A span of the agent's reasoning, materialised as a message. Stands alone rather 
 - `role` — `"reasoning"`, **required**. Fixed. Declared here rather than inherited, because this message does not compose BaseMessage.
 - `content` — `string`, **required**. The reasoning text.
 - `encryptedValue` — `string`, optional. A provider's opaque reasoning artefact belonging to this message.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is — redacted reasoning, or a signature over content, say. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 
 Closed object: the schema rejects members not listed here.
@@ -837,14 +845,28 @@ Bytes referenced by URL, fetched by whoever needs them.
 
 Closed object: the schema rejects members not listed here.
 
+### `FileSource`
+
+Bytes already at the provider, named by a handle the provider issued: an OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that provider can read. No bytes travel and nothing is fetched. Only the provider that minted the handle can resolve it; a peer that cannot drops the part as it drops any part it cannot use.
+
+**Fields:**
+
+- `type` — `"file"`, **required**. Discriminator.
+- `value` — `string`, **required**. The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT fetch it, parse it or read a scheme out of it.
+- `provider` — `string`, optional. Who issued the handle, when the producer knows. Optional: an agent already knows which provider it talks to. When present, SHOULD be the lowercase vendor id (openai, anthropic, google) that TokenUsage.provider uses, so a peer can tell before sending whether a handle is one it can use.
+- `mimeType` — `string`, optional. What the file is, when the producer knows. Optional, because the provider that holds the bytes knows.
+
+Closed object: the schema rejects members not listed here.
+
 ### `PartSource`
 
-Where a media part's bytes come from: carried inline, or referenced by URL.
+Where a media part's bytes come from: carried inline, referenced by URL, or already at the provider under a handle it issued.
 
 **Members:**
 
 - [`DataSource`](#datasource)
 - [`UrlSource`](#urlsource)
+- [`FileSource`](#filesource)
 
 Discriminated by `type`.
 
@@ -1210,6 +1232,7 @@ A call an assistant message made. Carries no subagent attribution of its own and
 - `type` — `"function"`, **required**. The only kind of call the protocol models.
 - `function` — [`FunctionCall`](#functioncall), **required**. What is being called, and with what.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this call.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this call. Carried here rather than folded into the containing message, because several calls can share one parent and merging them would make the result depend on their order.
 
 Closed object: the schema rejects members not listed here.
@@ -1352,7 +1375,7 @@ Modalities the agent can accept as input. Clients use this to show or hide file 
 - `audio` — `boolean`, optional. Set true if the agent can process audio inputs (speech, recordings).
 - `video` — `boolean`, optional. Set true if the agent can process video inputs.
 - `pdf` — `boolean`, optional. Set true if the agent can process PDF documents.
-- `file` — `boolean`, optional. Set true if the agent can process arbitrary file uploads.
+- `file` — `boolean`, optional. Set true if the agent can process arbitrary file uploads: files of a kind the image, audio, video and document parts do not cover. Says nothing about how a file arrives; a part's source (inline, URL or provider handle) is a separate question.
 
 Closed object: the schema rejects members not listed here.
 
@@ -1464,5 +1487,6 @@ The fields shared by the developer, system, assistant and user messages. Deliber
 - `role` — `string`, **required**. Who the message is from. Each message definition narrows this to a single value.
 - `name` — `string`, optional. An optional display name for the author.
 - `encryptedValue` — `string`, optional. A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn.
+- `encryptedValueType` — `string`, optional. The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer.
 - `metadata` — [`Metadata`](#metadata), optional. Extra information attached to this message.
 

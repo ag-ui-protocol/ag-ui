@@ -1,6 +1,7 @@
 import { type StreamTextResult } from "ai";
 import {
   EventType,
+  PROTOCOL_VERSION,
   randomUUID,
   type RunStartedEvent,
   type RunFinishedEvent,
@@ -52,6 +53,7 @@ export class AgentsToAGUIAdapter {
         type: EventType.RUN_STARTED,
         threadId,
         runId,
+        protocolVersion: PROTOCOL_VERSION,
         timestamp: Date.now(),
         ...(parentRunId && { parentRunId }),
         input: {

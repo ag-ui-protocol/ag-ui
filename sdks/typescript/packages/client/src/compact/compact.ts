@@ -107,6 +107,45 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
     }
   >();
 
+  // Keep one cross-type opening order for incomplete streams. Separate Maps are
+  // convenient for compaction by id, but flushing all text before all tools at a
+  // run boundary would invent a second ordering change.
+  const pendingStreamOrder: Array<
+    { kind: "text"; id: string } | { kind: "tool"; id: string }
+  > = [];
+
+  const rememberPendingStream = (kind: "text" | "tool", id: string) => {
+    pendingStreamOrder.push({ kind, id });
+  };
+
+  const forgetPendingStream = (kind: "text" | "tool", id: string) => {
+    const index = pendingStreamOrder.findIndex(
+      (entry) => entry.kind === kind && entry.id === id,
+    );
+    if (index !== -1) {
+      pendingStreamOrder.splice(index, 1);
+    }
+  };
+
+  const flushPendingStreams = () => {
+    for (const entry of pendingStreamOrder) {
+      if (entry.kind === "text") {
+        const pending = pendingTextMessages.get(entry.id);
+        if (pending) {
+          flushTextMessage(entry.id, pending, compacted);
+          pendingTextMessages.delete(entry.id);
+        }
+      } else {
+        const pending = pendingToolCalls.get(entry.id);
+        if (pending) {
+          flushToolCall(entry.id, pending, compacted);
+          pendingToolCalls.delete(entry.id);
+        }
+      }
+    }
+    pendingStreamOrder.length = 0;
+  };
+
   // State compaction: collects state events, flushed at RUN_STARTED (pre-run/inter-run), RUN_FINISHED/RUN_ERROR (in-run), and at end (trailing)
   let stateEvents: (StateSnapshotEvent | StateDeltaEvent)[] = [];
 
@@ -121,6 +160,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           contents: [],
           otherEvents: [],
         });
+        rememberPendingStream("text", messageId);
       }
 
       const pending = pendingTextMessages.get(messageId)!;
@@ -141,6 +181,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           contents: [],
           otherEvents: [],
         });
+        rememberPendingStream("text", messageId);
       }
 
       const pending = pendingTextMessages.get(messageId)!;
@@ -155,6 +196,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           contents: [],
           otherEvents: [],
         });
+        rememberPendingStream("text", messageId);
       }
 
       const pending = pendingTextMessages.get(messageId)!;
@@ -163,6 +205,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       // Flush this message's events
       flushTextMessage(messageId, pending, compacted);
       pendingTextMessages.delete(messageId);
+      forgetPendingStream("text", messageId);
     } else if (event.type === EventType.TOOL_CALL_START) {
       const startEvent = event as ToolCallStartEvent;
       const toolCallId = startEvent.toolCallId;
@@ -172,6 +215,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           args: [],
           otherEvents: [],
         });
+        rememberPendingStream("tool", toolCallId);
       }
 
       const pending = pendingToolCalls.get(toolCallId)!;
@@ -191,6 +235,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           args: [],
           otherEvents: [],
         });
+        rememberPendingStream("tool", toolCallId);
       }
 
       const pending = pendingToolCalls.get(toolCallId)!;
@@ -205,6 +250,7 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
           args: [],
           otherEvents: [],
         });
+        rememberPendingStream("tool", toolCallId);
       }
 
       const pending = pendingToolCalls.get(toolCallId)!;
@@ -213,12 +259,18 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       // Flush this tool call's events
       flushToolCall(toolCallId, pending, compacted);
       pendingToolCalls.delete(toolCallId);
+      forgetPendingStream("tool", toolCallId);
     } else if (event.type === EventType.RUN_STARTED) {
       // Flush any pre-run state events before starting a new run
       flushState(stateEvents, compacted);
       stateEvents = [];
       compacted.push(event);
     } else if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
+      // An incomplete text/tool stream is still part of the run that is ending.
+      // Flush it before the terminal event; emitting it afterwards creates an
+      // ordering that verifyEvents() rejects on replay.
+      flushPendingStreams();
+
       // Flush compacted state into output before the run boundary event
       flushState(stateEvents, compacted);
       stateEvents = [];
@@ -259,15 +311,9 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
     }
   }
 
-  // Flush any remaining incomplete messages
-  for (const [messageId, pending] of pendingTextMessages) {
-    flushTextMessage(messageId, pending, compacted);
-  }
-
-  // Flush any remaining incomplete tool calls
-  for (const [toolCallId, pending] of pendingToolCalls) {
-    flushToolCall(toolCallId, pending, compacted);
-  }
+  // Preserve cross-type opening order even when stored history ends without a
+  // run terminal. This must use the same ordering rule as RUN_ERROR/RUN_FINISHED.
+  flushPendingStreams();
 
   // Flush any remaining state events (incomplete run or events outside runs)
   flushState(stateEvents, compacted);
@@ -361,6 +407,23 @@ function flushToolCall(
   }
 }
 
+/**
+ * Compaction's warnings, behind the same switch as the rest of the package.
+ * `SUPPRESS_TRANSFORMATION_WARNINGS` is the one control an operator has over
+ * transformation chatter (enforce.ts, transform/proto.ts and the compatibility
+ * middlewares all honour it); a warning that ignored it was unsilenceable.
+ */
+const warnCompact = (message: string): void => {
+  if (
+    typeof process !== "undefined" &&
+    typeof process.env !== "undefined" &&
+    Boolean(process.env.SUPPRESS_TRANSFORMATION_WARNINGS)
+  ) {
+    return;
+  }
+  console.warn(message);
+};
+
 function flushState(
   stateEvents: (StateSnapshotEvent | StateDeltaEvent)[],
   compacted: BaseEvent[],
@@ -369,14 +432,59 @@ function flushState(
     return;
   }
 
+  // A window with no SNAPSHOT in it cannot be collapsed into one. Collapsing
+  // `SNAPSHOT + deltas` is sound because the snapshot states the whole
+  // document and the deltas refine it. Deltas ALONE are relative to a state
+  // this window never saw, so seeding `{}` and calling the result a snapshot
+  // manufactures an authoritative claim that everything else was absent —
+  // replaying it wipes state the consumer legitimately holds from before the
+  // window. Passed through unchanged instead: two deltas are barely worth
+  // collapsing anyway, and correctness is not negotiable for the saving.
+  // The LAST snapshot, not merely "is there one": everything before it is
+  // unobservable by definition, because a snapshot restates the whole document
+  // and replaces whatever the deltas ahead of it had built. Folding those
+  // deltas anyway applied them to the seeded `{}`, where their paths do not
+  // resolve — `applyPatch` validates, so it threw, and the catch below warned
+  // about a patch whose failure changed nothing. Right answer, wrong
+  // diagnosis. Starting at the last snapshot means the catch only ever fires
+  // for a patch that genuinely could not be applied to the state it names.
+  //
+  // A reverse loop rather than `findLastIndex`: this package targets es2017,
+  // and the method is ES2023.
+  let lastSnapshot = -1;
+  for (let index = stateEvents.length - 1; index >= 0; index--) {
+    if (stateEvents[index].type === EventType.STATE_SNAPSHOT) {
+      lastSnapshot = index;
+      break;
+    }
+  }
+  if (lastSnapshot === -1) {
+    compacted.push(...stateEvents);
+    return;
+  }
+
+  // From here the window DOES contain a snapshot, so it collapses exactly as
+  // it always has: seeding `{}` is harmless because the snapshot replaces the
+  // document wholesale before anything relative is applied to it.
   let state: Record<string, unknown> = {};
 
-  for (const event of stateEvents) {
+  for (const event of stateEvents.slice(lastSnapshot)) {
     if (event.type === EventType.STATE_SNAPSHOT) {
       state = structuredClone_(event.snapshot);
     } else {
-      const result = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false);
-      state = result.newDocument;
+      // Uncaught, a single unappliable patch took down every consumer that
+      // compacts a stream — `applyPatch` validates, so it THROWS rather than
+      // answering falsy. Warned and skipped, matching the reducer in
+      // apply/default.ts, which faces exactly the same failure.
+      try {
+        state = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false)
+          .newDocument;
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        warnCompact(
+          `[ag-ui][compact] Failed to apply state patch while compacting:\nCurrent state: ${JSON.stringify(state, null, 2)}\nPatch operations: ${JSON.stringify(event.delta, null, 2)}\nError: ${errorMessage}`,
+        );
+      }
     }
   }
 

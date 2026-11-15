@@ -373,6 +373,10 @@
         "role": {
           "const": "tool",
           "description": "Present only for symmetry with the message it mints; the value is fixed, so a producer may leave it out."
+        },
+        "error": {
+          "type": "string",
+          "description": "Why the tool failed, when it did. A string marks the tool call as failed, not the run. A producer MUST NOT send an empty one; a consumer that receives one anyway still reads a failure, which is why the schema accepts it. The tool message this event mints carries the same value as its own error. Absent means the producer reported no failure on this event, not that the call succeeded. Present alongside content rather than instead of it, so a partial result survives a failure."
         }
       },
       "required": ["type", "messageId", "toolCallId", "content"],
@@ -786,6 +790,10 @@
         "encryptedValue": {
           "type": "string",
           "description": "The provider's opaque artefact."
+        },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is, so the producer can restore it as the right provider block. An open string: the producer defines the values, and a consumer stores and returns it with the value without interpreting it."
         }
       },
       "required": ["type", "subtype", "entityId", "encryptedValue"],
@@ -1116,6 +1124,10 @@
           "type": "string",
           "description": "A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1221,6 +1233,10 @@
           "type": "string",
           "description": "A provider's opaque artefact belonging to this message."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1273,6 +1289,10 @@
           "type": "string",
           "description": "A provider's opaque reasoning artefact belonging to this message."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is — redacted reasoning, or a signature over content, say. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1301,6 +1321,10 @@
         "encryptedValue": {
           "type": "string",
           "description": "A provider's opaque artefact belonging to this call."
+        },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
         },
         "metadata": {
           "$ref": "#/$defs/Metadata",
@@ -1447,10 +1471,11 @@
     },
     "PartSource": {
       "$anchor": "PartSource",
-      "description": "Where a media part's bytes come from: carried inline, or referenced by URL.",
+      "description": "Where a media part's bytes come from: carried inline, referenced by URL, or already at the provider under a handle it issued.",
       "oneOf": [
         { "$ref": "#/$defs/DataSource" },
-        { "$ref": "#/$defs/UrlSource" }
+        { "$ref": "#/$defs/UrlSource" },
+        { "$ref": "#/$defs/FileSource" }
       ]
     },
     "DataSource": {
@@ -1485,6 +1510,28 @@
         "mimeType": {
           "type": "string",
           "description": "What the resource is, when the producer knows. Optional, because the response can say."
+        }
+      },
+      "required": ["type", "value"],
+      "unevaluatedProperties": false
+    },
+    "FileSource": {
+      "$anchor": "FileSource",
+      "type": "object",
+      "description": "Bytes already at the provider, named by a handle the provider issued: an OpenAI or Anthropic file id, a Gemini file URI, a storage URL only that provider can read. No bytes travel and nothing is fetched. Only the provider that minted the handle can resolve it; a peer that cannot drops the part as it drops any part it cannot use.",
+      "properties": {
+        "type": { "const": "file", "description": "Discriminator." },
+        "value": {
+          "type": "string",
+          "description": "The handle, exactly as the provider issued it. Opaque: a consumer MUST NOT fetch it, parse it or read a scheme out of it."
+        },
+        "provider": {
+          "type": "string",
+          "description": "Who issued the handle, when the producer knows. Optional: an agent already knows which provider it talks to. When present, SHOULD be the lowercase vendor id (openai, anthropic, google) that TokenUsage.provider uses, so a peer can tell before sending whether a handle is one it can use."
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "What the file is, when the producer knows. Optional, because the provider that holds the bytes knows."
         }
       },
       "required": ["type", "value"],
@@ -1795,7 +1842,7 @@
         },
         "file": {
           "type": "boolean",
-          "description": "Set true if the agent can process arbitrary file uploads."
+          "description": "Set true if the agent can process arbitrary file uploads: files of a kind the image, audio, video and document parts do not cover. Says nothing about how a file arrives; a part's source (inline, URL or provider handle) is a separate question."
         }
       },
       "unevaluatedProperties": false

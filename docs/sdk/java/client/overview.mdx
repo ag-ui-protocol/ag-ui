@@ -1,65 +1,57 @@
 ---
 title: "Overview"
-description: "Client package overview for the Java SDK"
+description: "Connect to remote AG-UI agents from Java"
 ---
 
-# ag-ui-client
+# java-client
 
-The Java Client SDK provides agent connectivity options for AI systems. It builds on the core types and events to deliver flexible connection methods to agent implementations.
+`java-client` lets you call a remote AG-UI endpoint as an ordinary `Agent`. It uses only the JDK `HttpClient` and the `Serializer` you inject.
 
-## AbstractAgent
+```xml
+<dependency>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>java-client</artifactId>
+  <version>0.1.1</version>
+</dependency>
+```
 
-`AbstractAgent` is the base agent class for implementing custom agent connectivity. Extend this class and implement `run` to bridge your service to AG-UI.
+## What's inside
 
-- Configuration — agent ID, messages, and state
-- Core Methods — runAgent, subscribe, message/state helpers
-- Protected Methods — event handling hooks
-- Properties — state and message tracking
+| Type | Purpose |
+|------|---------|
+| `HttpAgent` | An `Agent` that POSTs a `RunAgentInput` as JSON and decodes the Server-Sent Events response into a `Flow.Publisher<Event>`. |
+| `HttpAgentException` | Passed to `onError` when the endpoint returns an HTTP error status. |
 
-<Card
-  title="AbstractAgent Reference"
-  icon="cube"
-  href="/sdk/java/client/abstract-agent"
-  color="#3B82F6"
-  iconType="solid"
->
-  Base class for creating custom agent connections
-</Card>
+The client keeps no state. It does not store messages or state between runs. Each call to `run` sends the `RunAgentInput` you give it, so your application decides how to keep the conversation history. One approach is to collect `TEXT_MESSAGE_*` events into an `AssistantMessage` and append it to the list for the next run.
 
-## HttpAgent
+## Example
 
-Concrete implementation for HTTP-based agent connectivity using an injected `BaseHttpClient` implementation.
+This example uses a pattern-matching `switch`, which needs Java 21. On Java 17, use `instanceof` checks instead.
 
-- Configuration — agentId, threadId, httpClient
-- Methods — run via HTTP streaming, close
-- Builder — fluent configuration with validation
+```java
+Serializer serializer = new JacksonSerializer();
+Agent agent = new HttpAgent(URI.create("https://example.com/agent"), serializer);
 
-<Card
-  title="HttpAgent Reference"
-  icon="cube"
-  href="/sdk/java/client/http-agent"
-  color="#3B82F6"
-  iconType="solid"
->
-  Ready-to-use HTTP implementation for agent connectivity
-</Card>
+RunAgentInput input = new RunAgentInput(
+        "thread-1", UUID.randomUUID().toString(),
+        List.of(new UserMessage("msg-1", "Tell me a joke")),
+        List.of());
 
-## AgentSubscriber
+CompletableFuture<Void> done = new CompletableFuture<>();
+agent.run(input).subscribe(new Flow.Subscriber<>() {
+    @Override public void onSubscribe(Flow.Subscription s) { s.request(Long.MAX_VALUE); }
+    @Override public void onNext(Event event) {
+        switch (event) {
+            case TextMessageContentEvent e -> System.out.print(e.delta());
+            case ToolCallStartEvent e      -> System.out.println("\n[tool] " + e.toolCallName());
+            case RunErrorEvent e           -> System.err.println("\n[error] " + e.message());
+            default                        -> { }
+        }
+    }
+    @Override public void onError(Throwable t) { done.completeExceptionally(t); }
+    @Override public void onComplete() { done.complete(null); }
+});
+done.join();
+```
 
-Event-driven subscriber system for handling agent lifecycle events and state mutations during execution.
-
-- Event Handlers — lifecycle, message, tool call, and state events
-- Usage Examples — logging, persistence, error handling patterns
-- Integration — register and use subscribers with agents
-
-<Card
-  title="AgentSubscriber Reference"
-  icon="bolt"
-  href="/sdk/java/client/subscriber"
-  color="#3B82F6"
-  iconType="solid"
->
-  Comprehensive event system for reactive agent interaction
-</Card>
-
-
+See [HttpAgent](/sdk/java/client/http-agent) for constructor options, error handling and threading.

@@ -9,10 +9,16 @@ on:
   push:
     branches: [main]
     paths:
+      - "sdks/community/kotlin/library/**/*.gradle.kts"
+      - "sdks/community/kotlin/publish.sh"
+      - ".github/workflows/publish-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
   pull_request:
     paths:
+      - "sdks/community/kotlin/library/**/*.gradle.kts"
+      - "sdks/community/kotlin/publish.sh"
+      - ".github/workflows/publish-release.yml"
       - "scripts/release/**"
       - ".github/workflows/test-release-scripts.yml"
 
@@ -41,14 +47,14 @@ jobs:
           version: "10.33.4"
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ".node-version"
 
       # The uv.lock re-lock test skips itself when uv is absent, so without this
       # it would pass vacuously here and give false confidence.
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}

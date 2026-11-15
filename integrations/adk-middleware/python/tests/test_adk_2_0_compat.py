@@ -414,7 +414,7 @@ class TestWorkflowRootHitlEndToEnd:
             thread_id, tool_call_id, app_name, "test_user"
         )
         adk_agent._session_manager.mark_messages_processed(
-            app_name, thread_id, already_processed_message_ids
+            app_name, thread_id, already_processed_message_ids, user_id="test_user"
         )
         await adk_agent._session_manager._session_service.append_event(
             session,

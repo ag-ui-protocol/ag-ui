@@ -5,10 +5,20 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 
 class CircuitBreakerTest {
+
+    private class TestClock(private var now: Instant) : Clock {
+        override fun now(): Instant = now
+
+        fun advanceBy(duration: Duration) {
+            now += duration
+        }
+    }
 
     private val config = CircuitBreakerConfig(
         failureThreshold = 2,
@@ -16,7 +26,9 @@ class CircuitBreakerTest {
         successThreshold = 2
     )
 
-    private val breaker = CircuitBreaker(config)
+    private val clock = TestClock(Instant.fromEpochMilliseconds(1_000_000))
+
+    private val breaker = CircuitBreaker(config, clock)
 
     @AfterTest
     fun cleanup() {
@@ -34,12 +46,26 @@ class CircuitBreakerTest {
     }
 
     @Test
-    fun transitionsToHalfOpenAfterTimeoutAndClosesOnSuccess() = runBlocking {
+    fun staysOpenUntilRecoveryTimeoutHasPassed() {
+        breaker.recordFailure()
+        breaker.recordFailure()
+
+        clock.advanceBy(config.recoveryTimeoutMs.milliseconds)
+        assertTrue(breaker.isOpen())
+        assertEquals(CircuitBreakerState.OPEN, breaker.getState())
+
+        clock.advanceBy(1.milliseconds)
+        assertFalse(breaker.isOpen())
+        assertEquals(CircuitBreakerState.HALF_OPEN, breaker.getState())
+    }
+
+    @Test
+    fun transitionsToHalfOpenAfterTimeoutAndClosesOnSuccess() {
         breaker.recordFailure()
         breaker.recordFailure()
         assertTrue(breaker.isOpen())
 
-        delay(25)
+        clock.advanceBy((config.recoveryTimeoutMs + 1).milliseconds)
         assertFalse(breaker.isOpen())
         assertEquals(CircuitBreakerState.HALF_OPEN, breaker.getState())
 
@@ -52,10 +78,10 @@ class CircuitBreakerTest {
     }
 
     @Test
-    fun failureDuringHalfOpenReopensCircuit() = runBlocking {
+    fun failureDuringHalfOpenReopensCircuit() {
         breaker.recordFailure()
         breaker.recordFailure()
-        delay(25)
+        clock.advanceBy((config.recoveryTimeoutMs + 1).milliseconds)
         assertFalse(breaker.isOpen()) // transitions to half-open
 
         breaker.recordFailure()

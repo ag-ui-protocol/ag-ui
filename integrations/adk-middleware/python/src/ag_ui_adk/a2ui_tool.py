@@ -1,9 +1,9 @@
 """A2UI subagent tool factory for Google ADK agents (OSS-158).
 
-Thin adapter over ``ag-ui-a2ui-toolkit`` — the heavy lifting (op builders,
-prompt assembly, history walkers, output envelope, and the validate→retry
-recovery loop) lives in the toolkit. This adapter owns only the ADK-specific
-glue: the ``BaseTool`` decorator, runtime/state access, model bind + invoke,
+Adapter over ``ag-ui-a2ui-toolkit``: it reuses op builders, prompt assembly,
+history lookup and the 0.9 recovery loop. Native 1.0 validation/recovery lives
+in ``a2ui_protocol`` until the published toolkit supports that protocol.
+ADK glue includes the ``BaseTool`` decorator, runtime/state access, model invocation,
 and — unlike LangGraph, which gets it free via langchain's ``astream_events`` —
 explicit emission of the nested ``render_a2ui`` tool-call stream onto the run's
 event queue so the middleware paint gate and client see progressive components.
@@ -16,9 +16,13 @@ change.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
+import threading
 import uuid
+from contextlib import aclosing
+from functools import partial
 from typing import Any, Optional
 
 from google.adk.models.llm_request import LlmRequest
@@ -26,6 +30,7 @@ from google.adk.tools import BaseTool
 from google.genai import types
 
 from ag_ui.core import (
+    ActivitySnapshotEvent,
     EventType,
     RunAgentInput,
     ToolCallArgsEvent,
@@ -35,6 +40,7 @@ from ag_ui.core import (
 )
 
 from ag_ui_a2ui_toolkit import (
+    A2UIGenerationError,
     A2UI_OPERATIONS_KEY,
     A2UIToolParams,
     GENERATE_A2UI_TOOL_NAME,
@@ -43,13 +49,21 @@ from ag_ui_a2ui_toolkit import (
     prepare_a2ui_request,
     resolve_a2ui_tool_params,
     run_a2ui_generation_with_recovery,
+    validate_a2ui_components,
     wrap_error_envelope,
 )
 
 from .a2ui_google_sdk import (
+    catalog_protocol_version,
+    create_express_processor,
     heal_json_arg,
     normalize_catalog_dict,
     render_catalog_instructions,
+)
+from .a2ui_protocol import (
+    run_v1_generation_with_recovery,
+    v1_guidelines,
+    validate_v1_components,
 )
 from .event_translator import adk_events_to_messages
 from .session_manager import CONTEXT_STATE_KEY
@@ -70,6 +84,72 @@ RENDER_A2UI_TOOL_NAME: str = RENDER_A2UI_TOOL_DEF["function"]["name"]
 #: always wins — see the USER-PREVAILS branch in ``plan_a2ui_injection``).
 _A2UI_AUTOINJECT_ATTR = "_a2ui_auto_injected"
 
+
+class _ExpressOutputError(ValueError):
+    """The compiled output cannot be represented by this single-surface tool."""
+
+
+def _versioned_envelope(version: str, **kwargs: Any) -> str:
+    """Reuse toolkit assembly while selecting the catalog's wire protocol."""
+    envelope = json.loads(build_a2ui_envelope(**kwargs))
+    for operation in envelope[A2UI_OPERATIONS_KEY]:
+        operation["version"] = version
+    return json.dumps(envelope)
+
+
+def _prior_surface_configuration(messages: list, surface_id: str) -> tuple[str, dict]:
+    """Read the protocol and creation attributes of the current surface lifetime.
+
+    The toolkit reconstructs components/data/catalog ID but discards versions.
+    Prefer the create operation, stopping at a deletion so older lifetimes
+    cannot supply the version. Sparse histories can fall back to an update;
+    legacy history without version declarations retains the 0.9 default. Retain
+    creation attributes so an update activity can recreate the same surface.
+    """
+    latest_version = None
+    for message in reversed(messages):
+        if getattr(message, "role", None) != "tool":
+            continue
+        envelope = A2UISubAgentTool._extract_envelope(message.content)
+        if envelope is None:
+            continue
+        operations = envelope.get(A2UI_OPERATIONS_KEY)
+        if not isinstance(operations, list):
+            continue
+        for operation in reversed(operations):
+            if not isinstance(operation, dict):
+                continue
+            for action in (
+                "createSurface",
+                "updateComponents",
+                "updateDataModel",
+                "deleteSurface",
+            ):
+                body = operation.get(action)
+                if not isinstance(body, dict) or body.get("surfaceId") != surface_id:
+                    continue
+                if action == "deleteSurface":
+                    return latest_version or "v0.9", {}
+                version = operation.get("version")
+                if version is not None:
+                    version = catalog_protocol_version(
+                        {"protocolVersion": version}
+                    ).value
+                    if latest_version is None:
+                        latest_version = version
+                if action == "createSurface":
+                    version = version or "v0.9"
+                    keys = (
+                        "sendDataModel",
+                        "theme" if version == "v0.9" else "metadata",
+                    )
+                    attributes = {
+                        key: copy.deepcopy(body[key]) for key in keys if key in body
+                    }
+                    return version, attributes
+    return latest_version or "v0.9", {}
+
+
 # Description the A2UI middleware stamps on the schema context entry. MUST stay
 # byte-identical to the middleware's exported A2UI_SCHEMA_CONTEXT_DESCRIPTION
 # (middlewares/a2ui-middleware/src/index.ts) and the LangGraph adapter's copy —
@@ -79,6 +159,29 @@ A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
     "A2UI Component Schema — available components for generating UI surfaces. "
     "Use these component names and properties when creating A2UI operations."
 )
+
+
+def validate_inference_format(value: Any, *, field: str = "inference_format") -> str:
+    """Reject malformed format selections rather than silently switching modes."""
+    if not isinstance(value, str) or value not in ("express", "direct_json"):
+        raise ValueError(f"{field} must be 'express' or 'direct_json'; got {value!r}")
+    return value
+
+
+def run_inference_format(input: RunAgentInput, config: Optional[dict]) -> Optional[str]:
+    """Resolve a run override without mutating the backend's tool defaults."""
+    forwarded = input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
+    if "a2ui" in forwarded:
+        a2ui = forwarded["a2ui"]
+        if not isinstance(a2ui, dict):
+            raise ValueError("forwarded_props.a2ui must be an object")
+        if "inferenceFormat" in a2ui:
+            return validate_inference_format(
+                a2ui["inferenceFormat"], field="forwarded_props.a2ui.inferenceFormat"
+            )
+    if config is not None and "inference_format" in config:
+        return validate_inference_format(config["inference_format"])
+    return None
 
 
 class A2UISubAgentTool(BaseTool):
@@ -107,18 +210,26 @@ class A2UISubAgentTool(BaseTool):
         self._catalog = cfg["catalog"]
         self._recovery = cfg["recovery"]
         self._on_a2ui_attempt = cfg["on_a2ui_attempt"]
+        self._inference_format = validate_inference_format(
+            cfg.get("inference_format", "direct_json")
+        )
         # Injected per-run by ADKAgent so the tool can emit nested tool-call
         # events onto the active run's stream.
-        self.event_queue = None
+        self.event_queue: Any = None
 
-    def for_run(self, event_queue: Any) -> "A2UISubAgentTool":
+    def for_run(
+        self, event_queue: Any, *, inference_format: Optional[str] = None
+    ) -> "A2UISubAgentTool":
         """Return a per-run clone bound to ``event_queue``.
 
         The construction-time tool is shared across concurrent runs; ADKAgent
         swaps in this clone per run so each emits onto its own stream without
         mutating the shared instance (mirrors the ClientProxyToolset swap).
         """
-        clone = A2UISubAgentTool(self._cfg)
+        cfg = dict(self._cfg)
+        if inference_format is not None:
+            cfg["inference_format"] = validate_inference_format(inference_format)
+        clone = A2UISubAgentTool(cfg)
         clone.event_queue = event_queue
         # Preserve the auto-inject marker so a per-run clone of an auto-injected
         # tool is still recognized as auto-injected (parity with the dev-wired
@@ -166,20 +277,64 @@ class A2UISubAgentTool(BaseTool):
         messages = self._normalize_a2ui_tool_results(adk_events_to_messages(events))
         conversation = self._conversation_contents(events)
         state, schema_value = self._state_view(tool_context)
+        is_express = self._inference_format == "express"
+        processor: Any = None
+        guidelines = self._guidelines
 
         # Single catalog, client-sourced (no drift): prefer a host-supplied catalog
         # param, else the middleware-injected schema. Render it via Google's
-        # render_as_llm_instructions (server-to-client envelope + common-types
+        # Direct JSON catalog instructions (protocol envelope + common-types
         # DEFINITIONS the injected catalog only references + components) into the
         # prompt slot — richer than dumping the raw catalog. Render is best-effort
         # and tolerates the client's non-conformant catalog; on failure we leave the
         # raw schema text in the slot (today's behavior).
-        catalog_source = self._catalog or schema_value
-        instructions = render_catalog_instructions(
+        catalog_source = self._catalog if self._catalog is not None else schema_value
+        from a2ui.core.schema import ProtocolVersion
+
+        try:
+            protocol = catalog_protocol_version(catalog_source)
+            if protocol not in (ProtocolVersion.V0_9, ProtocolVersion.V1_0):
+                raise ValueError("ADK A2UI requires protocol version 0.9 or 1.0")
+        except ValueError as error:
+            return self._as_tool_return(wrap_error_envelope(str(error)))
+        version = protocol.value
+        validation_catalog = normalize_catalog_dict(
             catalog_source, default_catalog_id=self._default_catalog_id
         )
-        if instructions is not None:
-            state.setdefault("ag-ui", {})["a2ui_schema"] = instructions
+        catalog_id = (validation_catalog or {}).get(
+            "catalogId", self._default_catalog_id
+        )
+        if is_express:
+            from a2ui.core import A2uiError
+
+            try:
+                processor = create_express_processor(
+                    catalog_source,
+                    default_catalog_id=self._default_catalog_id,
+                    surface_id=target_surface_id or self._default_surface_id,
+                )
+                guidelines = (
+                    v1_guidelines(self._guidelines, direct_json=False)
+                    if protocol == ProtocolVersion.V1_0
+                    else dict(self._guidelines or {})
+                )
+                custom_generation = guidelines.get("generation_guidelines") or ""
+                guidelines["generation_guidelines"] = (
+                    processor.prompt_snippet + "\n\n" + custom_generation
+                )
+                state.setdefault("ag-ui", {}).pop("a2ui_schema", None)
+            except (A2uiError, ValueError) as error:
+                return self._as_tool_return(
+                    wrap_error_envelope(f"Invalid Express catalog: {error}")
+                )
+        else:
+            if protocol == ProtocolVersion.V1_0:
+                guidelines = v1_guidelines(self._guidelines, direct_json=True)
+            instructions = render_catalog_instructions(
+                catalog_source, default_catalog_id=self._default_catalog_id
+            )
+            if instructions is not None:
+                state.setdefault("ag-ui", {})["a2ui_schema"] = instructions
 
         prep = prepare_a2ui_request(
             intent=intent,
@@ -187,54 +342,380 @@ class A2UISubAgentTool(BaseTool):
             changes=changes,
             messages=messages,
             state=state,
-            guidelines=self._guidelines,
+            guidelines=guidelines,
         )
         if prep.get("error"):
             return self._as_tool_return(wrap_error_envelope(prep["error"]))
+        if prep.get("prior"):
+            try:
+                prior_version, creation_attributes = _prior_surface_configuration(
+                    messages, target_surface_id or self._default_surface_id
+                )
+                if prior_version != version:
+                    raise ValueError(
+                        f"Cannot change surface protocol version from {prior_version} "
+                        f"to {version}; create a new surface instead"
+                    )
+                prep["prior_creation_attributes"] = creation_attributes
+            except ValueError as error:
+                return self._as_tool_return(wrap_error_envelope(str(error)))
+        if is_express and prep.get("prior"):
+            prior_catalog_id = prep["prior"].get("catalogId")
+            if (
+                prior_catalog_id
+                and prior_catalog_id != processor.active_catalogs[0].catalog_id
+            ):
+                return self._as_tool_return(
+                    wrap_error_envelope(
+                        "The Express catalog must match the existing "
+                        "surface's catalogId"
+                    )
+                )
 
-        # Validate with the toolkit's structural/lenient validator against the SAME
-        # client catalog (membership; it does not strict-resolve $refs, so the
-        # non-conformant catalog is fine) — parity with the LangGraph/Declarative
-        # A2UI demos. None → pure structural validation.
-        validation_catalog = normalize_catalog_dict(
-            catalog_source, default_catalog_id=self._default_catalog_id
-        )
-
-        # One stable nested tool-call id, reused across every recovery attempt so
+        # One stable nested tool-call id is reused across recovery attempts so
         # the middleware/client swap the in-progress surface in place rather than
         # stacking N tool calls.
         surface_tool_call_id = f"a2ui-render-{uuid.uuid4().hex[:8]}"
+        activity_key = (
+            getattr(tool_context, "function_call_id", None) or surface_tool_call_id
+        )
         loop = asyncio.get_running_loop()
+        pending = set()
+        # Loop-side tasks running each attempt's model stream. Cancelling the
+        # cross-thread future only schedules their cancellation, so they are
+        # tracked here and awaited before a cancelled run is allowed to finish.
+        attempt_tasks: set[asyncio.Task] = set()
+        cancelled = threading.Event()
+
+        async def _tracked(invoke):
+            task = asyncio.current_task()
+            attempt_tasks.add(task)
+            try:
+                return await invoke
+            finally:
+                attempt_tasks.discard(task)
 
         def _invoke_subagent(prompt: str, attempt: int) -> Optional[dict]:
-            future = asyncio.run_coroutine_threadsafe(
-                self._stream_one_attempt(
+            if cancelled.is_set():
+                raise asyncio.CancelledError()
+            invoke = (
+                self._stream_express_attempt(
+                    prompt,
+                    conversation,
+                    processor,
+                    prep,
+                    activity_key,
+                    target_surface_id or self._default_surface_id,
+                    validation_catalog,
+                )
+                if is_express
+                else self._stream_one_attempt(
                     prompt, attempt, surface_tool_call_id, conversation
-                ),
-                loop,
+                )
             )
-            return future.result()
+            future = asyncio.run_coroutine_threadsafe(_tracked(invoke), loop)
+            pending.add(future)
+            if cancelled.is_set():
+                future.cancel()
+            try:
+                return future.result()
+            finally:
+                pending.discard(future)
 
         def _build_envelope(generated: dict) -> str:
-            return build_a2ui_envelope(
+            if is_express:
+                return json.dumps({A2UI_OPERATIONS_KEY: generated["_operations"]})
+            return _versioned_envelope(
+                version,
                 args=generated,
                 is_update=prep["is_update"],
                 target_surface_id=target_surface_id,
                 prior=prep.get("prior"),
                 default_surface_id=self._default_surface_id,
-                default_catalog_id=self._default_catalog_id,
+                default_catalog_id=catalog_id,
             )
 
-        result = await asyncio.to_thread(
-            run_a2ui_generation_with_recovery,
-            base_prompt=prep["prompt"],
-            catalog=validation_catalog,
-            config=self._recovery,
-            invoke_subagent=_invoke_subagent,
-            build_envelope=_build_envelope,
-            on_attempt=self._on_a2ui_attempt,
-        )
+        def on_attempt(record: dict) -> None:
+            if cancelled.is_set():
+                return
+            record["inference_format"] = self._inference_format
+            if self._on_a2ui_attempt:
+                self._on_a2ui_attempt(record)
+            if is_express and not record["ok"]:
+                max_attempts = (self._recovery or {}).get("maxAttempts", 3)
+                content = {
+                    "status": (
+                        "retrying" if record["attempt"] < max_attempts else "failed"
+                    ),
+                    "attempt": record["attempt"] + 1,
+                    "maxAttempts": max_attempts,
+                    "errors": record["errors"],
+                }
+                asyncio.run_coroutine_threadsafe(
+                    self._emit_express_activity(activity_key, content), loop
+                ).result()
+
+        try:
+            result = await asyncio.to_thread(
+                (
+                    partial(
+                        run_v1_generation_with_recovery, validate_schema=not is_express
+                    )
+                    if protocol == ProtocolVersion.V1_0
+                    else run_a2ui_generation_with_recovery
+                ),
+                base_prompt=prep["prompt"],
+                catalog=validation_catalog,
+                config=self._recovery,
+                invoke_subagent=_invoke_subagent,
+                build_envelope=_build_envelope,
+                on_attempt=on_attempt,
+            )
+        except asyncio.CancelledError:
+            cancelled.set()
+            # Cancelling each future schedules exactly one cancellation of its
+            # loop-side task (a task not yet started never runs). Do not cancel
+            # the tasks again: a second cancel would interrupt their cleanup.
+            for future in list(pending):
+                future.cancel()
+            # Stop/disconnect must not return while a model stream still runs:
+            # wait for the started attempt tasks to finish unwinding.
+            while attempt_tasks:
+                await asyncio.gather(*attempt_tasks, return_exceptions=True)
+            raise
         return self._as_tool_return(result["envelope"])
+
+    async def _emit_express_activity(self, key: str, content: dict) -> None:
+        """Use the middleware's existing stable, replacing A2UI activity contract."""
+        if self.event_queue is not None:
+            await self.event_queue.put(
+                ActivitySnapshotEvent(
+                    type=EventType.ACTIVITY_SNAPSHOT,
+                    activity_type="a2ui-surface",
+                    message_id=f"a2ui-surface-{key}",
+                    content={**content, "inferenceFormat": "express"},
+                    replace=True,
+                )
+            )
+
+    async def _stream_express_attempt(
+        self,
+        prompt: str,
+        conversation: list,
+        processor: Any,
+        prep: dict,
+        activity_key: str,
+        surface_id: str,
+        validation_catalog: Optional[dict],
+    ) -> dict:
+        """Forward text to the upstream SDK stream and publish validated snapshots.
+
+        The SDK owns parsing, progressive healing, state transactions and errors.
+        Already-published valid snapshots cannot be rolled back; a rejected
+        attempt is replaced by the normal retry/failure lifecycle activity.
+        """
+        from a2ui.core import A2uiError, A2uiIntegrityError
+        from a2ui.parser import A2uiPart
+        from a2ui.parser.messages import to_message_dicts
+        from a2ui.utils import validate_payload
+
+        state = processor.create_state()
+        catalog_id = processor.active_catalogs[0].catalog_id
+        version = catalog_protocol_version(processor.active_catalogs[0].to_json()).value
+        if prep.get("prior"):
+            prior = prep["prior"]
+            seed_ops = json.loads(
+                _versioned_envelope(
+                    version,
+                    args={
+                        "surfaceId": surface_id,
+                        "components": prior["components"],
+                        "data": prior.get("data"),
+                    },
+                    is_update=False,
+                    target_surface_id=None,
+                    prior=None,
+                    default_catalog_id=catalog_id,
+                )
+            )[A2UI_OPERATIONS_KEY]
+            seed_ops[0]["createSurface"].update(
+                copy.deepcopy(prep.get("prior_creation_attributes", {}))
+            )
+            state.apply(seed_ops)
+        stream = processor.open_stream(state=state)
+        last_generated = None
+        last_content = None
+        generated_operations = False
+
+        async def publish(parts: list, *, final: bool = False) -> None:
+            nonlocal last_generated, last_content, generated_operations
+            if not any(isinstance(part, A2uiPart) for part in parts) and not final:
+                return
+            for part in parts:
+                if isinstance(part, A2uiPart):
+                    messages = to_message_dicts(part.a2ui)
+                    generated_operations = generated_operations or bool(messages)
+                    for op in messages:
+                        for action, body in op.items():
+                            if action == "version":
+                                continue
+                            if action not in (
+                                "createSurface",
+                                "updateComponents",
+                                "updateDataModel",
+                            ):
+                                raise _ExpressOutputError(
+                                    f"ADK Express does not support {action}"
+                                )
+                            if body.get("surfaceId") != surface_id:
+                                raise _ExpressOutputError(
+                                    f"Express must target surface {surface_id!r}"
+                                )
+            if final and not generated_operations:
+                raise _ExpressOutputError(
+                    "Express response did not contain generated UI operations"
+                )
+            if state.surface_ids != [surface_id]:
+                if not state.surface_ids and not final:
+                    return
+                raise _ExpressOutputError("Express must produce exactly one UI surface")
+            surface = state.get_surface(surface_id)
+            components = copy.deepcopy(
+                [
+                    component.component_tree
+                    for component in surface.components_model.values
+                ]
+            )
+            data = copy.deepcopy(surface.data_model.get("/"))
+            if data is None:
+                data = {}
+            if not isinstance(data, dict):
+                raise _ExpressOutputError(
+                    "The Express surface data model root must be an object"
+                )
+            generated = {
+                "surfaceId": surface_id,
+                "components": components,
+                "data": data,
+            }
+            # A stream can contain valid component deltas with forward child
+            # references. Wait until a complete snapshot passes SDK topology
+            # validation before asking the frontend to paint it.
+            create_body = {"surfaceId": surface_id, "catalogId": catalog_id}
+            if surface.send_data_model:
+                create_body["sendDataModel"] = True
+            if surface.theme:
+                create_body["theme"] = surface.theme
+            if surface.metadata is not None:
+                create_body["metadata"] = surface.metadata
+            full_ops = [
+                {"version": version, "createSurface": create_body},
+                {
+                    "version": version,
+                    "updateComponents": {
+                        "surfaceId": surface_id,
+                        "components": components,
+                    },
+                },
+                {
+                    "version": version,
+                    "updateDataModel": {
+                        "surfaceId": surface_id,
+                        "path": "/",
+                        "value": data,
+                    },
+                },
+            ]
+            try:
+                validate_payload(processor.active_catalogs, full_ops)
+            except A2uiIntegrityError:
+                if not final:
+                    return
+                raise
+            operations = full_ops[1:] if prep["is_update"] else full_ops
+            generated["_operations"] = operations
+            last_generated = generated
+            # Keep the paint decision aligned with the existing recovery
+            # contract as well as SDK validation. For example a path binding
+            # may be schema-valid before the model initializes its data. Defer
+            # that snapshot; the unchanged recovery loop diagnoses it if the
+            # completed attempt still fails the toolkit's validator.
+            validate_components = (
+                partial(validate_v1_components, validate_schema=False)
+                if version == "1.0"
+                else validate_a2ui_components
+            )
+            if not validate_components(
+                components=components, data=data, catalog=validation_catalog
+            )["valid"]:
+                return
+            # Each activity owns an independent renderer state. Its snapshot
+            # must include creation even when the final protocol result is an
+            # update to a surface established by an earlier tool call.
+            content = {A2UI_OPERATIONS_KEY: full_ops}
+            if content != last_content:
+                await self._emit_express_activity(activity_key, content)
+                last_content = content
+
+        prompt += (
+            f"\n\nGenerate exactly one surface with id {surface_id!r}. "
+            "Do not delete surfaces or call standalone renderer functions."
+        )
+        if prep["is_update"]:
+            prompt += (
+                "\nBegin the Express block with "
+                f"surface({json.dumps(surface_id)}, update=true)."
+            )
+        request = self._build_llm_request(prompt, conversation)
+        saw_partial = False
+        try:
+            # aclosing: a cancelled run (Stop, disconnect) must close the model
+            # stream on this task, not later via the loop's async-gen finalizer.
+            async with aclosing(
+                self._model.generate_content_async(request, stream=True)
+            ) as responses:
+                async for response in responses:
+                    text = "".join(
+                        part.text
+                        for part in (
+                            getattr(getattr(response, "content", None), "parts", None)
+                            or []
+                        )
+                        if getattr(part, "text", None)
+                        and not getattr(part, "thought", False)
+                    )
+                    if not text:
+                        continue
+                    if getattr(response, "partial", False):
+                        saw_partial = True
+                    elif saw_partial:
+                        # ADK's terminal response repeats the entire accumulated
+                        # turn after its partial chunks. Never feed that text twice.
+                        continue
+                    try:
+                        await publish(stream.feed(text))
+                    except A2uiError as error:
+                        await publish(getattr(error, "partial_results", []))
+                        raise
+            await publish(stream.close(), final=True)
+            if last_generated is None:
+                raise _ExpressOutputError(
+                    "Express response did not contain a complete UI surface"
+                )
+            return last_generated
+        except (A2uiError, _ExpressOutputError) as error:
+            help_message = getattr(error, "help_message", None)
+            line = getattr(error, "line", None)
+            raise A2UIGenerationError(
+                [
+                    {
+                        "code": "express_compilation_error",
+                        "path": f"express line {line}" if line else "express",
+                        "message": str(error)
+                        + (f"\n{help_message}" if help_message else ""),
+                    }
+                ]
+            ) from error
 
     @staticmethod
     def _as_tool_return(envelope: str) -> Any:
@@ -272,12 +753,13 @@ class A2UISubAgentTool(BaseTool):
 
         llm_request = self._build_llm_request(prompt, conversation)
         final_args: Optional[dict] = None
-        async for response in self._model.generate_content_async(
-            llm_request, stream=True
-        ):
-            fc = self._extract_render_fc(response)
-            if fc is not None and getattr(fc, "args", None):
-                final_args = self._coerce_freeform_args(dict(fc.args))
+        async with aclosing(
+            self._model.generate_content_async(llm_request, stream=True)
+        ) as responses:
+            async for response in responses:
+                fc = self._extract_render_fc(response)
+                if fc is not None and getattr(fc, "args", None):
+                    final_args = self._coerce_freeform_args(dict(fc.args))
 
         # Atomic per-attempt paint: emit the complete args once. (Real per-delta
         # streaming for Gemini-3 partial_args is layered on separately.)
@@ -304,6 +786,18 @@ class A2UISubAgentTool(BaseTool):
         prompt rides as ``system_instruction`` and the real conversation turns are
         the request ``contents``.
         """
+        if self._inference_format == "express":
+            return LlmRequest(
+                model=getattr(self._model, "model", None),
+                contents=(
+                    list(conversation)
+                    if conversation
+                    else [types.Content(role="user", parts=[types.Part(text=prompt)])]
+                ),
+                config=types.GenerateContentConfig(
+                    system_instruction=prompt, response_modalities=["TEXT"]
+                ),
+            )
         # Free-form payload schema (vs the shared RENDER_A2UI_TOOL_DEF's typed
         # `components: array<object>`): Gemini's function-calling fills typed args
         # STRICTLY and emits empty `{}` for a property-less array-of-object. So we
@@ -315,7 +809,10 @@ class A2UISubAgentTool(BaseTool):
         # schemas from the prose; this string shape is ADK/Gemini-specific glue.
         declaration = types.FunctionDeclaration(
             name=_RENDER_A2UI_NAME,
-            description=RENDER_A2UI_TOOL_DEF["function"]["description"],
+            description=(
+                "Render a dynamic A2UI surface using the supplied catalog. "
+                "The root component must have id 'root'."
+            ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
@@ -326,7 +823,7 @@ class A2UISubAgentTool(BaseTool):
                     "components": types.Schema(
                         type=types.Type.STRING,
                         description=(
-                            "The A2UI v0.9 component array as a JSON string, e.g. "
+                            "The A2UI component array as a JSON string, e.g. "
                             '\'[{"id":"root","component":"Text","text":"Hi"}]\'. '
                             "The root component must have id 'root'."
                         ),
@@ -370,8 +867,8 @@ class A2UISubAgentTool(BaseTool):
         """Heal + parse the free-form JSON-string ``components``/``data`` Gemini
         returns into the structured list/dict the toolkit validates and emits.
 
-        Uses the Google SDK's ``parse_and_fix`` (smart quotes, trailing commas,
-        single-object→list wrap) rather than a bare ``json.loads`` — Gemini's
+        Uses the Google SDK's ``read_json`` (curly quotes, trailing commas, raw
+        line breaks) via ``heal_json_arg`` rather than a bare ``json.loads`` — Gemini's
         free-form JSON often needs that healing. A model may also return them
         already-structured (inline) — those are left untouched. On a hard parse
         failure the value is left as the original string, so the toolkit validator
@@ -448,6 +945,35 @@ class A2UISubAgentTool(BaseTool):
             if role == "tool" and isinstance(content, str):
                 envelope = cls._extract_envelope(content)
                 if envelope is not None:
+                    # Native 1.0 can initialize state in createSurface. The
+                    # published toolkit history walker only reads update ops;
+                    # expand a private history view without changing the ADK
+                    # event or the envelope sent to the renderer.
+                    operations = envelope.get(A2UI_OPERATIONS_KEY)
+                    if isinstance(operations, list):
+                        expanded = []
+                        for operation in operations:
+                            expanded.append(operation)
+                            if not isinstance(operation, dict):
+                                continue
+                            create = operation.get("createSurface")
+                            if operation.get("version") != "1.0" or not isinstance(
+                                create, dict
+                            ):
+                                continue
+                            for source_key, action, value_key in (
+                                ("components", "updateComponents", "components"),
+                                ("dataModel", "updateDataModel", "value"),
+                            ):
+                                if source_key in create:
+                                    body = {
+                                        "surfaceId": create.get("surfaceId"),
+                                        value_key: create[source_key],
+                                    }
+                                    if action == "updateDataModel":
+                                        body["path"] = "/"
+                                    expanded.append({"version": "1.0", action: body})
+                        envelope[A2UI_OPERATIONS_KEY] = expanded
                     msg = ToolMessage(
                         id=getattr(msg, "id", None) or str(uuid.uuid4()),
                         role="tool",
@@ -638,9 +1164,7 @@ def plan_a2ui_injection(
     config = config or {}
 
     # `forwarded_props` is Any on the wire; tolerate non-dict shapes.
-    forwarded = (
-        input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
-    )
+    forwarded = input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
     flag = forwarded.get("injectA2UITool")
     if flag is None:
         # Nullish fallback, mirroring the TS adapter's `??`: an explicit runtime
@@ -677,6 +1201,7 @@ def plan_a2ui_injection(
             "default_catalog_id": config.get("default_catalog_id"),
             "guidelines": config.get("guidelines"),
             "recovery": config.get("recovery"),
+            "inference_format": config.get("inference_format", "direct_json"),
         }
     )
     setattr(tool, _A2UI_AUTOINJECT_ATTR, True)

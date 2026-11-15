@@ -5,6 +5,12 @@ All notable changes to the AG-UI Ruby SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- [`RunStartedEvent`](https://docs.ag-ui.com/spec/draft/schema#runstartedevent), [`RunAgentInput`](https://docs.ag-ui.com/spec/draft/schema#runagentinput) can be created with an optional `protocol_version` parameter as defined by the specification.
+
 ## [0.2.0] - 2026-05-26
 
 ### Added

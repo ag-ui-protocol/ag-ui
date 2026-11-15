@@ -459,11 +459,22 @@ enum class CircuitBreakerState {
  * This class is thread-safe for concurrent access.
  * 
  * @param config Configuration for circuit breaker behavior
+ * @param clock Source of the current time for the recovery timeout
  * 
  * @see CircuitBreakerConfig
  * @see CircuitBreakerState
  */
-class CircuitBreaker(private val config: CircuitBreakerConfig) {
+class CircuitBreaker(
+    private val config: CircuitBreakerConfig,
+    private val clock: Clock
+) {
+
+    /**
+     * Creates a circuit breaker that uses the system clock.
+     *
+     * @param config Configuration for circuit breaker behavior
+     */
+    constructor(config: CircuitBreakerConfig) : this(config, Clock.System)
     
     private var _state = CircuitBreakerState.CLOSED
     private var failures = 0
@@ -491,7 +502,7 @@ class CircuitBreaker(private val config: CircuitBreakerConfig) {
             CircuitBreakerState.OPEN -> {
                 val lastFailure = lastFailureTime
                 if (lastFailure != null && 
-                    Clock.System.now().toEpochMilliseconds() - lastFailure.toEpochMilliseconds() > config.recoveryTimeoutMs) {
+                    clock.now().toEpochMilliseconds() - lastFailure.toEpochMilliseconds() > config.recoveryTimeoutMs) {
                     // Transition to half-open for testing
                     _state = CircuitBreakerState.HALF_OPEN
                     false
@@ -517,7 +528,7 @@ class CircuitBreaker(private val config: CircuitBreakerConfig) {
      */
     fun recordFailure() {
         failures++
-        lastFailureTime = Clock.System.now()
+        lastFailureTime = clock.now()
         
         when (_state) {
             CircuitBreakerState.CLOSED -> {

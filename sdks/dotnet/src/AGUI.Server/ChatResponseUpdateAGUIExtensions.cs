@@ -25,6 +25,9 @@ public static class ChatResponseUpdateAGUIExtensions
             }
             """).RootElement.Clone();
 
+    private static readonly JsonElement ServerToolExecutionMetadata =
+        JsonDocument.Parse("""{"ag-ui:tool-execution":"server"}""").RootElement.Clone();
+
     /// <summary>
     /// Converts a stream of <see cref="ChatResponseUpdate"/> instances to a stream of AG-UI <see cref="BaseEvent"/> instances.
     /// </summary>
@@ -601,9 +604,13 @@ public static class ChatResponseUpdateAGUIExtensions
                             break;
                         }
 
-                        // In mixed invocation (first turn), don't accumulate interrupts.
-                        // The stream will finish with RUN_FINISHED(success) instead.
-                        if (clientToolNames.Count > 0 && !isContinuation)
+                        // FICC also wraps server calls when a peer requires approval. In a mixed
+                        // first turn those collateral calls (no confirmation required) are resumed
+                        // by the continuation, so unwrap them without prompting. Without client
+                        // tools nothing else resumes them, so they still interrupt.
+#pragma warning disable MEAI001
+                        if (clientToolNames.Count > 0 && !isContinuation && !ar.RequiresConfirmation)
+#pragma warning restore MEAI001
                         {
                             break;
                         }
@@ -617,6 +624,8 @@ public static class ChatResponseUpdateAGUIExtensions
                             ToolCallId = toolCall.CallId,
                             Message = $"Approval required for tool call: {toolCall.Name}",
                             ResponseSchema = AGUIToolApprovalSchema,
+                            // A resume payload is an approval decision, not the result of execution.
+                            Metadata = ServerToolExecutionMetadata,
                         });
                         break;
 

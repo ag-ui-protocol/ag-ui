@@ -1,0 +1,269 @@
+{
+  "ts": {
+    "id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+    "session": "sesn_017Gbbvp7PAATiZFed3DKBMz",
+    "native": [
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:53:57.464912Z",
+        "session_thread_id": "sthr_01SCQvg3aJtA39kfZ1XEReBX",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_015bqm5CjC5cBEcBMxu95x7q",
+        "processed_at": "2026-10-19T13:03:17.497303Z",
+        "result": "allow",
+        "session_thread_id": "sthr_01SCQvg3aJtA39kfZ1XEReBX",
+        "tool_use_id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "type": "user.tool_confirmation"
+      },
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:53:57.178784Z",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_01LdMFfZXNgiSctVmScJEPjH",
+        "processed_at": "2026-10-19T13:03:17.467610Z",
+        "result": "allow",
+        "tool_use_id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "type": "user.tool_confirmation"
+      },
+      {
+        "content": [
+          {
+            "text": "File created: /tmp/claude-validation/child-marker.txt",
+            "type": "text"
+          }
+        ],
+        "id": "sevt_01K2jL4DHMLKHw15Ro6Yv3xF",
+        "is_error": false,
+        "processed_at": "2026-10-19T13:03:18.602717Z",
+        "tool_use_id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "type": "agent.tool_result"
+      }
+    ],
+    "root": [
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:53:57.464912Z",
+        "session_thread_id": "sthr_01SCQvg3aJtA39kfZ1XEReBX",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_015bqm5CjC5cBEcBMxu95x7q",
+        "processed_at": "2026-10-19T13:03:17.497303Z",
+        "result": "allow",
+        "session_thread_id": "sthr_01SCQvg3aJtA39kfZ1XEReBX",
+        "tool_use_id": "sevt_01Pd2vVXDm261Tfid5CqPPJc",
+        "type": "user.tool_confirmation"
+      }
+    ],
+    "emitted": []
+  },
+  "py": {
+    "id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+    "session": "sesn_01XvnAqKkGwCjYz38UVY4LQs",
+    "native": [
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:54:24.169790Z",
+        "session_thread_id": "sthr_01AR32GVJDaunZ1GbuYacPUc",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_01CjziW72CBoYEuThewYHqXb",
+        "processed_at": "2026-10-19T13:03:21.023703Z",
+        "result": "deny",
+        "session_thread_id": "sthr_01AR32GVJDaunZ1GbuYacPUc",
+        "tool_use_id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "type": "user.tool_confirmation"
+      },
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:54:23.949691Z",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_01Fh89BQeUuitXsvruTkM3sh",
+        "processed_at": "2026-10-19T13:03:20.961645Z",
+        "result": "deny",
+        "tool_use_id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "type": "user.tool_confirmation"
+      },
+      {
+        "content": [
+          {
+            "text": "Permission to use write has been rejected.",
+            "type": "text"
+          }
+        ],
+        "id": "sevt_015LiqMjKdX8gc6ogtgEyJgH",
+        "is_error": true,
+        "processed_at": "2026-10-19T13:03:21.014971Z",
+        "tool_use_id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "type": "agent.tool_result"
+      }
+    ],
+    "root": [
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:54:24.169790Z",
+        "session_thread_id": "sthr_01AR32GVJDaunZ1GbuYacPUc",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_01CjziW72CBoYEuThewYHqXb",
+        "processed_at": "2026-10-19T13:03:21.023703Z",
+        "result": "deny",
+        "session_thread_id": "sthr_01AR32GVJDaunZ1GbuYacPUc",
+        "tool_use_id": "sevt_01VJV8ds3CaePwERFkp5QBaJ",
+        "type": "user.tool_confirmation"
+      }
+    ],
+    "emitted": []
+  },
+  "dotnet": {
+    "id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+    "session": "sesn_01BxzUHxYgwyjKRmnCMUuBJJ",
+    "native": [
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:55:11.151138Z",
+        "session_thread_id": "sthr_01EbPDjCp4k81YtHhV17FEEA",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_01L6SSSXYR6ikMinDUAQ2c2U",
+        "processed_at": "2026-10-19T13:04:26.855436Z",
+        "result": "allow",
+        "session_thread_id": "sthr_01EbPDjCp4k81YtHhV17FEEA",
+        "tool_use_id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "type": "user.tool_confirmation"
+      },
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:55:10.920479Z",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_013jfc9y2xDji7oTYimLU4wr",
+        "processed_at": "2026-10-19T13:04:26.836279Z",
+        "result": "allow",
+        "tool_use_id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "type": "user.tool_confirmation"
+      },
+      {
+        "content": [
+          {
+            "text": "File created: /tmp/claude-validation/child-marker.txt",
+            "type": "text"
+          }
+        ],
+        "id": "sevt_01JB7AAr5TLgv892fijQ4aBz",
+        "is_error": false,
+        "processed_at": "2026-10-19T13:04:28.379638Z",
+        "tool_use_id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "type": "agent.tool_result"
+      }
+    ],
+    "root": [
+      {
+        "evaluated_permission": "ask",
+        "evaluation": {
+          "type": "always_ask"
+        },
+        "id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "input": {
+          "content": "CHILD_NATIVE_42",
+          "file_path": "/tmp/claude-validation/child-marker.txt"
+        },
+        "name": "write",
+        "processed_at": "2026-10-19T12:55:11.151138Z",
+        "session_thread_id": "sthr_01EbPDjCp4k81YtHhV17FEEA",
+        "type": "agent.tool_use"
+      },
+      {
+        "id": "sevt_01L6SSSXYR6ikMinDUAQ2c2U",
+        "processed_at": "2026-10-19T13:04:26.855436Z",
+        "result": "allow",
+        "session_thread_id": "sthr_01EbPDjCp4k81YtHhV17FEEA",
+        "tool_use_id": "sevt_01UVcDiZnYMvKXKM9UWjGYGT",
+        "type": "user.tool_confirmation"
+      }
+    ],
+    "emitted": []
+  }
+}

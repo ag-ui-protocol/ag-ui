@@ -1,0 +1,46 @@
+# Changelog
+
+## 1.0.4 — 2026-11-05
+
+- `zod` is now a required peer dependency (`^3.25.18 || ^4.0.0`), ensuring consumers use a single application-provided zod.
+
+### Breaking changes
+
+- `zod` must be installed by the consuming application as a peer dependency (`^3.25.18 || ^4.0.0`).
+
+## 1.0.3 — 2026-10-15
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 1.0.2 — 2026-10-05
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 1.0.1 — 2026-09-29
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 1.0.0 — 2026-09-17
+
+- Rebuilt on generated types; the main entry is now zod-free with validators moved to @ag-ui/core/schemas, making zod an optional peer.
+- 0.x names remain as deprecated aliases of the same types (see DEPRECATIONS.md); content parts are named by what they are rather than by direction.
+- PROTOCOL_VERSION now reads "1.0"
+- Ships the AG-UI 1.0 specification, JSON Schema, and the generators SDKs are produced from.
+
+### Breaking changes
+
+- PROTOCOL_VERSION changed to "1.0".
+- Validators moved to @ag-ui/core/schemas; zod is now an optional peer, so imports relying on zod from the main entry must update.
+- Several 0.x type names are now deprecated aliases; re-verify against DEPRECATIONS.md.

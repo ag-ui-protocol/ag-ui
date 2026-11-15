@@ -28,6 +28,11 @@ const attachments: InputContent[] = [
     source: { type: "data", mimeType: "video/mp4", value: "dmlkZW8=" },
     metadata: { filename: "clip.mp4" },
   },
+  {
+    type: "audio",
+    source: { type: "data", mimeType: "audio/wav", value: "UklGRiQAAABXQVZF" },
+    metadata: { filename: "voice.wav" },
+  },
 ];
 
 describe("multimodal snapshot fidelity", () => {

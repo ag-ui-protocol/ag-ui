@@ -162,6 +162,42 @@ public sealed class A2UIEnvelopeTest
         Assert.Contains("guide", prep.Prompt);
     }
 
+    [Theory]
+    [InlineData("create")]
+    [InlineData(null)]
+    public void PrepareA2UIRequest_CreateInstructions_AreScopedToEachInvocation(string? intent)
+    {
+        string[] instructions = ["Create North with value 11", "Create South with value 22", "Retry South with value 22"];
+        A2UIHistoryMessage[] history = [PriorSurfaceMessage("existing")];
+
+        foreach (string instruction in instructions)
+        {
+            A2UIPreparedRequest prep = A2UIToolkit.PrepareA2UIRequest(
+                intent, targetSurfaceId: null, instruction, history, state: null);
+
+            Assert.Null(prep.Error);
+            Assert.False(prep.IsUpdate);
+            Assert.Null(prep.Prior);
+            Assert.Contains(instruction, prep.Prompt);
+            Assert.DoesNotContain("Editing an existing surface", prep.Prompt);
+            foreach (string sibling in instructions.Where(value => value != instruction))
+            {
+                Assert.DoesNotContain(sibling, prep.Prompt);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void PrepareA2UIRequest_CreateWithoutInstructions_PreservesDefaultPrompt(string? changes)
+    {
+        A2UIPreparedRequest prep = A2UIToolkit.PrepareA2UIRequest(
+            "create", targetSurfaceId: null, changes, [], state: null);
+
+        Assert.Equal(A2UIToolkit.BuildSubagentPrompt(A2UIToolkit.BuildContextPrompt(null)), prep.Prompt);
+    }
+
     [Fact]
     public void PrepareA2UIRequest_MissingIntent_DefaultsToCreate()
     {
@@ -187,6 +223,7 @@ public sealed class A2UIEnvelopeTest
         Assert.Equal("cat://x", prep.Prior?.CatalogId);
         Assert.Contains("Editing an existing surface", prep.Prompt);
         Assert.Contains("make it red", prep.Prompt);
+        Assert.Equal(1, prep.Prompt.Split("make it red").Length - 1);
     }
 
     [Fact]
@@ -194,7 +231,7 @@ public sealed class A2UIEnvelopeTest
     {
         // Act
         A2UIPreparedRequest prep = A2UIToolkit.PrepareA2UIRequest(
-            "update", "missing", changes: null, [PriorSurfaceMessage("s1")], state: null);
+            "update", "missing", changes: "Change North to 12", [PriorSurfaceMessage("s1")], state: null);
 
         // Assert
         Assert.Equal(string.Empty, prep.Prompt);

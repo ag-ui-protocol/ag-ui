@@ -2,7 +2,7 @@
 
 import pytest
 
-from .test_agent import IDLE_END_TURN, base_input, collect, new_agent
+from .test_agent import IDLE_END_TURN, base_input, collect, new_agent, STATE_TOOL
 from .fake_client import FakeClient
 from ag_ui_claude_managed_agents import InMemorySessionStore
 
@@ -100,7 +100,7 @@ async def test_updates_session_when_frontend_tools_change(
     fake = await run_tool_transition(initial_tools, next_tools)
 
     assert fake.update_calls == [
-        ("sesn_1", {"agent": {"tools": [BASE_AGENT_TOOL, *expected_custom_tools]}})
+        ("sesn_1", {"agent": {"tools": [BASE_AGENT_TOOL, STATE_TOOL, *expected_custom_tools]}})
     ]
 
 
@@ -154,6 +154,7 @@ async def test_pushes_a_console_edit_to_the_agents_own_tools_into_an_override_se
                 "agent": {
                     "tools": [
                         edited_base_tool,
+                        STATE_TOOL,
                         custom_tool("show_chart", "Render a chart"),
                     ]
                 }
@@ -162,7 +163,7 @@ async def test_pushes_a_console_edit_to_the_agents_own_tools_into_an_override_se
     ]
 
 
-async def test_does_not_re_read_the_agents_tools_without_custom_tools():
+async def test_reserved_tool_keeps_override_catalog_in_sync():
     """Such a session runs the agent as-is, so there is nothing to keep in step
     and no reason to spend a call per run finding that out."""
     fake = FakeClient(
@@ -184,5 +185,5 @@ async def test_does_not_re_read_the_agents_tools_without_custom_tools():
         ),
     )
 
-    assert fake.retrieve_calls == []
+    assert fake.retrieve_calls
     assert fake.update_calls == []

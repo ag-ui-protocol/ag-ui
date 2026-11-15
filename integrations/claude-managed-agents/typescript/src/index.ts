@@ -9,6 +9,7 @@ export {
   TOOL_RESULT_MAX_CHARS,
 } from "./constants";
 export { InMemorySessionStore } from "./sessions";
+export type { SessionStream } from "./recovery";
 export { runTurn } from "./turn";
 export type { TurnOptions, TurnOutcome } from "./turn";
 export { customToolFrom, normalizeToolName } from "./tools";
@@ -18,6 +19,8 @@ export type {
   ManagedAgentsErrorContext,
   ManagedAgentsErrorHandler,
   ManagedAgentsAgentConfig,
+  SessionBinding,
+  PendingConfirmation,
   SessionRecord,
   SessionStore,
 } from "./types";
