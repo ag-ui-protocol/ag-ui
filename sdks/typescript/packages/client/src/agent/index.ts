@@ -13,3 +13,5 @@ export { resolveAgentDebugConfig } from "./types";
 export type { AgentSubscriber, AgentStateMutation, AgentSubscriberParams } from "./subscriber";
 export { DebugLogger, createDebugLogger, resolveDebugLogger } from "../debug-logger";
 export type { DebugLoggerInput } from "../debug-logger";
+export { ReplayAgent, createEventRecorder, recordEvents } from "./replay";
+export type { EventRecorder, ReplayAgentOptions, ReplayDelayMs } from "./replay";

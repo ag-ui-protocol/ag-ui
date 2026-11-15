@@ -1,5 +1,6 @@
 import { AbstractAgent } from "../agent";
 import { HttpAgent } from "../http";
+import { ReplayAgent } from "../replay";
 import { BaseEvent, Message, RunAgentInput } from "@ag-ui/core";
 import { EMPTY, Observable, Subscriber } from "rxjs";
 import { EventType, RunStartedEvent } from "@ag-ui/core";
@@ -99,6 +100,10 @@ describe("clone() field coverage", () => {
 
   it("gives an HttpAgent clone every own field a fresh instance has", () => {
     expect(missingOnClone(new HttpAgent({ url: "https://example.com/agent" }))).toEqual([]);
+  });
+
+  it("gives a ReplayAgent clone every own field a fresh instance has", () => {
+    expect(missingOnClone(new ReplayAgent([]))).toEqual([]);
   });
 });
 

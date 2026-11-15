@@ -61,6 +61,28 @@ Concrete implementation for HTTP-based agent connectivity:
   efficient event encoding format
 </Card>
 
+## ReplayAgent
+
+Play a recorded event stream through the same pipeline as a live agent, with no
+network. Record with `recordEvents` or `createEventRecorder`, serialize the
+events as JSON, and construct a `ReplayAgent`.
+
+- [Recording](/sdk/js/client/replay-agent#recording) - Capture a live run
+- [Playback](/sdk/js/client/replay-agent#behavior) - Multi-run, abort, and
+  past-the-end behavior
+- [Configuration](/sdk/js/client/replay-agent#configuration) - Delay and
+  constructor options
+
+<Card
+  title="ReplayAgent Reference"
+  icon="rotate"
+  href="/sdk/js/client/replay-agent"
+  color="#3B82F6"
+  iconType="solid"
+>
+  Record an agent run and replay it offline through the normal client pipeline
+</Card>
+
 ## Middleware
 
 Transform and intercept event streams flowing through agents with a flexible
