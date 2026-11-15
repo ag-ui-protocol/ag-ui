@@ -27,6 +27,7 @@ on:
       # so editing the table alone can turn that suite red.
       - "integrations/aws-strands/error-codes.json"
       - "integrations/langroid/python/**"
+      - "integrations/openai-agents/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
       - "integrations/agent-spec/python/**"
@@ -83,6 +84,7 @@ on:
       # so editing the table alone can turn that suite red.
       - "integrations/aws-strands/error-codes.json"
       - "integrations/langroid/python/**"
+      - "integrations/openai-agents/python/**"
       - "integrations/crew-ai/python/**"
       - "integrations/claude-managed-agents/python/**"
       - "integrations/agent-spec/python/**"
@@ -617,6 +619,18 @@ jobs:
         working-directory: integrations/adk-middleware/python
         run: uv run --locked python -m pytest tests/ -v
 
+      # SDK 0.9 moved a2ui.adk to a separate integration that AG-UI does not use
+      # (#3121). Normally resolve a fresh install with the published SDK/core and
+      # current Google versions, then exercise the SDK-backed helper and Express
+      # together. Keep the cached/locked test environment untouched.
+      - name: Smoke test the published A2UI SDK path
+        working-directory: integrations/adk-middleware/python
+        run: >-
+          uv run --isolated --no-project --python .venv/bin/python
+          --with . --with 'a2ui-agent-sdk==0.10.0' --with 'a2ui-core==0.5.0'
+          --with 'google-adk==2.12.0' --with 'google-genai==2.31.0'
+          python -I tests/smoke_a2ui_sdk.py
+
       - name: Assert no lockfile was rewritten
         # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
         # its tests would otherwise skip this step and report only the test failure,
@@ -634,6 +648,95 @@ jobs:
         # signal action.yml's header argues against.
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
+
+  # The job above runs the pinned PYTHON_VERSION; this one runs the newest version
+  # requires-python admits (#3080). Move it when the ceiling rises: a version
+  # nobody runs is a support claim nobody has checked.
+  #
+  # actions/setup-python rather than setup-uv's python-version, for the reason
+  # given above a2ui-toolkit-python: the pinned uv resolves "3.15" to 3.15.0b4.
+  #
+  # It also tests what users install. uv honours only the lower bound of a
+  # dependency's Requires-Python, so `uv sync` installs an ag-ui-a2ui-toolkit
+  # that declares <3.15 and the source run passes, while `pip install ag-ui-adk`
+  # finds no toolkit release for 3.15 at all. So the second half builds the sdist
+  # and wheel as publish-python-package.sh does, installs the wheel with pip into
+  # a fresh venv (pip applies every Requires-Python) constrained to the lock, and
+  # runs the suite from a copy of tests/ outside the checkout, so a module left
+  # out of the wheel cannot be imported from src/ instead.
+  adk-middleware-python-latest:
+    name: adk-middleware-python (3.15)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15"
+
+      # No python-version (see above): uv uses the interpreter setup-python installed.
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Install dependencies
+        working-directory: integrations/adk-middleware/python
+        run: uv sync --locked --python "$(command -v python)"
+
+      - name: Run tests
+        working-directory: integrations/adk-middleware/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Build sdist and wheel
+        working-directory: integrations/adk-middleware/python
+        run: uv build --python "$(command -v python)" --out-dir "$RUNNER_TEMP/dist"
+
+      - name: Install the wheel into a clean venv
+        # The constraints pin every dependency to the lock, so this tests the same
+        # tree as the source run; the dev group adds pytest and the test fixtures'
+        # extras (greenlet). No --only-binary: pyyaml ships no cp315 wheels and
+        # builds from its sdist.
+        working-directory: integrations/adk-middleware/python
+        run: |
+          uv export --frozen --no-emit-project --no-hashes -o "$RUNNER_TEMP/locked.txt"
+          uv export --frozen --only-group dev --no-emit-project --no-hashes -o "$RUNNER_TEMP/dev.txt"
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl \
+            -r "$RUNNER_TEMP/dev.txt" -c "$RUNNER_TEMP/locked.txt"
+
+      - name: Run tests against the installed wheel
+        # pytest.ini without its `pythonpath = src`, and -I to keep PYTHONPATH and
+        # the current directory out, so the only ag_ui_adk on sys.path is the
+        # installed one. The import check makes that explicit rather than assumed.
+        run: |
+          mkdir "$RUNNER_TEMP/wheel-tests"
+          cp -R integrations/adk-middleware/python/tests "$RUNNER_TEMP/wheel-tests/tests"
+          grep -v '^pythonpath' integrations/adk-middleware/python/pytest.ini > "$RUNNER_TEMP/wheel-tests/pytest.ini"
+          cd "$RUNNER_TEMP/wheel-tests"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -c '
+          import sys
+          import ag_ui_adk
+          import ag_ui_a2ui_toolkit
+          for module in (ag_ui_adk, ag_ui_a2ui_toolkit):
+              print(module.__name__, "imported from", module.__file__)
+              if not module.__file__.startswith(sys.prefix + "/"):
+                  sys.exit(f"{module.__name__} did not come from the installed wheel")
+          '
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # See adk-middleware-python for why both conditions are needed.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        # actionlint 1.7.12 does not support $/ references; checkout is gated above.
+        uses: ./.github/actions/assert-lockfiles-unchanged # zizmor: ignore[self-repository]
 
   adk-compatibility:
     name: ADK compatibility (${{ matrix.adk }})
@@ -1019,6 +1122,70 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  openai-agents-python:
+    name: openai-agents-python
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome — see
+        # the comment there for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect fork PR
+        id: fork-check
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" && \
+                "${GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME}" != "${GITHUB_REPOSITORY}" ]]; then
+            echo "prefix=fork-" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GITHUB_EVENT_PULL_REQUEST_HEAD_REPO_FULL_NAME: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Load cached venv
+        id: cached-uv-dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: integrations/openai-agents/python/.venv
+          key: ${{ steps.fork-check.outputs.prefix }}venv-${{ runner.os }}-openai-agents-py${{ env.PYTHON_VERSION }}-uv${{ env.UV_VERSION }}-${{ hashFiles('integrations/openai-agents/python/uv.lock') }}
+
+      - name: Install dependencies
+        working-directory: integrations/openai-agents/python
+        run: uv sync --locked
+
+      - name: Run tests
+        working-directory: integrations/openai-agents/python
+        run: uv run --locked python -m pytest tests/ -v
+
+      - name: Assert no lockfile was rewritten
+        # Must run when the tests FAIL: a job that rewrote a lockfile and then failed
+        # its tests would otherwise skip this step and report only the test failure,
+        # losing the signal this guard exists to produce.
+        #
+        # !cancelled() rather than always(), because always() also fires on
+        # cancellation, and concurrency cancels supersede runs constantly here — each
+        # one would otherwise spend a step re-checking a job nobody is waiting on.
+        #
+        # The checkout gate is NOT redundant with !cancelled(). !cancelled() is TRUE
+        # when an earlier step failed, including `Checkout code` — and this step is a
+        # local `uses:`, so with no repo on disk it dies with "Can't find 'action.yml'
+        # under .../assert-lockfiles-unchanged". That lands AFTER the real error and
+        # reads as though the guard itself is broken, which is precisely the misleading
+        # signal action.yml's header argues against.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
   crewai-python:
     runs-on: ubuntu-latest
     strategy:
@@ -1255,7 +1422,8 @@ jobs:
         run: uv run --locked python -m pytest tests/ -v
       - name: Assert no lockfile was rewritten
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        uses: $/.github/actions/assert-lockfiles-unchanged
+        # actionlint 1.7.12 does not support $/ references; checkout is gated above.
+        uses: ./.github/actions/assert-lockfiles-unchanged # zizmor: ignore[self-repository]
 
   claude-managed-agents-python:
     name: claude-managed-agents-python

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.46 — 2026-11-13
+
+- Read LangGraph's native `Interrupt.response_schema` field (langgraph >= 1.2.12), falling back to value-level `responseSchema`/`response_schema` keys.
+- Unwrap LangChain-serialized `ToolMessage` outputs under `kwargs` on tool end so tool calls and results emit correctly.
+- Skip `on_tool_end` outputs with no tool call id instead of throwing or emitting events with an undefined id.
+- Declare `protocolVersion` on `RUN_STARTED` events.
+- Refreshed Gemini thinking demos.
+
+### Breaking changes
+
+- `@ag-ui/client` and related peer dependencies now require >=1.0.0; `utils.ts` uses `contentToText`/`contentHasMedia`, which only exist in 1.0.
+
 ## 0.0.45 — 2026-10-05
 
 - Non-streamed tool calls now attach to their owning assistant message, recorded at OnChatModelEnd, so clients no longer hang calls on unrecognized stand-in messages.

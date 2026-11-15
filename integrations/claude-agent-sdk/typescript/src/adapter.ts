@@ -1,6 +1,15 @@
+import { NativeChildRecovery } from "./native-recovery";
 import { startLoopbackMcp } from "./loopback-mcp";
-import { RecoveryRun, type SessionBinding } from "./recovery";
-import { getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
+import {
+  RecoveryRun,
+  unresolvedToolUses,
+  historicalToolResults,
+  type SessionBinding,
+} from "./recovery";
+import {
+  getSessionInfo,
+  getSessionMessages,
+} from "@anthropic-ai/claude-agent-sdk";
 /**
  * Claude Agent SDK adapter for AG-UI protocol.
  */
@@ -18,6 +27,7 @@ import {
 import { createSdkMcpServer, query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Query,
+  HookCallback,
   Options,
   SDKResultMessage,
   SDKMessage,
@@ -37,6 +47,7 @@ import {
 import {
   type FrontendToolResult,
   processMessages,
+  recoveryUserMessages,
   buildStateContextAddendum,
   extractToolNames,
   stripMcpPrefix,
@@ -87,7 +98,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
   private config: ClaudeAgentAdapterConfig;
   private bindings = new Map<string, SessionBinding>();
   private admitted = new Set<string>();
-  private activeQueries = new Map<string, Query>();
+  private activeQueries = new Map<string, Pick<Query, "close" | "interrupt">>();
   private sessions = new Map<
     string,
     { sessionId: string; lastUsed: number; active: boolean }
@@ -132,8 +143,19 @@ export class ClaudeAgentAdapter extends AbstractAgent {
     this.bindings.delete(threadId);
   }
 
+  /**
+   * `AbstractAgent.clone()` skips field initializers, so the per-thread maps
+   * must be set here. Clones share them with the original: a host such as the
+   * CopilotKit runtime clones the agent for each request, and the follow-up
+   * run must find the session and the paused tool call of the earlier run, and
+   * be refused while another run of the same thread is active.
+   */
   public clone(): ClaudeAgentAdapter {
     const cloned = super.clone() as ClaudeAgentAdapter;
+    cloned.bindings = this.bindings;
+    cloned.admitted = this.admitted;
+    cloned.activeQueries = this.activeQueries;
+    cloned.sessions = this.sessions;
     cloned.config = { ...this.config };
     if (this.headers) {
       cloned.headers = { ...this.headers };
@@ -170,6 +192,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       this.translateStream(runInput, subscriber).catch((error) => {
         subscriber.error(error);
       });
+      return () => this.activeQueries.get(threadId)?.close?.();
     });
   }
 
@@ -226,19 +249,142 @@ export class ClaudeAgentAdapter extends AbstractAgent {
           sessionId: requested as string,
           profile: recoveryConfig?.profile ?? "default",
         };
-      const recovery = new RecoveryRun(
-        binding,
-        input,
-        recoveryConfig?.deferTools,
-      );
       const profile = binding?.profile ?? recoveryConfig?.profile ?? "default";
       const profileOptions = recoveryConfig
         ? await recoveryConfig.resolveProfile(profile)
         : {};
       const options = this.buildOptions(
-        { ...input, tools: recovery.tools },
+        {
+          ...input,
+          tools:
+            binding?.pending && binding.frontendTools
+              ? binding.frontendTools
+              : input.tools,
+        },
         profileOptions,
-        recovery.resolveFrontendResult,
+        (name, args) => {
+          if (this.config.nativeChildRecovery)
+            throw new Error(
+              "Frontend tool must be suspended before execution in native recovery mode",
+            );
+          return recovery.resolveFrontendResult(name, args);
+        },
+      );
+      if (this.config.nativeChildRecovery) {
+        const proxy = options.mcpServers?.[AG_UI_MCP_SERVER_NAME];
+        const native = new NativeChildRecovery(
+          this.config.nativeChildRecovery,
+          {
+            [STATE_MANAGEMENT_TOOL_FULL_NAME]: async (call) => {
+              const result = await createStateManagementTool().handler(
+                call.input,
+              );
+              return {
+                content: result.content
+                  .map((b: { text: string }) => b.text)
+                  .join("\n"),
+                is_error: !!result.isError,
+              };
+            },
+          },
+          proxy && typeof proxy === "object" && proxy.type === "sdk"
+            ? async (workerOptions) => {
+                const endpoint = await startLoopbackMcp(proxy);
+                return {
+                  options: {
+                    ...workerOptions,
+                    mcpServers: {
+                      ...workerOptions.mcpServers,
+                      [AG_UI_MCP_SERVER_NAME]: endpoint.config,
+                    },
+                  },
+                  close: () => endpoint.close(),
+                };
+              }
+            : undefined,
+        );
+        options.resume = binding?.sessionId ?? options.resume;
+        options.sessionId = options.resume
+          ? undefined
+          : (options.sessionId ?? randomUUID());
+        if (this.config.queryTimeoutMs)
+          timeoutHandle = setTimeout(
+            () =>
+              native.abort("SDK query timed out; parent remains unresolved"),
+            this.config.queryTimeoutMs,
+          );
+        if (hasState(input.state))
+          subscriber.next({
+            type: EventType.STATE_SNAPSHOT,
+            snapshot: input.state,
+          });
+        const sdkStream = native.run(
+          input,
+          options,
+          processMessages(input).userMessage,
+        );
+        this.activeQueries.set(queryKey, {
+          close: () => native.abort("SDK run cancelled"),
+          interrupt: async () => {
+            native.abort("SDK run interrupted");
+            return undefined;
+          },
+        });
+        await this.streamMessages(
+          sdkStream,
+          threadId,
+          runId,
+          input,
+          new Set(extractToolNames(input.tools)),
+          subscriber,
+          runCtx,
+        );
+        if (native.sessionId) {
+          const saved = { sessionId: native.sessionId, profile };
+          this.bindings.set(threadId, saved);
+          if (recoveryConfig) await recoveryConfig.store.save(threadId, saved);
+        }
+        subscriber.next({
+          type: EventType.RUN_FINISHED,
+          threadId,
+          runId,
+          ...(native.outcome ? { outcome: native.outcome } : {}),
+        });
+        subscriber.complete();
+        return;
+      }
+      let nativeHistory:
+        | Awaited<ReturnType<typeof getSessionMessages>>
+        | undefined;
+      if (binding?.pending && !binding.unsupportedPendingTools?.length) {
+        nativeHistory = await getSessionMessages(binding.sessionId, {
+          dir: options.cwd,
+          sessionStore: options.sessionStore,
+        });
+        const unresolved = unresolvedToolUses(nativeHistory);
+        if (
+          unresolved.length > 1 &&
+          unresolved.some((call) => call.id === binding.pending!.id)
+        ) {
+          binding.unsupportedPendingTools = unresolved;
+          if (recoveryConfig)
+            await recoveryConfig.store.save(threadId, structuredClone(binding));
+          this.bindings.set(threadId, structuredClone(binding));
+        }
+      }
+      const recovery = await RecoveryRun.restore(
+        binding,
+        input,
+        recoveryConfig?.deferTools ?? [],
+        async () => {
+          return historicalToolResults(
+            nativeHistory ??
+              (await getSessionMessages(binding!.sessionId, {
+                dir: options.cwd,
+                sessionStore: options.sessionStore,
+              })),
+          );
+        },
       );
       const proxy = options.mcpServers?.[AG_UI_MCP_SERVER_NAME];
       if (proxy && typeof proxy === "object" && proxy.type === "sdk") {
@@ -290,21 +436,74 @@ export class ClaudeAgentAdapter extends AbstractAgent {
         subscriber.complete();
         return;
       }
+      // Persist before acknowledging deferral, not in stream cleanup: cancellation
+      // can skip cleanup or arrive without a terminal SDK result. Serialize saves
+      // so concurrent hooks cannot overwrite a larger batch with an older one.
+      let checkpointQueue = Promise.resolve();
+      const saveRecoveryBinding = async () => {
+        const previous = checkpointQueue;
+        let release!: () => void;
+        checkpointQueue = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await previous;
+        try {
+          if (!recovery.binding) return;
+          const snapshot = structuredClone(recovery.binding);
+          if (recoveryConfig)
+            await recoveryConfig.store.save(threadId, snapshot);
+          this.bindings.set(threadId, snapshot);
+        } finally {
+          release();
+        }
+      };
+      const durableHook: HookCallback = async (...args) => {
+        const output = await recovery.hook(...args);
+        if (recovery.checkpointDeferred(args[0].session_id, profile))
+          await saveRecoveryBinding();
+        return output;
+      };
       options.hooks = {
         ...options.hooks,
         PreToolUse: [
           ...(options.hooks?.PreToolUse ?? []),
-          { hooks: [recovery.hook] },
+          { hooks: [durableHook] },
         ],
       };
       // Keep the SDK control channel alive for hook answers without enqueueing
       // an empty user turn after the CLI automatically replays the deferral.
-      const resumeGate = new Promise<void>((resolve) => {
+      let resumeGate = new Promise<void>((resolve) => {
         releaseResumeInput = resolve;
       });
+      const newMessages = recovery.resuming
+        ? recoveryUserMessages(input, binding!.pending!.id)
+        : [];
       const prompt = recovery.resuming
         ? (async function* (): AsyncIterable<SDKUserMessage> {
             await resumeGate;
+            for (const message of newMessages) {
+              await resumeGate;
+              if (subscriber.closed) return;
+              // Arm before yielding: the SDK can consume the prompt immediately.
+              // Only a validated successful result unlocks the following turn.
+              resumeGate = new Promise<void>((resolve) => {
+                releaseResumeInput = resolve;
+              });
+              const converted = processMessages({
+                ...input,
+                messages: [message],
+              }).userMessage;
+              if (typeof converted === "string") {
+                yield {
+                  type: "user",
+                  session_id: binding!.sessionId,
+                  parent_tool_use_id: null,
+                  message: { role: "user", content: converted },
+                };
+              } else {
+                yield* converted;
+              }
+            }
           })()
         : processMessages(input).userMessage;
       for (const notice of unsupportedInputParts(input)) {
@@ -325,6 +524,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
         );
       }
 
+      if (subscriber.closed) return;
       const messageStream = query({
         prompt,
         options: {
@@ -352,8 +552,12 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       }
 
       await this.streamMessages(
-        this.observeRecovery(messageStream, recovery, threadId, profile, () =>
-          releaseResumeInput?.(),
+        this.observeRecovery(
+          messageStream,
+          recovery,
+          profile,
+          () => releaseResumeInput?.(),
+          saveRecoveryBinding,
         ),
         threadId,
         runId,
@@ -407,25 +611,35 @@ export class ClaudeAgentAdapter extends AbstractAgent {
   private async *observeRecovery(
     stream: AsyncIterable<SDKMessage>,
     recovery: RecoveryRun,
-    threadId: string,
     profile: string,
     releaseInput: () => void,
+    saveBinding: () => Promise<void>,
   ): AsyncIterable<SDKMessage> {
     for await (const message of stream) {
-      if (message.type === "result") releaseInput();
+      if (message.type === "assistant" && message.parent_tool_use_id) {
+        for (const block of message.message.content) {
+          if (block.type === "tool_use")
+            recovery.observeChildTool(
+              {
+                id: block.id,
+                name: block.name,
+                input: block.input as Record<string, unknown>,
+              },
+              message.parent_tool_use_id,
+            );
+        }
+      }
       if (message.type === "user" && Array.isArray(message.message.content)) {
         for (const block of message.message.content) {
           if (
             block.type === "tool_result" &&
-            recovery.observeToolResult(block.tool_use_id) &&
+            recovery.observeToolResult(
+              block.tool_use_id,
+              message.parent_tool_use_id,
+            ) &&
             recovery.binding
           ) {
-            if (this.config.sessionRecovery)
-              await this.config.sessionRecovery.store.save(
-                threadId,
-                structuredClone(recovery.binding),
-              );
-            this.bindings.set(threadId, structuredClone(recovery.binding));
+            await saveBinding();
           }
         }
       }
@@ -439,18 +653,15 @@ export class ClaudeAgentAdapter extends AbstractAgent {
           message.type === "result" ? message : undefined,
         );
         if (recovery.binding) {
-          if (this.config.sessionRecovery)
-            await this.config.sessionRecovery.store.save(
-              threadId,
-              structuredClone(recovery.binding),
-            );
-          this.bindings.set(threadId, structuredClone(recovery.binding));
+          await saveBinding();
         }
+        recovery.assertSupported();
         if (message.type === "result" && message.is_error)
           throw new Error(
             "SDK resume/run failed; check the original files, tools, credentials and execution configuration.",
           );
       }
+      if (message.type === "result") releaseInput();
       yield message;
     }
   }
@@ -483,6 +694,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
       initialState: _state,
       debug: _debug,
       sessionRecovery: _recovery,
+      nativeChildRecovery: _nativeChildRecovery,
       maxSessions: _maxSessions,
       sessionTtlMs: _sessionTtlMs,
       queryTimeoutMs: _queryTimeoutMs,
@@ -1002,7 +1214,14 @@ export class ClaudeAgentAdapter extends AbstractAgent {
                   type: EventType.TOOL_CALL_RESULT,
                   threadId,
                   runId,
-                  messageId: toolMsg.id,
+                  // The native echo updates the submitted result, rather than
+                  // introducing a second outward message for the same call.
+                  messageId:
+                    input.messages.find(
+                      (message) =>
+                        message.role === "tool" &&
+                        message.toolCallId === toolUseId,
+                    )?.id ?? toolMsg.id,
                   toolCallId: toolUseId,
                   content: toolMsg.content!,
                   rawEvent: {
@@ -1068,7 +1287,14 @@ export class ClaudeAgentAdapter extends AbstractAgent {
 
           const resultText = (resultMsg as { result?: string }).result;
           if (!hasStreamedText && resultText) {
-            const resultMsgId = randomUUID();
+            // With partial streaming disabled, ResultMessage repeats the last
+            // complete assistant message. Preserve its canonical identity.
+            const lastAssistant = runMessages
+              .filter((m) => m.role === "assistant")
+              .at(-1);
+            const matchingAssistant =
+              lastAssistant?.content === resultText ? lastAssistant : undefined;
+            const resultMsgId = matchingAssistant?.id ?? randomUUID();
             subscriber.next({
               type: EventType.TEXT_MESSAGE_START,
               threadId,
@@ -1090,11 +1316,13 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               messageId: resultMsgId,
             });
 
-            upsertMessage({
-              id: resultMsgId,
-              role: "assistant" as const,
-              content: resultText,
-            });
+            upsertMessage(
+              matchingAssistant ?? {
+                id: resultMsgId,
+                role: "assistant" as const,
+                content: resultText,
+              },
+            );
           }
         }
       }

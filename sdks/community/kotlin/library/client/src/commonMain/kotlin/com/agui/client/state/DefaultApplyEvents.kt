@@ -13,7 +13,6 @@ import com.agui.client.agent.ReasoningTelemetryState
 import com.agui.client.agent.ThinkingTelemetryState
 import com.agui.client.agent.runSubscribersWithMutation
 import com.agui.core.types.*
-import com.reidsync.kxjsonpatch.JsonPatchApplicationException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.transform
@@ -64,7 +63,35 @@ private fun Message.withEnvelope(incoming: Metadata?, owner: String?, speaker: S
     }
 }
 
-private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
+/**
+ * Applies [delta] to [initialState] atomically.
+ *
+ * The delta is validated before any operation runs: every operation must be one of the six RFC 6902
+ * operations with a well-formed `path` (and `from` for `copy`/`move`). Callers that tolerate unknown
+ * operations must filter them out first. Every failure, including invalid input, is reported as
+ * [JsonPatchApplicationException].
+ */
+internal fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
+    try {
+        AgUiV1.validate("event", buildJsonObject {
+            put("type", "STATE_DELTA")
+            put("delta", delta)
+        })
+    } catch (e: IllegalArgumentException) {
+        throw JsonPatchApplicationException("Invalid state delta: ${e.message}", e)
+    } catch (e: IllegalStateException) {
+        throw JsonPatchApplicationException("Invalid state delta: ${e.message}", e)
+    }
+    return try {
+        applyValidatedStateDelta(delta, initialState)
+    } catch (e: JsonPatchApplicationException) {
+        throw e
+    } catch (e: RuntimeException) {
+        throw JsonPatchApplicationException("Failed to apply state delta: ${e.message}", e)
+    }
+}
+
+private fun applyValidatedStateDelta(delta: JsonArray, initialState: JsonElement): JsonElement {
     // Kotlin null denotes an absent document; JsonNull remains a valid JSON value.
     var candidate: JsonElement? = initialState
     for (element in delta) {
@@ -76,7 +103,7 @@ private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonEl
             continue
         }
         val currentState = candidate
-            ?: throw JsonPatchApplicationException("State delta '$name' at '$path' requires an existing document")
+            ?: throw JsonPatchApplicationException("State delta '$name' at '$path' has no target document")
         val tokens = statePatchPathTokens(path)
         when (name) {
             "test" -> {
@@ -101,13 +128,19 @@ private fun applyStateDelta(delta: JsonArray, initialState: JsonElement): JsonEl
                 requireStatePatchPath(currentState, path)
                 candidate = if (tokens.isEmpty()) null else withoutStatePatchSource(currentState, tokens)
             }
-            else -> {
-                requireStatePatchPath(currentState, path, allowAddition = name == "add")
-                candidate = writeStatePatch(currentState, tokens, operation.getValue("value"), adding = name == "add")
+            "add" -> {
+                requireStatePatchPath(currentState, path, allowAddition = true)
+                candidate = writeStatePatch(currentState, tokens, operation.getValue("value"), adding = true)
             }
+            "replace" -> {
+                requireStatePatchPath(currentState, path)
+                candidate = writeStatePatch(currentState, tokens, operation.getValue("value"), adding = false)
+            }
+            else -> throw JsonPatchApplicationException("Unsupported state delta operation '$name'")
         }
     }
-    return candidate ?: throw JsonPatchApplicationException("State delta cannot leave the document absent")
+    // Not an RFC 6902 rule: the application requires a state document after every delta.
+    return candidate ?: throw JsonPatchApplicationException("State delta would leave an absent document")
 }
 
 private fun statePatchValue(state: JsonElement, path: String): JsonElement {
@@ -123,25 +156,61 @@ private fun statePatchValue(state: JsonElement, path: String): JsonElement {
 
 private fun writeStatePatch(state: JsonElement, tokens: List<String>, value: JsonElement, adding: Boolean): JsonElement {
     if (tokens.isEmpty()) return value
-    val token = tokens.first()
-    val tail = tokens.drop(1)
-    return when (state) {
-        is JsonObject -> JsonObject(state.toMutableMap().apply {
-            this[token] = if (tail.isEmpty()) value else writeStatePatch(getValue(token), tail, value, adding)
-        })
-        is JsonArray -> JsonArray(state.toMutableList().apply {
-            val index = if (token == "-") size else token.toInt()
-            if (tail.isNotEmpty()) this[index] = writeStatePatch(get(index), tail, value, adding)
-            else if (adding) add(index, value) else this[index] = value
-        })
-        else -> throw JsonPatchApplicationException("Patch destination must have an object or array parent")
+    val token = tokens.last()
+    return rewriteStatePatchParent(state, tokens, "Patch destination must have an object or array parent") { parent ->
+        when (parent) {
+            is JsonObject -> JsonObject(parent.toMutableMap().apply { this[token] = value })
+            is JsonArray -> JsonArray(parent.toMutableList().apply {
+                val index = if (token == "-") size else token.toInt()
+                if (adding) add(index, value) else this[index] = value
+            })
+            else -> throw JsonPatchApplicationException("Patch destination must have an object or array parent")
+        }
     }
 }
 
-private fun statePatchPathTokens(path: String): List<String> =
-    if (path.isEmpty()) emptyList() else path.substring(1).split('/').map {
+/**
+ * Replaces the parent of the location [tokens] points to with [rewrite]'s result, and copies every
+ * container above it. Uses loops, not recursion: pointers are as long as the agent makes them, so
+ * recursion here would overflow the stack on deeply nested state.
+ */
+private fun rewriteStatePatchParent(
+    state: JsonElement,
+    tokens: List<String>,
+    notAContainer: String,
+    rewrite: (JsonElement) -> JsonElement
+): JsonElement {
+    val ancestors = ArrayList<JsonElement>(tokens.lastIndex)
+    var parent = state
+    for (position in 0 until tokens.lastIndex) {
+        ancestors.add(parent)
+        val token = tokens[position]
+        parent = when (parent) {
+            is JsonObject -> parent.getValue(token)
+            is JsonArray -> parent[token.toInt()]
+            else -> throw JsonPatchApplicationException(notAContainer)
+        }
+    }
+    var rewritten = rewrite(parent)
+    for (position in ancestors.lastIndex downTo 0) {
+        val token = tokens[position]
+        val child = rewritten
+        rewritten = when (val ancestor = ancestors[position]) {
+            is JsonObject -> JsonObject(ancestor.toMutableMap().apply { this[token] = child })
+            is JsonArray -> JsonArray(ancestor.toMutableList().apply { this[token.toInt()] = child })
+            else -> throw JsonPatchApplicationException(notAContainer)
+        }
+    }
+    return rewritten
+}
+
+private fun statePatchPathTokens(path: String): List<String> {
+    if (path.isEmpty()) return emptyList()
+    if (!path.startsWith("/")) throw JsonPatchApplicationException("Invalid JSON Pointer '$path'")
+    return path.substring(1).split('/').map {
         it.replace("~1", "/").replace("~0", "~")
     }
+}
 
 private fun requireStatePatchPath(state: JsonElement, path: String, allowAddition: Boolean = false) {
     val tokens = statePatchPathTokens(path)
@@ -169,40 +238,47 @@ private fun requireStatePatchPath(state: JsonElement, path: String, allowAdditio
     }
 }
 
-private fun withoutStatePatchSource(state: JsonElement, path: List<String>, position: Int = 0): JsonElement {
-    val token = path[position]
-    val isLeaf = position == path.lastIndex
-    return when (state) {
-        is JsonObject -> JsonObject(state.toMutableMap().apply {
-            if (isLeaf) remove(token)
-            else this[token] = withoutStatePatchSource(getValue(token), path, position + 1)
-        })
-        is JsonArray -> JsonArray(state.toMutableList().apply {
-            val index = token.toInt()
-            if (isLeaf) removeAt(index)
-            else this[index] = withoutStatePatchSource(get(index), path, position + 1)
-        })
-        else -> throw JsonPatchApplicationException("State delta move source must have an object or array parent")
+private fun withoutStatePatchSource(state: JsonElement, path: List<String>): JsonElement {
+    val token = path.last()
+    return rewriteStatePatchParent(state, path, "State delta move source must have an object or array parent") { parent ->
+        when (parent) {
+            is JsonObject -> JsonObject(parent.toMutableMap().apply { remove(token) })
+            is JsonArray -> JsonArray(parent.toMutableList().apply { removeAt(token.toInt()) })
+            else -> throw JsonPatchApplicationException("State delta move source must have an object or array parent")
+        }
     }
 }
 
+// Walks a work list, and only uses == on primitives: JsonObject and JsonArray equality recurses, so
+// it would overflow the stack on deeply nested values.
 private fun jsonPatchValuesEqual(actual: JsonElement, expected: JsonElement): Boolean {
-    if (actual == expected) return true
-    return when {
-        actual is JsonObject && expected is JsonObject ->
-            actual.keys == expected.keys && actual.all { (key, value) ->
-                jsonPatchValuesEqual(value, expected.getValue(key))
+    val pending = ArrayDeque<Pair<JsonElement, JsonElement>>()
+    pending.addLast(actual to expected)
+    while (pending.isNotEmpty()) {
+        val (left, right) = pending.removeLast()
+        when {
+            left is JsonObject && right is JsonObject -> {
+                if (left.keys != right.keys) return false
+                left.forEach { (key, value) -> pending.addLast(value to right.getValue(key)) }
             }
-        actual is JsonArray && expected is JsonArray ->
-            actual.size == expected.size && actual.indices.all { index ->
-                jsonPatchValuesEqual(actual[index], expected[index])
+            left is JsonArray && right is JsonArray -> {
+                if (left.size != right.size) return false
+                left.indices.forEach { index -> pending.addLast(left[index] to right[index]) }
             }
-        actual is JsonPrimitive && expected is JsonPrimitive && !actual.isString && !expected.isString -> {
-            val actualNumber = normalizedJsonNumber(actual.content)
-            actualNumber != null && actualNumber == normalizedJsonNumber(expected.content)
+            left is JsonPrimitive && right is JsonPrimitive -> {
+                if (!jsonPatchPrimitivesEqual(left, right)) return false
+            }
+            else -> return false
         }
-        else -> false
     }
+    return true
+}
+
+private fun jsonPatchPrimitivesEqual(actual: JsonPrimitive, expected: JsonPrimitive): Boolean {
+    if (actual == expected) return true
+    if (actual.isString || expected.isString) return false
+    val actualNumber = normalizedJsonNumber(actual.content)
+    return actualNumber != null && actualNumber == normalizedJsonNumber(expected.content)
 }
 
 private val jsonNumberPattern = Regex("""(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?""")
@@ -239,6 +315,19 @@ private fun adjustDecimalExponent(exponent: String, adjustment: Int): String {
     return if (negative) "-$adjusted" else adjusted
 }
 
+/**
+ * Applies [events] to the messages and state in [input] and emits the resulting [AgentState]s.
+ *
+ * A `STATE_DELTA` can fail in two ways, and they are handled differently:
+ * - A malformed event fails the flow with [IllegalArgumentException] or [IllegalStateException] and
+ *   does not reach [stateHandler]. This covers a malformed operation or JSON Pointer and an invalid
+ *   event envelope, and it means the agent is not speaking the protocol.
+ * - A well-formed delta that cannot be applied to the current state, such as one whose `path` does
+ *   not exist, is reported through [StateChangeHandler.onStateError]. The previous state is kept and
+ *   the run continues.
+ *
+ * Unknown operations are neither: they are dropped with a warning and the rest of the delta applies.
+ */
 fun defaultApplyEvents(
     input: RunAgentInput,
     events: Flow<BaseEvent>,
@@ -272,7 +361,8 @@ fun defaultApplyEvents(
         reasoningStreams.getOrPut(messageId) { MutableReasoningStream(messageId) }
 
     logger.d {
-        "defaultApplyEvents start: initial messages=${messages.joinToString { "${it.messageRole}:${it.id}" }} state=$state"
+        // The state is left out on purpose: JsonElement.toString recurses, so it overflows the stack on deep state.
+        "defaultApplyEvents start: initial messages=${messages.joinToString { "${it.messageRole}:${it.id}" }}"
     }
 
     fun finalizeThinkingMessage() {
@@ -550,6 +640,7 @@ fun defaultApplyEvents(
                     }
                 })
                 // Validate the original JSON tree; serialization can coerce opaque numeric literals.
+                // Outside the try below on purpose: a malformed event is fatal, not a state error.
                 AgUiV1.validate("event", buildJsonObject {
                     put("type", "STATE_DELTA")
                     put("delta", delta)

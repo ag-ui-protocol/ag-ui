@@ -139,8 +139,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The workspace default starts 30 Nx tasks. Each test task also starts
+      # its own worker pool, starving native subprocess tests on this runner.
+      # Bound project concurrency instead of weakening their timeout checks.
       - name: Test Build
-        run: pnpm run build
+        run: pnpm run build --parallel=1
 
       # A verification build must not rewrite tracked files (PNI-303): the proto
       # generator is pinned via config.protocVersion and tsdown's exports
@@ -149,7 +152,7 @@ jobs:
         run: git diff --exit-code
 
       - name: Run tests
-        run: pnpm run test
+        run: pnpm run test --parallel=1
 
       # @ag-ui/core declares zod to consumers as the optional peer
       # `^3.25.18 || ^4.0.0` (the ^3.25.76 in devDependencies is only what this

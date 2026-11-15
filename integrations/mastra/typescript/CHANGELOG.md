@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.2 — 2026-10-27
+
+- RUN_FINISHED now carries Mastra's finish reason unchanged on `metadata.mastra.finishReason` when reported; cancelled runs carry none.
+- Added `subagentVisibility: "hidden" | "attributed"` option (default `"hidden"`); attributed mode maps each Mastra delegation to an AG-UI 1.0 subagent invocation.
+- Run usage now counts delegated sub-agents' token usage by adding each forwarded `finish` once, in both visibility modes.
+- Fixed loss of sibling tool calls across suspension.
+- Fixed tool ownership not being preserved across text segments.
+- Fixed `use()` middlewares not carrying onto cloned agents, so they now run on clones CopilotKit serves.
+
+### Breaking changes
+
+- `AbstractAgent.middlewares` is now protected; subclasses building their own clones must account for this access change.
+
 ## 2.0.1 — 2026-10-12
 
 - Fixed `selectNewMessages` to forward the contiguous tail from the first unstored message, instead of dropping every message whose id Mastra had stored.

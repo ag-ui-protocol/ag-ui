@@ -8,6 +8,7 @@ Built for simplicity and flexibility, it enables seamless integration between AI
 ---
 
 <div align="center">
+<a href="https://trendshift.io/repositories/27961?utm_source=repository-badge&utm_medium=badge&utm_campaign=badge-repository-27961" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/27961" alt="ag-ui-protocol%2Fag-ui | Trendshift" width="250" height="55"/></a>
 <a href="https://trendshift.io/repositories/27961?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-27961" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27961/daily" alt="ag-ui-protocol%2Fag-ui | Trendshift" width="250" height="55"/></a>
 </div>
 
@@ -121,7 +122,8 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 | [Claude Agent SDK](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/claude-agent-sdk) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/claude-agent-sdk-python/feature/shared_state) |
 | [Claude Managed Agents SDK](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/claude-managed-agents) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/claude-managed-agents-python/feature/tool_based_generative_ui) |
 | [Langroid](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/langroid) | ✅ Supported | 🎮 [Demos](https://dojo.ag-ui.com/langroid/feature/shared_state) |
-| [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
+| [Omnara](https://omnara.com) | ✅ Supported | ➡️ [Docs](https://docs.ag-ui.com/integrations/omnara) 🎮 [Demos](https://dojo.ag-ui.com/omnara/feature/tool_based_generative_ui) |
+| [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) | 🛠️ In Progress | – |
 | [Cloudflare Agents](https://developers.cloudflare.com/agents/) | ✅ Supported | ➡️ [Integration](https://github.com/ag-ui-protocol/ag-ui/tree/main/integrations/community/cloudflare-agents) |
 
 
@@ -173,6 +175,7 @@ AG-UI was born from CopilotKit's initial **partnership** with LangChain and Crew
 | Terminal + Agent | ✅ Supported | ➡️ [Getting Started](https://docs.ag-ui.com/quickstart/clients) | Community |
 | Chat platforms (Slack, Microsoft Teams) | ✅ Supported | ➡️ [Channels SDK](https://github.com/CopilotKit/channels-sdk) 🎮 [OpenTag example](https://github.com/CopilotKit/OpenTag) | 1st Party |
 | [React Native](https://reactnative.dev/) | ✅ Supported | ➡️ [Example](https://github.com/CopilotKit/CopilotKit/tree/main/examples/v2/react-native/demo) | 1st Party |
+| [OpenBot](https://open.bot) | ✅ Supported | ➡️ [Getting Started](https://open.bot/builders) 🎮 [Source](https://github.com/CopilotKit/OpenBot) | 1st Party |
 | [signoff-ui](https://github.com/dgesteves/signoff-ui) | ✅ Supported | ➡️ [Getting Started](https://signoff-ui.vercel.app/docs/ag-ui) 🎮 [Demo](https://signoff-ui.vercel.app/components#ag-ui) | Community |
 
 [View all supported integrations →](https://docs.ag-ui.com/introduction#supported-integrations)

@@ -211,13 +211,6 @@ class AgentToolIntegrationTest {
             debug = true
         }
 
-        // Test sending a message that should trigger tool usage
-        val events = agent.sendMessage("Calculate 5 + 3").toList()
-
-        // Verify events were received (this would normally work with real SSE)
-        // For now, just verify the agent was configured correctly  
-        assertTrue(events.isEmpty() || events.isNotEmpty()) // Allow empty for mock
-        
         // Check that tools are included in the agent configuration
         val tools = toolRegistry.getAllTools()
         assertEquals(1, tools.size)
@@ -245,8 +238,6 @@ class AgentToolIntegrationTest {
             this.toolRegistry = toolRegistry
             systemPrompt = "You are a helpful assistant with access to calculator and weather tools."
         }
-
-        val events = agent.sendMessage("What's 7 * 6 and what's the weather in San Francisco?").toList()
 
         // Verify multiple tools are available
         val tools = toolRegistry.getAllTools()

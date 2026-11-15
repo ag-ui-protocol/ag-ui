@@ -41,9 +41,20 @@ internal sealed class ManagedAgentsTurn
     private readonly HashSet<string> _clientParks = new(StringComparer.Ordinal);
     private readonly HashSet<string> _askedConfirmations = new(StringComparer.Ordinal);
     private bool _done;
+    internal bool SuppressStateCall { get; set; }
+    internal ManagedAgentsSessionRecord? StateRecord { get; set; }
+    internal Func<Task>? PersistState { get; set; }
+    internal Func<List<JsonElement>, ContextDelivery?>? AttachResultContext { get; set; }
+    internal void EmitState(JsonElement state) => Emit(new StateSnapshotEvent { Snapshot = state });
     internal ManagedAgentsEventStream? ConnectedStream { get; set; }
     internal HashSet<string> SeenEventIds { get; } = new(StringComparer.Ordinal);
     internal bool Recovering { get; set; }
+    internal bool IsAcknowledged(string id) => _ackedToolUses.Contains(id);
+    internal async IAsyncEnumerable<BaseEvent> ResumeStateCallAsync(JsonElement call, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await HandleCustomToolUseAsync(call.GetProperty("id").GetString()!, ManagedAgentsState.Name, InputJsonOf(call), call, cancellationToken).ConfigureAwait(false);
+        foreach (var evt in Drain()) yield return evt;
+    }
     internal void AcknowledgeHistory(IEnumerable<string> ids) => _ackedToolUses.UnionWith(ids);
     internal Func<string, Task>? OnEventHandled { get; set; }
     internal Dictionary<string, JsonElement> ConfirmationEvents { get; } = new(StringComparer.Ordinal);
@@ -133,6 +144,7 @@ internal sealed class ManagedAgentsTurn
         await using (((IAsyncDisposable)stream).ConfigureAwait(false))
         {
             await SendOutboundAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var evt in Drain()) yield return evt;
 
             await foreach (var streamEvent in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
@@ -175,8 +187,7 @@ internal sealed class ManagedAgentsTurn
     /// </summary>
     private async Task SendOutboundAsync(CancellationToken cancellationToken)
     {
-        var followUps = _outbound.Where(IsFollowUp).ToList();
-        var results = _outbound.Where(static evt => !IsFollowUp(evt)).ToList();
+        var (results, followUps) = ManagedAgentsContext.Split(_outbound);
 
         if (results.Count > 0)
         {
@@ -221,18 +232,6 @@ internal sealed class ManagedAgentsTurn
                 await Task.Delay(ManagedAgentsLimits.SentWhileParkedRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
             }
         }
-    }
-
-    private static bool IsFollowUp(JsonElement evt)
-    {
-        if (evt.ValueKind != JsonValueKind.Object
-            || !evt.TryGetProperty("type", out var type)
-            || type.ValueKind != JsonValueKind.String)
-        {
-            return false;
-        }
-
-        return type.GetString() is "user.message" or "system.message";
     }
 
     /// <summary>
@@ -328,7 +327,7 @@ internal sealed class ManagedAgentsTurn
 
         if (streamEvent.TryPickAgentCustomToolUseEvent(out var customToolUse))
         {
-            await HandleCustomToolUseAsync(customToolUse.ID, customToolUse.Name, InputJsonOf(streamEvent.Json), cancellationToken).ConfigureAwait(false);
+            await HandleCustomToolUseAsync(customToolUse.ID, customToolUse.Name, InputJsonOf(streamEvent.Json), streamEvent.Json, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -497,10 +496,50 @@ internal sealed class ManagedAgentsTurn
         Finish(ManagedAgentsTurnOutcome.Parked(_clientParks.ToList(), PendingConfirmations.ToList()));
     }
 
-    private async Task HandleCustomToolUseAsync(string toolUseId, string name, string inputJson, CancellationToken cancellationToken)
+    private async Task HandleCustomToolUseAsync(string toolUseId, string name, string inputJson, JsonElement native, CancellationToken cancellationToken)
     {
         // Report the frontend's original tool name, which may differ from the normalized name
         // registered on the managed agent.
+        if (name == ManagedAgentsState.Name && StateRecord is { } record)
+        {
+            if (record.SessionThreadId is null && native.TryGetProperty("session_thread_id", out var scope) && scope.ValueKind == JsonValueKind.String && record.PrimaryThreadId is null)
+                record.PrimaryThreadId = await _client.GetPrimaryThreadIdAsync(_sessionId, cancellationToken).ConfigureAwait(false);
+            if (record.SessionThreadId is not null || !ManagedAgentsState.Primary(native, record))
+            {
+                // The primary state handler does not own this child call. Keep its
+                // original identity actionable until an explicit native result arrives.
+                EmitToolCall(toolUseId, name, inputJson);
+                _clientParks.Add(toolUseId);
+                if (_onClientPark is not null) await _onClientPark(toolUseId).ConfigureAwait(false);
+                return;
+            }
+            if (record.PreserveTools)
+            {
+                var catalog = await _client.GetSessionToolsAsync(_sessionId, cancellationToken).ConfigureAwait(false);
+                var reserved = catalog.Where(tool => ManagedAgentsCustomTools.NameOf(tool) == ManagedAgentsState.Name).ToList();
+                if (reserved.Count != 1 || !JsonElement.DeepEquals(reserved[0], ManagedAgentsState.Definition))
+                    throw new ArgumentException("The imported session does not contain the compatible reserved shared state tool.");
+            }
+            if (!SuppressStateCall) EmitToolCall(toolUseId, name, inputJson);
+            JsonElement state; long revision; string text;
+            try
+            {
+                using var input = JsonDocument.Parse(inputJson);
+                (state, revision) = ManagedAgentsState.Apply(record, input.RootElement);
+                text = revision == 0 ? "Shared state unchanged; expectedRevision remains 0." : ManagedAgentsState.Snapshot(record, state, revision);
+            }
+            catch (Exception error) when (error is ArgumentException or JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                await AnswerCustomToolUseAsync(toolUseId, error.Message, true).ConfigureAwait(false);
+                return;
+            }
+            await AnswerCustomToolUseAsync(toolUseId, text, false).ConfigureAwait(false);
+            if (!_ackedToolUses.Contains(toolUseId) || revision == 0) return;
+            record.SharedState = state; record.SharedStateRevision = revision;
+            if (PersistState is not null) await PersistState().ConfigureAwait(false);
+            EmitState(state);
+            return;
+        }
         _clientTools.TryGetValue(name, out var originalName);
         EmitToolCall(toolUseId, originalName ?? name, inputJson);
         if (originalName is not null || Recovering && !_backendTools.ContainsKey(name))
@@ -599,13 +638,16 @@ internal sealed class ManagedAgentsTurn
     /// the tool already ran (or was answered) and the session is waiting on the result — but is
     /// bounded by its own timeout so a stalled connection cannot hold the thread's run gate open.
     /// </summary>
-    private async Task PostCustomToolResultAsync(string toolUseId, string text, bool isError)
+    private async Task<ContextDelivery?> PostCustomToolResultAsync(string toolUseId, string text, bool isError)
     {
+        var events = new List<JsonElement> { ManagedAgentsSessionEvents.CustomToolResult(toolUseId, text, isError) };
+        // A recovered state result can resume the model immediately. Carry required context
+        // on that supported companion, not on a later approval or follow-up request.
+        var context = AttachResultContext?.Invoke(events);
         using var sendTimeout = new CancellationTokenSource(ManagedAgentsLimits.BestEffortSendTimeout);
-        await _client
-            .SendEventsAsync(_sessionId, [ManagedAgentsSessionEvents.CustomToolResult(toolUseId, text, isError)], sendTimeout.Token)
-            .ConfigureAwait(false);
+        await _client.SendEventsAsync(_sessionId, events, sendTimeout.Token).ConfigureAwait(false);
         _ackedToolUses.Add(toolUseId);
+        return context;
     }
 
     /// <summary>
@@ -616,9 +658,10 @@ internal sealed class ManagedAgentsTurn
     /// </summary>
     private async Task AnswerCustomToolUseAsync(string toolUseId, string text, bool isError)
     {
+        ContextDelivery? context;
         try
         {
-            await PostCustomToolResultAsync(toolUseId, text, isError).ConfigureAwait(false);
+            context = await PostCustomToolResultAsync(toolUseId, text, isError).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -634,7 +677,14 @@ internal sealed class ManagedAgentsTurn
             return;
         }
 
-        EmitToolResult(toolUseId, text);
+        // Persistence failures are not delivery failures: the native result already landed.
+        // Let the run error propagate without interrupting native sibling work.
+        if (context is not null && StateRecord is { } record)
+        {
+            context.Acknowledge(record, results: true);
+            if (PersistState is not null) await PersistState().ConfigureAwait(false);
+        }
+        EmitToolResult(toolUseId, isError ? JsonSerializer.Serialize(new { error = true, content = text }) : text);
     }
 
     private void HandleSessionError(JsonElement error)
@@ -892,7 +942,7 @@ internal sealed class ManagedAgentsTurn
 
     private static AGUIContent DescribeContent(JsonElement rawEvent)
     {
-        return ManagedAgentsContent.ToolContent(ContentBlocksOf(rawEvent));
+        return ManagedAgentsContent.ToolContent(ContentBlocksOf(rawEvent), rawEvent.TryGetProperty("is_error", out var error) && error.ValueKind == JsonValueKind.True);
     }
 
     private static string? TextDeltaOf(JsonElement rawEvent)

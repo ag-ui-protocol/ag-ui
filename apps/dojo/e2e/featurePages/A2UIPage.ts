@@ -148,9 +148,9 @@ export class A2UIPage {
   /**
    * Click an action button on a rendered surface and wait for the run it starts.
    *
-   * The A2UI middleware forwards the click, appends a synthetic log_a2ui_event
-   * assistant call plus its result to the history, and re-runs the agent, so the
-   * agent's reply about the choice arrives as a new turn.
+   * The TypeScript A2UI middleware forwards the click as private user context
+   * (`A2UI user action:` followed by the complete action JSON) and re-runs the
+   * agent, so its reply about the choice arrives as a new turn.
    *
    * `nth` is a 0-based index into the buttons that CURRENTLY match `label`
    * inside the surface, in DOM order. It is not a card index: a clicked button

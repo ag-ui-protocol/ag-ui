@@ -10,8 +10,9 @@ Refer to `docs/architecture.md` for the design philosophy, package structure, an
 ### Provisioning a repo-local SDK (optional, hermetic)
 
 To build against the exact pinned SDK without touching the machine-wide install, use the
-provisioning scripts. They download the SDK from `global.json` into a gitignored `.dotnet/`
-folder and build/test against it only (`DOTNET_MULTILEVEL_LOOKUP=0`):
+provisioning scripts. They download the SDK from `global.json`, plus the .NET 8 and 9 runtimes
+the multi-targeted test projects run on, into a gitignored `.dotnet/` folder and build/test
+against it only (`DOTNET_MULTILEVEL_LOOKUP=0`):
 
 ```bash
 ./build.cmd            # Windows: provision + build

@@ -373,6 +373,10 @@
         "role": {
           "const": "tool",
           "description": "Present only for symmetry with the message it mints; the value is fixed, so a producer may leave it out."
+        },
+        "error": {
+          "type": "string",
+          "description": "Why the tool failed, when it did. A string marks the tool call as failed, not the run. A producer MUST NOT send an empty one; a consumer that receives one anyway still reads a failure, which is why the schema accepts it. The tool message this event mints carries the same value as its own error. Absent means the producer reported no failure on this event, not that the call succeeded. Present alongside content rather than instead of it, so a partial result survives a failure."
         }
       },
       "required": ["type", "messageId", "toolCallId", "content"],
@@ -786,6 +790,10 @@
         "encryptedValue": {
           "type": "string",
           "description": "The provider's opaque artefact."
+        },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is, so the producer can restore it as the right provider block. An open string: the producer defines the values, and a consumer stores and returns it with the value without interpreting it."
         }
       },
       "required": ["type", "subtype", "entityId", "encryptedValue"],
@@ -1116,6 +1124,10 @@
           "type": "string",
           "description": "A provider's opaque artefact belonging to this message, stored by a consumer and returned on a later turn."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1221,6 +1233,10 @@
           "type": "string",
           "description": "A provider's opaque artefact belonging to this message."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1273,6 +1289,10 @@
           "type": "string",
           "description": "A provider's opaque reasoning artefact belonging to this message."
         },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is — redacted reasoning, or a signature over content, say. Stored and returned with it, never interpreted by a consumer."
+        },
         "metadata": {
           "$ref": "#/$defs/Metadata",
           "description": "Extra information attached to this message."
@@ -1301,6 +1321,10 @@
         "encryptedValue": {
           "type": "string",
           "description": "A provider's opaque artefact belonging to this call."
+        },
+        "encryptedValueType": {
+          "type": "string",
+          "description": "The producer's own name for what kind of artefact encryptedValue is. Stored and returned with it, never interpreted by a consumer."
         },
         "metadata": {
           "$ref": "#/$defs/Metadata",

@@ -37,7 +37,7 @@ const agent = new YourAgent().use(
 
 Tools are model-visible by default. An explicit `_meta.ui.visibility` list must include `"model"` to expose a tool to the agent; app-only tools remain available through the iframe proxy. For example, Excalidraw's `read_me` returns the format guide as a normal tool result, while `create_view` also produces a UI activity.
 
-After a supporting tool returns, the middleware continues the agent with its result so prerequisites such as `read_me` can lead to a UI tool in the same run. It waits for unresolved frontend tool calls and preserves interrupted or cancelled runs. Supporting-tool chains are limited to ten rounds; exceeding the limit fails the stream.
+After a tool returns, including a UI tool, the middleware continues the agent with the original call ID and result. The model can finish its turn without a separate user message. It waits for unresolved frontend tool calls and preserves interrupted or cancelled runs. Tool chains are limited to ten rounds; exceeding the limit fails the stream.
 
 ## Configuration
 
@@ -166,3 +166,5 @@ MCP_APPS_LIVE_TEST=1 pnpm exec nx run @ag-ui/mcp-apps-middleware:test --skip-nx-
 ```
 
 This exercises real MCP tool discovery, prerequisite and UI tool execution, and UI resource retrieval. Model choice, browser rendering, and replay behavior require downstream application validation.
+
+Failed middleware results carry `metadata["ag-ui:tool-result"].error`. The string marker (including an empty string) preserves error status through client history without changing the result payload. Claude SDK recovery reads this marker when no explicit tool-message `error` is present.

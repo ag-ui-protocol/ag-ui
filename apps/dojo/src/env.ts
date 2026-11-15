@@ -26,6 +26,7 @@ type envVars = {
   awsStrandsTypescriptUrl: string;
   claudeAgentSdkPythonUrl: string;
   claudeAgentSdkTypescriptUrl: string;
+  openaiAgentsPythonUrl: string;
   claudeManagedAgentsDotnetUrl: string;
   claudeManagedAgentsPythonUrl: string;
   claudeManagedAgentsTypescriptUrl: string;
@@ -37,6 +38,11 @@ type envVars = {
   watsonxApiKey: string;
   watsonxBearerToken: string;
   watsonxBaseUrl: string;
+  omnaraApiKey: string;
+  omnaraOrgId: string;
+  omnaraProjectId: string;
+  omnaraModelProvider: string;
+  omnaraModel: string;
   customDomainTitle: Record<string, string>;
 };
 
@@ -92,6 +98,8 @@ export default function getEnvVars(): envVars {
       process.env.CLAUDE_AGENT_SDK_PYTHON_URL || "http://localhost:8019",
     claudeAgentSdkTypescriptUrl:
       process.env.CLAUDE_AGENT_SDK_TYPESCRIPT_URL || "http://localhost:8020",
+    openaiAgentsPythonUrl:
+      process.env.OPENAI_AGENTS_PYTHON_URL || "http://localhost:8031",
     claudeManagedAgentsDotnetUrl:
       process.env.CLAUDE_MANAGED_AGENTS_DOTNET_URL || "http://localhost:8026",
     claudeManagedAgentsPythonUrl:
@@ -108,6 +116,12 @@ export default function getEnvVars(): envVars {
     watsonxApiKey: process.env.WATSONX_API_KEY || "",
     watsonxBearerToken: process.env.WATSONX_BEARER_TOKEN || "",
     watsonxBaseUrl: process.env.WATSONX_BASE_URL || "",
+    omnaraApiKey: process.env.OMNARA_API_KEY || "",
+    omnaraOrgId: process.env.OMNARA_ORG_ID || "",
+    omnaraProjectId: process.env.OMNARA_PROJECT_ID || "",
+    omnaraModelProvider:
+      process.env.OMNARA_MODEL_PROVIDER || "openrouter-demos",
+    omnaraModel: process.env.OMNARA_MODEL || "ag-ui-demo",
     customDomainTitle: customDomainTitle,
   };
 }

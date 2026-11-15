@@ -23,15 +23,26 @@ Install the required peer dependencies:
 npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
 ```
 
-The optional CopilotKit integration is available from `@ag-ui/mastra/copilotkit`.
-Install its peer dependency only when using that entry point. It needs
-`@copilotkit/runtime` `^1.76.0`, which uses AG-UI 1.0 agent types and protocol.
-This raises the optional runtime peer from `^1.60.1`; applications using this
-entry point must upgrade CopilotKit. The runtime and shared development
-dependencies also use 1.76.0 so integration tests exercise that baseline:
+The optional CopilotKit integration exports `registerCopilotKit`. Import it
+from the entry point for your CopilotKit version, and install its peer
+dependency only when you use it. The route options are the same in both; the
+runtime options are the `CopilotRuntime` options of that CopilotKit version.
+
+| CopilotKit | Entry point                  | Peer dependency                         |
+| ---------- | ---------------------------- | --------------------------------------- |
+| 1.x        | `@ag-ui/mastra/copilotkit`   | `@copilotkit/runtime` `^1.76.0`         |
+| 2.x        | `@ag-ui/mastra/copilotkit-2` | `@copilotkit/runtime` `>=2.0.0-rc.0 <3` |
+
+CopilotKit 1.76.0 is the first 1.x release with AG-UI 1.0 agent types and
+protocol. The runtime and shared development dependencies use 1.76.0, so the
+integration tests exercise that baseline. A 2.x development copy types the 2.x
+entry point.
 
 ```bash
+# CopilotKit 1.x
 npm install @copilotkit/runtime@^1.76.0
+# CopilotKit 2.x
+npm install @copilotkit/runtime@next
 ```
 
 ## Usage
@@ -167,8 +178,59 @@ approved, or Mastra's decline message when declined, without running the tool.
   without a result (a server call, a backgrounded one, the A2UI render
   subagent's) gets a placeholder `TOOL_CALL_RESULT` first, so a consumer that
   derives the pending calls from the stream sees only the frontend ones.
+- When Mastra reported why the run ended (its finish reason: `stop`, `length`,
+  `tool-calls`, ...), `RUN_FINISHED` carries it unchanged as
+  `metadata.mastra.finishReason`, so a client can tell a turn cut off by the
+  step limit or the length limit from a finished answer. A cancelled run
+  carries none.
 - `RUN_STARTED` declares the AG-UI `protocolVersion` the bridge speaks, and
   `getCapabilities()` returns the adapter's AG-UI capabilities declaration.
+
+## Sub-agents
+
+A Mastra supervisor delegates to its sub-agents (`agents: { … }`) through
+`agent-<name>` tool calls. Two options choose what the client sees of a
+delegation:
+
+```ts
+new MastraAgent({
+  agent: supervisor,
+  resourceId: "user-123",
+  subagentVisibility: "attributed", // default "hidden"
+  subagentToolResults: "omit", // default "full"
+});
+```
+
+- `subagentVisibility: "hidden"` (the default) keeps the bridge as it was: the
+  client sees the delegating tool call and its result, and nothing of the
+  sub-agent's own stream.
+- `subagentVisibility: "attributed"` makes each delegation an AG-UI subagent
+  invocation: `SUBAGENT_STARTED`, then the sub-agent's text, reasoning and tool
+  calls streamed live and tagged with its `subagentRunId`, then
+  `SUBAGENT_FINISHED` or `SUBAGENT_ERROR`. A nested delegation's
+  `subagentRunId` is its parent's followed by its own call id (`D1/d9`), so the
+  run that resumes a suspended invocation announces the same id again. Needs an
+  AG-UI 1.0 client.
+- `subagentToolResults: "omit"` sends an attributed sub-agent's own tool
+  results empty (a failed call keeps its error), to keep large results off the
+  wire. The delegation's own result, which the supervisor's model reads, is
+  never omitted.
+- A sub-agent that fails ends with `SUBAGENT_ERROR` and the code
+  `MASTRA_SUBAGENT_ERROR` (its model or a tool failed), `MASTRA_TRIPWIRE` (a
+  processor blocked it) or `CANCELLED` (the run stopped first), with a message
+  and never a stack. Only its invocation ends: the supervisor gets the
+  delegation's result and the run goes on.
+- `getCapabilities()` of a local supervisor in `"attributed"` mode declares
+  `multiAgent` with its sub-agents and their descriptions.
+- `RUN_FINISHED` usage includes every sub-agent's model calls in either
+  visibility, one entry per provider and model. A local supervisor's sub-agents
+  are labelled with their own models; a remote one's stay unlabelled, as its own
+  usage does. Mastra forwards none of a sub-agent's usage while it is paused,
+  so the run that resumes it counts the sub-agent's calls from before the pause
+  too: each of them is counted once across the two runs.
+
+A sub-agent's `data-*` parts, workflows used as tools and `agent.network()` are
+not attributed.
 
 ## Reasoning and tool results
 

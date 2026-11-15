@@ -119,7 +119,7 @@ class FakeClient:
         self.beta = SimpleNamespace(
             agents=SimpleNamespace(retrieve=self._retrieve),
             sessions=SimpleNamespace(
-                create=self._create, update=self._update, events=events
+                create=self._create, update=self._update, retrieve=self._session_retrieve, events=events
             ),
         )
 
@@ -165,3 +165,6 @@ class FakeClient:
     async def _retrieve(self, agent_id: str, **kwargs: Any) -> SimpleNamespace:
         self.retrieve_calls.append((agent_id, kwargs))
         return SimpleNamespace(tools=self.agent_tools)
+
+    async def _session_retrieve(self, session_id):
+        return SimpleNamespace(agent={"id": "agent_1", "tools": self.agent_tools})

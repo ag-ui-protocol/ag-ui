@@ -88,6 +88,9 @@ async function getHandler(integrationId: string) {
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
+    // The generative UI tool demo gets the render_ui tool; the markdown demo
+    // needs none (the agent writes ```a2ui fences).
+    generativeUI: { agents: ["generative_ui_tool"] },
     a2ui: {
       agents: a2uiAgents,
       // Catalog used when creating a surface from a STREAMED render_a2ui call.

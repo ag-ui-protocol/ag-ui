@@ -13,7 +13,7 @@ from ag_ui_claude_sdk.handlers import handle_tool_result_block
 ])
 async def test_rich_result_survives_event_and_snapshot(blocks):
     message = build_agui_tool_message("original", blocks)
-    events = [event async for event in handle_tool_result_block(SimpleNamespace(tool_use_id="original", content=blocks, is_error=False), "thread", "run")]
+    events = [event async for event in handle_tool_result_block(SimpleNamespace(tool_use_id="original", content=blocks, is_error=False), "thread", "run", {})]
     assert [part.metadata["claude"]["block"] for part in message.content] == blocks
     assert events[0].content == message.content
     assert events[0].tool_call_id == message.tool_call_id == "original"
@@ -38,7 +38,7 @@ async def test_frontend_proxy_returns_exact_answer():
 async def test_error_event_and_snapshot_have_identical_rich_payload():
     blocks = [{"type": "text", "text": "failed"}, {"type": "resource", "resource": {"uri": "ui://chart", "mimeType": "text/html", "text": "<div>chart</div>"}}]
     message = build_agui_tool_message("original", blocks, True)
-    events = [event async for event in handle_tool_result_block(SimpleNamespace(tool_use_id="original", content=blocks, is_error=True), "thread", "run")]
+    events = [event async for event in handle_tool_result_block(SimpleNamespace(tool_use_id="original", content=blocks, is_error=True), "thread", "run", {})]
     assert [part.metadata["claude"]["block"] for part in message.content] == blocks
     assert all(part.metadata["claude"]["isError"] for part in message.content)
     assert events[0].content == message.content
@@ -93,9 +93,31 @@ async def test_text_document_filename_and_explicit_unsupported_notice(make_input
 async def test_native_structured_result_and_record_identity_are_retained():
     block = SimpleNamespace(tool_use_id="original", content="ok", is_error=False)
     raw = {"structuredContent": {"chart": [1, 2]}, "_meta": {"ui": {"resourceUri": "ui://chart"}}}
-    events = [e async for e in handle_tool_result_block(block, "thread", "run", None, raw, "record-original")]
+    events = [e async for e in handle_tool_result_block(block, "thread", "run", {}, None, raw, "record-original")]
     assert events[0].raw_event["tool_use_result"] == raw
     assert events[0].raw_event["uuid"] == "record-original"
+
+
+@pytest.mark.asyncio
+async def test_adapter_routes_user_message_result_and_uuid_to_their_own_fields(make_input):
+    # The adapter reads tool_use_result and uuid off the SDK UserMessage and
+    # hands both to handle_tool_result_block. Each must land in its own field.
+    from claude_agent_sdk import UserMessage, ToolResultBlock
+    from ag_ui_claude_sdk import ClaudeAgentAdapter
+    from .conftest import aiter
+    inp = make_input(messages=[{"id": "user", "role": "user", "content": "go"}])
+    raw = {"structuredContent": {"chart": [1, 2]}}
+    message = UserMessage(
+        content=[ToolResultBlock(tool_use_id="original", content="ok", is_error=False)],
+        uuid="record-original",
+        tool_use_result=raw,
+    )
+    adapter = ClaudeAgentAdapter("test")
+    events = [e async for e in adapter._stream_claude_sdk(aiter([message]), inp.thread_id, inp.run_id, inp, set())]
+    result = next(e for e in events if e.type == "TOOL_CALL_RESULT")
+    assert result.tool_call_id == "original"
+    assert result.raw_event["tool_use_result"] == raw
+    assert result.raw_event["uuid"] == "record-original"
 
 
 @pytest.mark.asyncio
@@ -168,7 +190,7 @@ async def test_result_and_snapshot_encode_preserved_payloads(text, expected, ric
     from ag_ui.core import MessagesSnapshotEvent
     payload = [{"type": "text", "text": text, "annotations": {"label": text}}] if rich else text
     block = SimpleNamespace(tool_use_id="unsafe", content=payload, is_error=True)
-    events = [e async for e in handle_tool_result_block(block, "thread", "run", sdk_result={"nested": text})]
+    events = [e async for e in handle_tool_result_block(block, "thread", "run", {}, sdk_result={"nested": text})]
     snapshot = MessagesSnapshotEvent(messages=[build_agui_tool_message("unsafe", payload, True)])
     for event in [*events, snapshot]:
         wire = EventEncoder().encode(event)

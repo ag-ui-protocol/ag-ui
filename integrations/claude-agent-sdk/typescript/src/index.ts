@@ -27,3 +27,6 @@ export type {
   SessionBindingStore,
   SessionRecoveryConfig,
 } from "./recovery";
+
+export type { NativeChildRecoveryConfig } from "./native-recovery";
+export type { NativeCall, NativeResult } from "./native-history";

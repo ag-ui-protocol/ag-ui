@@ -1828,6 +1828,12 @@ export class LangGraphAgent extends AbstractAgent {
         break;
       case LangGraphEventTypes.OnToolEnd:
         let toolCallOutput = event.data?.output;
+        // Like the chat-model outputs recordToolCallOwners reads, a tool's
+        // ToolMessage can arrive LangChain-serialized; its fields are under
+        // `kwargs`, so `tool_call_id` would otherwise look missing.
+        if (toolCallOutput?.lc && toolCallOutput?.kwargs) {
+          toolCallOutput = toolCallOutput.kwargs;
+        }
 
         // Command from within a tool. We need to grab result from the tool result message
         if (
@@ -1886,6 +1892,24 @@ export class LangGraphAgent extends AbstractAgent {
             });
 
           // Tool has completed — reset so the next snapshot reflects real state.
+          this.activeRun!.modelMadeToolCall = false;
+          this.activeRun!.hasFunctionStreaming = false;
+          break;
+        }
+
+        // Only a ToolMessage-shaped output names the tool call it answers.
+        // A tool invoked outside ToolNode can end with undefined, a string or
+        // a list; reading `tool_call_id` off those either threw (undefined)
+        // or emitted tool events with no id. Skip them, as the Python
+        // integration does (#1072).
+        if (
+          typeof toolCallOutput !== "object" ||
+          toolCallOutput === null ||
+          typeof toolCallOutput.tool_call_id !== "string"
+        ) {
+          console.warn(
+            `[LangGraphAgent] Skipping on_tool_end output without a tool_call_id for tool "${event.name}".`,
+          );
           this.activeRun!.modelMadeToolCall = false;
           this.activeRun!.hasFunctionStreaming = false;
           break;

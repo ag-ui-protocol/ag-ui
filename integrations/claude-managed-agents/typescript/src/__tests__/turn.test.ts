@@ -516,7 +516,7 @@ describe("runTurn", () => {
         type: EventType.TOOL_CALL_RESULT,
         messageId: "result_ctu_1",
         toolCallId: "ctu_1",
-        content: "clock offline",
+        content: JSON.stringify({ error: true, content: "clock offline" }),
         role: "tool",
       },
     ]);

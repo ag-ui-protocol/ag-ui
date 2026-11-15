@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Kotlin](https://img.shields.io/badge/kotlin-2.1.21-blue.svg?logo=kotlin)](http://kotlinlang.org)
-[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20JVM-lightgrey)](https://kotlinlang.org/docs/multiplatform.html)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20macOS%20%7C%20JVM%20%7C%20Wasm-lightgrey)](https://kotlinlang.org/docs/multiplatform.html)
 [![API](https://img.shields.io/badge/API-26%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=26)
 
 A production-ready Kotlin Multiplatform client library for connecting applications to AI agents that implement the [Agent User Interaction Protocol (AG-UI)](https://docs.ag-ui.com/).
@@ -60,7 +60,7 @@ After merge, shared CI compares the three module versions with Maven Central and
 runs Gradle tests and unsigned staging for new versions. The staged repository
 passes between jobs in the same workflow run at the selected source commit.
 Kotlin publishes last, waits for the generated POMs to become visible, then records
-package tags and the reviewed notes. All 18 existing Gradle publications remain,
+package tags and the reviewed notes. All 24 Gradle publications are staged,
 including iosX64 for Intel Mac consumers.
 
 A workflow dry run builds pending packages without deployment, release records,

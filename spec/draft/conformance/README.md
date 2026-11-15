@@ -140,6 +140,7 @@ Every key is optional; state what the rule actually requires and nothing more.
 | `noWarnings` | no warning at all was emitted |
 | `messageCount` | how many messages the client holds afterwards |
 | `messages` | subset-matched against the final messages, in order |
+| `messageAbsentPaths` | paths inside the final messages, keyed `"<index>.<dotted path>"`, that must not exist |
 | `state` | subset-matched against the final state |
 | `request` | subset-matched against the `RunAgentInput` the client sent |
 | `requestAbsentPaths` | dotted paths that must be absent from that input |
@@ -218,10 +219,10 @@ than pretending. An override says a lane *differs*; a skipped key says a lane
 ### Asserting that something is *gone*
 
 Absence inside a **delivered event** is directly assertable with
-`eventAbsentPaths`, and absence in the **sent request** with
-`requestAbsentPaths`. What the subset matchers cannot express is absence
-inside `messages` or `state` — there, use a shape a wrong implementation
-cannot produce:
+`eventAbsentPaths`, inside the **final messages** with `messageAbsentPaths`,
+and in the **sent request** with `requestAbsentPaths`. What the subset
+matchers cannot express is absence inside `state` — there, use a shape a
+wrong implementation cannot produce:
 
 - **A dropped state key** — make the replacing snapshot a root-level array
   (`["only-this"]`). No merge can produce that, so a `state = {...old, ...new}`

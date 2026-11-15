@@ -330,3 +330,95 @@ class TestInterruptMappingHardening:
             )
         )
         assert result.tool_call_id == "camel"
+
+
+@dataclass
+class FakeNativeInterrupt:
+    """A LangGraph >= 1.2.12 Interrupt: the schema sits next to ``value``."""
+    value: Any
+    id: Any = "int-1"
+    response_schema: Any = None
+
+
+class TestNativeResponseSchema(unittest.TestCase):
+    """``interrupt(value, response_schema=Model)`` (langgraph >= 1.2.12) puts the
+    JSON Schema on ``Interrupt.response_schema``, not inside the value. The
+    mapper reads it first and keeps the value-level keys as the fallback."""
+
+    DECISION_SCHEMA = {
+        "properties": {"approved": {"title": "Approved", "type": "boolean"}},
+        "required": ["approved"],
+        "title": "Decision",
+        "type": "object",
+    }
+
+    def map(self, lg):
+        from ag_ui_langgraph.interrupts import lg_interrupt_to_agui
+
+        return lg_interrupt_to_agui(lg)
+
+    def test_reads_the_schema_from_the_interrupt_itself(self):
+        result = self.map(FakeNativeInterrupt(
+            value={"question": "approve?"}, response_schema=self.DECISION_SCHEMA))
+        self.assertEqual(result.response_schema, self.DECISION_SCHEMA)
+
+    def test_reads_it_when_the_value_is_a_string_keeping_the_message(self):
+        result = self.map(FakeNativeInterrupt(
+            value="approve?", response_schema=self.DECISION_SCHEMA))
+        self.assertEqual(result.message, "approve?")
+        self.assertEqual(result.response_schema, self.DECISION_SCHEMA)
+
+    def test_prefers_it_over_the_keys_inside_the_value(self):
+        result = self.map(FakeNativeInterrupt(
+            value={"responseSchema": {"type": "string"},
+                   "response_schema": {"type": "number"}},
+            response_schema=self.DECISION_SCHEMA,
+        ))
+        self.assertEqual(result.response_schema, self.DECISION_SCHEMA)
+
+    def test_falls_back_to_the_value_when_it_is_none(self):
+        camel = self.map(FakeNativeInterrupt(value={"responseSchema": {"type": "string"}}))
+        snake = self.map(FakeNativeInterrupt(value={"response_schema": {"type": "number"}}))
+        self.assertEqual(camel.response_schema, {"type": "string"})
+        self.assertEqual(snake.response_schema, {"type": "number"})
+
+    def test_none_everywhere_leaves_the_schema_unset(self):
+        result = self.map(FakeNativeInterrupt(value={"question": "approve?"}))
+        self.assertIsNone(result.response_schema)
+        self.assertNotIn("responseSchema", result.model_dump(by_alias=True, exclude_none=True))
+
+    def test_older_langgraph_without_the_attribute_keeps_the_value_keys(self):
+        # FakeInterrupt has no response_schema attribute, like langgraph < 1.2.12.
+        result = self.map(FakeInterrupt(value={"response_schema": {"type": "string"}}, id="int-1"))
+        self.assertEqual(result.response_schema, {"type": "string"})
+
+    def test_preserves_an_empty_native_schema(self):
+        result = self.map(FakeNativeInterrupt(
+            value={"responseSchema": {"type": "string"}}, response_schema={}))
+        self.assertEqual(result.response_schema, {})
+
+    def test_a_non_mapping_native_schema_is_ignored(self):
+        # interrupt() always stores JSON Schema; an Interrupt built by hand can
+        # carry the Python type instead. It must not fail validation of the
+        # AG-UI interrupt: it is ignored and the value-level keys apply.
+        class Decision:
+            approved: bool
+
+        for unusable in (Decision, object()):
+            with self.subTest(unusable=unusable):
+                result = self.map(FakeNativeInterrupt(
+                    value={"response_schema": {"type": "string"}},
+                    response_schema=unusable,
+                ))
+                self.assertEqual(result.response_schema, {"type": "string"})
+
+    def test_raw_metadata_is_still_the_value_only(self):
+        result = self.map(FakeNativeInterrupt(
+            value={"question": "approve?"}, response_schema=self.DECISION_SCHEMA))
+        self.assertEqual(result.metadata["langgraph"]["raw"], {"question": "approve?"})
+
+    def test_wire_carries_camel_case_response_schema(self):
+        result = self.map(FakeNativeInterrupt(
+            value={"question": "approve?"}, response_schema=self.DECISION_SCHEMA))
+        dumped = result.model_dump(by_alias=True, exclude_none=True)
+        self.assertEqual(dumped["responseSchema"], self.DECISION_SCHEMA)

@@ -1,3 +1,5 @@
+import { restoreStateHistory } from "./state";
+import { restoreContext } from "./context";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   BetaManagedAgentsSessionEvent,
@@ -80,6 +82,8 @@ export async function recoverSession(
       if (seen.has(event.id)) continue;
       seen.add(event.id);
       ordered.push(event);
+      if (event.type === "system.message")
+        restoreContext(event.content, record);
       switch (event.type) {
         case "session.status_running":
           if (!record.sessionThreadId) running = true;
@@ -145,6 +149,7 @@ export async function recoverSession(
           break;
       }
     }
+    await restoreStateHistory(client, record, ordered, signal);
     if (ended)
       throw new RecoveryError(
         "session_ended",
@@ -156,6 +161,7 @@ export async function recoverSession(
         "A pending request is missing from the available native history.",
       );
     }
+    for (const event of ordered) rememberChildCall(record, event);
     const pending = [...calls.values()].filter(
       (event) => !answered.has(event.id),
     );
@@ -315,7 +321,7 @@ function emitRecoveredActivity(
       messageId: event.id,
       toolCallId,
       role: "tool",
-      content: toolContent(event.content),
+      content: toolContent(event.content, event.is_error === true),
     } as BaseEvent);
   }
 }
@@ -346,4 +352,68 @@ export function recoveryFinished(
       ? { outcome: { type: "interrupt", interrupts } }
       : {}),
   } as BaseEvent;
+}
+
+/** Only native root cross-posts establish child ownership. */
+export function rememberChildCall(
+  record: SessionRecord,
+  event: BetaManagedAgentsSessionEvent,
+) {
+  if (
+    !record.sessionThreadId &&
+    (event.type === "agent.tool_use" || event.type === "agent.mcp_tool_use") &&
+    event.session_thread_id
+  ) {
+    (record.childToolCalls ??= {})[event.id] = event.session_thread_id;
+  }
+}
+
+/** Root cursors and timestamps cannot bound child history. */
+export async function recoverChildResults(
+  client: Anthropic,
+  record: SessionRecord,
+  signal: AbortSignal,
+  emit: (event: BaseEvent) => void,
+  persist: () => void | Promise<void>,
+) {
+  if (record.sessionThreadId) return;
+  const delivered = new Set(record.deliveredChildResultIds ?? []);
+  const calls = Object.entries(record.childToolCalls ?? {}).filter(
+    ([id]) => !delivered.has(id),
+  );
+  for (const thread of new Set(calls.map(([, thread]) => thread))) {
+    for await (const event of client.beta.sessions.threads.events.list(
+      thread,
+      { session_id: record.sessionId },
+      { signal },
+    )) {
+      if (
+        event.type !== "agent.tool_result" &&
+        event.type !== "agent.mcp_tool_result"
+      )
+        continue;
+      const callId =
+        event.type === "agent.tool_result"
+          ? event.tool_use_id
+          : event.type === "agent.mcp_tool_result"
+            ? event.mcp_tool_use_id
+            : undefined;
+      if (
+        !callId ||
+        record.childToolCalls?.[callId] !== thread ||
+        delivered.has(callId)
+      )
+        continue;
+      if (
+        "session_thread_id" in event &&
+        event.session_thread_id &&
+        event.session_thread_id !== thread
+      )
+        continue;
+      const scoped = { ...event, session_thread_id: thread };
+      emitRecoveredActivity(scoped, emit, new Set(), new Map(), new Map());
+      delivered.add(callId);
+      await persist();
+    }
+  }
 }

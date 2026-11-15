@@ -492,7 +492,7 @@ const agentJson = (id: string): Json => ({
   type: "agent",
   name: `ag-ui-dojo-${featureOf(id)}`,
   version: 1,
-  model: { id: "claude-sonnet-5" },
+  model: { id: "claude-sonnet-5-5" },
   system: "",
   tools: [],
   mcp_servers: [],

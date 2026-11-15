@@ -38,6 +38,7 @@ class CaptureAgent extends AbstractAgent {
     super();
   }
   run(input: RunAgentInput) {
+    const first = !this.input;
     this.input = input;
     return from([
       {
@@ -45,7 +46,7 @@ class CaptureAgent extends AbstractAgent {
         threadId: input.threadId,
         runId: input.runId,
       },
-      ...this.events,
+      ...(first ? this.events : []),
       {
         type: EventType.RUN_FINISHED,
         threadId: input.threadId,

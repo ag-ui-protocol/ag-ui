@@ -165,8 +165,13 @@ Every validator moves, including the historic aliases (`EventSchemas`, the
 `*InputPartSchema` names, `OptionalMetadataSchema`) and the capability
 schemas. `@ag-ui/client` no longer re-exports them either — it re-exports
 core's main entry, and they are not on it. `@ag-ui/client` itself still
-depends on zod, because its enforcement stage validates with it; nothing
-changes in how you install the client.
+needs zod, because its enforcement stage validates with it. It takes zod as a
+peer dependency (as do `@ag-ui/encoder` and `@ag-ui/proto`), so install zod
+alongside it:
+
+```bash
+npm install @ag-ui/client zod
+```
 
 ### Unknown material no longer reaches your code
 

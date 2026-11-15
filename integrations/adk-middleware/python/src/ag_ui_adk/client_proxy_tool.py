@@ -305,6 +305,11 @@ class ClientProxyTool(BaseTool):
             # the translator processes the event first, then ADK runs this proxy tool.
             if tool_call_id in self._translator_emitted_tool_call_ids:
                 logger.debug(f"Skipping TOOL_CALL emission for {tool_call_id} — already emitted by EventTranslator")
+                # Consume this call's slot in the twin ledger below, so the
+                # next same-name invocation is matched against the right
+                # partial instead of this one (#2856).
+                if tool_call_id in self._translator_lro_emitted_ids_by_name.get(self.name, []):
+                    self._lro_finalized_by_name[self.name] = self._lro_finalized_by_name.get(self.name, 0) + 1
                 return None
 
             # Cross-path twin suppression: under SSE streaming the translator

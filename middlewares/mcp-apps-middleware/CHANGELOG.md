@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3 — 2026-10-21
+
+- Completed SDK middleware tools.
+- Recovery input is now retained during processing.
+
+### Breaking changes
+
+None.
+
 ## 0.1.2 — 2026-10-06
 
 - Preserve prerequisite history and structured results during tool execution.

@@ -492,6 +492,14 @@ class EventTranslator:
             # Handle complete (non-partial) function calls
             if hasattr(adk_event, 'get_function_calls') and not is_partial:
                 function_calls = adk_event.get_function_calls()
+                # Non-Gemini adapters (OpenAI, Anthropic, LiteLLM) send no end
+                # marker: the aggregated call itself closes the open stream.
+                if self._active_streaming_fc_id is not None and any(
+                    getattr(fc, 'name', None) == self._active_streaming_fc_name
+                    for fc in function_calls or []
+                ):
+                    async for event in self._translate_streaming_function_call(types.FunctionCall()):
+                        yield event
                 if function_calls:
                     # Filter out long-running tool calls; those are handled by translate_lro_function_calls
                     try:
@@ -970,16 +978,21 @@ class EventTranslator:
             # second model turn calling the same tool again cannot occur within
             # this runner stream — LRO pauses the invocation — so a same-name
             # reappearance in a LATER event is always a replay.
+            # Calls already emitted under the SAME id still occupy their
+            # position: Gemini SSE streams each parallel call in its own
+            # partial chunk, then repeats all of them in the final under the
+            # same ids, and skipping them uncounted would make the next new
+            # call look like a replay of the first (#2856).
             seen_in_event: Dict[str, int] = {}
             for i, part in enumerate(adk_event.content.parts):
                 if part.function_call:
                     fc = part.function_call
-                    if getattr(fc, 'id', None) in lro_ids \
-                      and fc.id not in self.emitted_tool_call_ids:
+                    if getattr(fc, 'id', None) in lro_ids:
                         position = seen_in_event.get(fc.name, 0) + 1
                         seen_in_event[fc.name] = position
                         already_emitted = len(self.lro_emitted_ids_by_name.get(fc.name, []))
-                        if position <= already_emitted:
+                        if fc.id not in self.emitted_tool_call_ids \
+                          and position <= already_emitted:
                             # Replay of the position-th call — already emitted
                             # (under a different ID); suppress the duplicate.
                             continue
@@ -1268,10 +1281,11 @@ class EventTranslator:
             )
             self.emitted_tool_call_ids.add(self._active_streaming_fc_id)
             logger.debug(f"Streaming FC started: tool={tool_name}, id={self._active_streaming_fc_id}")
-            return
+            # Fall through: non-Gemini adapters (OpenAI, Anthropic, LiteLLM) can
+            # carry partial_args on the first chunk.
 
         # --- No active streaming FC — skip stray chunks ---
-        if self._active_streaming_fc_id is None:
+        elif self._active_streaming_fc_id is None:
             return
 
         tool_call_id = self._active_streaming_fc_id

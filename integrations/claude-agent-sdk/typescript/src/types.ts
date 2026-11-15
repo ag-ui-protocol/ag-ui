@@ -54,6 +54,8 @@ import type {
  */
 export type ClaudeAgentAdapterConfig = AgentConfig &
   Options & {
+    /** Opt-in local native child recovery; independent of Intelligence or event storage. */
+    nativeChildRecovery?: import("./native-recovery").NativeChildRecoveryConfig;
     /** Maximum number of idle sessions to keep. Default: 1000 */
     maxSessions?: number;
     /** Durable host binding store and trusted execution profiles. */

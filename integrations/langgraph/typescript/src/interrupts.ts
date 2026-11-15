@@ -33,7 +33,14 @@ export function langGraphInterruptToAGUI(
   const toolCallId =
     (dict?.toolCallId as string | undefined) ??
     (dict?.tool_call_id as string | undefined);
+  // LangGraph's own field first: `interrupt(value, response_schema=...)`
+  // (langgraph >= 1.2.12) puts the JSON Schema next to `value`, not inside it.
+  // Without one, langgraph-api sends `null` (0.15) or omits the field (0.16).
+  // Keys inside the value stay as the fallback for graphs that carry it there.
+  // @langchain/langgraph-sdk types `response_schema` only from 1.11.1.
   const responseSchema =
+    (lg as { response_schema?: Record<string, unknown> | null })
+      .response_schema ??
     (dict?.responseSchema as Record<string, unknown> | undefined) ??
     (dict?.response_schema as Record<string, unknown> | undefined);
   const expiresAt =

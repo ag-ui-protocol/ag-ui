@@ -5,8 +5,11 @@
 import logging
 import uuid
 import warnings
+from contextlib import aclosing
 from collections.abc import Sequence
 from typing import Any, Awaitable, Callable, Coroutine, List, Mapping, Optional
+
+from anyio import CancelScope
 
 from ag_ui.core import (
     AssistantMessage,
@@ -19,6 +22,7 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from google.adk.sessions.state import State as _ADKState
 from pydantic import BaseModel
 
 # Use ``sse-starlette`` for the SSE response so we can return a fully-formed
@@ -38,6 +42,10 @@ from .event_translator import adk_events_to_messages
 from .session_manager import _is_processed_message_state_key
 
 logger = logging.getLogger(__name__)
+
+# ADK routes state keys carrying these prefixes to app-wide and user-wide
+# scope instead of to the session.
+_SCOPED_STATE_PREFIXES = (_ADKState.APP_PREFIX, _ADKState.USER_PREFIX)
 
 AgentResolver = Callable[[Request, RunAgentInput], Awaitable[ADKAgent | None]]
 
@@ -119,7 +127,35 @@ async def _merge_extractor_state(
         Callable[[Request, RunAgentInput], Coroutine[dict[str, Any], Any, Any]]
     ],
 ) -> RunAgentInput:
-    """Run the request extractor and merge returned state over input state."""
+    """Scope client state to the session, then merge extractor state over it.
+
+    ``app:``/``user:``-prefixed keys in the client-supplied state are removed
+    first, before the extractor runs and before anything is merged. Running the
+    removal ahead of both early returns matters: most deployments configure no
+    extractor at all, and a removal placed after those returns would never run
+    for them. It also means any prefixed key still present once this returns
+    came from ``extract_state_from_request``, which is server-side.
+    """
+    existing_state = input_data.state if isinstance(input_data.state, dict) else {}
+    scoped_key_count = sum(
+        1
+        for key in existing_state
+        if isinstance(key, str) and key.startswith(_SCOPED_STATE_PREFIXES)
+    )
+    if scoped_key_count:
+        logger.warning(
+            "Dropped %d app/user scoped key(s) from client-supplied state; "
+            "state sent with a run is scoped to the session. Supply app- or "
+            "user-scoped keys from extract_state_from_request instead.",
+            scoped_key_count,
+        )
+        existing_state = {
+            key: value
+            for key, value in existing_state.items()
+            if not (isinstance(key, str) and key.startswith(_SCOPED_STATE_PREFIXES))
+        }
+        input_data = input_data.model_copy(update={"state": existing_state})
+
     if not extract_state_fn:
         return input_data
 
@@ -127,7 +163,6 @@ async def _merge_extractor_state(
     if not extracted_state_dict:
         return input_data
 
-    existing_state = input_data.state if isinstance(input_data.state, dict) else {}
     merged_state = {**existing_state, **extracted_state_dict}
     return input_data.model_copy(update={"state": merged_state})
 
@@ -165,6 +200,39 @@ def _sse_event(raw_data: str, *, event: Optional[str] = None) -> ServerSentEvent
     return ServerSentEvent(data=raw_data, event=event, sep="\n")
 
 
+class _ClosingEventSourceResponse(EventSourceResponse):
+    """Close the body in its streaming task, including a cancelled send()."""
+
+    async def stream_response(self, send):
+        # sse-starlette 2.1 uses this public hook; newer releases use the
+        # underscored hook below. Preserve the declared dependency floor.
+        try:
+            await super().stream_response(send)
+        finally:
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+    async def _stream_response(self, send):
+        try:
+            await super()._stream_response(send)
+        finally:
+            # The iterator owns ContextVar tokens from this task. Closing it
+            # from a disconnect listener or GC finalizer uses another Context.
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """Apply the same deterministic closure to the legacy encoded stream."""
+
+    async def stream_response(self, send):
+        try:
+            await super().stream_response(send)
+        finally:
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
 async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     """Yield ``ServerSentEvent``s for an SSE consumer.
 
@@ -175,31 +243,32 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     always sees a structured stream tail.
     """
     try:
-        async for event in agent.run(input_data):
-            try:
-                encoded = event.model_dump_json(by_alias=True)
-                logger.debug(f"HTTP Response: {encoded}")
-                yield _sse_event(encoded)
-            except Exception as encoding_error:
-                logger.error(
-                    f"❌ Event encoding error: {encoding_error}", exc_info=True
-                )
-                error_event = _build_run_error(
-                    message=f"Event encoding failed: {str(encoding_error)}",
-                    code="ENCODING_ERROR",
-                )
+        async with aclosing(agent.run(input_data)) as events:
+            async for event in events:
                 try:
-                    yield _sse_event(
-                        error_event.model_dump_json(by_alias=True)
-                    )
-                except Exception:
+                    encoded = event.model_dump_json(by_alias=True)
+                    logger.debug(f"HTTP Response: {encoded}")
+                    yield _sse_event(encoded)
+                except Exception as encoding_error:
                     logger.error(
-                        "Failed to encode error event, yielding basic SSE error"
+                        f"❌ Event encoding error: {encoding_error}", exc_info=True
                     )
-                    yield _sse_event(
-                        '{"error": "Event encoding failed"}', event="error"
+                    error_event = _build_run_error(
+                        message=f"Event encoding failed: {str(encoding_error)}",
+                        code="ENCODING_ERROR",
                     )
-                return
+                    try:
+                        yield _sse_event(
+                            error_event.model_dump_json(by_alias=True)
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to encode error event, yielding basic SSE error"
+                        )
+                        yield _sse_event(
+                            '{"error": "Event encoding failed"}', event="error"
+                        )
+                    return
     except Exception as agent_error:
         logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
         try:
@@ -228,27 +297,28 @@ async def _legacy_stream(
     encoder later doesn't require a separate endpoint change.
     """
     try:
-        async for event in agent.run(input_data):
-            try:
-                encoded = encoder.encode(event)
-                logger.debug(f"HTTP Response: {encoded}")
-                yield encoded
-            except Exception as encoding_error:
-                logger.error(
-                    f"❌ Event encoding error: {encoding_error}", exc_info=True
-                )
-                error_event = _build_run_error(
-                    message=f"Event encoding failed: {str(encoding_error)}",
-                    code="ENCODING_ERROR",
-                )
+        async with aclosing(agent.run(input_data)) as events:
+            async for event in events:
                 try:
-                    yield encoder.encode(error_event)
-                except Exception:
+                    encoded = encoder.encode(event)
+                    logger.debug(f"HTTP Response: {encoded}")
+                    yield encoded
+                except Exception as encoding_error:
                     logger.error(
-                        "Failed to encode error event, yielding basic SSE error"
+                        f"❌ Event encoding error: {encoding_error}", exc_info=True
                     )
-                    yield 'data: {"error": "Event encoding failed"}\n\n'
-                return
+                    error_event = _build_run_error(
+                        message=f"Event encoding failed: {str(encoding_error)}",
+                        code="ENCODING_ERROR",
+                    )
+                    try:
+                        yield encoder.encode(error_event)
+                    except Exception:
+                        logger.error(
+                            "Failed to encode error event, yielding basic SSE error"
+                        )
+                        yield 'data: {"error": "Event encoding failed"}\n\n'
+                    return
     except Exception as agent_error:
         logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
         try:
@@ -447,8 +517,8 @@ def add_adk_fastapi_endpoint(
         content_type = encoder.get_content_type()
 
         if content_type == "text/event-stream":
-            return EventSourceResponse(_sse_stream(agent, input_data))
-        return StreamingResponse(
+            return _ClosingEventSourceResponse(_sse_stream(agent, input_data))
+        return _ClosingStreamingResponse(
             _legacy_stream(agent, input_data, encoder),
             media_type=content_type,
         )
