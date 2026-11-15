@@ -1,4 +1,4 @@
-import { Message, ResumeEntry, RunAgentInput, State } from "@ag-ui/core";
+import { AGUIError, Message, ResumeEntry, RunAgentInput, State } from "@ag-ui/core";
 
 /** Normalized debug configuration for the AG-UI agent. */
 export interface ResolvedAgentDebugConfig {
@@ -52,6 +52,23 @@ export interface HttpAgentConfig extends AgentConfig {
   url: string;
   headers?: Record<string, string>;
   fetch?: HttpAgentFetchFn;
+  /**
+   * Abort the run if response headers do not arrive within this many
+   * milliseconds, or if no bytes arrive on the response body for this long.
+   * Any body chunk — including SSE comment keepalives (`: ping`) — resets the
+   * timer. Unset (the default) waits indefinitely. Must be a positive finite
+   * number when provided.
+   */
+  idleTimeoutMs?: number;
+}
+
+/** Accept a positive finite timeout, or undefined for no timeout. */
+export function resolveIdleTimeoutMs(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  throw new AGUIError(`Invalid idleTimeoutMs ${String(value)}: expected a positive finite number.`);
 }
 
 export interface RunAgentParameters

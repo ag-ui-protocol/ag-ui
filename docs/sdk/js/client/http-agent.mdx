@@ -21,8 +21,17 @@ When creating an HTTP agent, you need to provide an `HttpAgentConfig` object:
 interface HttpAgentConfig extends AgentConfig {
   url: string // Endpoint URL for the agent service
   headers?: Record<string, string> // Optional HTTP headers
+  idleTimeoutMs?: number // Optional idle timeout in milliseconds
 }
 ```
+
+`idleTimeoutMs` is opt-in. When set, the agent aborts the request if response
+headers do not arrive within that many milliseconds, or if no bytes arrive on
+the response body for that long. The timer resets on every body chunk, including
+SSE comment keepalives (`: ping`). The run then fails with
+`HttpAgentIdleTimeoutError` (`code: "IDLE_TIMEOUT"`). Unset, the stream waits
+indefinitely, matching previous behavior. A caller `abortRun()` during a stall
+is still reported as a user abort, not a timeout.
 
 ## Creating an HttpAgent
 
@@ -32,6 +41,7 @@ const agent = new HttpAgent({
   headers: {
     Authorization: "Bearer your-api-key",
   },
+  idleTimeoutMs: 30_000,
 })
 ```
 
@@ -119,4 +129,6 @@ run(input: RunAgentInput): RunAgent
 
 - `url`: The endpoint URL for the agent service
 - `headers`: HTTP headers to include with requests
+- `idleTimeoutMs`: Optional idle timeout in milliseconds. Unset means no
+  timeout.
 - `abortController`: AbortController instance for request cancellation

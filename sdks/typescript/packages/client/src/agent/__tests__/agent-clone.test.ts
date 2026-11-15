@@ -49,6 +49,7 @@ describe("HttpAgent cloning", () => {
     const httpAgent = new HttpAgent({
       url: "https://example.com/agent",
       headers: { Authorization: "Bearer token" },
+      idleTimeoutMs: 4_000,
       threadId: "thread-http",
       initialMessages: [
         {
@@ -74,6 +75,7 @@ describe("HttpAgent cloning", () => {
     expect(cloned.messages).not.toBe(httpAgent.messages);
     expect(cloned.state).toEqual(httpAgent.state);
     expect(cloned.state).not.toBe(httpAgent.state);
+    expect(cloned.idleTimeoutMs).toBe(4_000);
     expect(cloned.abortController).not.toBe(httpAgent.abortController);
     expect(cloned.abortController).toBeInstanceOf(AbortController);
     expect(cloned.abortController.signal.aborted).toBe(true);

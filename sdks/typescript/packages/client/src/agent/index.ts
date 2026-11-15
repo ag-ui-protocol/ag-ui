@@ -1,6 +1,7 @@
 export { AbstractAgent } from "./agent";
 export type { RunAgentResult } from "./agent";
 export { HttpAgent } from "./http";
+export { HttpAgentIdleTimeoutError } from "../run/http-request";
 export type {
   AgentConfig,
   HttpAgentConfig,
