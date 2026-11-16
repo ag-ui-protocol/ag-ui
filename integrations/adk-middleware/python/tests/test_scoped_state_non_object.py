@@ -15,6 +15,7 @@ The tests run offline: a fake ``BaseLlm`` and ``InMemorySessionService``.
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any, AsyncGenerator, Dict, List
 from unittest.mock import patch
 
@@ -211,8 +212,9 @@ class TestEndpointRejectsNonObjectState:
 
 
 class TestMergeExtractorStateRejectsNonObjectState:
-    """The check lives in ``_merge_extractor_state``, which also serves
-    ``/capabilities`` and ``/agents/state``."""
+    """The check lives in ``_merge_extractor_state``. Only the run endpoint
+    can reach it with client state: ``/capabilities`` and ``/agents/state``
+    call it with ``state={}``, so they never return the 422."""
 
     @pytest.mark.parametrize(
         "extractor", EXTRACTORS.values(), ids=EXTRACTORS.keys()
@@ -325,3 +327,48 @@ def test_state_endpoint_warm_read_error_does_not_leak_backend_details():
     assert response.json()["error"] == SESSION_READ_ERROR_MESSAGE
     for fragment in ("hunter2", "db.internal", "other-user-4f2a"):
         assert fragment not in response.text
+
+
+@pytest.mark.asyncio
+async def test_direct_run_keeps_mapping_state_and_drops_pairs():
+    """A read-only mapping is still a JSON-object-like state; keep it.
+
+    Pairs on another thread are still dropped.
+    """
+    service = InMemorySessionService()
+    agent = _agent(service)
+
+    async def run(thread_id: str, state: Any) -> Dict[str, Any]:
+        run_input = RunAgentInput(
+            thread_id=thread_id,
+            run_id="r-" + thread_id,
+            state=state,
+            messages=[
+                UserMessage(id="m-" + thread_id, role="user", content="hi")
+            ],
+            tools=[],
+            context=[],
+            forwarded_props={},
+        )
+        events = [event async for event in agent.run(run_input)]
+        assert events[-1].type == EventType.RUN_FINISHED
+        listed = await service.list_sessions(
+            app_name=APP_NAME, user_id=USER_ID
+        )
+        for item in listed.sessions:
+            session = await service.get_session(
+                app_name=APP_NAME, user_id=USER_ID, session_id=item.id
+            )
+            if session.state.get("_ag_ui_thread_id") == thread_id:
+                return dict(session.state)
+        raise AssertionError(f"no session for thread {thread_id}")
+
+    mapping_state = await run(
+        "mapping", MappingProxyType({"plain": "kept"})
+    )
+    assert mapping_state.get("plain") == "kept"
+
+    pairs_state = await run("pairs", PAIRS)
+    assert "plain" not in pairs_state
+    assert _app_scope(service) == {}
+    assert _user_scope(service) == {}

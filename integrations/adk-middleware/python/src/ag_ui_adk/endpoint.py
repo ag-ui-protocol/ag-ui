@@ -157,7 +157,9 @@ async def _merge_extractor_state(
             ``[key, value]`` pairs passes validation. The prefix check below
             only reads object keys, and ``dict()`` on the array would rebuild
             the prefixed keys later, so only an object (or null, for no
-            state) is accepted.
+            state) is accepted. Only the run endpoint can raise this:
+            ``/capabilities`` and ``/agents/state`` build their input with
+            ``state={}``.
     """
     if input_data.state is not None and not isinstance(input_data.state, dict):
         raise _NonObjectStateError(_NON_OBJECT_STATE_MESSAGE)
@@ -586,8 +588,6 @@ def add_adk_fastapi_endpoint(
                 logger.debug("Capabilities endpoint called but no capabilities configured on agent")
                 return JSONResponse(content={})
             return JSONResponse(content=caps)
-        except _NonObjectStateError:
-            return _non_object_state_response()
         except Exception as e:
             logger.error(f"Error in capabilities endpoint: {e}", exc_info=True)
             return JSONResponse(
@@ -772,8 +772,6 @@ def add_adk_fastapi_endpoint(
                 "messages": messages_dict
             })
 
-        except _NonObjectStateError:
-            return _non_object_state_response()
         except Exception as e:
             logger.error(f"Error in /agents/state endpoint: {e}", exc_info=True)
             return JSONResponse(
