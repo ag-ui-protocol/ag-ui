@@ -208,7 +208,7 @@ def test_the_default_ttl_is_fifteen_minutes():
 
 
 def test_refusals_are_logged_without_token_or_arguments(caplog):
-    signer = ApprovalSigner(SECRET)
+    signer = ApprovalSigner(SECRET, scope="bank")
     paused = signer.hold("t1", raw_call('{"secret_arg":"hunter2"}'))
     token = held_call_token(paused)
     forged = raw_call('{"secret_arg":"other"}', "forged")
@@ -233,7 +233,7 @@ def test_refusals_are_logged_without_token_or_arguments(caplog):
 def test_a_call_with_duplicate_keys_runs_on_the_text_that_was_signed():
     # Two parsers may read {"to":"own","to":"attacker"} two ways; the tool
     # must get one reading only, the one the token was issued for.
-    signer = ApprovalSigner(SECRET)
+    signer = ApprovalSigner(SECRET, scope="bank")
     paused = signer.hold("t1", raw_call('{"to":"own","amount":5,"to":"attacker"}'))
     resumed = resume(history_with(paused), [approve("c1")], signer)
 
@@ -243,7 +243,7 @@ def test_a_call_with_duplicate_keys_runs_on_the_text_that_was_signed():
 
 def test_overflowing_numbers_with_other_text_do_not_share_a_token():
     # 1e400 and 1e999 both parse to inf: one token must not cover both texts.
-    signer = ApprovalSigner(SECRET)
+    signer = ApprovalSigner(SECRET, scope="bank")
     paused = signer.hold("t1", raw_call('{"amount":1e400}'))
     changed = paused.model_copy(
         update={"function": FunctionCall(name="transfer", arguments='{"amount":1e999}')}
@@ -255,7 +255,7 @@ def test_overflowing_numbers_with_other_text_do_not_share_a_token():
 
 
 def test_an_overflowing_number_runs_on_its_own_text():
-    signer = ApprovalSigner(SECRET)
+    signer = ApprovalSigner(SECRET, scope="bank")
     paused = signer.hold("t1", raw_call('{"amount":1e400}'))
     resume(history_with(paused), [approve("c1")], signer)
 
@@ -267,7 +267,7 @@ def test_an_overflowing_number_runs_on_its_own_text():
 
 @pytest.mark.parametrize("arguments", ['{"a":"\\ud800"}', "not json \ud800"])
 def test_a_lone_surrogate_does_not_crash(arguments):
-    signer = ApprovalSigner(SECRET)
+    signer = ApprovalSigner(SECRET, scope="bank")
     paused = signer.hold("t1", raw_call(arguments))
     assert signer.verify("t1", paused) is not None
 

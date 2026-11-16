@@ -146,7 +146,7 @@ def test_a_token_moved_to_another_tool_does_not_run_it():
 
 def test_a_token_from_another_thread_or_secret_does_not_run_the_call():
     other_thread = held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"), thread_id="t2", scope="support")
-    other_secret = ApprovalSigner("x" * 32).hold(
+    other_secret = ApprovalSigner("x" * 32, scope="support").hold(
         "t1", tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1")
     )
     for forged in (other_thread, other_secret):
@@ -156,7 +156,7 @@ def test_a_token_from_another_thread_or_secret_does_not_run_the_call():
 
 
 def test_an_expired_approval_does_not_run(monkeypatch):
-    signer = ApprovalSigner(SECRET, ttl_seconds=60)
+    signer = ApprovalSigner(SECRET, ttl_seconds=60, scope="support")
     paused = signer.hold("t1", tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"))
     now = time.time()
     monkeypatch.setattr(time, "time", lambda: now + 61)
@@ -259,7 +259,7 @@ def test_a_configured_signer_is_used_for_pause_and_resume():
     paused = _paused_through_the_agent(signer)
 
     # Another secret cannot resume it; the same one can.
-    resumed = resume(paused, [approve("c1")], signer=ApprovalSigner("y" * 32))
+    resumed = resume(paused, [approve("c1")], signer=ApprovalSigner("y" * 32, scope="support"))
     assert [e.content for e in resumed.tool_results] == [UNVERIFIED] and ran == []
     run(agent_with([text("Done.")], signer=signer), request(paused, resume=[approve("c1")]))
     assert ran == [("refund", "own-1", 5)]

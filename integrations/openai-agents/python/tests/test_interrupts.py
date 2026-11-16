@@ -160,12 +160,21 @@ def request(messages: list[Any], resume: list[ResumeEntry] | None = None, tools=
     )
 
 
-def held(tool_call: ToolCall, thread_id: str = "t1", scope: str = "") -> ToolCall:
+SCOPE = "test"
+"""The approval scope of the calls these tests resume with ``resume_tool_calls``."""
+
+
+def signer(scope: str = SCOPE) -> Any:
+    """The signer these tests pause and resume with: a signer needs a scope."""
+    return default_approval_signer().scoped(scope)
+
+
+def held(tool_call: ToolCall, thread_id: str = "t1", scope: str = SCOPE) -> ToolCall:
     """``tool_call`` as this server paused it: with its signed token.
 
     ``scope`` is the agent's approval scope: its name for an ``OpenAIAgentsAgent``.
     """
-    return default_approval_signer().scoped(scope).hold(thread_id, tool_call)
+    return signer(scope).hold(thread_id, tool_call)
 
 
 def run(agent: OpenAIAgentsAgent, run_input: RunAgentInput) -> list[Any]:
@@ -375,7 +384,7 @@ def test_an_undecided_call_stays_open_only_when_this_server_paused_it():
     ]
     resumed = asyncio.run(
         resume_tool_calls(
-            Agent(name="support", instructions="Help.", tools=[refund_amount, lookup_order]), request(history)
+            Agent(name="support", instructions="Help.", tools=[refund_amount, lookup_order]), request(history), approvals=signer()
         )
     )
     assert [i.id for i in resumed.open_interrupts] == ["refund"]
@@ -397,6 +406,7 @@ def test_client_tool_calls_are_left_for_the_client():
         resume_tool_calls(
             agent,
             request(history, tools=[Tool(name="confirm", description="", parameters={"type": "object"})]),
+            approvals=signer(),
         )
     )
     assert resumed.tool_results == []
@@ -426,6 +436,7 @@ def test_a_handoff_agents_tool_is_answered_too():
         resume_tool_calls(
             triage,
             request(history, resume=[ResumeEntry(interrupt_id="c2", status="resolved", payload={"approved": True})]),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == ["Refunded ORD-2."]
@@ -476,6 +487,7 @@ def test_a_tool_behind_an_sdk_handoff_object_is_answered():
                 _paused_call("issue_refund", '{"order_id": "ORD-3"}'),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == ["Refunded ORD-3."]
@@ -508,6 +520,7 @@ def test_an_approved_call_does_not_run_when_two_agents_share_the_tool_name():
                 _paused_call("update_account", '{"change": "x"}'),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == [AMBIGUOUS]
@@ -531,7 +544,7 @@ def test_an_undecided_call_stays_open_when_any_tool_of_its_name_needs_approval()
 
     specialist = Agent(name="accounts", instructions="Accounts.", tools=[specialist_update])
     root = Agent(name="root", instructions="Route.", tools=[root_update], handoffs=[handoff(specialist)])
-    resumed = asyncio.run(resume_tool_calls(root, request(_paused_call("update_account", '{"change": "x"}'))))
+    resumed = asyncio.run(resume_tool_calls(root, request(_paused_call("update_account", '{"change": "x"}')), approvals=signer()))
     assert [i.id for i in resumed.open_interrupts] == ["c3"]
     assert resumed.tool_results == []
 
@@ -588,6 +601,7 @@ def test_a_resumed_tool_gets_the_run_config_and_its_agent():
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
             run_config=RunConfig(workflow_name="wf-1"),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == ["wf-1 / ops"]
@@ -629,6 +643,7 @@ def test_an_approved_call_does_not_run_a_tool_that_is_now_disabled(is_enabled):
                 _paused_call("wipe", "{}"),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == [UNAVAILABLE]
@@ -678,6 +693,7 @@ def test_an_approved_call_of_an_mcp_server_tool_runs_on_that_server():
                 _paused_call("lookup", '{"q": "x"}'),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     assert calls == [("lookup", {"q": "x"})]
@@ -698,6 +714,7 @@ def test_a_resumed_tool_keeps_its_timeout():
                 _paused_call("slow", "{}"),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     [result] = resumed.tool_results
@@ -718,6 +735,7 @@ def test_an_approval_whose_tool_is_gone_is_closed_not_left_open(answered):
                 if answered
                 else None,
             ),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == [UNAVAILABLE]
@@ -729,6 +747,7 @@ def test_hosted_and_client_calls_are_not_closed_by_the_backend():
         resume_tool_calls(
             Agent(name="ops", instructions="Ops."),
             request(history, tools=[Tool(name="confirm", description="", parameters={"type": "object"})]),
+            approvals=signer(),
         )
     )
     assert resumed.tool_results == []
@@ -756,6 +775,7 @@ def test_an_approved_agent_tool_whose_sub_agent_pauses_fails_clearly():
                     _paused_call("refunds", '{"input": "refund ORD-5"}'),
                     resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
                 ),
+                approvals=signer(),
             )
         )
     assert refunds == []
@@ -775,6 +795,7 @@ def test_a_resumed_tool_sees_its_call_and_the_conversation():
                 _paused_call("inspect_call", "{}"),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     assert [e.content for e in resumed.tool_results] == ["c3 inspect_call ['message', 'function_call']"]
@@ -830,6 +851,7 @@ def test_an_mcp_tool_shared_by_an_agent_and_its_handoff_target_is_not_ambiguous(
                 _paused_call("lookup", "{}"),
                 resume=[ResumeEntry(interrupt_id="c3", status="resolved", payload={"approved": True})],
             ),
+            approvals=signer(),
         )
     )
     assert calls == ["lookup"]
@@ -843,7 +865,7 @@ def test_an_undecided_call_stays_open_when_the_mcp_policy_differs_by_agent():
     server = _docs_server([], require_approval=lambda _context, agent, _tool: agent.name == "docs")
     specialist = Agent(name="docs", instructions="Docs.", mcp_servers=[server])
     triage = Agent(name="triage", instructions="Route.", mcp_servers=[server], handoffs=[specialist])
-    resumed = asyncio.run(resume_tool_calls(triage, request(_paused_call("lookup", "{}"))))
+    resumed = asyncio.run(resume_tool_calls(triage, request(_paused_call("lookup", "{}")), approvals=signer()))
     assert [i.id for i in resumed.open_interrupts] == ["c3"]
     assert resumed.tool_results == []
 
@@ -877,6 +899,7 @@ def test_a_reused_call_id_only_resumes_the_paused_call():
         resume_tool_calls(
             Agent(name="support", instructions="Help.", tools=[issue_refund]),
             request(history, resume=[ResumeEntry(interrupt_id="call_0", status="resolved", payload={"approved": True})]),
+            approvals=signer(),
         )
     )
     assert refunds == ["ORD-2"]

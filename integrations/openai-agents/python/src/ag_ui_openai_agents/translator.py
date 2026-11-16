@@ -174,9 +174,11 @@ class AGUITranslator:
             approvals: Signs each call this run pauses for approval; the token
                 rides on that call in the MESSAGES_SNAPSHOT, and
                 ``resume_tool_calls`` runs a call only with it (see
-                ``approvals``). Pass the same signer to both. Defaults to
-                ``default_approval_signer()``. A client resumes approvals only
-                from a history built from the MESSAGES_SNAPSHOT.
+                ``approvals``). Pass the same signer to both, with a scope
+                (``default_approval_signer().scoped(agent.name)``). Defaults
+                to ``default_approval_signer()``, which has none: a run that
+                pauses for approval then ends with RUN_ERROR. A client resumes
+                approvals only from a history built from the MESSAGES_SNAPSHOT.
 
         Yields:
             AG-UI events ready to encode or send.

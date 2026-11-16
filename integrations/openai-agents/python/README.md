@@ -719,10 +719,13 @@ approval cannot, and `to_agui` ends such a run with `RUN_ERROR`
 model run while an approval is still open:
 
 ```python
-from ag_ui_openai_agents import resume_tool_calls
+from ag_ui_openai_agents import default_approval_signer, resume_tool_calls
+
+# The signer must have a scope: the agent that pauses and resumes the calls.
+approvals = default_approval_signer().scoped(agent.name)
 
 resumed = await resume_tool_calls(
-    agent, run_input, context=context, run_config=run_config
+    agent, run_input, context=context, run_config=run_config, approvals=approvals
 )
 if resumed.open_interrupts:
     events = None  # to_agui ends the run with the undecided approvals
@@ -731,7 +734,9 @@ else:
     events = Runner.run_streamed(
         agent, input=translated.messages, context=context, run_config=run_config
     )
-async for event in translator.to_agui(events, resumed.run_input, resumed=resumed):
+async for event in translator.to_agui(
+    events, resumed.run_input, resumed=resumed, approvals=approvals
+):
     ...
 ```
 
@@ -749,7 +754,10 @@ decided tokens:
   it the same on every worker serving one agent. Give agents that share the
   secret and a name, but not their tools, different scopes. With the
   translator, pass `ApprovalSigner(secret, scope=...)` (or
-  `signer.scoped(...)`) to both `to_agui` and `resume_tool_calls`.
+  `signer.scoped(...)`) to both `to_agui` and `resume_tool_calls`. A signer
+  without a scope, such as `default_approval_signer()` itself, fails closed:
+  `to_agui` ends a run that pauses for approval with `RUN_ERROR`, and
+  `resume_tool_calls` answers every paused call with `UNVERIFIED`.
 - *Idempotency.* Each decided token is recorded in a `ConsumedTokens` store,
   by default in process memory until the token expires (`ttl_seconds`, 15
   minutes by default). The default does not stop a replay that reaches

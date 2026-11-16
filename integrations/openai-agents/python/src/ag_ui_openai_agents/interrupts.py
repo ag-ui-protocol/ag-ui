@@ -252,8 +252,10 @@ async def resume_tool_calls(
         context: The SDK run context handed to the tools.
         run_config: The run's ``RunConfig``, handed to the tools as the SDK
             would (an agent used as a tool takes its model provider from it).
-        approvals: The signer that issued the tokens of the paused calls.
-            Defaults to ``default_approval_signer()``.
+        approvals: The signer that issued the tokens of the paused calls,
+            with the same scope. Defaults to ``default_approval_signer()``,
+            which has no scope and so verifies no token: every paused call
+            is then ``UNVERIFIED``.
 
     Returns:
         The request with the answers in place, their TOOL_CALL_RESULT events,

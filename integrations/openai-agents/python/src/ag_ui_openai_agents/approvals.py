@@ -122,7 +122,8 @@ class ApprovalSigner:
             approval cannot run another agent's tool of the same name. Use the
             same scope on every worker serving one agent, and a different one
             for each agent that shares the secret. ``OpenAIAgentsAgent`` sets
-            it (see its ``approval_scope``).
+            it (see its ``approval_scope``). A signer without a scope cannot
+            issue a token and verifies none: give it one with ``scoped``.
     """
 
     def __init__(
@@ -155,7 +156,19 @@ class ApprovalSigner:
         return ApprovalSigner(self._key, ttl_seconds=self._ttl, consumed=self._consumed, scope=scope)
 
     def issue(self, thread_id: str, call: ToolCall) -> str:
-        """A token for ``call``, paused in thread ``thread_id``."""
+        """A token for ``call``, paused in thread ``thread_id``.
+
+        Raises:
+            ValueError: This signer has no scope.
+        """
+        if not self._scope:
+            raise ValueError(
+                "A tool approval can only be paused by a signer with a scope, so that "
+                "no other agent can run the call. Pass approvals=signer.scoped(agent.name) "
+                "(for example default_approval_signer().scoped(agent.name)) to both "
+                "to_agui and resume_tool_calls, or serve the agent with OpenAIAgentsAgent, "
+                "which sets one."
+            )
         payload = {
             "v": _TOKEN_VERSION,
             "aud": self._scope,
@@ -183,8 +196,11 @@ class ApprovalSigner:
 
         Returns None when the token is missing, malformed, signed with another
         secret, issued under another scope or for another thread, call id,
-        tool name or arguments, or expired.
+        tool name or arguments, or expired. Always None when this signer has
+        no scope.
         """
+        if not self._scope:
+            return None
         token = held_call_token(call)
         if not isinstance(token, str) or token.count(".") != 1:
             return None
@@ -248,9 +264,10 @@ _process_secret: bytes | None = None
 
 
 def default_approval_signer(*, consumed: ConsumedTokens | None = None) -> ApprovalSigner:
-    """The signer used when none is passed.
+    """The signer used when none is passed, without a scope.
 
-    Its secret comes from ``AG_UI_OPENAI_AGENTS_APPROVAL_SECRET``. Without it,
+    It neither issues nor verifies tokens until it is given a scope with
+    ``scoped`` (``OpenAIAgentsAgent`` does this). Its secret comes from ``AG_UI_OPENAI_AGENTS_APPROVAL_SECRET``. Without it,
     a random secret is made for this process: approvals then only resume on
     the process that paused them, and not after a restart.
 

@@ -37,6 +37,10 @@
     `OpenAIAgentsAgent`, default the agent's name; `ApprovalSigner(scope=...)`
     or `signer.scoped(...)` with the translator). Another agent with a tool of
     the same name refuses it, even with the same secret and store.
+  - A signer without a scope neither issues nor verifies tokens. With the
+    translator, pass a scoped signer as `approvals=` to both `to_agui` and
+    `resume_tool_calls`; without one, `to_agui` ends a run that pauses for
+    approval with `RUN_ERROR`, and every paused call resumes as `UNVERIFIED`.
   - A resumed call runs on the canonical JSON its token covers, so a duplicate
     key or an overflowing number cannot be read two ways. Argument text with a
     lone surrogate no longer crashes the signer.

@@ -10,14 +10,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
 from ag_ui.core import EventType, FunctionCall, ResumeEntry, ToolCall, UserMessage
-from agents import Agent, function_tool
+from agents import Agent, Runner, function_tool
 from test_interrupts import ScriptedModel, call, finished, request, run, snapshot, text
 
-from ag_ui_openai_agents import ApprovalSigner, OpenAIAgentsAgent
+from ag_ui_openai_agents import AGUITranslator, ApprovalSigner, OpenAIAgentsAgent, resume_tool_calls
 from ag_ui_openai_agents import approvals as approvals_module
 from ag_ui_openai_agents.approvals import SECRET_ENV
 from ag_ui_openai_agents.interrupts import UNVERIFIED
@@ -208,3 +209,107 @@ def test_a_signer_scope_is_bound_into_the_token():
     assert sandbox.verify("t1", held) is not None
     assert production.verify("t1", held) is None
     assert production.scope == "production"
+
+
+# ── the translator needs a scope to pause or resume an approval ──────────
+
+
+def _translate(sdk_agent: Agent, run_input: Any, **kwargs: Any) -> list[Any]:
+    """Run ``sdk_agent`` and translate its stream, as a translator user does."""
+    translator = AGUITranslator()
+    translated = translator.to_openai(run_input)
+    events: list[Any] = []
+
+    async def collect():
+        result = Runner.run_streamed(sdk_agent, input=translated.messages)
+        async for event in translator.to_agui(result, run_input, **kwargs):
+            events.append(event)
+
+    try:
+        asyncio.run(collect())
+    except ValueError:
+        pass  # to_agui re-raises after RUN_ERROR
+    return events
+
+
+def _sandbox_and_production() -> tuple[Agent, Agent]:
+    sandbox = Agent(
+        name="sandbox",
+        instructions="Help.",
+        tools=[preview_refund],
+        model=ScriptedModel([call("refund", {"order_id": "ORD-1"}, "c1")]),
+    )
+    production = Agent(name="production", instructions="Help.", tools=[refund])
+    return sandbox, production
+
+
+def test_the_translator_without_a_scoped_signer_lets_no_other_agent_run_the_call(monkeypatch):
+    # The probe from review: the sandbox run is translated with no signer, and
+    # its genuine snapshot is resumed on production, also with no signer.
+    monkeypatch.setenv(SECRET_ENV, SECRET)
+    sandbox, production = _sandbox_and_production()
+
+    events = _translate(sandbox, request([UserMessage(id="u1", role="user", content="refund")]))
+    snapshots = [e for e in events if e.type == EventType.MESSAGES_SNAPSHOT]
+    if snapshots:
+        resumed = asyncio.run(
+            resume_tool_calls(production, request(snapshots[-1].messages, resume=[approve("c1")]))
+        )
+        assert tool_results(resumed.tool_results) == [("c1", UNVERIFIED)]
+
+    assert ran == []
+    # Fail closed: the pause is refused, not signed with an empty scope.
+    assert events[-1].type == EventType.RUN_ERROR
+    assert "scope" in events[-1].message
+
+
+def test_a_signer_without_a_scope_neither_issues_nor_verifies():
+    unscoped = ApprovalSigner(SECRET)
+    tool_call = ToolCall(id="c1", type="function", function=FunctionCall(name="refund", arguments="{}"))
+
+    with pytest.raises(ValueError, match="scope"):
+        unscoped.issue("t1", tool_call)
+
+    # A token with an empty scope, signed with the right secret (as the
+    # previous release issued them), is refused too.
+    payload = {
+        "v": 1,
+        "aud": "",
+        "tid": "t1",
+        "tcid": "c1",
+        "name": "refund",
+        "ah": approvals_module._arguments_hash("{}"),
+        "exp": 2**40,
+        "jti": "j",
+    }
+    body = approvals_module._b64(json.dumps(payload, separators=(",", ":")).encode())
+    token = f"{body}.{approvals_module._b64(unscoped._sign(body))}"
+    forged = tool_call.model_copy(update={"metadata": {"ag-ui": {"heldCall": token}}})
+    assert unscoped.verify("t1", forged) is None
+
+
+def test_the_translator_with_a_scoped_signer_resumes_on_that_agent_only(monkeypatch):
+    monkeypatch.setenv(SECRET_ENV, SECRET)
+    store = SharedConsumedTokens()
+    base = approvals_module.default_approval_signer(consumed=store)
+    sandbox, production = _sandbox_and_production()
+
+    events = _translate(
+        sandbox,
+        request([UserMessage(id="u1", role="user", content="refund")]),
+        approvals=base.scoped(sandbox.name),
+    )
+    assert finished(events).outcome.type == "interrupt"
+    history = snapshot(events)
+
+    elsewhere = asyncio.run(
+        resume_tool_calls(production, request(history, resume=[approve("c1")]), approvals=base.scoped(production.name))
+    )
+    assert tool_results(elsewhere.tool_results) == [("c1", UNVERIFIED)]
+    assert ran == []
+
+    here = asyncio.run(
+        resume_tool_calls(sandbox, request(history, resume=[approve("c1")]), approvals=base.scoped(sandbox.name))
+    )
+    assert tool_results(here.tool_results) == [("c1", "preview only")]
+    assert ran == ["preview ORD-1"]
