@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Security (GHSA-qjj5-3932-qh6q): a client-sent `forwardedProps.nodeName`/`node_name` is honoured only when the thread history shows that node ran in the latest step; otherwise the request starts a new run. In continue mode, client state is filtered by the graph input schema, as in start mode.
+  - Migration: the run config comes only from `LangGraphAgent(config=...)` or a subclass; the adapter does not use a client `forwardedProps.config`, `context` or `checkpoint` as run options, so no allowlist change is needed here.
+  - A `node_name` inside a subgraph, or of a node that is waiting on an `interrupt()`, never backs a continue: the request starts a new run (with a warning). A resume (`RunAgentInput.resume` or `command.resume`) sent together with the interrupted node name works as before.
 
 ## 0.0.47 — 2026-10-07
 

@@ -6,11 +6,19 @@
  * - a client-chosen `nodeName` must not decide where the graph continues;
  *   only the thread's own history can (same rule as the Python adapter);
  * - in "continue" mode, client state reaches only the graph's input schema;
- * - `forwardedProps.config` must not override the operator's assistant config;
+ * - only an allowlist of `forwardedProps` reaches `runs.stream`: the run
+ *   config, context, checkpoint and every other run option are the operator's;
  * - `forwardedProps.command` may carry `resume`, never `goto` or `update`.
  *
  * The Platform client is a stub, so this is unit-level proof of what the
  * adapter sends, not an end-to-end run against a LangGraph server.
+ *
+ * The node-name tests are defensive. `runAgentStream` resets `activeRun`, and
+ * only `handleNodeChange` sets `activeRun.nodeName`, after the continue check,
+ * so no released code path brings a client `nodeName` into continue mode
+ * today. The tests put the name where the continue check reads it (as a
+ * subclass that overrides `prepareStream` could) and check that the history
+ * guard still refuses it.
  */
 import { describe, it, expect, vi } from "vitest";
 import { LangGraphAgent } from "../agent";
@@ -139,9 +147,21 @@ function historyAfter(node: string) {
   ];
 }
 
+// Put the client node name where the continue check reads it, as a subclass
+// that overrides `prepareStream` could. No released path does this today; see
+// the file header.
+function withClientNodeName(agent: LangGraphAgent) {
+  const prepare = agent.prepareStream.bind(agent);
+  vi.spyOn(agent, "prepareStream").mockImplementation(async (i, m) => {
+    agent.activeRun!.nodeName = i.forwardedProps?.nodeName;
+    return prepare(i, m);
+  });
+}
+
 describe("client control over where and how a LangGraph run resumes", () => {
   it("a nodeName on a new thread does not skip nodes: the run starts at START", async () => {
     const { agent, streamCalls, updateState } = buildAgent();
+    withClientNodeName(agent);
 
     await agent.runAgentStream(
       input({ nodeName: "sensitive_action" }, { approved: true }),
@@ -155,16 +175,41 @@ describe("client control over where and how a LangGraph run resumes", () => {
     expect(streamCalls[0].input).not.toHaveProperty("approved");
   });
 
+  it("a nodeName is refused when the latest checkpoint came from updateState", async () => {
+    // A continue (or a regenerate fork) wrote the latest checkpoint and the
+    // run stopped before a step. The checkpoint before it lists
+    // `sensitive_action` as next, but that node never ran.
+    const { agent, updateState } = buildAgent({
+      history: [
+        {
+          values: {},
+          next: ["sensitive_action"],
+          metadata: { source: "update" },
+          checkpoint: { checkpoint_id: "ck-2" },
+        },
+        {
+          values: {},
+          next: ["sensitive_action"],
+          metadata: { source: "loop" },
+          checkpoint: { checkpoint_id: "ck-1" },
+        },
+      ],
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "sensitive_action" }),
+      subscriber(),
+    );
+
+    expect(updateState).not.toHaveBeenCalled();
+  });
+
   it("a nodeName the thread's history does not back is ignored", async () => {
     const { agent, updateState } = buildAgent({
       history: historyAfter("some_other_node"),
     });
-    // Same state the adapter has when the node name comes from the client.
-    const prepare = agent.prepareStream.bind(agent);
-    vi.spyOn(agent, "prepareStream").mockImplementation(async (i, m) => {
-      agent.activeRun!.nodeName = i.forwardedProps?.nodeName;
-      return prepare(i, m);
-    });
+    withClientNodeName(agent);
 
     await agent.runAgentStream(
       input({ nodeName: "sensitive_action" }, { approved: true }),
@@ -178,11 +223,7 @@ describe("client control over where and how a LangGraph run resumes", () => {
     const { agent, updateState } = buildAgent({
       history: historyAfter("check_permission"),
     });
-    const prepare = agent.prepareStream.bind(agent);
-    vi.spyOn(agent, "prepareStream").mockImplementation(async (i, m) => {
-      agent.activeRun!.nodeName = i.forwardedProps?.nodeName;
-      return prepare(i, m);
-    });
+    withClientNodeName(agent);
 
     await agent.runAgentStream(
       input({ nodeName: "check_permission" }, { approved: true }),
@@ -268,5 +309,102 @@ describe("client control over where and how a LangGraph run resumes", () => {
 
     expect(streamCalls).toHaveLength(1);
     expect(streamCalls[0].command).toEqual({ resume: "approved" });
+  });
+
+  it("forwardedProps.context does not reach the run", async () => {
+    // LangGraph Platform merges `context` into `configurable`, so a client
+    // context would override the operator config as `config` did.
+    const { agent, streamCalls } = buildAgent({
+      assistantConfig: { configurable: { tenant: "operator-tenant" } },
+    });
+
+    await agent.runAgentStream(
+      input({ context: { tenant: "attacker-tenant", user_id: "victim" } }),
+      subscriber(),
+    );
+
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0].context?.user_id).toBeUndefined();
+    expect(streamCalls[0].context?.tenant).not.toBe("attacker-tenant");
+  });
+
+  it("forwardedProps.checkpoint and checkpointId do not reach the run", async () => {
+    // A client-chosen checkpoint could replay a step whose `next` is the
+    // sensitive action after a single approval.
+    const { agent, streamCalls } = buildAgent();
+
+    await agent.runAgentStream(
+      input({
+        checkpoint: { checkpoint_id: "ck-approved", checkpoint_ns: "" },
+        checkpointId: "ck-approved",
+      }),
+      subscriber(),
+    );
+
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0]).not.toHaveProperty("checkpoint");
+    expect(streamCalls[0]).not.toHaveProperty("checkpointId");
+  });
+
+  it("a regenerate run uses the adapter fork, not a client checkpoint", async () => {
+    const { agent, streamCalls } = buildAgent();
+    (agent as any).activeRun = { id: "run-1", threadId: "thread-1" };
+    (agent as any).activeRun.schemaKeys = await agent.getSchemaKeys();
+    (agent as any).getCheckpointByMessage = vi.fn().mockResolvedValue({
+      values: { messages: [] },
+      next: ["check_permission"],
+      checkpoint: { checkpoint_id: "ck-1" },
+    });
+
+    await agent.prepareRegenerateStream(
+      {
+        ...input({
+          checkpoint: { checkpoint_id: "ck-approved", checkpoint_ns: "" },
+          checkpointId: "ck-approved",
+        }),
+        messageCheckpoint: { id: "m1", type: "human", content: "go" },
+      } as any,
+      ["values"] as any,
+    );
+
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0]).not.toHaveProperty("checkpoint");
+    // `ck-update` is what the stubbed `threads.updateState` (the fork) returns.
+    expect(streamCalls[0].checkpointId).toBe("ck-update");
+  });
+
+  it("only allowlisted forwardedProps reach the run", async () => {
+    const { agent, streamCalls } = buildAgent();
+
+    await agent.runAgentStream(
+      input({
+        streamSubgraphs: false,
+        durability: "sync",
+        webhook: "https://attacker.example/hook",
+        interruptBefore: [],
+        interruptAfter: [],
+        multitaskStrategy: "rollback",
+        onCompletion: "delete",
+        metadata: { user_id: "victim" },
+        afterSeconds: 3600,
+      }),
+      subscriber(),
+    );
+
+    expect(streamCalls).toHaveLength(1);
+    const payload = streamCalls[0];
+    expect(payload.streamSubgraphs).toBe(false);
+    expect(payload.durability).toBe("sync");
+    for (const key of [
+      "webhook",
+      "interruptBefore",
+      "interruptAfter",
+      "multitaskStrategy",
+      "onCompletion",
+      "metadata",
+      "afterSeconds",
+    ]) {
+      expect(payload).not.toHaveProperty(key);
+    }
   });
 });

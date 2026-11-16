@@ -153,3 +153,169 @@ def test_continue_from_the_node_that_ran_last_still_works():
 
     assert response.status_code == 200
     assert ran == ["second_step"]
+
+
+def _steps_graph(ran: list[str]):
+    """START -> first -> second -> third, paused before ``second``."""
+
+    class Steps(TypedDict, total=False):
+        messages: Annotated[list, add_messages]
+
+    def step(name: str):
+        def run(state: Steps) -> dict:
+            ran.append(name)
+            return {}
+
+        return run
+
+    builder = StateGraph(Steps)
+    for name in ("first", "second", "third"):
+        builder.add_node(name, step(name))
+    builder.add_edge(START, "first")
+    builder.add_edge("first", "second")
+    builder.add_edge("second", "third")
+    builder.add_edge("third", END)
+    return builder.compile(checkpointer=MemorySaver(), interrupt_before=["second"])
+
+
+def _client_for(graph, name: str = "agent") -> TestClient:
+    app = FastAPI()
+    add_langgraph_fastapi_endpoint(app, LangGraphAgent(name=name, graph=graph), "/agent")
+    return TestClient(app)
+
+
+def test_node_name_is_refused_when_the_latest_checkpoint_came_from_update_state():
+    ran: list[str] = []
+    graph = _steps_graph(ran)
+    client = _client_for(graph)
+
+    assert client.post("/agent", json=_body("t", "r1", {}, {})).status_code == 200
+    assert ran == ["first"]
+
+    # A continue from ``first`` wrote the latest checkpoint and stopped before
+    # any step ran. The checkpoint before it lists ``second`` as next, but
+    # ``second`` never ran.
+    graph.update_state(
+        {"configurable": {"thread_id": "t"}}, {}, as_node="first"
+    )
+    latest = graph.get_state({"configurable": {"thread_id": "t"}})
+    assert latest.metadata["source"] == "update"
+
+    ran.clear()
+    response = client.post("/agent", json=_body("t", "r2", {}, {"nodeName": "second"}))
+
+    assert response.status_code == 200
+    # Continuing "from second" would skip it and run ``third``. Refused, the
+    # request is a new run, which pauses before ``second`` again.
+    assert "third" not in ran
+    assert ran == ["first"]
+
+
+def _approval_graph(ran: list[str]):
+    """START -> ask (interrupt) -> act."""
+    from langgraph.types import interrupt
+
+    class Approval(TypedDict, total=False):
+        messages: Annotated[list, add_messages]
+        answer: str
+
+    def ask(state: Approval) -> dict:
+        answer = interrupt({"question": "proceed?"})
+        ran.append(f"ask:{answer}")
+        return {"answer": answer}
+
+    def act(state: Approval) -> dict:
+        ran.append(f"act:{state.get('answer')}")
+        return {}
+
+    builder = StateGraph(Approval)
+    builder.add_node("ask", ask)
+    builder.add_node("act", act)
+    builder.add_edge(START, "ask")
+    builder.add_edge("ask", "act")
+    builder.add_edge("act", END)
+    return builder.compile(checkpointer=MemorySaver())
+
+
+def test_resume_with_the_interrupted_node_name_still_resumes():
+    """CopilotKit sends ``command.resume`` together with the node that interrupted."""
+    ran: list[str] = []
+    client = _client_for(_approval_graph(ran))
+
+    first = client.post("/agent", json=_body("hitl", "r1", {}, {}))
+    assert first.status_code == 200
+    assert ran == []
+
+    response = client.post(
+        "/agent",
+        json=_body(
+            "hitl", "r2", {}, {"command": {"resume": "yes"}, "nodeName": "ask"}
+        ),
+    )
+
+    assert response.status_code == 200
+    assert ran == ["ask:yes", "act:yes"]
+
+
+def test_interrupted_node_name_without_a_resume_does_not_continue():
+    """Naming the interrupted node without a resume value does not get past it.
+
+    The node never finished, so the history does not back it: the request is
+    no longer treated as a continue (before the fix it was). The outcome is the
+    same as before: the thread still has an open interrupt, so the adapter
+    reports that interrupt again and the graph does not run.
+    """
+    ran: list[str] = []
+    graph = _approval_graph(ran)
+    client = _client_for(graph)
+
+    assert client.post("/agent", json=_body("hitl", "r1", {}, {})).status_code == 200
+
+    response = client.post("/agent", json=_body("hitl", "r2", {}, {"nodeName": "ask"}))
+
+    assert response.status_code == 200
+    assert ran == []
+    assert "proceed?" in response.text
+    state = graph.get_state({"configurable": {"thread_id": "hitl"}})
+    assert state.next == ("ask",)
+
+
+def test_a_subgraph_node_name_is_refused_for_continue():
+    """Thread history lists only top-level nodes, so a subgraph node name never
+    backs a continue: the request starts a new run (with a warning)."""
+    ran: list[str] = []
+
+    class Inner(TypedDict, total=False):
+        messages: Annotated[list, add_messages]
+
+    def inner(name: str):
+        def run(state: Inner) -> dict:
+            ran.append(name)
+            return {}
+
+        return run
+
+    sub = StateGraph(Inner)
+    sub.add_node("inner_a", inner("inner_a"))
+    sub.add_node("inner_b", inner("inner_b"))
+    sub.add_edge(START, "inner_a")
+    sub.add_edge("inner_a", "inner_b")
+    sub.add_edge("inner_b", END)
+
+    parent = StateGraph(Inner)
+    parent.add_node("sub", sub.compile())
+    parent.add_edge(START, "sub")
+    parent.add_edge("sub", END)
+    client = _client_for(parent.compile(checkpointer=MemorySaver()))
+
+    assert client.post("/agent", json=_body("nested", "r1", {}, {})).status_code == 200
+    assert ran == ["inner_a", "inner_b"]
+
+    ran.clear()
+    response = client.post(
+        "/agent", json=_body("nested", "r2", {}, {"nodeName": "inner_a"})
+    )
+
+    assert response.status_code == 200
+    assert "RUN_ERROR" not in response.text
+    assert ran == ["inner_a", "inner_b"]

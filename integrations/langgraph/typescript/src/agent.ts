@@ -201,6 +201,37 @@ const ROOT_SUBGRAPH_NAME = "root";
 const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
 const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 
+/**
+ * The `forwardedProps` keys a client may pass through to `runs.stream`. Both
+ * are options the adapter reads itself while it handles the stream, so the
+ * run must use the same value. `streamMode` is also client-chosen, but the
+ * adapter sets it on the payload itself, and `command` is rebuilt from
+ * `command.resume` only. Everything else in a LangGraph run payload (config,
+ * context, checkpoint, webhook, interrupts, multitask and completion options,
+ * metadata) is the operator's: set it with `assistantConfig` or in a subclass.
+ */
+const CLIENT_RUN_PROPS = ["streamSubgraphs", "durability"] as const;
+
+/** LangGraph run options a client may not set. Named only for the warning. */
+const LANGGRAPH_RUN_OPTIONS = [
+  "config",
+  "context",
+  "checkpoint",
+  "checkpointId",
+  "checkpointDuring",
+  "metadata",
+  "webhook",
+  "interruptBefore",
+  "interruptAfter",
+  "multitaskStrategy",
+  "onCompletion",
+  "onDisconnect",
+  "afterSeconds",
+  "ifNotExists",
+  "streamResumable",
+  "feedbackKeys",
+] as const;
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -608,27 +639,31 @@ export class LangGraphAgent extends AbstractAgent {
   /**
    * Split the client-supplied `forwardedProps` into what may reach the run.
    *
-   * The run config is the operator's (`assistantConfig`): a client
-   * `forwardedProps.config` is not merged over it. A client may resume an
+   * Only the keys in `CLIENT_RUN_PROPS` pass through to `runs.stream`. The run
+   * config, context, checkpoint and every other run option are the
+   * operator's (`assistantConfig`, or a subclass). A client may resume an
    * interrupt (`command.resume`), but may not steer the graph (`goto`) or
-   * write its state (`update`). `nodeName` is the adapter's own input and is
-   * not part of the run payload.
+   * write its state (`update`). Dropped LangGraph run options are logged;
+   * other keys (the adapter's own `nodeName`, `threadMetadata`, app data) are
+   * not run options and are dropped without a warning.
    */
   private clientRunProps(
     forwardedProps: RunAgentExtendedInput["forwardedProps"],
   ) {
-    const {
-      command: clientCommand,
-      config: clientConfig,
-      nodeName: _nodeName,
-      ...restProps
-    } = forwardedProps ?? {};
-    if (clientConfig !== undefined) {
+    const props: Record<string, unknown> = forwardedProps ?? {};
+    const restProps: Record<string, unknown> = {};
+    for (const key of CLIENT_RUN_PROPS) {
+      if (props[key] !== undefined) restProps[key] = props[key];
+    }
+    const droppedRunOptions = LANGGRAPH_RUN_OPTIONS.filter(
+      (key) => props[key] !== undefined,
+    );
+    if (droppedRunOptions.length > 0) {
       console.warn(
-        "[@ag-ui/langgraph] ignoring forwardedProps.config: the run config comes from the agent's assistantConfig.",
+        `[@ag-ui/langgraph] ignoring forwardedProps run options: ${droppedRunOptions.join(", ")}; the run config comes from the agent's assistantConfig.`,
       );
     }
-    const { resume, ...droppedCommandFields } = clientCommand ?? {};
+    const { resume, ...droppedCommandFields } = forwardedProps?.command ?? {};
     const dropped = Object.keys(droppedCommandFields);
     if (dropped.length > 0) {
       console.warn(
