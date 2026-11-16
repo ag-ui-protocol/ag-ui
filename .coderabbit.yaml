@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: chill
+  # Advisory reviews; retain existing CI and human approval requirements.
+  auto_approvals:
+    enabled: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  collapse_walkthrough: true
+  in_progress_fortune: false
+  poem: false
+
+  # Keep manifests, protocol schemas, fixtures, and tests in review scope.
+  # Exclusions also remove files from CodeRabbit's checkout, so keep them narrow.
+  path_filters:
+    - "!**/pnpm-lock.yaml"
+    - "!**/package-lock.json"
+    - "!**/yarn.lock"
+    - "!**/uv.lock"
+    - "!**/poetry.lock"
+    - "!**/Cargo.lock"
+    - "!**/pubspec.lock"
+    - "!**/Podfile.lock"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/coverage/**"
+    - "!**/.next/**"
+    - "!sdks/python/ag_ui/_generated/**"
+    - "!sdks/typescript/packages/core/src/generated/**"
+    - "!sdks/typescript/packages/proto/src/generated/**"
+
+  path_instructions:
+    - path: "sdks/**"
+      instructions: >-
+        Prioritize wire compatibility, serialization, event ordering, streaming
+        cancellation and cleanup, and error propagation. Check behavior against
+        the applicable protocol version and conformance fixtures in spec/.
+        Respect language-specific idioms and independent SDK versions; do not
+        assume every SDK already implements the draft specification. For
+        generated models, recommend changes to the schema or generator rather
+        than hand edits to generated output.
+    - path: "integrations/**"
+      instructions: >-
+        Check that framework events map correctly to AG-UI lifecycle, message,
+        tool-call, and state events. Focus on stable IDs, incremental streaming,
+        cancellation, error paths, and state isolation between users and runs.
+        Respect each framework's supported versions and existing adapter patterns.
+        Look for regression tests covering changed event translations.
+    - path: "middlewares/**"
+      instructions: >-
+        Check event ordering, state isolation, cancellation, error propagation,
+        and cleanup. Transformations must preserve unrelated events and metadata
+        unless the middleware explicitly documents otherwise.
+    - path: "spec/**"
+      instructions: >-
+        Treat schemas, conformance streams, fixtures, and generators as protocol
+        contracts. Check backward compatibility and distinguish frozen versions
+        from draft changes. Preserve protobuf field numbers and the append-only
+        number ledger. Check that schema and generator changes have matching
+        valid, invalid, or stream fixtures as appropriate; distinguish exact
+        schema validation from forgiving receiver compatibility behavior.
