@@ -95,18 +95,21 @@ To take the user ID from a trusted request header (for example one set by an
 authenticating gateway), read it from `request.headers` in a custom
 `extract_state_from_request` and write it as a top-level state key. Values that
 the extractor returns replace client-supplied state keys with the same name.
-Always return the key, also when the header is missing, so that a client cannot
-supply it in the run body:
+If the header is missing, reject the request so that the run never falls back
+to a shared or client-supplied identity:
 
 ```python
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from ag_ui.core import RunAgentInput
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
 
 
 async def extract_identity(request: Request, input_data: RunAgentInput) -> dict:
     # The request header is the only source of the user ID.
-    return {"user_id": request.headers.get("x-user-id") or "anonymous"}
+    user_id = request.headers.get("x-user-id")
+    if not user_id:
+        raise HTTPException(status_code=401)
+    return {"user_id": user_id}
 
 
 agent = ADKAgent(
