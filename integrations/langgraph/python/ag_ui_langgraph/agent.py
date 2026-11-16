@@ -22,6 +22,7 @@ from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
+from pydantic_core import to_jsonable_python
 
 from .types import (
     State,
@@ -519,6 +520,21 @@ def _is_deepagents_task_call(tool_call) -> bool:
     return isinstance(args, dict) and "subagent_type" in args
 
 
+def _same_input_value(stored, sent) -> bool:
+    """Whether the client's ``sent`` value is the stored value echoed back.
+
+    The client holds the state as JSON (the adapter's ``STATE_SNAPSHOT``, which
+    the event encoder serializes with pydantic), so a stored ``datetime``,
+    ``set`` or Pydantic model comes back in its JSON form. Compare both values
+    in that form. A value that cannot be converted or compared (numpy or pandas
+    state, say) counts as changed: the run then starts from START.
+    """
+    try:
+        return bool(to_jsonable_python(stored) == to_jsonable_python(sent))
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
 def _changed_input_keys(update, current, channels=None) -> List[str]:
     """The keys of ``update`` that would change the thread's state ``current``.
 
@@ -534,7 +550,7 @@ def _changed_input_keys(update, current, channels=None) -> List[str]:
             if value:
                 changed.append(key)
         elif key in current:
-            if current[key] != value:
+            if not _same_input_value(current[key], value):
                 changed.append(key)
         elif value not in (None, [], {}):
             changed.append(key)
@@ -1815,9 +1831,10 @@ class LangGraphAgent:
             node_name_for_mode = node_name_input if (node_name_input and node_name_input != "__end__") else None
 
             # ``node_name`` is the client's claim about where the thread stands.
-            # Used as ``as_node`` it tells LangGraph that node has just run, so
-            # the graph goes on from its successors and every node before them
-            # is skipped. Honour it only when the thread's own history agrees.
+            # A continue does not act on that claim: it resumes only the nodes
+            # the thread itself has waiting (see ``prepare_stream``). The
+            # claim only decides between a continue and a new run, so a claim
+            # the thread's history does not back starts a new run.
             if (
                 node_name_for_mode
                 and not has_resume_input
@@ -2494,17 +2511,22 @@ class LangGraphAgent:
             }
 
         if self.active_run["mode"] == "continue":
-            # The same rule as a new run (``get_stream_payload_input``): what the
-            # client sends reaches only the channels of the graph's input
-            # schema. Unfiltered, a continue would write any channel, the ones
-            # the graph keeps to itself included.
+            # A continue resumes the thread as it stands: the stream input is
+            # ``None`` and nothing is written first, so LangGraph runs only
+            # the tasks in the latest checkpoint's ``next``. It cannot skip a
+            # node. (An ``update_state(..., as_node=node_name)`` would mark the
+            # named node as finished and run its successors instead; under
+            # ``durability="exit"`` the history check cannot tell whether that
+            # node really finished, so that write let a client run the nodes
+            # after a gate that had refused, or after a node that never ran.)
+            #
+            # The nodes that ran before may have checked the input (a
+            # permission gate, say). Their decision holds only for the input
+            # they saw. If the request changes it (a new message, a changed
+            # channel of the input schema), the run starts from START instead,
+            # so those nodes check the new input.
             input_keys = (self.active_run.get("schema_keys") or {}).get("input") or []
             continue_state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *input_keys])
-            # A continue skips the nodes before the named one, and those nodes
-            # may have checked the input (a permission gate, say). Their
-            # decision holds only for the input they saw. If the request
-            # changes it (a new message, a changed channel), the run starts
-            # from START, so those nodes check the new input.
             changed_keys = _changed_input_keys(
                 continue_state,
                 agent_state.values or {},
@@ -2520,12 +2542,6 @@ class LangGraphAgent:
                 )
                 self.active_run["mode"] = "start"
                 self.active_run["node_name"] = None
-            else:
-                # Nothing the client sent changes the state, so write none of
-                # it. Writing an equal value is not always a no-op: a channel
-                # with a reducer (``operator.add``, say) would combine it with
-                # the stored value into one the nodes before have not seen.
-                await self.graph.aupdate_state(config, {}, as_node=self.active_run.get("node_name"))
 
         if has_resume_input:
             if agui_resume is not None:
@@ -4101,12 +4117,19 @@ class LangGraphAgent:
             )
 
     async def _ran_in_latest_step(self, config: RunnableConfig, node_name: str) -> bool:
-        """Whether ``node_name`` ran in the step that produced the thread's latest checkpoint.
+        """Whether the thread's history backs a continue after ``node_name``.
 
-        The checkpoint before the latest one lists, in ``next``, the nodes that
-        step ran. A thread with no such pair (a new thread), or whose latest
-        checkpoint was written by ``update_state`` rather than by a step, has
-        no node to continue from.
+        The checkpoint before the latest one lists, in ``next``, the nodes the
+        latest step ran. A thread with no such pair (a new thread), or whose
+        latest checkpoint was written by ``update_state`` rather than by a
+        step, has no node to continue from. A node still in the latest
+        ``next`` has not finished (it failed, or it waits to run again).
+
+        This is a sanity check, not the guard: under ``durability="exit"``
+        the two latest checkpoints can come from different runs, so the
+        "previous" ``next`` does not prove the node ran. A continue only
+        resumes the thread's own pending tasks, so a wrong answer here starts
+        a new run or resumes those tasks; it never skips a node.
         """
         snapshots = []
         try:
@@ -4119,6 +4142,8 @@ class LangGraphAgent:
             return False
         latest, previous = snapshots[0], snapshots[1]
         if (latest.metadata or {}).get("source") != "loop":
+            return False
+        if node_name in (latest.next or ()):
             return False
         return node_name in (previous.next or ())
 

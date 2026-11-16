@@ -116,8 +116,8 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
     """Interrupt resumes must bypass the regenerate heuristic (#1743)."""
 
     async def test_handle_stream_events_uses_forwarded_node_name_for_continue_mode(self):
-        """A no-resume request with node_name continues from that node when it
-        adds no input. (A new message would start a new run instead; see
+        """A no-resume request with node_name continues the paused thread when
+        it adds no input. (A new message would start a new run instead; see
         test_continue_mode_node_name.py.)"""
         agent = make_agent()
 
@@ -146,11 +146,11 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         async for event in agent._handle_stream_events(inp):
             collected.append(event)
 
-        agent.graph.aupdate_state.assert_awaited_once()
-        self.assertEqual(
-            agent.graph.aupdate_state.await_args.kwargs.get("as_node"),
-            "approval_node",
-        )
+        # A continue resumes the thread as it stands: no state write (an
+        # ``as_node`` write would mark the node as finished and skip it) and
+        # no stream input, so only the thread's pending tasks run.
+        agent.graph.aupdate_state.assert_not_called()
+        self.assertIsNone(agent.graph.astream_events.call_args.kwargs.get("input"))
 
     async def test_node_name_the_thread_did_not_run_last_starts_a_new_run(self):
         """A node name the thread's history does not back is not continued from."""

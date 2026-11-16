@@ -1,13 +1,17 @@
 """``forwardedProps.node_name`` and ``state`` come from the client.
 
-In "continue" mode the adapter calls ``aupdate_state(config, state,
-as_node=node_name)``: LangGraph then treats that node as having just run and
-goes on from its successors. These tests run a real graph with a gate node, so
-they show what a client-chosen node name and state can and cannot do.
+In "continue" mode the adapter resumes the thread as it stands: no state write
+and no stream input, so LangGraph runs only the tasks the thread has waiting.
+These tests run a real graph with a gate node, so they show what a
+client-chosen node name and state can and cannot do.
 """
 
+import datetime as dt
 import operator
 from typing import Annotated, Any
+
+import pytest
+from pydantic import BaseModel
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +21,7 @@ from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from ag_ui_langgraph.agent import _changed_input_keys
 
 
 class GateState(TypedDict, total=False):
@@ -499,3 +504,156 @@ def test_continue_does_not_write_an_unchanged_value_through_a_reducer():
     assert ran == [("gate", 100), ("act", 100, True)]
     state = graph.get_state({"configurable": {"thread_id": "amt"}})
     assert state.values["amount"] == 100
+
+
+# --- durability="exit" ------------------------------------------------------
+#
+# With ``durability="exit"`` LangGraph saves one checkpoint per run, so the two
+# latest checkpoints can come from different runs and the history check alone
+# cannot prove that the named node finished. The continue must not depend on
+# it: it resumes only the thread's pending tasks, so it cannot skip a node.
+
+DURABILITIES = [None, "exit"]
+
+
+def _agent_with(durability, trust_history=False):
+    """A ``LangGraphAgent`` that runs with ``durability`` (set by the operator,
+    as a deployment would). With ``trust_history`` the history check always
+    agrees, to test the continue on its own."""
+
+    class Agent(LangGraphAgent):
+        def get_stream_kwargs(self, *args, **kwargs):
+            out = super().get_stream_kwargs(*args, **kwargs)
+            if durability:
+                out["durability"] = durability
+            return out
+
+        if trust_history:
+            async def _ran_in_latest_step(self, config, node_name):
+                return True
+
+    return Agent
+
+
+class UserState(TypedDict, total=False):
+    messages: Annotated[list, add_messages]
+    user: str
+
+
+def _exit_client(graph, durability, trust_history=False) -> TestClient:
+    app = FastAPI()
+    agent_cls = _agent_with(durability, trust_history)
+    add_langgraph_fastapi_endpoint(app, agent_cls(name="agent", graph=graph), "/agent")
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _raising_gate_graph(ran: list[str]):
+    """START -> gate -> act; ``gate`` raises for anyone but an admin."""
+
+    def gate(state: UserState) -> dict:
+        ran.append("gate")
+        if state.get("user") != "admin":
+            raise PermissionError("admins only")
+        return {}
+
+    def act(state: UserState) -> dict:
+        ran.append("act")
+        return {}
+
+    builder = StateGraph(UserState)
+    builder.add_node("gate", gate)
+    builder.add_node("act", act)
+    builder.add_edge(START, "gate")
+    builder.add_edge("gate", "act")
+    builder.add_edge("act", END)
+    return builder.compile(checkpointer=MemorySaver())
+
+
+def _pay_graph(ran: list[str]):
+    """START -> quote -> pay -> deliver, paused before ``pay``."""
+
+    def step(name: str):
+        def run(state: UserState) -> dict:
+            ran.append(name)
+            return {}
+
+        return run
+
+    builder = StateGraph(UserState)
+    for name in ("quote", "pay", "deliver"):
+        builder.add_node(name, step(name))
+    builder.add_edge(START, "quote")
+    builder.add_edge("quote", "pay")
+    builder.add_edge("pay", "deliver")
+    builder.add_edge("deliver", END)
+    return builder.compile(checkpointer=MemorySaver(), interrupt_before=["pay"])
+
+
+def _user_body(run_id: str, forwarded_props: dict) -> dict:
+    return _same_turn_body("t", run_id, {"user": "mallory"}, forwarded_props)
+
+
+@pytest.mark.parametrize("trust_history", [False, True])
+@pytest.mark.parametrize("durability", DURABILITIES)
+def test_a_gate_that_refused_cannot_be_continued_past(durability, trust_history):
+    ran: list[str] = []
+    client = _exit_client(_raising_gate_graph(ran), durability, trust_history)
+
+    # The gate refuses twice. Under exit durability that leaves two "loop"
+    # checkpoints whose ``next`` is ``gate``, as if ``gate`` had just run.
+    client.post("/agent", json=_user_body("r1", {}))
+    client.post("/agent", json=_user_body("r2", {}))
+    assert ran == ["gate", "gate"]
+
+    ran.clear()
+    response = client.post("/agent", json=_user_body("r3", {"nodeName": "gate"}))
+
+    assert response.status_code == 200
+    assert "act" not in ran
+    assert ran == ["gate"]
+
+
+@pytest.mark.parametrize("trust_history", [False, True])
+@pytest.mark.parametrize("durability", DURABILITIES)
+def test_a_node_that_never_ran_cannot_be_continued_past(durability, trust_history):
+    ran: list[str] = []
+    client = _exit_client(_pay_graph(ran), durability, trust_history)
+
+    client.post("/agent", json=_user_body("r1", {}))
+    client.post("/agent", json=_user_body("r2", {}))
+    assert "pay" not in ran
+
+    ran.clear()
+    response = client.post("/agent", json=_user_body("r3", {"nodeName": "pay"}))
+
+    assert response.status_code == 200
+    assert "deliver" not in ran or ran.index("pay") < ran.index("deliver")
+    # The history backs no continue from ``pay``: a new run, paused again
+    # before ``pay``. With the history check bypassed, the continue resumes
+    # the pending ``pay`` before ``deliver``.
+    assert ran == (["pay", "deliver"] if trust_history else ["quote"])
+
+
+# --- comparing the client's echo with the stored state -----------------------
+
+
+class _Model(BaseModel):
+    a: int = 1
+
+
+class _Uncomparable:
+    def __eq__(self, other):
+        raise ValueError("truth value of an array is ambiguous")
+
+
+def test_an_echo_of_the_json_form_is_unchanged():
+    at = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    current = {"at": at, "tags": {"x"}, "model": _Model(), "order": {"a": 1, "b": 2}}
+    echo = {"at": "2026-01-01T00:00:00Z", "tags": ["x"], "model": {"a": 1}, "order": {"b": 2, "a": 1}}
+
+    assert _changed_input_keys(echo, current) == []
+    assert _changed_input_keys({"at": "2025-01-01T00:00:00Z"}, current) == ["at"]
+
+
+def test_a_value_that_cannot_be_compared_counts_as_changed():
+    assert _changed_input_keys({"arr": [1, 2]}, {"arr": _Uncomparable()}) == ["arr"]
