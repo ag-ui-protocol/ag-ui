@@ -69,6 +69,7 @@ class OpenAIAgentsAgent:
         context_in_instructions: bool = True,
         approvals: ApprovalSigner | None = None,
         consumed_tokens: ConsumedTokens | None = None,
+        approval_scope: str | None = None,
     ) -> None:
         """Configure an OpenAI Agents SDK Agent for AG-UI requests.
 
@@ -112,6 +113,12 @@ class OpenAIAgentsAgent:
                 comes after a restart: with several workers, pass a store they
                 share (see ``ConsumedTokens``). With ``approvals``, pass the
                 store to ``ApprovalSigner(consumed=...)`` instead.
+            approval_scope: The scope this agent's approval tokens are bound
+                to: a token runs a call only on an agent with the same scope.
+                Defaults to the scope of ``approvals`` when it has one, else
+                ``name``. Give every worker serving this agent the same scope,
+                and give agents that share the secret and a name, but not
+                their tools, different ones.
 
         Raises:
             ValueError: Both ``approvals`` and ``consumed_tokens`` were given.
@@ -135,9 +142,11 @@ class OpenAIAgentsAgent:
         self._run_error_message = run_error_message
         self._context_in_instructions = context_in_instructions
         self._own_signer = approvals is not None
-        self._approvals = (
+        self._approval_scope = approval_scope
+        self._signer = (
             default_approval_signer(consumed=consumed_tokens) if consumed_tokens is not None else approvals
         )
+        self._approvals: ApprovalSigner | None = None
 
     def with_consumed_tokens(self, consumed_tokens: ConsumedTokens) -> "OpenAIAgentsAgent":
         """A copy of this agent whose default signer records decided approvals in ``consumed_tokens``.
@@ -150,7 +159,8 @@ class OpenAIAgentsAgent:
                 "Pass consumed_tokens to ApprovalSigner(consumed=...) when you pass approvals."
             )
         clone = copy.copy(self)
-        clone._approvals = default_approval_signer(consumed=consumed_tokens)
+        clone._signer = default_approval_signer(consumed=consumed_tokens)
+        clone._approvals = None
         return clone
 
     @property
@@ -159,10 +169,15 @@ class OpenAIAgentsAgent:
 
         Without ``approvals`` or ``consumed_tokens`` this is
         ``default_approval_signer()``, made on first use; it logs a warning
-        when its decided approvals are kept per process.
+        when its decided approvals are kept per process. It is bound to this
+        agent's ``approval_scope``.
         """
         if self._approvals is None:
-            self._approvals = default_approval_signer()
+            signer = self._signer if self._signer is not None else default_approval_signer()
+            scope = self._approval_scope
+            if scope is None:
+                scope = signer.scope or self.name
+            self._approvals = signer.scoped(scope)
         return self._approvals
 
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:

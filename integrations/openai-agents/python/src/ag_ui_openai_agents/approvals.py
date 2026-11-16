@@ -9,8 +9,9 @@ client keeps the snapshot as its history and sends it back, token included.
 A resume entry runs a call only when its token verifies.
 
 Token: ``base64url(JSON payload) + "." + base64url(HMAC-SHA256(secret, base64url(payload)))``.
-The payload binds the thread, the tool call id, the tool name and the SHA-256
-of the arguments in canonical form (see ``canonical_arguments``), and it
+The payload binds the signer's scope (the agent that paused the call), the
+thread, the tool call id, the tool name and the SHA-256 of the arguments in
+canonical form (see ``canonical_arguments``), and it
 carries an expiry and a random nonce (``jti``). A resumed call runs on that
 canonical form, so the tool gets exactly the text the token covers. A decided
 token is consumed, so the same approval cannot run the call again. With
@@ -116,6 +117,12 @@ class ApprovalSigner:
             minutes (``DEFAULT_TTL_SECONDS``).
         consumed: Where decided tokens are recorded. Defaults to a
             per-process store; with several workers pass a shared one.
+        scope: The agent or endpoint whose calls this signer pauses. A token
+            verifies only under the scope that issued it, so one agent's
+            approval cannot run another agent's tool of the same name. Use the
+            same scope on every worker serving one agent, and a different one
+            for each agent that shares the secret. ``OpenAIAgentsAgent`` sets
+            it (see its ``approval_scope``).
     """
 
     def __init__(
@@ -124,6 +131,7 @@ class ApprovalSigner:
         *,
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
         consumed: ConsumedTokens | None = None,
+        scope: str = "",
     ) -> None:
         key = secret.encode() if isinstance(secret, str) else bytes(secret)
         if len(key) < MIN_SECRET_BYTES:
@@ -133,11 +141,24 @@ class ApprovalSigner:
         self._key = key
         self._ttl = ttl_seconds
         self._consumed = consumed if consumed is not None else InMemoryConsumedTokens()
+        self._scope = scope
+
+    @property
+    def scope(self) -> str:
+        """The scope this signer's tokens are bound to."""
+        return self._scope
+
+    def scoped(self, scope: str) -> ApprovalSigner:
+        """This signer, with the same secret, TTL and store, bound to ``scope``."""
+        if scope == self._scope:
+            return self
+        return ApprovalSigner(self._key, ttl_seconds=self._ttl, consumed=self._consumed, scope=scope)
 
     def issue(self, thread_id: str, call: ToolCall) -> str:
         """A token for ``call``, paused in thread ``thread_id``."""
         payload = {
             "v": _TOKEN_VERSION,
+            "aud": self._scope,
             "tid": thread_id,
             "tcid": call.id,
             "name": call.function.name,
@@ -161,8 +182,8 @@ class ApprovalSigner:
         """The token on ``call`` if this server issued it for exactly this call.
 
         Returns None when the token is missing, malformed, signed with another
-        secret, issued for another thread, call id, tool name or arguments, or
-        expired.
+        secret, issued under another scope or for another thread, call id,
+        tool name or arguments, or expired.
         """
         token = held_call_token(call)
         if not isinstance(token, str) or token.count(".") != 1:
@@ -181,6 +202,7 @@ class ApprovalSigner:
         expires_at = payload.get("exp")
         if (
             payload.get("v") != _TOKEN_VERSION
+            or payload.get("aud") != self._scope
             or payload.get("tid") != thread_id
             or payload.get("tcid") != call.id
             or payload.get("name") != call.function.name
@@ -194,11 +216,20 @@ class ApprovalSigner:
         return HeldCall(token_id=payload["jti"], expires_at=float(expires_at))
 
     async def consume(self, held: HeldCall) -> bool:
-        """Record a decision on ``held``. False when one was already recorded."""
+        """Record a decision on ``held``. False when one was already recorded.
+
+        Also False once ``held`` has expired, checked again after the store
+        answers: the record of a decided token may be dropped at expiry, so an
+        expired token would otherwise count as new. ``verify`` checks expiry
+        too, but resumed tools run in turn, so a token can expire between its
+        ``verify`` and its ``consume``.
+        """
+        if held.expires_at <= time.time():
+            return False
         result = self._consumed.consume(held.token_id, held.expires_at)
         if inspect.isawaitable(result):
             result = await result
-        return bool(result)
+        return bool(result) and held.expires_at > time.time()
 
     def _sign(self, body: str) -> bytes:
         return hmac.new(self._key, body.encode(), hashlib.sha256).digest()

@@ -160,9 +160,12 @@ def request(messages: list[Any], resume: list[ResumeEntry] | None = None, tools=
     )
 
 
-def held(tool_call: ToolCall, thread_id: str = "t1") -> ToolCall:
-    """``tool_call`` as this server paused it: with its signed token."""
-    return default_approval_signer().hold(thread_id, tool_call)
+def held(tool_call: ToolCall, thread_id: str = "t1", scope: str = "") -> ToolCall:
+    """``tool_call`` as this server paused it: with its signed token.
+
+    ``scope`` is the agent's approval scope: its name for an ``OpenAIAgentsAgent``.
+    """
+    return default_approval_signer().scoped(scope).hold(thread_id, tool_call)
 
 
 def run(agent: OpenAIAgentsAgent, run_input: RunAgentInput) -> list[Any]:

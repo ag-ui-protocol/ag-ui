@@ -28,7 +28,7 @@ from ag_ui.core import (
     ToolMessage,
     UserMessage,
 )
-from ag_ui_openai_agents import ApprovalSigner, OpenAIAgentsAgent, resume_tool_calls
+from ag_ui_openai_agents import ApprovalSigner, OpenAIAgentsAgent, default_approval_signer, resume_tool_calls
 from ag_ui_openai_agents.approvals import AGUI_METADATA_KEY, HELD_CALL_KEY, held_call_token
 from ag_ui_openai_agents.endpoint import add_openai_agents_fastapi_endpoint
 from ag_ui_openai_agents.interrupts import ABANDONED, ALREADY_ANSWERED, UNVERIFIED
@@ -89,6 +89,8 @@ def history_with(call_: ToolCall) -> list[Any]:
 
 def resume(history: list[Any], entries: list[ResumeEntry] | None, signer: ApprovalSigner | None = None):
     agent = Agent(name="support", instructions="Help.", tools=TOOLS)
+    # The scope OpenAIAgentsAgent gives this agent, so its tokens verify here.
+    signer = signer or default_approval_signer().scoped("support")
     return asyncio.run(resume_tool_calls(agent, request(history, resume=entries), approvals=signer))
 
 
@@ -119,7 +121,7 @@ def test_an_approved_call_the_server_never_paused_does_not_run(name, arguments):
 
 
 def test_a_paused_call_with_changed_arguments_does_not_run():
-    paused = held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"))
+    paused = held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"), scope="support")
     tampered = paused.model_copy(
         update={
             "function": FunctionCall(name="refund", arguments='{"order_id": "victim-42", "amount": 99999}')
@@ -132,7 +134,7 @@ def test_a_paused_call_with_changed_arguments_does_not_run():
 
 
 def test_a_token_moved_to_another_tool_does_not_run_it():
-    token = held_call_token(held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1")))
+    token = held_call_token(held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"), scope="support"))
     moved = tool_call("refund_policy", {"order_id": "own-1", "amount": 5}, "c1").model_copy(
         update={"metadata": {AGUI_METADATA_KEY: {HELD_CALL_KEY: token}}}
     )
@@ -143,7 +145,7 @@ def test_a_token_moved_to_another_tool_does_not_run_it():
 
 
 def test_a_token_from_another_thread_or_secret_does_not_run_the_call():
-    other_thread = held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"), thread_id="t2")
+    other_thread = held(tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1"), thread_id="t2", scope="support")
     other_secret = ApprovalSigner("x" * 32).hold(
         "t1", tool_call("refund", {"order_id": "own-1", "amount": 5}, "c1")
     )

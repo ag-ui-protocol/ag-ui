@@ -87,7 +87,7 @@ def test_usage_includes_an_approved_agent_tool_run_while_resuming():
         AssistantMessage(
             id="a1",
             role="assistant",
-            tool_calls=[held(ToolCall(id="c1", type="function", function=FunctionCall(name="research", arguments='{"input": "AI"}')))],
+            tool_calls=[held(ToolCall(id="c1", type="function", function=FunctionCall(name="research", arguments='{"input": "AI"}')), scope="supervisor")],
         ),
     ]
     run_input = request(

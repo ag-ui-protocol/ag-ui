@@ -31,6 +31,12 @@
     used.
   - An approval token expires after 15 minutes by default (`ttl_seconds`).
     This limits how long a replay can work when decided tokens are not shared.
+    A token that expires while an earlier resumed tool runs is refused, not
+    run again.
+  - A token is bound to the agent that paused the call (`approval_scope=` on
+    `OpenAIAgentsAgent`, default the agent's name; `ApprovalSigner(scope=...)`
+    or `signer.scoped(...)` with the translator). Another agent with a tool of
+    the same name refuses it, even with the same secret and store.
   - A resumed call runs on the canonical JSON its token covers, so a duplicate
     key or an overflowing number cannot be read two ways. Argument text with a
     lone surrogate no longer crashes the signer.

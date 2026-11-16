@@ -744,6 +744,12 @@ decided tokens:
   bytes). Without either, a random secret is made per process: approvals
   then resume only on the process that paused them, and not after a restart.
   Give every worker the same secret.
+- *Scope.* A token runs a call only on the agent that paused it. The scope is
+  `OpenAIAgentsAgent(approval_scope=...)`, by default the agent's name. Keep
+  it the same on every worker serving one agent. Give agents that share the
+  secret and a name, but not their tools, different scopes. With the
+  translator, pass `ApprovalSigner(secret, scope=...)` (or
+  `signer.scoped(...)`) to both `to_agui` and `resume_tool_calls`.
 - *Idempotency.* Each decided token is recorded in a `ConsumedTokens` store,
   by default in process memory until the token expires (`ttl_seconds`, 15
   minutes by default). The default does not stop a replay that reaches

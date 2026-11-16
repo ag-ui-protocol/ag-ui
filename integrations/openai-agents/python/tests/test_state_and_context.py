@@ -153,7 +153,7 @@ def test_a_state_change_before_a_resumed_tool_fails_still_reaches_the_client():
         AssistantMessage(
             id="a1",
             role="assistant",
-            tool_calls=[held(ToolCall(id="c1", type="function", function=FunctionCall(name="approve_then_fail", arguments='{"name": "milk"}')))],
+            tool_calls=[held(ToolCall(id="c1", type="function", function=FunctionCall(name="approve_then_fail", arguments='{"name": "milk"}')), scope="lists")],
         ),
     ]
     agent = OpenAIAgentsAgent(Agent(name="lists", instructions="Keep the list.", tools=[approve_then_fail]))
