@@ -7,6 +7,7 @@ import { Middleware } from "@/middleware";
 import { enforceEvents, enforceOutgoingInput, isRecognizedEvent } from "../enforce";
 import { stripUnknown } from "../strip";
 import { EventSchema } from "@ag-ui/core/schemas";
+import { ZodError } from "zod/v4";
 
 class MemoryAgent extends AbstractAgent {
   constructor(private events: BaseEvent[]) {
@@ -186,7 +187,7 @@ describe("enforceEvents (unit)", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("preserves a supported RUN_FINISHED outcome, strips an unrecognised string variant, and rejects missing or non-string outcome types", async () => {
+  it("preserves a supported RUN_FINISHED outcome and strips an unrecognised string variant", async () => {
     const supported = await lastValueFrom(
       of({ ...FINISH, outcome: { type: "success" } } as unknown as BaseEvent).pipe(
         enforceEvents(),
@@ -203,24 +204,26 @@ describe("enforceEvents (unit)", () => {
       ),
     );
     expect(future).toEqual([FINISH]);
-    expect(warnSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes("/outcome"))).toBe(
-      true,
-    );
+    expect(warnSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes("/outcome"))).toBe(true);
+  });
 
+  it.each([
+    ["a numeric", { type: 1 }],
+    ["a missing", {}],
+    ["a null", { type: null }],
+    ["an inherited", Object.assign(Object.create({ type: "success" }), { xExtra: 1 })],
+  ])("rejects %s outcome discriminator without emitting or warning", (_label, outcome) => {
     warnSpy.mockClear();
-    await expect(
-      lastValueFrom(
-        of({ ...FINISH, outcome: { type: 1 } } as unknown as BaseEvent).pipe(
-          enforceEvents(),
-          toArray(),
-        ),
-      ),
-    ).rejects.toThrow();
-    await expect(
-      lastValueFrom(
-        of({ ...FINISH, outcome: {} } as unknown as BaseEvent).pipe(enforceEvents(), toArray()),
-      ),
-    ).rejects.toThrow();
+    const next = vi.fn();
+    const error = vi.fn();
+    of({ ...FINISH, outcome } as unknown as BaseEvent)
+      .pipe(enforceEvents())
+      .subscribe({ next, error });
+
+    expect(next).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledOnce();
+    expect(error.mock.calls[0][0]).toBeInstanceOf(ZodError);
+    expect((error.mock.calls[0][0] as ZodError).issues[0].path).toEqual(["outcome", "type"]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
