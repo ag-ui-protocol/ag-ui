@@ -202,19 +202,21 @@ const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
 const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
 
 /**
- * The `forwardedProps` keys a client may pass through to `runs.stream`. Both
- * are options the adapter reads itself while it handles the stream, so the
- * run must use the same value. `streamMode` is also client-chosen, but the
+ * The `forwardedProps` keys a client may pass through to `runs.stream`. It is
+ * an option the adapter reads itself while it handles the stream, so the run
+ * must use the same value. `streamMode` is also client-chosen, but the
  * adapter sets it on the payload itself, and `command` is rebuilt from
  * `command.resume` only. Everything else in a LangGraph run payload (config,
- * context, checkpoint, webhook, interrupts, multitask and completion options,
- * metadata) is the operator's: set it with `assistantConfig` or in a subclass.
+ * context, checkpoint, durability, webhook, interrupts, multitask and
+ * completion options, metadata) is the operator's: set it with
+ * `assistantConfig` or in a subclass.
  */
-const CLIENT_RUN_PROPS = ["streamSubgraphs", "durability"] as const;
+const CLIENT_RUN_PROPS = ["streamSubgraphs"] as const;
 
 /** LangGraph run options a client may not set. Named only for the warning. */
 const LANGGRAPH_RUN_OPTIONS = [
   "config",
+  "durability",
   "context",
   "checkpoint",
   "checkpointId",
@@ -233,9 +235,30 @@ const LANGGRAPH_RUN_OPTIONS = [
 ] as const;
 
 /**
+ * A JSON form of `value` with object keys in a fixed order, so that two
+ * values that differ only in key order compare equal. `undefined` when the
+ * value cannot be serialized (a BigInt, a cycle).
+ */
+function stableJson(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value, (_key, item: unknown) =>
+      item && typeof item === "object" && !Array.isArray(item)
+        ? Object.fromEntries(
+            Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
+              a < b ? -1 : a > b ? 1 : 0,
+            ),
+          )
+        : item,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The keys of `update` that would change the thread's values `current`.
- * Messages written through `updateState` are added to the thread, so any
- * message is a change.
+ * Messages are added to the thread, so any message is a change. A value
+ * that cannot be compared counts as changed.
  */
 function changedInputKeys(
   update: Record<string, unknown>,
@@ -251,7 +274,8 @@ function changedInputKeys(
   return Object.entries(update).flatMap(([key, value]) => {
     if (key === "messages") return isEmpty(value) ? [] : [key];
     if (!(key in current)) return isEmpty(value) ? [] : [key];
-    return JSON.stringify(current[key]) === JSON.stringify(value) ? [] : [key];
+    const stored = stableJson(current[key]);
+    return stored !== undefined && stored === stableJson(value) ? [] : [key];
   });
 }
 
@@ -699,11 +723,18 @@ export class LangGraphAgent extends AbstractAgent {
   }
 
   /**
-   * Whether `nodeName` ran in the step that produced the thread's latest
-   * checkpoint. The checkpoint before the latest lists, in `next`, the nodes
-   * that step ran. A thread with no such pair (a new thread), or whose latest
+   * Whether the thread's history backs a continue after `nodeName`. The
+   * checkpoint before the latest lists, in `next`, the nodes the latest step
+   * ran. A thread with no such pair (a new thread), or whose latest
    * checkpoint was written by `updateState` rather than by a step, has no
-   * node to continue from.
+   * node to continue from. A node still in the latest `next` has not
+   * finished (it failed, or it waits to run again).
+   *
+   * This is a sanity check, not the guard: with `durability: "exit"` the two
+   * latest checkpoints can come from different runs, so the "previous"
+   * `next` does not prove the node ran. A continue only resumes the thread's
+   * own pending tasks, so a wrong answer here starts a new run or resumes
+   * those tasks; it never skips a node.
    */
   private async ranInLatestStep(
     threadId: string,
@@ -723,6 +754,7 @@ export class LangGraphAgent extends AbstractAgent {
     if (latest.metadata?.source !== "loop") {
       return false;
     }
+    if ((latest.next ?? []).includes(nodeName)) return false;
     return (previous.next ?? []).includes(nodeName);
   }
 
@@ -950,9 +982,8 @@ export class LangGraphAgent extends AbstractAgent {
         : undefined;
 
     // A thread paused at an interrupt has nowhere to continue from: the
-    // request ends on that interrupt below. Writing as a node first would
-    // replace the pending task and drop its interrupt (same order as the
-    // Python adapter, which checks interrupts before any write).
+    // request ends on that interrupt below (same order as the Python
+    // adapter, which checks interrupts first).
     if (
       continueFromNode &&
       (agentState.tasks ?? []).some((task) => task.interrupts?.length)
@@ -960,10 +991,11 @@ export class LangGraphAgent extends AbstractAgent {
       continueFromNode = undefined;
     }
 
-    // The node name is a claim about where the thread stands. Used as `asNode`
-    // it tells LangGraph that node has just run, so the graph goes on from its
-    // successors and every node before them is skipped. Honour it only when
-    // the thread's own history agrees (same rule as the Python adapter).
+    // The node name is a claim about where the thread stands. A continue does
+    // not act on that claim: it resumes only the nodes the thread itself has
+    // waiting (see below). The claim only decides between a continue and a
+    // new run, so a claim the thread's history does not back starts a new
+    // run (same rule as the Python adapter).
     if (
       continueFromNode &&
       !(await this.ranInLatestStep(threadId, continueFromNode))
@@ -974,9 +1006,10 @@ export class LangGraphAgent extends AbstractAgent {
       continueFromNode = undefined;
     }
 
-    // Same rule as a new run (`getStreamPayloadInput`): client state reaches
-    // only the channels of the graph's input schema. With the schema
-    // unavailable there is no allowlist, so there is no continue either.
+    // A continue compares the client's state with the thread's on the
+    // channels of the graph's input schema, the same channels a new run would
+    // write (`getStreamPayloadInput`). With the schema unavailable there is
+    // nothing to compare against, so there is no continue either.
     const inputKeys = this.activeRun!.schemaKeys?.input;
     if (continueFromNode && !inputKeys) {
       console.warn(
@@ -989,11 +1022,11 @@ export class LangGraphAgent extends AbstractAgent {
         ...DEFAULT_SCHEMA_KEYS,
         ...inputKeys,
       ]);
-      // A continue skips the nodes before the named one, and those nodes may
-      // have checked the input (a permission gate, say). Their decision holds
-      // only for the input they saw. If the request changes it (a new
-      // message, a changed channel), the run starts from START instead, so
-      // those nodes check the new input (same rule as the Python adapter).
+      // The nodes that ran before may have checked the input (a permission
+      // gate, say). Their decision holds only for the input they saw. If the
+      // request changes it (a new message, a changed channel), the run starts
+      // from START instead, so those nodes check the new input (same rule as
+      // the Python adapter).
       const changedKeys = changedInputKeys(continueValues, agentState.values);
       if (
         stateValuesDiff.messages?.length &&
@@ -1009,18 +1042,15 @@ export class LangGraphAgent extends AbstractAgent {
       }
     }
 
+    // A continue resumes the thread as it stands: the run input is `null`
+    // (`getStreamPayloadInput`) and nothing is written first, so LangGraph
+    // runs only the tasks in the latest checkpoint's `next`. It cannot skip a
+    // node. (An `updateState` with `asNode` would mark the named node as
+    // finished and run its successors instead; with `durability: "exit"` the
+    // history check cannot tell whether that node really finished, so that
+    // write let a client run the nodes after a gate that had refused, or
+    // after a node that never ran.)
     const mode = continueFromNode ? "continue" : "start";
-
-    if (mode === "continue") {
-      // Nothing the client sent changes the thread's values, so write none of
-      // it. Writing an equal value is not always a no-op: a channel with a
-      // reducer (an add reducer, say) would combine it with the stored value
-      // into one the nodes before have not seen.
-      await this.client.threads.updateState(threadId, {
-        values: {},
-        asNode: continueFromNode,
-      });
-    }
 
     const payloadInput = getStreamPayloadInput({
       mode,

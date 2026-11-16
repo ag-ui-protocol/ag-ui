@@ -5,7 +5,8 @@
  *
  * - a client-chosen `nodeName` must not decide where the graph continues;
  *   only the thread's own history can (same rule as the Python adapter);
- * - in "continue" mode, client state reaches only the graph's input schema;
+ * - a continue writes nothing and sends no input: it resumes only the
+ *   thread's pending tasks, so it cannot skip a node;
  * - only an allowlist of `forwardedProps` reaches `runs.stream`: the run
  *   config, context, checkpoint and every other run option are the operator's;
  * - `forwardedProps.command` may carry `resume`, never `goto` or `update`.
@@ -233,8 +234,8 @@ describe("client control over where and how a LangGraph run resumes", () => {
     expect(updateState).not.toHaveBeenCalled();
   });
 
-  it("continuing from the node that ran last writes only the input schema", async () => {
-    const { agent, updateState } = buildAgent({
+  it("continuing from the node that ran last writes no client state", async () => {
+    const { agent, updateState, streamCalls } = buildAgent({
       history: historyAfter("check_permission"),
       stateValues: SAME_TURN,
     });
@@ -245,10 +246,9 @@ describe("client control over where and how a LangGraph run resumes", () => {
       subscriber(),
     );
 
-    expect(updateState).toHaveBeenCalledTimes(1);
-    const [, body] = updateState.mock.calls[0];
-    expect(body.asNode).toBe("check_permission");
-    expect(body.values ?? {}).not.toHaveProperty("approved");
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0].input).toBeNull();
   });
 
   it("forwardedProps.config does not override the operator's assistant config", async () => {
@@ -394,7 +394,7 @@ describe("client control over where and how a LangGraph run resumes", () => {
     await agent.runAgentStream(
       input({
         streamSubgraphs: false,
-        durability: "sync",
+        durability: "exit",
         webhook: "https://attacker.example/hook",
         interruptBefore: [],
         interruptAfter: [],
@@ -409,8 +409,8 @@ describe("client control over where and how a LangGraph run resumes", () => {
     expect(streamCalls).toHaveLength(1);
     const payload = streamCalls[0];
     expect(payload.streamSubgraphs).toBe(false);
-    expect(payload.durability).toBe("sync");
     for (const key of [
+      "durability",
       "webhook",
       "interruptBefore",
       "interruptAfter",
@@ -424,22 +424,15 @@ describe("client control over where and how a LangGraph run resumes", () => {
   });
 
   it("an empty input schema is an empty allowlist, not an open one", async () => {
-    const { agent, updateState } = buildAgent({
-      history: historyAfter("check_permission"),
-      stateValues: SAME_TURN,
+    const { agent, updateState, streamCalls } = buildAgent({
       inputProperties: {},
     });
-    withClientNodeName(agent);
 
-    await agent.runAgentStream(
-      input({ nodeName: "check_permission" }, { approved: true }),
-      subscriber(),
-    );
+    await agent.runAgentStream(input({}, { approved: true }), subscriber());
 
-    expect(updateState).toHaveBeenCalledTimes(1);
-    const [, body] = updateState.mock.calls[0];
-    expect(body.asNode).toBe("check_permission");
-    expect(body.values ?? {}).not.toHaveProperty("approved");
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0].input).not.toHaveProperty("approved");
   });
 
   it("a continue that changes an input channel starts a new run instead", async () => {
@@ -479,7 +472,7 @@ describe("client control over where and how a LangGraph run resumes", () => {
   });
 
   it("a continue with unchanged input still continues", async () => {
-    const { agent, updateState } = buildAgent({
+    const { agent, updateState, streamCalls } = buildAgent({
       history: historyAfter("check_permission"),
       stateValues: { ...SAME_TURN, resource: "public", approved: true },
       inputProperties: { messages: {}, resource: {} },
@@ -491,14 +484,51 @@ describe("client control over where and how a LangGraph run resumes", () => {
       subscriber(),
     );
 
-    expect(updateState).toHaveBeenCalledTimes(1);
-    expect(updateState.mock.calls[0][1].asNode).toBe("check_permission");
+    // A continue: the thread resumes its own pending tasks.
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0].input).toBeNull();
+  });
+
+  it("an echo that differs only in key order is unchanged", async () => {
+    const { agent, updateState, streamCalls } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: { ...SAME_TURN, filter: { a: 1, b: 2 } },
+      inputProperties: { messages: {}, filter: {} },
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }, { filter: { b: 2, a: 1 } }),
+      subscriber(),
+    );
+
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls[0].input).toBeNull();
+  });
+
+  it("a value that cannot be compared counts as changed", async () => {
+    const { agent, streamCalls } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: { ...SAME_TURN, amount: 1 },
+      inputProperties: { messages: {}, amount: {} },
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }, { amount: BigInt(1) }),
+      subscriber(),
+    );
+
+    // A start run: the input goes in at START.
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0].input).not.toBeNull();
   });
   it("a continue writes none of an unchanged input, so a reducer cannot change it", async () => {
     // check_permission approved amount 100. `amount` has an add reducer on the
     // graph, so writing the equal 100 again would store 200, which the check
     // never saw. The continue goes on but writes no client value.
-    const { agent, updateState } = buildAgent({
+    const { agent, updateState, streamCalls } = buildAgent({
       history: historyAfter("check_permission"),
       stateValues: { ...SAME_TURN, amount: 100, approved: true },
       inputProperties: { messages: {}, amount: {} },
@@ -510,10 +540,8 @@ describe("client control over where and how a LangGraph run resumes", () => {
       subscriber(),
     );
 
-    expect(updateState).toHaveBeenCalledTimes(1);
-    const [, body] = updateState.mock.calls[0];
-    expect(body.asNode).toBe("check_permission");
-    expect(body.values).toEqual({});
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls[0].input).toBeNull();
   });
   it("a node with a pending interrupt is not a continue point: the interrupt stays", async () => {
     // `check_permission` ran in the latest step and paused at an interrupt.
@@ -568,5 +596,87 @@ describe("client control over where and how a LangGraph run resumes", () => {
 
     expect(updateState).not.toHaveBeenCalled();
     expect(streamCalls).toHaveLength(0);
+  });
+
+  // With `durability: "exit"` LangGraph saves one checkpoint per run, so the
+  // two latest checkpoints can come from different runs: the history check
+  // cannot prove that the named node finished. These histories are the ones
+  // a live `langgraph dev` server records (newest first) after two runs.
+  describe("durability", () => {
+    // START -> gate -> act; `gate` raised in two runs.
+    const REFUSED_TWICE = {
+      default: [
+        { values: {}, next: ["gate"], metadata: { source: "loop", step: 2 } },
+        {
+          values: {},
+          next: ["__start__"],
+          metadata: { source: "input", step: 1 },
+        },
+      ],
+      // Each run saved one "loop" checkpoint with `gate` still in `next`.
+      exit: [
+        { values: {}, next: ["gate"], metadata: { source: "loop", step: 2 } },
+        { values: {}, next: ["gate"], metadata: { source: "loop", step: 0 } },
+      ],
+    };
+    // START -> quote -> pay -> deliver, paused before `pay` in two runs.
+    const PAUSED_TWICE = {
+      default: [
+        { values: {}, next: ["pay"], metadata: { source: "loop", step: 1 } },
+        { values: {}, next: ["quote"], metadata: { source: "loop", step: 0 } },
+      ],
+      exit: [
+        { values: {}, next: ["pay"], metadata: { source: "loop", step: 1 } },
+        { values: {}, next: ["pay"], metadata: { source: "loop", step: 1 } },
+      ],
+    };
+
+    for (const [name, history, nodeName] of [
+      ["default: a gate that refused", REFUSED_TWICE.default, "gate"],
+      ["default: a node that never ran", PAUSED_TWICE.default, "pay"],
+      ["exit: a gate that refused", REFUSED_TWICE.exit, "gate"],
+      ["exit: a node that never ran", PAUSED_TWICE.exit, "pay"],
+    ] as const) {
+      it(`${name} is not a continue point`, async () => {
+        const { agent, updateState, streamCalls } = buildAgent({
+          history: [...history],
+          stateValues: SAME_TURN,
+        });
+        withClientNodeName(agent);
+
+        await agent.runAgentStream(input({ nodeName }), subscriber());
+
+        expect(updateState).not.toHaveBeenCalled();
+        expect(streamCalls).toHaveLength(1);
+        // A new run from START: the named node runs (again).
+        expect(streamCalls[0].input).not.toBeNull();
+      });
+
+      it(`${name}: a continue the history check lets through cannot skip it`, async () => {
+        const { agent, updateState, streamCalls } = buildAgent({
+          history: [...history],
+          stateValues: SAME_TURN,
+        });
+        withClientNodeName(agent);
+        // Take the history check out: the continue alone must hold.
+        vi.spyOn(agent as any, "ranInLatestStep").mockResolvedValue(true);
+
+        await agent.runAgentStream(input({ nodeName }), subscriber());
+
+        // No `asNode` write marks the node as finished, and no input is sent:
+        // the run resumes the thread's pending `next`, the named node first.
+        expect(updateState).not.toHaveBeenCalled();
+        expect(streamCalls).toHaveLength(1);
+        expect(streamCalls[0].input).toBeNull();
+      });
+    }
+
+    it("a client cannot choose exit durability", async () => {
+      const { agent, streamCalls } = buildAgent();
+
+      await agent.runAgentStream(input({ durability: "exit" }), subscriber());
+
+      expect(streamCalls[0]).not.toHaveProperty("durability");
+    });
   });
 });
