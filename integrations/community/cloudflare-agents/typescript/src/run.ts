@@ -333,9 +333,24 @@ function runFinished(
     threadId: input.threadId,
     runId: input.runId,
     timestamp: Date.now(),
-    outcome,
+    outcome: downgradeOutcome(input, outcome),
     ...(usage && usage.length > 0 && { usage }),
   };
+}
+
+/**
+ * A client that declares no protocol version predates AG-UI 1.0, and the
+ * 0.0.x clients reject outcome fields they do not know. AG-UI lets a producer
+ * that knows its peer is older leave such additions out, so
+ * `pendingToolCallIds` (a 1.0 addition) goes only to 1.0 clients.
+ */
+function downgradeOutcome(
+  input: RunAgentInput,
+  outcome: NonNullable<RunFinishedEvent["outcome"]>,
+): NonNullable<RunFinishedEvent["outcome"]> {
+  if (input.protocolVersion || outcome.type !== "success" || !("pendingToolCallIds" in outcome)) return outcome;
+  const { pendingToolCallIds: _pending, ...older } = outcome;
+  return older;
 }
 
 function runError(error: unknown, code: string, usage?: RunErrorEvent["usage"]): RunErrorEvent {

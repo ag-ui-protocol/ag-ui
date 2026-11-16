@@ -1046,6 +1046,22 @@ describe("runAGUI", () => {
     expect(seen).toEqual({});
   });
 
+  it("leaves pendingToolCallIds out for a client older than AG-UI 1.0", async () => {
+    // Pre-1.0 clients (no protocolVersion), such as @ag-ui/client 0.0.x, reject unknown outcome fields.
+    const tools = [{ name: "confirm_order", description: "Ask the user", parameters: { type: "object", properties: {} } }];
+    const handler = () => ({
+      fullStream: (async function* () {
+        yield { type: "tool-call", toolCallId: "fc1", toolName: "confirm_order", input: {} };
+      })(),
+    });
+
+    const older = await collect(runAGUI({ ...input, tools }, handler));
+    expect((older.at(-1) as any).outcome).toEqual({ type: "success" });
+
+    const current = await collect(runAGUI({ ...input, tools, protocolVersion: PROTOCOL_VERSION }, handler));
+    expect((current.at(-1) as any).outcome).toEqual({ type: "success", pendingToolCallIds: ["fc1"] });
+  });
+
   it("serves a newer protocol version with a warning", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const events = await collect(runAGUI({ ...input, protocolVersion: "1.7" }, emptyStream));
