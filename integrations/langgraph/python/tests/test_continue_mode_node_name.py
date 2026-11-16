@@ -93,7 +93,7 @@ def test_continue_writes_only_the_input_schema():
     ran: list[str] = []
     client = _gate_client(ran)
 
-    first = client.post("/agent", json=_body("thread", "r1", {}, {}))
+    first = client.post("/agent", json=_same_turn_body("thread", "r1", {}, {}))
     assert first.status_code == 200
     assert ran == ["check_permission"]
 
@@ -103,12 +103,15 @@ def test_continue_writes_only_the_input_schema():
     ran.clear()
     second = client.post(
         "/agent",
-        json=_body(
+        json=_same_turn_body(
             "thread", "r2", {"approved": True}, {"nodeName": "check_permission"}
         ),
     )
 
     assert second.status_code == 200
+    # A continue: nothing in the input schema changed, so check_permission is
+    # not run again, and the dropped ``approved`` cannot route past it.
+    assert ran == []
     assert "sensitive_action" not in ran
     assert "secret released" not in second.text
 
@@ -143,12 +146,12 @@ def test_continue_from_the_node_that_ran_last_still_works():
     )
     client = TestClient(app)
 
-    assert client.post("/agent", json=_body("paused", "r1", {}, {})).status_code == 200
+    assert client.post("/agent", json=_same_turn_body("paused", "r1", {}, {})).status_code == 200
     assert ran == ["first_step"]
 
     ran.clear()
     response = client.post(
-        "/agent", json=_body("paused", "r2", {}, {"nodeName": "first_step"})
+        "/agent", json=_same_turn_body("paused", "r2", {}, {"nodeName": "first_step"})
     )
 
     assert response.status_code == 200
@@ -319,3 +322,113 @@ def test_a_subgraph_node_name_is_refused_for_continue():
     assert response.status_code == 200
     assert "RUN_ERROR" not in response.text
     assert ran == ["inner_a", "inner_b"]
+
+
+class ResourceState(TypedDict, total=False):
+    messages: Annotated[list, add_messages]
+    resource: str
+    approved: bool
+
+
+class ResourceInput(TypedDict, total=False):
+    messages: Annotated[list, add_messages]
+    resource: str
+
+
+def _resource_gate_client(ran: list):
+    """START -> gate -> (approved ? act : END), paused before ``act``.
+
+    ``gate`` approves only the public resource; ``act`` uses whatever resource
+    is in state when it runs. ``approved`` is private: not in the input schema.
+    """
+
+    def gate(state: ResourceState) -> dict:
+        ran.append(("gate", state.get("resource")))
+        return {"approved": state.get("resource") == "public"}
+
+    def route(state: ResourceState) -> str:
+        return "act" if state.get("approved") else END
+
+    def act(state: ResourceState) -> dict:
+        ran.append(("act", state.get("resource"), state.get("approved")))
+        return {}
+
+    builder = StateGraph(ResourceState, input_schema=ResourceInput)
+    builder.add_node("gate", gate)
+    builder.add_node("act", act)
+    builder.add_edge(START, "gate")
+    builder.add_conditional_edges("gate", route, ["act", END])
+    builder.add_edge("act", END)
+    graph = builder.compile(checkpointer=MemorySaver(), interrupt_before=["act"])
+    return _client_for(graph), graph
+
+
+def _same_turn_body(thread_id: str, run_id: str, state: Any, forwarded_props: dict) -> dict:
+    """A request that re-sends the thread's existing message, adding none."""
+    return {**_body(thread_id, run_id, state, forwarded_props),
+            "messages": [{"id": "m-turn", "role": "user", "content": "go"}]}
+
+
+def test_continue_does_not_carry_changed_input_past_the_check():
+    """The gate approved ``public``. Continuing from it with ``private`` must
+    not run ``act`` on ``private``: the input changed, so the gate decides again."""
+    ran: list = []
+    client, _ = _resource_gate_client(ran)
+
+    first = client.post(
+        "/agent", json=_same_turn_body("res", "r1", {"resource": "public"}, {})
+    )
+    assert first.status_code == 200
+    assert ran == [("gate", "public")]
+
+    second = client.post(
+        "/agent",
+        json=_same_turn_body(
+            "res", "r2", {"resource": "private"}, {"nodeName": "gate"}
+        ),
+    )
+
+    assert second.status_code == 200
+    assert "RUN_ERROR" not in second.text
+    assert ("act", "private", True) not in ran
+    # The request is a new run: the gate checks ``private`` and refuses it.
+    assert ran == [("gate", "public"), ("gate", "private")]
+
+
+def test_continue_with_a_new_message_starts_a_new_run():
+    """A new message is changed input too: the nodes before the named one
+    have not seen it, so the run starts from START."""
+    ran: list = []
+    client, _ = _resource_gate_client(ran)
+
+    assert client.post(
+        "/agent", json=_body("res-msg", "r1", {"resource": "public"}, {})
+    ).status_code == 200
+
+    response = client.post(
+        "/agent",
+        json=_body("res-msg", "r2", {"resource": "public"}, {"nodeName": "gate"}),
+    )
+
+    assert response.status_code == 200
+    assert ran == [("gate", "public"), ("gate", "public")]
+
+
+def test_continue_with_unchanged_input_goes_on_past_the_check():
+    """The same input the gate approved continues to ``act``."""
+    ran: list = []
+    client, _ = _resource_gate_client(ran)
+
+    assert client.post(
+        "/agent", json=_same_turn_body("res-ok", "r1", {"resource": "public"}, {})
+    ).status_code == 200
+
+    response = client.post(
+        "/agent",
+        json=_same_turn_body(
+            "res-ok", "r2", {"resource": "public"}, {"nodeName": "gate"}
+        ),
+    )
+
+    assert response.status_code == 200
+    assert ran == [("gate", "public"), ("act", "public", True)]

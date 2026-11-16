@@ -45,9 +45,22 @@ const GRAPH = {
 interface Setup {
   history?: any[];
   assistantConfig?: Record<string, unknown>;
+  /** The thread's current values (`threads.getState`). */
+  stateValues?: Record<string, unknown>;
+  /** Override `input_schema.properties`. */
+  inputProperties?: Record<string, unknown>;
 }
 
-function buildAgent({ history = [], assistantConfig }: Setup = {}) {
+// The thread already holds the message `input()` sends, so a request built
+// with `input()` adds no new message.
+const SAME_TURN = { messages: [{ id: "m1", type: "human", content: "go" }] };
+
+function buildAgent({
+  history = [],
+  assistantConfig,
+  stateValues = { messages: [] },
+  inputProperties = { messages: {} },
+}: Setup = {}) {
   const agent = new LangGraphAgent({
     graphId: "gate",
     deploymentUrl: "http://localhost:8000",
@@ -69,9 +82,7 @@ function buildAgent({ history = [], assistantConfig }: Setup = {}) {
     threads: {
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
-      getState: vi
-        .fn()
-        .mockResolvedValue({ values: { messages: [] }, tasks: [] }),
+      getState: vi.fn().mockResolvedValue({ values: stateValues, tasks: [] }),
       getHistory,
       updateState,
     },
@@ -80,7 +91,7 @@ function buildAgent({ history = [], assistantConfig }: Setup = {}) {
       getGraph: vi.fn().mockResolvedValue(GRAPH),
       getSchemas: vi.fn().mockResolvedValue({
         // `approved` is a private channel: in the state schema, not the input.
-        input_schema: { properties: { messages: {} } },
+        input_schema: { properties: inputProperties },
         output_schema: { properties: { messages: {}, result: {} } },
         state_schema: {
           properties: { messages: {}, approved: {}, result: {} },
@@ -222,6 +233,7 @@ describe("client control over where and how a LangGraph run resumes", () => {
   it("continuing from the node that ran last writes only the input schema", async () => {
     const { agent, updateState } = buildAgent({
       history: historyAfter("check_permission"),
+      stateValues: SAME_TURN,
     });
     withClientNodeName(agent);
 
@@ -406,5 +418,77 @@ describe("client control over where and how a LangGraph run resumes", () => {
     ]) {
       expect(payload).not.toHaveProperty(key);
     }
+  });
+
+  it("an empty input schema is an empty allowlist, not an open one", async () => {
+    const { agent, updateState } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: SAME_TURN,
+      inputProperties: {},
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }, { approved: true }),
+      subscriber(),
+    );
+
+    expect(updateState).toHaveBeenCalledTimes(1);
+    const [, body] = updateState.mock.calls[0];
+    expect(body.asNode).toBe("check_permission");
+    expect(body.values ?? {}).not.toHaveProperty("approved");
+  });
+
+  it("a continue that changes an input channel starts a new run instead", async () => {
+    // check_permission approved `public`. Continuing from it with `private`
+    // would carry `private` past the check.
+    const { agent, updateState, streamCalls } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: { ...SAME_TURN, resource: "public", approved: true },
+      inputProperties: { messages: {}, resource: {} },
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }, { resource: "private" }),
+      subscriber(),
+    );
+
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls).toHaveLength(1);
+    // A start run: the input goes in at START, so the check runs again.
+    expect(streamCalls[0].input).toMatchObject({ resource: "private" });
+  });
+
+  it("a continue that adds a message starts a new run instead", async () => {
+    const { agent, updateState, streamCalls } = buildAgent({
+      history: historyAfter("check_permission"),
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }),
+      subscriber(),
+    );
+
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls[0].input?.messages).toHaveLength(1);
+  });
+
+  it("a continue with unchanged input still continues", async () => {
+    const { agent, updateState } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: { ...SAME_TURN, resource: "public", approved: true },
+      inputProperties: { messages: {}, resource: {} },
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }, { resource: "public" }),
+      subscriber(),
+    );
+
+    expect(updateState).toHaveBeenCalledTimes(1);
+    expect(updateState.mock.calls[0][1].asNode).toBe("check_permission");
   });
 });

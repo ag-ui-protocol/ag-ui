@@ -232,6 +232,29 @@ const LANGGRAPH_RUN_OPTIONS = [
   "feedbackKeys",
 ] as const;
 
+/**
+ * The keys of `update` that would change the thread's values `current`.
+ * Messages written through `updateState` are added to the thread, so any
+ * message is a change.
+ */
+function changedInputKeys(
+  update: Record<string, unknown>,
+  current: Record<string, unknown> = {},
+): string[] {
+  const isEmpty = (value: unknown) =>
+    value === undefined ||
+    value === null ||
+    (Array.isArray(value) && value.length === 0) ||
+    (typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value as object).length === 0);
+  return Object.entries(update).flatMap(([key, value]) => {
+    if (key === "messages") return isEmpty(value) ? [] : [key];
+    if (!(key in current)) return isEmpty(value) ? [] : [key];
+    return JSON.stringify(current[key]) === JSON.stringify(value) ? [] : [key];
+  });
+}
+
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
   assistantConfig?: LangGraphConfig;
@@ -940,18 +963,45 @@ export class LangGraphAgent extends AbstractAgent {
       continueFromNode = undefined;
     }
 
+    // Same rule as a new run (`getStreamPayloadInput`): client state reaches
+    // only the channels of the graph's input schema. With the schema
+    // unavailable there is no allowlist, so there is no continue either.
+    const inputKeys = this.activeRun!.schemaKeys?.input;
+    let continueValues: State | undefined;
+    if (continueFromNode && !inputKeys) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the graph's input schema is unavailable; starting a new run instead.`,
+      );
+      continueFromNode = undefined;
+    }
+    if (continueFromNode && inputKeys) {
+      continueValues = filterObjectBySchemaKeys(inputState ?? {}, [
+        ...DEFAULT_SCHEMA_KEYS,
+        ...inputKeys,
+      ]);
+      // A continue skips the nodes before the named one, and those nodes may
+      // have checked the input (a permission gate, say). Their decision holds
+      // only for the input they saw. If the request changes it (a new
+      // message, a changed channel), the run starts from START instead, so
+      // those nodes check the new input (same rule as the Python adapter).
+      const changedKeys = changedInputKeys(continueValues, agentState.values);
+      if (
+        stateValuesDiff.messages?.length &&
+        !changedKeys.includes("messages")
+      ) {
+        changedKeys.push("messages");
+      }
+      if (changedKeys.length > 0) {
+        console.warn(
+          `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the request changes ${changedKeys.join(", ")}, which the nodes before it have not seen; starting a new run instead.`,
+        );
+        continueFromNode = undefined;
+      }
+    }
+
     const mode = continueFromNode ? "continue" : "start";
 
     if (mode === "continue") {
-      // Same rule as a new run (`getStreamPayloadInput`): client state reaches
-      // only the channels of the graph's input schema.
-      const inputKeys = this.activeRun!.schemaKeys?.input;
-      const continueValues = inputKeys
-        ? filterObjectBySchemaKeys(inputState ?? {}, [
-            ...DEFAULT_SCHEMA_KEYS,
-            ...inputKeys,
-          ])
-        : inputState;
       await this.client.threads.updateState(threadId, {
         values: continueValues,
         asNode: continueFromNode,
@@ -2565,10 +2615,10 @@ export class LangGraphAgent extends AbstractAgent {
       const outputSchema = Object.keys(graphSchema.output_schema.properties);
 
       return {
-        input:
-          inputSchema && inputSchema.length
-            ? [...inputSchema, ...this.constantSchemaKeys]
-            : null,
+        // An empty input schema is an empty allowlist (only the adapter's
+        // constant keys), not an unavailable one: `null` would let every
+        // client key through.
+        input: [...inputSchema, ...this.constantSchemaKeys],
         output:
           outputSchema && outputSchema.length
             ? [...outputSchema, ...this.constantSchemaKeys]

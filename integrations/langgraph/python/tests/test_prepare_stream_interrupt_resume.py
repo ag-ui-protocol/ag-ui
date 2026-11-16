@@ -116,7 +116,9 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
     """Interrupt resumes must bypass the regenerate heuristic (#1743)."""
 
     async def test_handle_stream_events_uses_forwarded_node_name_for_continue_mode(self):
-        """A no-resume request with node_name should continue from that node."""
+        """A no-resume request with node_name continues from that node when it
+        adds no input. (A new message would start a new run instead; see
+        test_continue_mode_node_name.py.)"""
         agent = make_agent()
 
         checkpoint_messages = [
@@ -134,7 +136,6 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
 
         frontend_messages = [
             UserMessage(id="h1", role="user", content="do something"),
-            UserMessage(id="h2", role="user", content="follow up"),
         ]
         inp = _make_input(
             messages=frontend_messages,

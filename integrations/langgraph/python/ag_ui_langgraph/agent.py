@@ -519,6 +519,28 @@ def _is_deepagents_task_call(tool_call) -> bool:
     return isinstance(args, dict) and "subagent_type" in args
 
 
+def _changed_input_keys(update, current, channels=None) -> List[str]:
+    """The keys of ``update`` that would change the thread's state ``current``.
+
+    ``update["messages"]`` holds only the messages the request adds, so any
+    message is a change. A key that is not a channel of the graph (when the
+    channels are known) changes nothing: LangGraph does not store it.
+    """
+    changed = []
+    for key, value in (update or {}).items():
+        if channels is not None and key not in channels:
+            continue
+        if key == "messages":
+            if value:
+                changed.append(key)
+        elif key in current:
+            if current[key] != value:
+                changed.append(key)
+        elif value not in (None, [], {}):
+            changed.append(key)
+    return changed
+
+
 def _pending_tool_calls_are_all_task(messages) -> bool:
     """True when the checkpoint's pending tool calls are all `task` delegations.
 
@@ -2476,13 +2498,30 @@ class LangGraphAgent:
             # client sends reaches only the channels of the graph's input
             # schema. Unfiltered, a continue would write any channel, the ones
             # the graph keeps to itself included.
-            input_keys = (self.active_run.get("schema_keys") or {}).get("input")
-            continue_state = (
-                filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *input_keys])
-                if input_keys
-                else state
+            input_keys = (self.active_run.get("schema_keys") or {}).get("input") or []
+            continue_state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *input_keys])
+            # A continue skips the nodes before the named one, and those nodes
+            # may have checked the input (a permission gate, say). Their
+            # decision holds only for the input they saw. If the request
+            # changes it (a new message, a changed channel), the run starts
+            # from START, so those nodes check the new input.
+            changed_keys = _changed_input_keys(
+                continue_state,
+                agent_state.values or {},
+                getattr(self.graph, "channels", None),
             )
-            await self.graph.aupdate_state(config, continue_state, as_node=self.active_run.get("node_name"))
+            if changed_keys:
+                logger.warning(
+                    "ignoring forwardedProps.node_name=%r: the request changes %s, which the "
+                    "nodes before it have not seen; starting a new run instead "
+                    "(thread_id=%r, run_id=%r)",
+                    self.active_run.get("node_name"), ", ".join(changed_keys),
+                    thread_id, self.active_run.get("id"),
+                )
+                self.active_run["mode"] = "start"
+                self.active_run["node_name"] = None
+            else:
+                await self.graph.aupdate_state(config, continue_state, as_node=self.active_run.get("node_name"))
 
         if has_resume_input:
             if agui_resume is not None:
