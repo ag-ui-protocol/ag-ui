@@ -605,6 +605,69 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * Split the client-supplied `forwardedProps` into what may reach the run.
+   *
+   * The run config is the operator's (`assistantConfig`): a client
+   * `forwardedProps.config` is not merged over it. A client may resume an
+   * interrupt (`command.resume`), but may not steer the graph (`goto`) or
+   * write its state (`update`). `nodeName` is the adapter's own input and is
+   * not part of the run payload.
+   */
+  private clientRunProps(
+    forwardedProps: RunAgentExtendedInput["forwardedProps"],
+  ) {
+    const {
+      command: clientCommand,
+      config: clientConfig,
+      nodeName: _nodeName,
+      ...restProps
+    } = forwardedProps ?? {};
+    if (clientConfig !== undefined) {
+      console.warn(
+        "[@ag-ui/langgraph] ignoring forwardedProps.config: the run config comes from the agent's assistantConfig.",
+      );
+    }
+    const { resume, ...droppedCommandFields } = clientCommand ?? {};
+    const dropped = Object.keys(droppedCommandFields);
+    if (dropped.length > 0) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring forwardedProps.command fields: ${dropped.join(", ")}; only "resume" is accepted.`,
+      );
+    }
+    const command: { resume?: unknown } | undefined =
+      resume !== undefined ? { resume } : undefined;
+    return { command, restProps };
+  }
+
+  /**
+   * Whether `nodeName` ran in the step that produced the thread's latest
+   * checkpoint. The checkpoint before the latest lists, in `next`, the nodes
+   * that step ran. A thread with no such pair (a new thread), or whose latest
+   * checkpoint was written by `updateState` rather than by a step, has no
+   * node to continue from.
+   */
+  private async ranInLatestStep(
+    threadId: string,
+    nodeName: string,
+  ): Promise<boolean> {
+    let history: ThreadState<State>[];
+    try {
+      history = await this.client.threads.getHistory(threadId, { limit: 2 });
+    } catch (error) {
+      console.warn(
+        `[@ag-ui/langgraph] could not read the thread's history to check the node name: ${(error as Error)?.message ?? error}`,
+      );
+      return false;
+    }
+    if (!history || history.length < 2) return false;
+    const [latest, previous] = history;
+    if (latest.metadata?.source !== "loop") {
+      return false;
+    }
+    return (previous.next ?? []).includes(nodeName);
+  }
+
   async prepareRegenerateStream(
     input: RegenerateInput,
     streamMode: StreamMode | StreamMode[],
@@ -634,10 +697,9 @@ export class LangGraphAgent extends AbstractAgent {
     });
 
     let payloadConfig: LangGraphConfig | undefined;
-    const configsToMerge = [
-      this.assistantConfig,
-      forwardedProps?.config,
-    ].filter(Boolean) as LangGraphConfig[];
+    const configsToMerge = [this.assistantConfig].filter(
+      Boolean,
+    ) as LangGraphConfig[];
     if (configsToMerge.length) {
       payloadConfig = await this.mergeConfigs({
         configs: configsToMerge,
@@ -650,7 +712,7 @@ export class LangGraphAgent extends AbstractAgent {
       this.shapePayloadConfig(payloadConfig);
 
     const payload = {
-      ...(input.forwardedProps ?? {}),
+      ...this.clientRunProps(forwardedProps).restProps,
       input: this.langGraphDefaultMergeState(
         timeTravelCheckpoint.values,
         [messageCheckpoint],
@@ -821,21 +883,43 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant.assistant_id,
     );
 
-    const mode =
+    let continueFromNode =
       !hasResume &&
       threadId &&
       this.activeRun!.nodeName != "__end__" &&
       this.activeRun!.nodeName
-        ? "continue"
-        : "start";
+        ? this.activeRun!.nodeName
+        : undefined;
+
+    // The node name is a claim about where the thread stands. Used as `asNode`
+    // it tells LangGraph that node has just run, so the graph goes on from its
+    // successors and every node before them is skipped. Honour it only when
+    // the thread's own history agrees (same rule as the Python adapter).
+    if (
+      continueFromNode &&
+      !(await this.ranInLatestStep(threadId, continueFromNode))
+    ) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the thread's latest step did not run that node; starting a new run instead.`,
+      );
+      continueFromNode = undefined;
+    }
+
+    const mode = continueFromNode ? "continue" : "start";
 
     if (mode === "continue") {
-      const nodeBefore = this.activeRun!.graphInfo.edges.find(
-        (e) => e.target === this.activeRun!.nodeName,
-      );
+      // Same rule as a new run (`getStreamPayloadInput`): client state reaches
+      // only the channels of the graph's input schema.
+      const inputKeys = this.activeRun!.schemaKeys?.input;
+      const continueValues = inputKeys
+        ? filterObjectBySchemaKeys(inputState ?? {}, [
+            ...DEFAULT_SCHEMA_KEYS,
+            ...inputKeys,
+          ])
+        : inputState;
       await this.client.threads.updateState(threadId, {
-        values: inputState,
-        asNode: nodeBefore?.source,
+        values: continueValues,
+        asNode: continueFromNode,
       });
     }
 
@@ -858,10 +942,9 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     let payloadConfig: LangGraphConfig | undefined;
-    const configsToMerge = [
-      this.assistantConfig,
-      forwardedProps?.config,
-    ].filter(Boolean) as LangGraphConfig[];
+    const configsToMerge = [this.assistantConfig].filter(
+      Boolean,
+    ) as LangGraphConfig[];
     if (configsToMerge.length) {
       payloadConfig = await this.mergeConfigs({
         configs: configsToMerge,
@@ -872,7 +955,7 @@ export class LangGraphAgent extends AbstractAgent {
     // forwardedProps is optional on the input; the SSE-drop recovery now reaches
     // this continuation path (instead of returning early via regenerate), so guard
     // against an undefined value here rather than throwing on destructure.
-    const { command, ...restProps } = forwardedProps ?? {};
+    const { command, restProps } = this.clientRunProps(forwardedProps);
 
     // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
     // The SDK doesn't export a Task type, so we use `any` here.

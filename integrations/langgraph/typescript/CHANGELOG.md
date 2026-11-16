@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Security (GHSA-qjj5-3932-qh6q): continue mode resumes only from the node that the thread history shows ran in the latest step, uses that node as `asNode`, and filters client state by the graph input schema. `forwardedProps.config` no longer overrides `assistantConfig`, and `forwardedProps.command` accepts only `resume` (`goto` and `update` are dropped with a warning).
+
 ## 0.0.46 — 2026-11-13
 
 - Read LangGraph's native `Interrupt.response_schema` field (langgraph >= 1.2.12), falling back to value-level `responseSchema`/`response_schema` keys.
