@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+language: en-US
+reviews:
+  profile: chill
+  # Advisory reviews; retain existing CI and human approval requirements.
+  auto_approvals:
+    enabled: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  collapse_walkthrough: true
+  in_progress_fortune: false
+  poem: false
+
+  # Keep manifests, protocol schemas, fixtures, and tests in review scope.
+  # Exclusions also remove files from CodeRabbit's checkout, so keep them narrow.
+  path_filters:
+    - "!**/pnpm-lock.yaml"
+    - "!**/package-lock.json"
+    - "!**/yarn.lock"
+    - "!**/uv.lock"
+    - "!**/poetry.lock"
+    - "!**/Cargo.lock"
+    - "!**/pubspec.lock"
+    - "!**/Podfile.lock"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/coverage/**"
+    - "!**/.next/**"
+    - "!sdks/python/ag_ui/_generated/**"
+    - "!sdks/typescript/packages/core/src/generated/**"
+    - "!sdks/typescript/packages/proto/src/generated/**"
+    - "!sdks/dotnet/src/**/Generated/**"
+    - "!docs/spec/*/schema.mdx"
+
+  path_instructions:
+    - path: "sdks/**"
+      instructions: >-
+        Prioritize wire compatibility, serialization, event ordering, streaming
+        cancellation and cleanup, and error propagation. Check behavior against
+        the applicable protocol version and conformance fixtures in spec/.
+        Respect language-specific idioms and independent SDK versions; do not
+        assume every SDK already implements the draft specification. For
+        generated models, recommend changes to the schema or generator rather
+        than hand edits to generated output. Producers must omit absent
+        optional fields rather than serialize them as null; see
+        sdks/fixtures/null-omission.json, which every SDK is held to. Changes to
+        pre-1.0 compatibility shims must keep DEPRECATIONS.md accurate.
+    - path: "sdks/community/**"
+      instructions: >-
+        Community SDKs are maintained independently. Hold them to the frozen
+        protocol version they target (spec/1.0 unless stated otherwise), not to
+        the draft, and do not ask for feature parity with first-party SDKs.
+        Prefer each language's own conventions and tooling.
+    - path: "sdks/typescript/packages/proto/src/proto/**"
+      instructions: >-
+        These .proto files are generated from spec/ by the spec generator.
+        Recommend changes to the schema or generator instead of hand edits.
+        Field numbers must match the proto-freeze.txt ledger of the matching
+        spec version; flag any renumbered, reused, or dropped field that is not
+        recorded there as reserved.
+    - path: "integrations/**"
+      instructions: >-
+        Check that framework events map correctly to AG-UI lifecycle, message,
+        tool-call, and state events. Focus on stable IDs, incremental streaming,
+        cancellation, error paths, and state isolation between users and runs.
+        Respect each framework's supported versions and existing adapter patterns.
+        Look for regression tests covering changed event translations.
+    - path: "middlewares/**"
+      instructions: >-
+        Check event ordering, state isolation, cancellation, error propagation,
+        and cleanup. Transformations must preserve unrelated events and metadata
+        unless the middleware explicitly documents otherwise.
+    - path: "spec/**"
+      instructions: >-
+        Treat schemas, conformance streams, fixtures, and generators as protocol
+        contracts. Check backward compatibility and distinguish frozen versions
+        from draft changes. Preserve protobuf field numbers and the append-only
+        number ledger. Check that schema and generator changes have matching
+        valid, invalid, or stream fixtures as appropriate; distinguish exact
+        schema validation from forgiving receiver compatibility behavior.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Review for supply-chain and privilege risk: third-party actions pinned
+        to full commit SHAs, least-privilege permissions declared per job, no
+        checkout or execution of PR-head code under pull_request_target, and no
+        untrusted event data (titles, branch names, file names, logins)
+        interpolated through expressions into run or script inputs. Respect
+        existing zizmor ignore comments only when their justification still
+        holds.
+    - path: "docs/**"
+      instructions: >-
+        Check technical accuracy against spec/ and the SDK APIs: event names,
+        field names, casing, and code samples must match the current protocol.
+        Flag draft-only features presented as part of a released version.
