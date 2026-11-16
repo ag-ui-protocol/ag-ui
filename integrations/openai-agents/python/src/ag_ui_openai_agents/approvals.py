@@ -10,9 +10,12 @@ A resume entry runs a call only when its token verifies.
 
 Token: ``base64url(JSON payload) + "." + base64url(HMAC-SHA256(secret, base64url(payload)))``.
 The payload binds the thread, the tool call id, the tool name and the SHA-256
-of the canonical JSON of the arguments, and it carries an expiry and a random
-nonce (``jti``). A decided token is consumed, so the same approval cannot run
-the call again.
+of the arguments in canonical form (see ``canonical_arguments``), and it
+carries an expiry and a random nonce (``jti``). A resumed call runs on that
+canonical form, so the tool gets exactly the text the token covers. A decided
+token is consumed, so the same approval cannot run the call again. With
+several workers, the record of decided tokens must be shared (see
+``ConsumedTokens``).
 """
 
 from __future__ import annotations
@@ -44,7 +47,14 @@ HELD_CALL_KEY = "heldCall"
 SECRET_ENV = "AG_UI_OPENAI_AGENTS_APPROVAL_SECRET"
 """Environment variable the default signer reads its secret from."""
 
-DEFAULT_TTL_SECONDS = 3600
+DEFAULT_TTL_SECONDS = 15 * 60
+"""How long an approval stays answerable by default.
+
+It also bounds replay when decided tokens are kept per process: a replay that
+reaches another worker, or comes after a restart, verifies until expiry.
+Fifteen minutes is enough to decide one approval and keeps that window short.
+Pass ``ttl_seconds`` for longer, together with a shared ``ConsumedTokens``.
+"""
 MIN_SECRET_BYTES = 32
 _TOKEN_VERSION = 1
 
@@ -53,7 +63,12 @@ class ConsumedTokens(Protocol):
     """Where decided tokens are recorded, so a decision applies once.
 
     Give every worker of a deployment the same store (Redis, a database) to
-    stop a replay that reaches a different worker.
+    stop a replay that reaches a different worker or comes after a restart.
+    Pass it as ``consumed_tokens=`` to ``OpenAIAgentsAgent`` or
+    ``add_openai_agents_fastapi_endpoint``, or as ``consumed=`` to
+    ``ApprovalSigner``. ``consume`` may be sync or async, and must be atomic
+    across workers: for example Redis ``SET <token_id> 1 NX EXAT <expires_at>``,
+    which tells you whether the key was new.
     """
 
     def consume(self, token_id: str, expires_at: float) -> bool | Awaitable[bool]:
@@ -97,9 +112,10 @@ class ApprovalSigner:
     Args:
         secret: At least 32 bytes (UTF-8 bytes for a string). Every worker that
             may receive the resume needs the same secret.
-        ttl_seconds: How long an approval stays answerable. Defaults to an hour.
+        ttl_seconds: How long an approval stays answerable. Defaults to 15
+            minutes (``DEFAULT_TTL_SECONDS``).
         consumed: Where decided tokens are recorded. Defaults to a
-            per-process store.
+            per-process store; with several workers pass a shared one.
     """
 
     def __init__(
@@ -197,38 +213,94 @@ def held_call_token(call: ToolCall) -> Any:
 
 _default: ApprovalSigner | None = None
 _default_lock = threading.Lock()
+_process_secret: bytes | None = None
 
 
-def default_approval_signer() -> ApprovalSigner:
+def default_approval_signer(*, consumed: ConsumedTokens | None = None) -> ApprovalSigner:
     """The signer used when none is passed.
 
     Its secret comes from ``AG_UI_OPENAI_AGENTS_APPROVAL_SECRET``. Without it,
     a random secret is made for this process: approvals then only resume on
     the process that paused them, and not after a restart.
+
+    Args:
+        consumed: Where decided tokens are recorded. Without it, the one
+            per-process signer is returned and decided tokens are kept in
+            process memory, so a replay that reaches another worker, or comes
+            after a restart, runs the call again until the token expires. With
+            it, a new signer with the same secret and this store is returned.
     """
     global _default
     with _default_lock:
+        if consumed is not None:
+            return ApprovalSigner(_secret(), consumed=consumed)
         if _default is None:
-            secret = os.environ.get(SECRET_ENV)
-            if not secret:
+            if os.environ.get(SECRET_ENV):
                 logger.warning(
-                    "%s is not set; tool approvals are signed with a random per-process "
-                    "secret and only resume on this process",
+                    "%s is set but decided tool approvals are kept in an in-memory, "
+                    "per-process store; a replayed approval that reaches another worker "
+                    "or comes after a restart runs the tool again until the token "
+                    "expires. Pass a shared consumed_tokens store when running more "
+                    "than one worker",
                     SECRET_ENV,
                 )
-                secret = secrets.token_bytes(MIN_SECRET_BYTES)
-            _default = ApprovalSigner(secret)
+            _default = ApprovalSigner(_secret())
         return _default
 
 
-def _arguments_hash(arguments: str | None) -> str:
-    """SHA-256 of the canonical JSON of the arguments (the raw text if not JSON)."""
+def _secret() -> bytes | str:
+    """The configured secret, or this process's random one. Call under ``_default_lock``."""
+    global _process_secret
+    secret = os.environ.get(SECRET_ENV)
+    if secret:
+        return secret
+    if _process_secret is None:
+        logger.warning(
+            "%s is not set; tool approvals are signed with a random per-process "
+            "secret and only resume on this process",
+            SECRET_ENV,
+        )
+        _process_secret = secrets.token_bytes(MIN_SECRET_BYTES)
+    return _process_secret
+
+
+def canonical_arguments(arguments: str | None) -> str:
+    """The text of ``arguments`` that a token covers and a resumed tool runs on.
+
+    JSON is written again with sorted keys, no spaces and ASCII escapes, so a
+    duplicate key keeps one value and the tool reads the arguments the way
+    the hash did. Text that is not JSON, or JSON with a number that does not
+    survive the round trip (``1e400`` and ``1e999`` both read as infinity),
+    is kept exactly as sent.
+    """
+    return _canonical(arguments)[0]
+
+
+def _canonical(arguments: str | None) -> tuple[str, bool]:
+    """``canonical_arguments``, and whether it is re-encoded JSON."""
     text = arguments or "{}"
     try:
-        text = json.dumps(json.loads(text), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    except ValueError:
+        return (
+            json.dumps(
+                json.loads(text),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ),
+            True,
+        )
+    except (ValueError, RecursionError):
+        return text, False
+
+
+def _arguments_hash(arguments: str | None) -> str:
+    """SHA-256 of ``canonical_arguments``; text kept as sent is marked apart."""
+    text, is_json = _canonical(arguments)
+    if not is_json:
         text = "raw:" + text
-    return hashlib.sha256(text.encode()).hexdigest()
+    # A lone surrogate is a valid str but not valid UTF-8: hash it, never crash.
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def _b64(data: bytes) -> str:
@@ -251,6 +323,7 @@ __all__ = [
     "InMemoryConsumedTokens",
     "HELD_CALL_KEY",
     "SECRET_ENV",
+    "canonical_arguments",
     "default_approval_signer",
     "held_call_token",
 ]

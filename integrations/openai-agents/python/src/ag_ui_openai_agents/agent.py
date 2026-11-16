@@ -1,5 +1,6 @@
 """Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI."""
 
+import copy
 import inspect
 import logging
 from contextlib import aclosing
@@ -8,7 +9,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, RunConfig, RunContextWrapper, Runner
 
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
-from .approvals import ApprovalSigner
+from .approvals import ApprovalSigner, ConsumedTokens, default_approval_signer
 from .interrupts import _mcp_tools, resume_tool_calls
 from .state import SharedState, use_shared_state
 from .translator import AGUITranslator
@@ -67,6 +68,7 @@ class OpenAIAgentsAgent:
         run_error_message: str | None = None,
         context_in_instructions: bool = True,
         approvals: ApprovalSigner | None = None,
+        consumed_tokens: ConsumedTokens | None = None,
     ) -> None:
         """Configure an OpenAI Agents SDK Agent for AG-UI requests.
 
@@ -104,7 +106,20 @@ class OpenAIAgentsAgent:
                 Defaults to ``default_approval_signer()``, whose secret comes
                 from ``AG_UI_OPENAI_AGENTS_APPROVAL_SECRET`` (or is random per
                 process).
+            consumed_tokens: Where the default signer records decided
+                approvals, so each runs once. Defaults to process memory,
+                which does not stop a replay that reaches another worker or
+                comes after a restart: with several workers, pass a store they
+                share (see ``ConsumedTokens``). With ``approvals``, pass the
+                store to ``ApprovalSigner(consumed=...)`` instead.
+
+        Raises:
+            ValueError: Both ``approvals`` and ``consumed_tokens`` were given.
         """
+        if approvals is not None and consumed_tokens is not None:
+            raise ValueError(
+                "Pass consumed_tokens to ApprovalSigner(consumed=...) when you pass approvals."
+            )
         self.agent = agent
         self.name = name or agent.name
         self.description = description
@@ -119,7 +134,36 @@ class OpenAIAgentsAgent:
         self._emit_run_error = emit_run_error
         self._run_error_message = run_error_message
         self._context_in_instructions = context_in_instructions
-        self._approvals = approvals
+        self._own_signer = approvals is not None
+        self._approvals = (
+            default_approval_signer(consumed=consumed_tokens) if consumed_tokens is not None else approvals
+        )
+
+    def with_consumed_tokens(self, consumed_tokens: ConsumedTokens) -> "OpenAIAgentsAgent":
+        """A copy of this agent whose default signer records decided approvals in ``consumed_tokens``.
+
+        Raises:
+            ValueError: This agent was given its own ``approvals`` signer.
+        """
+        if self._own_signer:
+            raise ValueError(
+                "Pass consumed_tokens to ApprovalSigner(consumed=...) when you pass approvals."
+            )
+        clone = copy.copy(self)
+        clone._approvals = default_approval_signer(consumed=consumed_tokens)
+        return clone
+
+    @property
+    def approvals(self) -> ApprovalSigner:
+        """The signer this agent pauses and resumes approvals with.
+
+        Without ``approvals`` or ``consumed_tokens`` this is
+        ``default_approval_signer()``, made on first use; it logs a warning
+        when its decided approvals are kept per process.
+        """
+        if self._approvals is None:
+            self._approvals = default_approval_signer()
+        return self._approvals
 
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Translate one AG-UI request, run the agent, and yield AG-UI events.
@@ -157,7 +201,7 @@ class OpenAIAgentsAgent:
             emit_run_error=self._emit_run_error,
             run_error_message=self._run_error_message,
             shared_state=state,
-            approvals=self._approvals,
+            approvals=self.approvals,
         )
         try:
             with use_shared_state(state):
@@ -166,7 +210,7 @@ class OpenAIAgentsAgent:
                     input,
                     context=context,
                     run_config=self._run_config,
-                    approvals=self._approvals,
+                    approvals=self.approvals,
                 )
         except Exception as exc:
             # A tool that failed while resuming fails the run the way a tool

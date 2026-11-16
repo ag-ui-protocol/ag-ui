@@ -21,6 +21,21 @@
     the `approvals=` argument of `OpenAIAgentsAgent`, `resume_tool_calls` and
     `AGUITranslator.to_agui`. Set `AG_UI_OPENAI_AGENTS_APPROVAL_SECRET` (at
     least 32 bytes), or pass a signer, so that all workers share one secret.
+  - Decided tokens are kept in process memory by default. **With more than one
+    worker, pass a shared `ConsumedTokens` store** (for example Redis) as
+    `consumed_tokens=` to `add_openai_agents_fastapi_endpoint` or
+    `OpenAIAgentsAgent`. Otherwise a replay that reaches another worker, or
+    comes after a restart, runs the tool again until the token expires. The
+    server logs a warning at startup when
+    `AG_UI_OPENAI_AGENTS_APPROVAL_SECRET` is set and the in-memory store is
+    used.
+  - An approval token expires after 15 minutes by default (`ttl_seconds`).
+    This limits how long a replay can work when decided tokens are not shared.
+  - A resumed call runs on the canonical JSON its token covers, so a duplicate
+    key or an overflowing number cannot be read two ways. Argument text with a
+    lone surrogate no longer crashes the signer.
+  - `UNVERIFIED` and `ALREADY_ANSWERED` refusals are logged as warnings with
+    the thread id, the call id and the tool name.
   - Reported privately by dtnvgs.
 
 ## 0.1.0

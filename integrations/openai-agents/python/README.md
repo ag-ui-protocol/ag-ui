@@ -744,16 +744,57 @@ decided tokens:
   bytes). Without either, a random secret is made per process: approvals
   then resume only on the process that paused them, and not after a restart.
   Give every worker the same secret.
-- *Idempotency.* A decided token is recorded in `ApprovalSigner(...,
-  consumed=...)`, by default in process memory until the token expires
-  (`ttl_seconds`, one hour by default). With several workers, pass a shared
-  `ConsumedTokens` store (for example Redis) so a replay that reaches another
-  worker is refused too. When one of several approved tools raises
-  (`failure_error_function=None`), the request fails, and the calls that
-  already ran in it are not reported; they do not run again.
+- *Idempotency.* Each decided token is recorded in a `ConsumedTokens` store,
+  by default in process memory until the token expires (`ttl_seconds`, 15
+  minutes by default). The default does not stop a replay that reaches
+  another worker, or that comes after a restart: that replay runs the tool
+  again until the token expires. **With more than one worker, you must give
+  all workers one shared store.** Pass it as `consumed_tokens=` to
+  `add_openai_agents_fastapi_endpoint` or `OpenAIAgentsAgent`, or as
+  `ApprovalSigner(secret, consumed=...)` when you pass your own signer.
+  When `AG_UI_OPENAI_AGENTS_APPROVAL_SECRET` is set and the in-memory store
+  is used, the server logs a warning at startup. When one of several
+  approved tools raises (`failure_error_function=None`), the request fails,
+  and the calls that already ran in it are not reported; they do not run
+  again.
+- *Arguments.* The token covers the arguments in canonical JSON (sorted
+  keys, no spaces, ASCII escapes), and an approved call runs on that text.
+  So a duplicate key has one value only. Text that is not JSON, or that has
+  a number too large for a float, is covered and run exactly as sent.
+- *Refusals.* An `UNVERIFIED` or `ALREADY_ANSWERED` answer is logged as a
+  warning with the thread id, the call id and the tool name. The token and
+  the arguments are not logged.
 - *History.* The token travels in the `MESSAGES_SNAPSHOT`. A client must
   build the next request from it (keep `emit_messages_snapshot=True`); a call
   without its token is never run.
+
+A `ConsumedTokens` store has one method, sync or async. It must record the
+token id atomically across workers and return `False` when the id was
+already recorded:
+
+```python
+import redis.asyncio as redis
+
+from ag_ui_openai_agents import add_openai_agents_fastapi_endpoint
+
+
+class RedisConsumedTokens:
+    def __init__(self, client: redis.Redis) -> None:
+        self._client = client
+
+    async def consume(self, token_id: str, expires_at: float) -> bool:
+        # SET NX: only the first worker to record the id gets True.
+        return bool(
+            await self._client.set(
+                f"ag-ui:approval:{token_id}", 1, nx=True, exat=int(expires_at) + 1
+            )
+        )
+
+
+add_openai_agents_fastapi_endpoint(
+    app, agent, "/agent", consumed_tokens=RedisConsumedTokens(redis.Redis())
+)
+```
 
 A resumed call runs outside the SDK's run loop, so tool guardrails and run
 hooks do not see it, and the agent's `tool_use_behavior` (`StopAtTools`,

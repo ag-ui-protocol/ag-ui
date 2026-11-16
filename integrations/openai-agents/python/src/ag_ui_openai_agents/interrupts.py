@@ -51,7 +51,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolMessage,
 )
-from .approvals import ApprovalSigner, default_approval_signer
+from .approvals import ApprovalSigner, canonical_arguments, default_approval_signer
 from .engine.agui_to_openai import AGUIToOpenAITranslator
 from .engine.helpers import new_tool_result_id, read_attr, to_string
 from .engine.types import HOSTED_TOOL_CALL_TYPES
@@ -336,19 +336,23 @@ async def resume_tool_calls(
             paused = latest[call.id] is occurrence
             proof = held.get(call.id) if paused else None
             entry = entries.get(call.id) if paused else None
+            # A held call runs on the text its token covers, read one way only.
+            arguments = (
+                canonical_arguments(call.function.arguments) if proof is not None else call.function.arguments
+            )
             tool_context = ToolContext(
                 context=context,
                 usage=usage,
                 tool_name=tool.name,
                 tool_call_id=call.id,
-                tool_arguments=call.function.arguments,
+                tool_arguments=arguments,
                 # What a live call sees: the call itself, and the
                 # conversation up to it as model input.
                 tool_call=ResponseFunctionToolCall(
                     type="function_call",
                     call_id=call.id,
                     name=call.function.name,
-                    arguments=call.function.arguments or "",
+                    arguments=arguments or "",
                 ),
                 turn_input=AGUIToOpenAITranslator().translate_messages(messages),
                 agent=owner,
@@ -362,16 +366,30 @@ async def resume_tool_calls(
                 continue
             if entry is not None and proof is None:
                 # Not a call this server paused: never run it.
+                logger.warning(
+                    "Refused a resumed tool call with no valid approval token: "
+                    "thread_id=%r tool_call_id=%r tool=%r",
+                    run_input.thread_id,
+                    call.id,
+                    call.function.name,
+                )
                 _close(messages, results, taken_ids, call.id, UNVERIFIED)
                 continue
             if proof is not None and not await signer.consume(proof):
                 # This approval was decided before: never run the call twice.
+                logger.warning(
+                    "Refused a replayed tool approval that was already decided: "
+                    "thread_id=%r tool_call_id=%r tool=%r",
+                    run_input.thread_id,
+                    call.id,
+                    call.function.name,
+                )
                 _close(messages, results, taken_ids, call.id, ALREADY_ANSWERED)
                 continue
             content = await _answer(
                 tool,
                 call.id,
-                call.function.arguments,
+                arguments,
                 entry,
                 tool_context,
                 owner=owner,

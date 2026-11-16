@@ -31,7 +31,7 @@ from ag_ui.core import (
     Tool,
     UserMessage,
 )
-from ag_ui_openai_agents import OpenAIAgentsAgent, SharedState
+from ag_ui_openai_agents import OpenAIAgentsAgent, SharedState, default_approval_signer
 
 
 def _run_input(with_tool: bool = False) -> RunAgentInput:
@@ -338,7 +338,7 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
             "end_custom_event": end,
             "emit_run_error": False,
             "run_error_message": "safe error",
-            "approvals": None,
+            "approvals": default_approval_signer(),
         }
     ]
 
