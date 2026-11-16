@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, RunConfig, RunContextWrapper, Runner
 
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
+from .approvals import ApprovalSigner
 from .interrupts import _mcp_tools, resume_tool_calls
 from .state import SharedState, use_shared_state
 from .translator import AGUITranslator
@@ -25,9 +26,10 @@ class OpenAIAgentsAgent:
     The wrapper is reusable across requests. Non-conflicting client tools are
     added to a per-request agent clone, and output uses fresh per-run state.
 
-    Tools marked ``needs_approval`` work with no extra code and no server
-    state: a paused call ends the run with an AG-UI interrupt, and the next
-    request's ``resume`` entry approves or rejects it (see ``interrupts``).
+    Tools marked ``needs_approval`` work with no extra code: a paused call
+    ends the run with an AG-UI interrupt, and the next request's ``resume``
+    entry approves or rejects it (see ``interrupts``). The server signs each
+    paused call, so only calls it paused can run (see ``approvals``).
 
     The request's AG-UI context is added to the agent's instructions, and its
     state is the run's ``SharedState``: tools read and change it through
@@ -64,6 +66,7 @@ class OpenAIAgentsAgent:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
         context_in_instructions: bool = True,
+        approvals: ApprovalSigner | None = None,
     ) -> None:
         """Configure an OpenAI Agents SDK Agent for AG-UI requests.
 
@@ -96,6 +99,11 @@ class OpenAIAgentsAgent:
             context_in_instructions: Append the request's AG-UI context to the
                 agent's instructions, as "description: value" lines, so the
                 model sees what the page shared. Defaults to True.
+            approvals: Signs the tool calls a run pauses for approval and
+                verifies them on resume. Give every worker the same secret.
+                Defaults to ``default_approval_signer()``, whose secret comes
+                from ``AG_UI_OPENAI_AGENTS_APPROVAL_SECRET`` (or is random per
+                process).
         """
         self.agent = agent
         self.name = name or agent.name
@@ -111,6 +119,7 @@ class OpenAIAgentsAgent:
         self._emit_run_error = emit_run_error
         self._run_error_message = run_error_message
         self._context_in_instructions = context_in_instructions
+        self._approvals = approvals
 
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Translate one AG-UI request, run the agent, and yield AG-UI events.
@@ -148,11 +157,16 @@ class OpenAIAgentsAgent:
             emit_run_error=self._emit_run_error,
             run_error_message=self._run_error_message,
             shared_state=state,
+            approvals=self._approvals,
         )
         try:
             with use_shared_state(state):
                 resumed = await resume_tool_calls(
-                    self.agent, input, context=context, run_config=self._run_config
+                    self.agent,
+                    input,
+                    context=context,
+                    run_config=self._run_config,
+                    approvals=self._approvals,
                 )
         except Exception as exc:
             # A tool that failed while resuming fails the run the way a tool

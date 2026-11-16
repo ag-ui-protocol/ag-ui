@@ -1,4 +1,4 @@
-"""Tool approvals as AG-UI interrupts, with nothing kept on the server.
+"""Tool approvals as AG-UI interrupts, with no paused run kept on the server.
 
 A tool marked ``needs_approval`` pauses the OpenAI Agents SDK run before it
 executes: the run ends with the call on ``result.interruptions`` and the model
@@ -9,13 +9,16 @@ paused call in its history. That history is all a resume needs:
 * Pause: ``approval_interrupts`` turns each paused call into an AG-UI
   interrupt (id = the tool call id), which ``AGUITranslator.to_agui`` puts on
   RUN_FINISHED's ``interrupt`` outcome.
+* Proof: the history is the client's, so the server signs each call it
+  pauses and the MESSAGES_SNAPSHOT carries the token on that call (see
+  ``approvals``). Only a call whose token verifies counts as paused.
 * Resume: the next request carries the same history plus ``resume`` entries.
   ``resume_tool_calls`` answers every unanswered call of the agent's own
-  tools before the model runs. An approved call runs its tool; a rejected or
-  cancelled one gets a result saying it did not run. A call that still needs
-  approval and has no entry (the user sent a new message instead) stays
-  open: the run answers what the entries cover and ends with its interrupt
-  again, without calling the model.
+  tools before the model runs. An approved call runs its tool once; a
+  rejected or cancelled one gets a result saying it did not run. A paused
+  call with no entry (the user sent a new message instead) stays open: the
+  run answers what the entries cover and ends with its interrupt again,
+  without calling the model. A call without a valid token is never run.
 
 The SDK's own resume (``RunState``) is not used, because it would mean
 keeping the paused run on the server, or shipping it to the client and
@@ -48,6 +51,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolMessage,
 )
+from .approvals import ApprovalSigner, default_approval_signer
 from .engine.agui_to_openai import AGUIToOpenAITranslator
 from .engine.helpers import new_tool_result_id, read_attr, to_string
 from .engine.types import HOSTED_TOOL_CALL_TYPES
@@ -80,6 +84,16 @@ AMBIGUOUS = (
 
 UNAVAILABLE = "This tool is not available now, so the call did not run."
 """Result of a call whose tool is disabled (``is_enabled``) or gone at resume."""
+
+UNVERIFIED = (
+    "This tool call was not paused for approval by this server, or its approval "
+    "expired. It did not run."
+)
+"""Result of a call that a resume entry decides but that has no valid token:
+the client wrote it, changed it, or the approval expired."""
+
+ALREADY_ANSWERED = "This tool call was already answered. It did not run again."
+"""Result of a call whose approval was already decided once."""
 
 
 def approval_interrupts(items: Iterable[ToolApprovalItem]) -> list[Interrupt]:
@@ -197,24 +211,31 @@ async def resume_tool_calls(
     *,
     context: Any = None,
     run_config: RunConfig | None = None,
+    approvals: ApprovalSigner | None = None,
 ) -> ResumedInput:
     """Answer the calls of ``agent``'s own tools that the history left open.
 
     A call is open when the history has no tool message for it: the run that
-    made it paused for approval, or stopped before the tool ran. A call with a
-    ``resume`` entry is open even when the client added a tool message for it
-    (some clients write their response there): the entry decides, and the
-    client's message is replaced. Each open call is answered from the
-    request's ``resume`` entry for its id:
+    made it paused for approval, or stopped before the tool ran. A call is
+    held (paused by this server) when it carries a token ``approvals`` issued
+    for this thread, call id, tool name and arguments, not yet expired. A held
+    call with a ``resume`` entry is open even when the client added a tool
+    message for it (some clients write their response there): the entry
+    decides, and the client's message is replaced. A result this server wrote
+    is never replaced. Each open call is answered from the request's
+    ``resume`` entry for its id:
 
-    * resolved with ``{"approved": true}``: the tool runs, and its output is
-      the result, unless its ``is_enabled`` now says no (``UNAVAILABLE``), as
-      the SDK would check before offering it;
-    * resolved with anything else: ``REJECTED``;
-    * cancelled: ``CANCELLED``;
-    * no entry, for a call the SDK would pause for approval: no answer. The
-      approval stays open and is listed in ``open_interrupts``, as AG-UI
-      requires for an approval nobody decided;
+    * on a held call, resolved with ``{"approved": true}``: the tool runs, and
+      its output is the result, unless its ``is_enabled`` now says no
+      (``UNAVAILABLE``), as the SDK would check before offering it;
+    * on a held call, resolved with anything else: ``REJECTED``;
+    * on a held call, cancelled: ``CANCELLED``;
+    * on a held call already decided once: ``ALREADY_ANSWERED``;
+    * on any other call: ``UNVERIFIED``. The client wrote or changed it, or
+      its approval expired;
+    * no entry, for a held call: no answer. The approval stays open and is
+      listed in ``open_interrupts``, as AG-UI requires for an approval nobody
+      decided;
     * no entry, for any other call (it stopped before its tool ran):
       ``ABANDONED``.
 
@@ -231,13 +252,16 @@ async def resume_tool_calls(
         context: The SDK run context handed to the tools.
         run_config: The run's ``RunConfig``, handed to the tools as the SDK
             would (an agent used as a tool takes its model provider from it).
+        approvals: The signer that issued the tokens of the paused calls.
+            Defaults to ``default_approval_signer()``.
 
     Returns:
         The request with the answers in place, their TOOL_CALL_RESULT events,
         and the approvals still open. Returned unchanged when no call was
         open.
     """
-    tools, ambiguous, named = await _function_tools(agent, context)
+    signer = approvals or default_approval_signer()
+    tools, ambiguous, _ = await _function_tools(agent, context)
     client_tools = {tool.name for tool in run_input.tools or []}
     entries = {entry.interrupt_id: entry for entry in run_input.resume or []}
     history = list(run_input.messages)
@@ -256,14 +280,30 @@ async def resume_tool_calls(
                     occurrence[2] = index
                     break
     latest = {occurrence[1].id: occurrence for occurrence in occurrences}
+    # Only the latest call with an id can be the paused one, and only when this
+    # server signed it as paused: the history, names and arguments included, is
+    # the client's.
+    held = {
+        call_id: proof
+        for call_id, occurrence in latest.items()
+        if occurrence[1].function.name in tools
+        and (proof := signer.verify(run_input.thread_id, occurrence[1])) is not None
+    }
 
-    # A resume entry decides the latest call with its id. For one of the
-    # agent's own calls, a tool message the client wrote for it (some clients
-    # write their response there) is dropped: the entry decides.
+    # A resume entry decides the latest call with its id. For a held call, a
+    # tool message the client wrote for it (some clients write their response
+    # there) is dropped: the entry decides. A result this server wrote stays:
+    # the call was already answered.
     dropped: set[int] = set()
     for call_id, occurrence in latest.items():
-        if call_id in entries and occurrence[1].function.name in tools and occurrence[2] is not None:
-            dropped.add(occurrence[2])
+        result = occurrence[2]
+        if (
+            call_id in entries
+            and call_id in held
+            and result is not None
+            and not _server_result(history[result], call_id)
+        ):
+            dropped.add(result)
             occurrence[2] = None
     open_calls: dict[int, list[list[Any]]] = {}
     for occurrence in occurrences:
@@ -294,6 +334,7 @@ async def resume_tool_calls(
             tool, owner = owned
             # Only the latest call with this id is the paused one.
             paused = latest[call.id] is occurrence
+            proof = held.get(call.id) if paused else None
             entry = entries.get(call.id) if paused else None
             tool_context = ToolContext(
                 context=context,
@@ -313,12 +354,19 @@ async def resume_tool_calls(
                 agent=owner,
                 run_config=run_config,
             )
-            # The call may mean any tool of that name (see _function_tools).
-            if entry is None and paused and _may_need_approval(named[tool.name]):
+            if entry is None and proof is not None:
                 # Nobody decided: the approval stays open and is asked again.
                 still_open.append(
                     _approval_interrupt(call.id, call.function.name, call.function.arguments)
                 )
+                continue
+            if entry is not None and proof is None:
+                # Not a call this server paused: never run it.
+                _close(messages, results, taken_ids, call.id, UNVERIFIED)
+                continue
+            if proof is not None and not await signer.consume(proof):
+                # This approval was decided before: never run the call twice.
+                _close(messages, results, taken_ids, call.id, ALREADY_ANSWERED)
                 continue
             content = await _answer(
                 tool,
@@ -338,6 +386,12 @@ async def resume_tool_calls(
         usage=usage if usage.requests or usage.total_tokens else None,
         open_interrupts=still_open,
     )
+
+
+def _server_result(message: Message, call_id: str) -> bool:
+    """Whether ``message`` is a result this server wrote for ``call_id`` (see ``_close``)."""
+    base = new_tool_result_id(call_id)
+    return message.id == base or message.id.startswith(f"{base}-")
 
 
 def _close(
@@ -396,19 +450,6 @@ async def _answer(
             "sub-agent, which cannot be resumed from the conversation."
         )
     return to_string(output)
-
-
-def _may_need_approval(tools: list[FunctionTool]) -> bool:
-    """Whether a call of one of ``tools`` may have paused for approval.
-
-    ``tools`` are all the tools the call's name may mean, one per agent that
-    has one (an MCP server's approval policy can depend on the agent): the
-    history cannot tell which agent made the call. A callable policy counts as
-    needing approval: its answer at the pause depended on that run's context,
-    which a stateless resume no longer has, so asking it again could drop an
-    approval nobody decided.
-    """
-    return any(tool.needs_approval is not False for tool in tools)
 
 
 async def _enabled(tool: FunctionTool, tool_context: ToolContext[Any], owner: Agent[Any]) -> bool:
@@ -522,11 +563,13 @@ __all__ = [
     "UnresumableApprovalError",
     "unresumable_approvals",
     "ABANDONED",
+    "ALREADY_ANSWERED",
     "AMBIGUOUS",
     "APPROVAL_SCHEMA",
     "UNAVAILABLE",
     "CANCELLED",
     "REJECTED",
+    "UNVERIFIED",
     "ResumedInput",
     "approval_interrupts",
     "resume_tool_calls",

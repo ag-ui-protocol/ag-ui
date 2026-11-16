@@ -10,7 +10,7 @@ from agents.items import ModelResponse
 from agents.usage import Usage
 from openai.types.responses import ResponseCompletedEvent, ResponseUsage
 from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
-from test_interrupts import ScriptedModel, call, finished, request, text
+from test_interrupts import ScriptedModel, call, finished, held, request, text
 
 from ag_ui.core import UserMessage
 from ag_ui_openai_agents import OpenAIAgentsAgent
@@ -87,7 +87,7 @@ def test_usage_includes_an_approved_agent_tool_run_while_resuming():
         AssistantMessage(
             id="a1",
             role="assistant",
-            tool_calls=[ToolCall(id="c1", type="function", function=FunctionCall(name="research", arguments='{"input": "AI"}'))],
+            tool_calls=[held(ToolCall(id="c1", type="function", function=FunctionCall(name="research", arguments='{"input": "AI"}')))],
         ),
     ]
     run_input = request(

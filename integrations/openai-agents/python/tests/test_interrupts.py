@@ -37,7 +37,7 @@ from ag_ui.core import (
     ToolMessage,
     UserMessage,
 )
-from ag_ui_openai_agents import OpenAIAgentsAgent, resume_tool_calls
+from ag_ui_openai_agents import OpenAIAgentsAgent, default_approval_signer, resume_tool_calls
 from ag_ui_openai_agents.interrupts import (
     ABANDONED,
     AMBIGUOUS,
@@ -158,6 +158,11 @@ def request(messages: list[Any], resume: list[ResumeEntry] | None = None, tools=
         forwarded_props=None,
         resume=resume,
     )
+
+
+def held(tool_call: ToolCall, thread_id: str = "t1") -> ToolCall:
+    """``tool_call`` as this server paused it: with its signed token."""
+    return default_approval_signer().hold(thread_id, tool_call)
 
 
 def run(agent: OpenAIAgentsAgent, run_input: RunAgentInput) -> list[Any]:
@@ -348,10 +353,10 @@ def lookup_order(order_id: str) -> str:
     return f"{order_id}: shipped"
 
 
-def test_an_undecided_call_stays_open_unless_its_tool_never_needs_approval():
+def test_an_undecided_call_stays_open_only_when_this_server_paused_it():
     # A callable policy's answer at the pause depended on that run's context,
-    # so the call stays open without asking it again (even an amount it would
-    # have waved through). A tool that never needs approval only stopped
+    # so a paused call stays open without asking the policy again (even for an
+    # amount it would wave through). A call that never paused only stopped
     # before it ran (a client tool in the same turn ended the run).
     policy_calls.clear()
     history = [
@@ -360,7 +365,7 @@ def test_an_undecided_call_stays_open_unless_its_tool_never_needs_approval():
             id="a1",
             role="assistant",
             tool_calls=[
-                ToolCall(id="refund", type="function", function=FunctionCall(name="refund_amount", arguments='{"amount": 5}')),
+                held(ToolCall(id="refund", type="function", function=FunctionCall(name="refund_amount", arguments='{"amount": 5}'))),
                 ToolCall(id="lookup", type="function", function=FunctionCall(name="lookup_order", arguments='{"order_id": "ORD-1"}')),
             ],
         ),
@@ -404,10 +409,12 @@ def test_a_handoff_agents_tool_is_answered_too():
             id="a1",
             role="assistant",
             tool_calls=[
-                ToolCall(
-                    id="c2",
-                    type="function",
-                    function=FunctionCall(name="issue_refund", arguments='{"order_id": "ORD-2"}'),
+                held(
+                    ToolCall(
+                        id="c2",
+                        type="function",
+                        function=FunctionCall(name="issue_refund", arguments='{"order_id": "ORD-2"}'),
+                    )
                 )
             ],
         ),
@@ -443,12 +450,15 @@ def test_a_decision_the_client_also_wrote_as_the_tool_result_still_runs_the_tool
 
 
 def _paused_call(name: str, arguments: str, call_id: str = "c3") -> list[Any]:
+    """A history whose last call this server paused (it carries a token)."""
     return [
         UserMessage(id="u1", role="user", content="do it"),
         AssistantMessage(
             id="a1",
             role="assistant",
-            tool_calls=[ToolCall(id=call_id, type="function", function=FunctionCall(name=name, arguments=arguments))],
+            tool_calls=[
+                held(ToolCall(id=call_id, type="function", function=FunctionCall(name=name, arguments=arguments)))
+            ],
         ),
     ]
 
@@ -843,10 +853,12 @@ def test_a_reused_call_id_only_resumes_the_paused_call():
             id=message_id,
             role="assistant",
             tool_calls=[
-                ToolCall(
-                    id="call_0",
-                    type="function",
-                    function=FunctionCall(name="issue_refund", arguments=json.dumps({"order_id": order})),
+                held(
+                    ToolCall(
+                        id="call_0",
+                        type="function",
+                        function=FunctionCall(name="issue_refund", arguments=json.dumps({"order_id": order})),
+                    )
                 )
             ],
         )

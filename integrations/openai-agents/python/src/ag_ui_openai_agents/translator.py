@@ -9,9 +9,11 @@ from agents.stream_events import StreamEvent
 from ag_ui.core import (
     PROTOCOL_VERSION,
     TokenUsage,
+    AssistantMessage,
     BaseEvent,
     CustomEvent,
     EventType,
+    MessagesSnapshotEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedCancelledOutcome,
@@ -21,6 +23,7 @@ from ag_ui.core import (
     RunStartedEvent,
     StateSnapshotEvent,
 )
+from .approvals import ApprovalSigner, default_approval_signer
 from .engine.agui_to_openai import AGUIToOpenAITranslator
 from .engine.openai_to_agui import OpenAIToAGUITranslator
 from .engine.types import ClientToolPending, TranslatedInput
@@ -105,6 +108,7 @@ class AGUITranslator:
         run_error_message: str | None = None,
         resumed: ResumedInput | None = None,
         shared_state: SharedState | None = None,
+        approvals: ApprovalSigner | None = None,
     ) -> AsyncIterator[BaseEvent]:
         """Translate an SDK event stream into ordered AG-UI events.
 
@@ -167,6 +171,12 @@ class AGUITranslator:
                 streamed as a STATE_SNAPSHOT before the next translated event,
                 so it precedes the tool's result. Start the SDK run inside
                 ``use_shared_state(shared_state)`` so tools can reach it.
+            approvals: Signs each call this run pauses for approval; the token
+                rides on that call in the MESSAGES_SNAPSHOT, and
+                ``resume_tool_calls`` runs a call only with it (see
+                ``approvals``). Pass the same signer to both. Defaults to
+                ``default_approval_signer()``. A client resumes approvals only
+                from a history built from the MESSAGES_SNAPSHOT.
 
         Yields:
             AG-UI events ready to encode or send.
@@ -235,9 +245,16 @@ class AGUITranslator:
                         type=EventType.STATE_SNAPSHOT,
                         snapshot=snapshot,
                     )
+            outcome = _outcome(events, outbound, run_input, resumed)
             # 6. MESSAGES_SNAPSHOT (optional)
             if emit_messages_snapshot:
-                yield outbound.build_messages_snapshot(run_input)
+                yield _hold_paused_calls(
+                    outbound.build_messages_snapshot(run_input),
+                    outcome,
+                    resumed,
+                    run_input.thread_id,
+                    approvals or default_approval_signer(),
+                )
             # 7. end_custom_event (optional) — resolved just before emitting.
             if end_custom_event is not None:
                 yield await self._resolve_custom_event(end_custom_event)
@@ -247,7 +264,7 @@ class AGUITranslator:
                 type=EventType.RUN_FINISHED,
                 thread_id=run_input.thread_id,
                 run_id=run_input.run_id,
-                outcome=_outcome(events, outbound, run_input, resumed),
+                outcome=outcome,
                 usage=_run_usage(events, outbound, resumed),
             )
             # Set before yield because a consumer may close at the terminal event.
@@ -331,6 +348,38 @@ def _outcome(
     client_tools = {tool.name for tool in run_input.tools or []}
     pending = outbound.unanswered_tool_calls(client_tools)
     return RunFinishedSuccessOutcome(type="success", pending_tool_call_ids=pending or None)
+
+
+def _hold_paused_calls(
+    snapshot: MessagesSnapshotEvent,
+    outcome: Any,
+    resumed: ResumedInput | None,
+    thread_id: str,
+    signer: ApprovalSigner,
+) -> MessagesSnapshotEvent:
+    """``snapshot`` with a signed token on each call this run paused.
+
+    Only calls the SDK paused in this run are signed. An approval asked again
+    keeps the token it already carries: a second token for one call would let
+    the call run once per token.
+    """
+    if not isinstance(outcome, RunFinishedInterruptOutcome):
+        return snapshot
+    asked_again = {i.tool_call_id for i in (resumed.open_interrupts if resumed else [])}
+    paused = {i.tool_call_id for i in outcome.interrupts} - asked_again
+    messages = list(snapshot.messages)
+    # The latest call with an id is the paused one (providers may reuse ids).
+    for index in reversed(range(len(messages))):
+        message = messages[index]
+        if not paused or not isinstance(message, AssistantMessage) or not message.tool_calls:
+            continue
+        calls = list(message.tool_calls)
+        for position in reversed(range(len(calls))):
+            if calls[position].id in paused:
+                paused.discard(calls[position].id)
+                calls[position] = signer.hold(thread_id, calls[position])
+        messages[index] = message.model_copy(update={"tool_calls": calls})
+    return snapshot.model_copy(update={"messages": messages})
 
 
 def _run_usage(

@@ -212,6 +212,7 @@ authentication.
 ```python
 from ag_ui_openai_agents import (
     AGUITranslator,
+    ApprovalSigner,  # see Backend tool approval
     OpenAIAgentsAgent,
     TranslatedInput,
     add_openai_agents_fastapi_endpoint,
@@ -424,7 +425,7 @@ iterator, cancellation remains the caller's responsibility.
 | Custom lifecycle events | Yes | Start/end `CustomEvent` hooks. |
 | Multimodal input | Partial | Text, images, documents, and some audio; see below. |
 | Multimodal output | No | AG-UI currently has no matching image/audio output event. |
-| Backend approval (`needs_approval`) | Yes | AG-UI interrupt on `RUN_FINISHED`; resumed from `resume` entries, no server state. |
+| Backend approval (`needs_approval`) | Yes | AG-UI interrupt on `RUN_FINISHED`; resumed from `resume` entries. Paused calls are server-signed; no paused run is kept on the server. |
 | MCP approval request | Yes | Emitted as `CUSTOM` named `mcp_approval_request`. |
 
 ## Message mapping: AG-UI → OpenAI
@@ -664,7 +665,7 @@ def issue_refund(order_id: str) -> str:
 
 The OpenAI Agents SDK pauses such a call before the tool runs and lists it on
 `result.interruptions`. The integration maps that onto AG-UI interrupts and
-keeps nothing on the server between the pause and the resume:
+keeps no paused run on the server between the pause and the resume:
 
 1. **Pause.** When `to_agui` is given the `RunResultStreaming` and the run
    paused, `RUN_FINISHED` carries `outcome: {"type": "interrupt"}` with one
@@ -672,24 +673,26 @@ keeps nothing on the server between the pause and the resume:
    `reason` is `"tool_approval"`, `metadata` holds `tool_name` and the parsed
    `tool_input`, and `response_schema` asks for `{"approved": boolean}`. The
    paused call stays in the `MESSAGES_SNAPSHOT` with no result, so the client
-   keeps it in its history.
+   keeps it in its history. The server signs that call: its
+   `metadata["ag-ui"]["heldCall"]` holds an HMAC token over the thread, the
+   call id, the tool name and the canonical arguments, with an expiry.
 2. **Resume.** The next request carries that history and a `resume` entry per
    interrupt. `resume_tool_calls` answers every open call of the agent's own
-   tools before the model runs: `{"approved": true}` runs the tool, any other
-   answer gives the model the SDK's rejection text, and a cancelled
-   interrupt gives `CANCELLED`.
+   tools before the model runs. For a call whose token verifies,
+   `{"approved": true}` runs the tool, any other answer gives the model the
+   SDK's rejection text, and a cancelled interrupt gives `CANCELLED`. Each
+   token is used once: deciding the same call again gives `ALREADY_ANSWERED`,
+   and a result the server wrote is never replaced. A call without a valid
+   token (the client wrote it or changed its arguments, or the approval
+   expired) never runs: an entry for it gives `UNVERIFIED`.
 3. **Undecided.** A paused call with no entry (the user sent a new message
    instead, or a partial `resume` answered only some calls) stays open. The
    run answers what the entries cover, does not call the model, and ends
    with that call's interrupt again, as AG-UI requires for an approval
    nobody decided. The new message stays in the history and reaches the
-   model once the approval is decided. An unfinished call that needed no
-   approval (for example one stopped by a client tool in the same turn)
-   gets `ABANDONED`. A call whose tool has a callable `needs_approval`
-   policy stays open too: the policy's answer depended on the context of the
-   run that paused, which a stateless resume no longer has. When several
-   agents have tools of the call's name, the call stays open if any of them
-   may need approval.
+   model once the approval is decided. An unfinished call without a valid
+   token (for example one stopped by a client tool in the same turn) gets
+   `ABANDONED`.
 
    Tools of agents reachable through `handoffs`
    (plain agents or `handoff(...)` objects) are found too. The history does
@@ -732,24 +735,34 @@ async for event in translator.to_agui(events, resumed.run_input, resumed=resumed
     ...
 ```
 
-Because nothing is kept on the server, one rule of the AG-UI interrupt
-contract is handled differently:
+Approvals need a signing secret and, for replay protection, a record of
+decided tokens:
 
-- *Idempotency.* Replaying the same resume request runs an approved tool
-  again; the server has no record that it already ran. Key side effects on
-  the call id (`ToolContext.tool_call_id`) where a retried request must not
-  repeat them. The same holds when one of several approved tools raises
-  (`failure_error_function=None`): the request fails, and the calls that
-  already ran in it are not reported.
+- *Secret.* Pass `approvals=ApprovalSigner(secret)` to `OpenAIAgentsAgent`
+  (and the same signer to `resume_tool_calls` and `to_agui` when you use the
+  translator), or set `AG_UI_OPENAI_AGENTS_APPROVAL_SECRET` (at least 32
+  bytes). Without either, a random secret is made per process: approvals
+  then resume only on the process that paused them, and not after a restart.
+  Give every worker the same secret.
+- *Idempotency.* A decided token is recorded in `ApprovalSigner(...,
+  consumed=...)`, by default in process memory until the token expires
+  (`ttl_seconds`, one hour by default). With several workers, pass a shared
+  `ConsumedTokens` store (for example Redis) so a replay that reaches another
+  worker is refused too. When one of several approved tools raises
+  (`failure_error_function=None`), the request fails, and the calls that
+  already ran in it are not reported; they do not run again.
+- *History.* The token travels in the `MESSAGES_SNAPSHOT`. A client must
+  build the next request from it (keep `emit_messages_snapshot=True`); a call
+  without its token is never run.
 
 A resumed call runs outside the SDK's run loop, so tool guardrails and run
 hooks do not see it, and the agent's `tool_use_behavior` (`StopAtTools`,
 `stop_on_first_tool`) does not end the run after it: the model is called
 with the tool's result as usual. An approved agent tool whose sub-agent
 then pauses for an approval of its own fails with
-`UnresumableApprovalError`. The server trusts the history it is sent, as it does for
-client tool results; authorize the decision before resuming if that matters to
-you. See
+`UnresumableApprovalError`. The token proves the server paused the call; it
+does not prove who decided it. Authorize the decision before resuming if
+that matters to you. See
 [`human_in_the_loop_approval.py`](examples/agents_examples/human_in_the_loop_approval.py)
 for a complete endpoint.
 
