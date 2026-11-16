@@ -49,6 +49,8 @@ interface Setup {
   stateValues?: Record<string, unknown>;
   /** Override `input_schema.properties`. */
   inputProperties?: Record<string, unknown>;
+  /** The thread's pending tasks (`threads.getState`), interrupts included. */
+  tasks?: any[];
 }
 
 // The thread already holds the message `input()` sends, so a request built
@@ -60,6 +62,7 @@ function buildAgent({
   assistantConfig,
   stateValues = { messages: [] },
   inputProperties = { messages: {} },
+  tasks = [],
 }: Setup = {}) {
   const agent = new LangGraphAgent({
     graphId: "gate",
@@ -82,7 +85,7 @@ function buildAgent({
     threads: {
       get: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
       create: vi.fn().mockResolvedValue({ thread_id: "thread-1" }),
-      getState: vi.fn().mockResolvedValue({ values: stateValues, tasks: [] }),
+      getState: vi.fn().mockResolvedValue({ values: stateValues, tasks }),
       getHistory,
       updateState,
     },
@@ -511,5 +514,59 @@ describe("client control over where and how a LangGraph run resumes", () => {
     const [, body] = updateState.mock.calls[0];
     expect(body.asNode).toBe("check_permission");
     expect(body.values).toEqual({});
+  });
+  it("a node with a pending interrupt is not a continue point: the interrupt stays", async () => {
+    // `check_permission` ran in the latest step and paused at an interrupt.
+    // Writing as that node would replace the pending task and drop its
+    // interrupt, while the client is still told the run is interrupted. The
+    // request ends on the interrupt instead and writes nothing (same as the
+    // Python adapter).
+    const { agent, streamCalls, updateState } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: SAME_TURN,
+      tasks: [
+        {
+          id: "task-1",
+          name: "check_permission",
+          interrupts: [{ value: "approve?", id: "int-1" }],
+        },
+      ],
+    });
+    withClientNodeName(agent);
+    const sub = subscriber();
+
+    await agent.runAgentStream(input({ nodeName: "check_permission" }), sub);
+
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls).toHaveLength(0);
+    expect(sub.next).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "RUN_FINISHED" }),
+    );
+  });
+
+  it("the node before an interrupted one is not a continue point either", async () => {
+    // `check_permission` ran in the latest step; `sensitive_action` after it
+    // is paused at an interrupt. A continue as `check_permission` would
+    // schedule `sensitive_action` again and drop its interrupt.
+    const { agent, streamCalls, updateState } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: SAME_TURN,
+      tasks: [
+        {
+          id: "task-2",
+          name: "sensitive_action",
+          interrupts: [{ value: "approve?", id: "int-2" }],
+        },
+      ],
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }),
+      subscriber(),
+    );
+
+    expect(updateState).not.toHaveBeenCalled();
+    expect(streamCalls).toHaveLength(0);
   });
 });

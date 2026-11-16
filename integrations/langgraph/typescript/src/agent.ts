@@ -949,6 +949,17 @@ export class LangGraphAgent extends AbstractAgent {
         ? this.activeRun!.nodeName
         : undefined;
 
+    // A thread paused at an interrupt has nowhere to continue from: the
+    // request ends on that interrupt below. Writing as a node first would
+    // replace the pending task and drop its interrupt (same order as the
+    // Python adapter, which checks interrupts before any write).
+    if (
+      continueFromNode &&
+      (agentState.tasks ?? []).some((task) => task.interrupts?.length)
+    ) {
+      continueFromNode = undefined;
+    }
+
     // The node name is a claim about where the thread stands. Used as `asNode`
     // it tells LangGraph that node has just run, so the graph goes on from its
     // successors and every node before them is skipped. Honour it only when
