@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Security (GHSA-qjj5-3932-qh6q): a client-sent `forwardedProps.nodeName`/`node_name` is honoured only when the thread history shows that node ran in the latest step; otherwise the request starts a new run. In continue mode, client state is filtered by the graph input schema, as in start mode.
+
 ## 0.0.47 — 2026-10-07
 
 - Non-streamed tool calls now name the owning assistant message as the parent instead of reusing the result message id.

@@ -1792,6 +1792,23 @@ class LangGraphAgent:
             # explicit.
             node_name_for_mode = node_name_input if (node_name_input and node_name_input != "__end__") else None
 
+            # ``node_name`` is the client's claim about where the thread stands.
+            # Used as ``as_node`` it tells LangGraph that node has just run, so
+            # the graph goes on from its successors and every node before them
+            # is skipped. Honour it only when the thread's own history agrees.
+            if (
+                node_name_for_mode
+                and not has_resume_input
+                and thread_id
+                and not await self._ran_in_latest_step(config, node_name_for_mode)
+            ):
+                logger.warning(
+                    "ignoring forwardedProps.node_name=%r: the thread's latest step did "
+                    "not run that node; starting a new run instead (thread_id=%r, run_id=%r)",
+                    node_name_for_mode, thread_id, self.active_run.get("id"),
+                )
+                node_name_for_mode = None
+
             if not has_resume_input and thread_id and node_name_for_mode:
                 self.active_run["mode"] = "continue"
                 self.active_run["node_name"] = node_name_for_mode
@@ -2455,7 +2472,17 @@ class LangGraphAgent:
             }
 
         if self.active_run["mode"] == "continue":
-            await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
+            # The same rule as a new run (``get_stream_payload_input``): what the
+            # client sends reaches only the channels of the graph's input
+            # schema. Unfiltered, a continue would write any channel, the ones
+            # the graph keeps to itself included.
+            input_keys = (self.active_run.get("schema_keys") or {}).get("input")
+            continue_state = (
+                filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *input_keys])
+                if input_keys
+                else state
+            )
+            await self.graph.aupdate_state(config, continue_state, as_node=self.active_run.get("node_name"))
 
         if has_resume_input:
             if agui_resume is not None:
@@ -4029,6 +4056,28 @@ class LangGraphAgent:
                     delta=reasoning_data["text"]
                 )
             )
+
+    async def _ran_in_latest_step(self, config: RunnableConfig, node_name: str) -> bool:
+        """Whether ``node_name`` ran in the step that produced the thread's latest checkpoint.
+
+        The checkpoint before the latest one lists, in ``next``, the nodes that
+        step ran. A thread with no such pair (a new thread), or whose latest
+        checkpoint was written by ``update_state`` rather than by a step, has
+        no node to continue from.
+        """
+        snapshots = []
+        try:
+            async for snapshot in self.graph.aget_state_history(config, limit=2):
+                snapshots.append(snapshot)
+        except Exception as exc:
+            logger.warning("could not read the thread's history to check node_name: %s", exc)
+            return False
+        if len(snapshots) < 2:
+            return False
+        latest, previous = snapshots[0], snapshots[1]
+        if (latest.metadata or {}).get("source") != "loop":
+            return False
+        return node_name in (previous.next or ())
 
     async def get_checkpoint_before_message(self, message_id: str, thread_id: str, config: Optional[RunnableConfig] = None) -> Any:
         if not thread_id:
