@@ -1,5 +1,7 @@
 import "server-only";
 
+import { codexRequestMetadata } from "./codex-request-metadata";
+
 import type { AbstractAgent } from "@ag-ui/client";
 import type { AgentsMap } from "./types/agents";
 import { mapAgents } from "./utils/agents";
@@ -806,7 +808,10 @@ export const agentsIntegrations = {
 
   "codex-sdk-typescript": async () =>
     mapAgents(
-      (path) => new HttpAgent({ url: `${envVars.codexSdkTypescriptUrl}/${path}` }),
+      (path) =>
+        new HttpAgent({ url: `${envVars.codexSdkTypescriptUrl}/${path}` }).use(
+          codexRequestMetadata,
+        ),
       { agentic_chat: "agentic_chat" },
     ),
 

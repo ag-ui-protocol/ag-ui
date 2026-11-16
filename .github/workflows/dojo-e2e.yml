@@ -694,6 +694,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           node apps/dojo/scripts/prep-dojo-everything.js --only dojo,codex-sdk-typescript
+          pnpm exec nx run demo-viewer:test:codex-request-metadata
 
       - name: Set up Flutter 3.47.1
         run: |
