@@ -1,4 +1,5 @@
 # Changelog
+
 ## 0.0.47 — 2026-10-07
 
 - Non-streamed tool calls now name the owning assistant message as the parent instead of reusing the result message id.
