@@ -20,7 +20,7 @@ from ag_ui.core import (
     ToolMessage,
 )
 from ag_ui.encoder import EventEncoder
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from google.adk.sessions.state import State as _ADKState
 from pydantic import BaseModel
@@ -572,6 +572,8 @@ def add_adk_fastapi_endpoint(
                 logger.debug("Capabilities endpoint called but no capabilities configured on agent")
                 return JSONResponse(content={})
             return JSONResponse(content=caps)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in capabilities endpoint: {e}", exc_info=True)
             return JSONResponse(
@@ -747,6 +749,8 @@ def add_adk_fastapi_endpoint(
                 "messages": messages_dict
             })
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in /agents/state endpoint: {e}", exc_info=True)
             return JSONResponse(

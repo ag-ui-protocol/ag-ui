@@ -925,6 +925,39 @@ class TestExtractHeaders:
         assert captured_input[0].state["headers"] == {"locale": "pt-BR"}
         assert captured_input[0].state["plain"] == 1
 
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/test"),
+        ("GET", "/test/capabilities"),
+        ("POST", "/agents/state"),
+    ])
+    def test_identity_extractor_preserves_unauthorized(
+        self, mock_agent, sample_input, method, path
+    ):
+        """A 401 from the identity hook reaches the client on every route."""
+        from fastapi import HTTPException
+
+        async def extract_identity(request, input_data):
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_state_from_request=extract_identity,
+        )
+        payload = sample_input.model_dump() if path == "/test" else {
+            "threadId": "test_thread"
+        }
+        response = TestClient(app).request(
+            method, path, **({"json": payload} if method == "POST" else {})
+        )
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Authentication required"}
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+
     def test_no_extract_headers_backward_compatible(self, mock_agent, sample_input):
         """Test that omitting extract_headers works as before."""
         captured_input = []
