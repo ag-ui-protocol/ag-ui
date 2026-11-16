@@ -25,6 +25,7 @@ export {
   eventStreamResponse,
   type HandleAGUIRequestOptions,
 } from "./http";
+export { InvalidInputError } from "./input";
 export {
   convertMessages,
   toModelMessages,

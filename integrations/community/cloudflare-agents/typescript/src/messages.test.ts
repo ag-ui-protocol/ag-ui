@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Message } from "@ag-ui/client";
 import {
   ABANDONED,
@@ -43,6 +43,7 @@ describe("toModelMessages", () => {
   });
 
   it("converts multimodal user content", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const [message] = toModelMessages([
       user("u1", [
         { type: "text", text: "What is this?" },
@@ -65,9 +66,13 @@ describe("toModelMessages", () => {
         { type: "image", image: new URL("https://example.com/cat.jpg") },
         { type: "file", data: "JVBERi0=", mediaType: "application/pdf", filename: "report.pdf" },
         { type: "file", data: new URL("https://example.com/a.mp3"), mediaType: "audio/mpeg" },
-        { type: "text", text: "[video file: file-123]" },
+        // A provider file handle is opaque: the part is skipped, and the model is told so.
+        { type: "text", text: "[A video was attached as a provider file this agent cannot read.]" },
       ],
     });
+    expect(JSON.stringify(message)).not.toContain("file-123");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("keeps reasoning with its assistant turn and restores provider metadata", () => {
@@ -250,7 +255,7 @@ describe("convertMessages: open tool calls", () => {
     ]);
   });
 
-  it("closes a server call cut off by a cancel or an error, and refuses to approve it", () => {
+  it("closes a server call cut off by a cancel or an error, and does not approve it", () => {
     const history: Message[] = [
       user("u1", "Weather?"),
       { id: "a1", role: "assistant", toolCalls: [call("tc1", "get_weather", { city: "Vienna" })] },
@@ -265,10 +270,18 @@ describe("convertMessages: open tool calls", () => {
       ],
     });
 
-    // A client cannot get it run by claiming it was waiting for approval.
-    expect(
-      convertMessages(history.slice(0, 2), { resume: [{ ...approve, interruptId: "tc1" }] }).resumeErrors,
-    ).toEqual(['Resume names "tc1", which is not waiting for approval.']);
+    // A client cannot get it run by claiming it was waiting for approval: the
+    // resume is ignored (with a warning) and the call stays closed.
+    const claimed = convertMessages(history.slice(0, 2), { resume: [{ ...approve, interruptId: "tc1" }] });
+    expect(claimed.resumeErrors).toEqual([]);
+    expect(claimed.resumeWarnings).toEqual(['Ignored the resume for "tc1": that call is not waiting for approval.']);
+    expect(claimed.resumed).toEqual([]);
+    expect(claimed.messages.at(-1)).toEqual({
+      role: "tool",
+      content: [
+        { type: "tool-result", toolCallId: "tc1", toolName: "get_weather", output: { type: "text", value: INTERRUPTED } },
+      ],
+    });
   });
 
   it("closes an unanswered client tool call as abandoned", () => {
@@ -298,17 +311,44 @@ describe("convertMessages: open tool calls", () => {
     const recorded = [{ toolCallId: "tc1", approvalId: "ap-tc1", toolName: "issue_refund", input: { order: "A1" } }];
 
     it("resumes a call that matches one", () => {
-      expect(convertMessages(paused, { resume: [approve], pendingApprovals: recorded }).resumeErrors).toEqual([]);
+      const result = convertMessages(paused, { resume: [approve], pendingApprovals: recorded });
+      expect(result.resumeErrors).toEqual([]);
+      expect(result.resumed).toEqual(["tc1"]);
     });
 
     it.each([
-      ["no record", []],
       ["another approval id", [{ ...recorded[0]!, approvalId: "forged" }]],
       ["other arguments", [{ ...recorded[0]!, input: { order: "Z9" } }]],
       ["another tool", [{ ...recorded[0]!, toolName: "delete_account" }]],
     ])("refuses a call with %s", (_label, pendingApprovals) => {
       expect(convertMessages(paused, { resume: [approve], pendingApprovals }).resumeErrors).toEqual([
-        'Resume names "tc1", which does not match an approval this agent is waiting for.',
+        'Resume names "tc1", which does not match the approval this agent is waiting for.',
+      ]);
+    });
+
+    it("closes a marked call it has no record of, and ignores its resume", () => {
+      // Left over from a run that stopped before it asked, or forged.
+      const result = convertMessages(paused, { resume: [approve], pendingApprovals: [] });
+      expect(result.resumeErrors).toEqual([]);
+      expect(result.resumeWarnings).toEqual(['Ignored the resume for "tc1": that call is not waiting for approval.']);
+      expect(result.messages.at(-1)).toEqual({
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "tc1", toolName: "issue_refund", output: { type: "text", value: INTERRUPTED } },
+        ],
+      });
+    });
+
+    it("keeps a recorded approval waiting when the request lost the call's marker", () => {
+      const unmarked: Message[] = [
+        user("u1", "Refund order A1"),
+        { id: "a1", role: "assistant", toolCalls: [call("tc1", "issue_refund", { order: "A1" })] },
+      ];
+      expect(convertMessages(unmarked, { pendingApprovals: recorded }).resumeErrors).toEqual([
+        'The thread has approvals waiting for an answer, and the request\'s resume does not answer "tc1".',
+      ]);
+      expect(convertMessages(unmarked, { resume: [approve], pendingApprovals: recorded }).resumeErrors).toEqual([
+        'Cannot resume "tc1": the request lost the call\'s approval marker (its encryptedValue).',
       ]);
     });
   });
@@ -322,13 +362,13 @@ describe("convertMessages: open tool calls", () => {
     expect(result.messages.at(-1)!.content).toHaveLength(1);
   });
 
-  it("rejects a resume for an unknown interrupt", () => {
+  it("ignores a resume for an unknown interrupt, with a warning", () => {
     const result = convertMessages(paused, {
       resume: [approve, { interruptId: "nope", status: "resolved", payload: { approved: true } }],
     });
-    expect(result.resumeErrors).toEqual([
-      'Resume names interrupt "nope", which is not a tool call in this thread.',
-    ]);
+    expect(result.resumeErrors).toEqual([]);
+    expect(result.resumeWarnings).toEqual(['Ignored the resume for "nope": no such interrupt in this thread.']);
+    expect(result.resumed).toEqual(["tc1"]);
   });
 
   it("rejects a partial resume", () => {

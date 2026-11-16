@@ -75,8 +75,17 @@ export class CloudflareAgentsClient extends AbstractAgent {
     this.WebSocketImpl = config.WebSocket;
   }
 
-  run(input: RunAgentInput): Observable<BaseEvent> {
+  run(rawInput: RunAgentInput): Observable<BaseEvent> {
     return new Observable<BaseEvent>((subscriber) => {
+      // As AG-UI requires right before sending: members the protocol does not
+      // define are removed (with a warning); a malformed input fails here.
+      let input: RunAgentInput;
+      try {
+        input = enforceOutgoingInput(rawInput);
+      } catch (error) {
+        subscriber.error(error);
+        return;
+      }
       const WebSocketImpl = this.WebSocketImpl ?? globalThis.WebSocket;
       if (!WebSocketImpl) {
         subscriber.error(

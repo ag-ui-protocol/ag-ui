@@ -1,9 +1,20 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 
 /**
- * AG-UI over a Cloudflare Agents WebSocket. The frames share the socket with
- * the Agents SDK's own protocol (state sync, RPC), so every frame is tagged
- * and each side ignores frames it does not know.
+ * AG-UI over a Cloudflare Agents WebSocket (a custom AG-UI transport). The
+ * frames share the socket with the Agents SDK's own protocol (state sync,
+ * RPC), so every frame is a tagged JSON text message and each side ignores
+ * frames it does not know.
+ *
+ * - A run starts with a `RunFrame`. Its events come back as `EventFrame`s,
+ *   one event per frame, in order, tagged with the run id; several runs can
+ *   share one socket.
+ * - A run ends with the event frame carrying `RUN_FINISHED` or `RUN_ERROR`.
+ * - An input the agent refuses comes back as a single `RUN_ERROR` event frame
+ *   (code `INVALID_INPUT`, or `INVALID_RESUME`), without `RUN_STARTED`.
+ * - An `AbortFrame` cancels a run started on the same connection; the run
+ *   ends with `RUN_FINISHED` and the cancelled outcome. Closing the socket
+ *   cancels its runs.
  */
 
 /** Client -> agent: start a run. */
@@ -21,7 +32,8 @@ export interface AbortFrame {
 /** Agent -> client: one event of a run. */
 export interface EventFrame {
   type: "ag-ui:event";
-  runId: string;
+  /** The run the event belongs to; null when a refused run frame named none. */
+  runId: string | null;
   event: BaseEvent;
 }
 

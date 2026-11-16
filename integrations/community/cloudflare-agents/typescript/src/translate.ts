@@ -39,10 +39,18 @@ export interface TranslateOptions {
   channel?: EventChannel;
   /** Why the user denied a call, by tool call id: the denied call's result. */
   denials?: ReadonlyMap<string, string>;
+  /** The run's cancel signal: a stream that fails once it fired was cancelled, not broken. */
+  abortSignal?: AbortSignal;
+  /**
+   * The paused calls this run resumes. If the run is cancelled before they
+   * return, they are closed with a result, so the next run does not take them
+   * for calls still waiting for an answer.
+   */
+  resumedToolCallIds?: Iterable<string>;
 }
 
 export type TranslationOutcome =
-  | { type: "success" }
+  | { type: "success"; pendingToolCallIds?: string[] }
   | { type: "interrupt"; interrupts: Interrupt[] }
   | { type: "cancelled" }
   | { type: "error"; message: string; code: string };
@@ -138,7 +146,12 @@ class Translation {
     this.clientTools = new Set(options.clientToolNames ?? []);
   }
 
+  /** The stream failed. After the run was cancelled, that is the cancel tearing it down. */
   fail(error: unknown): void {
+    if (this.options.abortSignal?.aborted) {
+      this.cancelled = true;
+      return;
+    }
     this.error ??= { message: errorMessage(error), code: "STREAM_ERROR" };
   }
 
@@ -262,9 +275,10 @@ class Translation {
         this.totalUsage = part.totalUsage;
         break;
 
+      // AG-UI keeps unprefixed CUSTOM names for itself; these are the AI SDK's parts.
       case "source": {
         const { type: _type, ...source } = part;
-        yield event({ type: EventType.CUSTOM, name: "source", value: source });
+        yield event({ type: EventType.CUSTOM, name: "ai-sdk:source", value: source });
         break;
       }
       case "file":
@@ -272,7 +286,7 @@ class Translation {
         const file = isRecord(part.file) ? part.file : {};
         yield event({
           type: EventType.CUSTOM,
-          name: part.type,
+          name: `ai-sdk:${part.type}`,
           value: { mediaType: file.mediaType, base64: file.base64 },
         });
         break;
@@ -292,7 +306,7 @@ class Translation {
         this.cancelled = true;
         break;
       case "error":
-        this.error = { message: errorMessage(part.error), code: "STREAM_ERROR" };
+        this.fail(part.error);
         break;
 
       default:
@@ -310,18 +324,20 @@ class Translation {
       this.stepOpen = false;
       yield event({ type: EventType.STEP_FINISHED, stepName: `step-${this.step}` });
     }
-    if (this.error) return;
-
-    if (this.cancelled) {
-      // A server call cut off by the cancel would otherwise look like a call
-      // waiting for approval on the next run.
-      const pending = new Set(this.interrupts.map((i) => i.toolCallId));
-      for (const [id, call] of this.calls) {
-        if (this.answered.has(id) || pending.has(id)) continue;
-        if (this.clientTools.has(call.toolCall.function.name)) continue;
-        yield* this.toolResult(id, INTERRUPTED);
-      }
+    if (this.cancelled || this.error) {
+      // A run that stopped asks nothing: its server calls without a result,
+      // one paused for approval included, are closed as interrupted, so the
+      // next run does not take them for calls still waiting for an answer.
+      // The page's own calls stay the page's to answer.
+      for (const id of this.calls.keys()) yield* this.toolResult(id, INTERRUPTED);
     }
+    if (this.cancelled) {
+      // A cancelled run waits for nothing, so the calls it was resuming are
+      // closed too. After an error they stay open: the client still holds
+      // their interrupts and answers them again.
+      for (const id of this.options.resumedToolCallIds ?? []) yield* this.toolResult(id, INTERRUPTED);
+    }
+    if (this.error) return;
 
     yield event({
       type: EventType.MESSAGES_SNAPSHOT,
@@ -339,7 +355,13 @@ class Translation {
     if (this.interrupts.length > 0) {
       return { outcome: { type: "interrupt", interrupts: this.interrupts }, usage, approvals };
     }
-    return { outcome: { type: "success" }, usage, approvals };
+    // The calls this run made and left for the page to answer, in order.
+    const pending = [...this.calls.keys()].filter((id) => !this.answered.has(id));
+    return {
+      outcome: { type: "success", ...(pending.length > 0 && { pendingToolCallIds: pending }) },
+      usage,
+      approvals,
+    };
   }
 
   private noteTextMetadata(providerId: string, metadata: unknown): void {
@@ -504,6 +526,10 @@ class Translation {
 
   private *toolResult(toolCallId: string, content: string, error?: string): Generator<BaseEvent> {
     if (this.answered.has(toolCallId)) return;
+    // AG-UI forbids an agent to answer the page's tools, even a call whose
+    // arguments did not parse (the AI SDK reports that as a tool error).
+    const call = this.calls.get(toolCallId);
+    if (call && this.clientTools.has(call.toolCall.function.name)) return;
     this.answered.add(toolCallId);
     const message: ToolMessage = {
       id: randomUUID(),

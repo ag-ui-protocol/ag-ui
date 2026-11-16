@@ -350,4 +350,20 @@ describe("withAGUI over WebSocket", () => {
       },
     ]);
   });
+
+  it("reports a run frame without a run id on the socket", async () => {
+    const agent = new TodoAgent({ todos: [] });
+    const frames: any[] = [];
+    await agent.onMessage(
+      { id: "c1", send: (data: string) => void frames.push(JSON.parse(data)) },
+      JSON.stringify({ type: RUN_FRAME, input: { threadId: "t", messages: [] } }),
+    );
+    expect(frames).toEqual([
+      {
+        type: EVENT_FRAME,
+        runId: null,
+        event: { type: EventType.RUN_ERROR, message: "runId is required", code: "INVALID_INPUT" },
+      },
+    ]);
+  });
 });

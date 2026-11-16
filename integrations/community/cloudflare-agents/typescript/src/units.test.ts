@@ -10,6 +10,9 @@ import {
 } from "./provider-metadata";
 import { EventChannel, mergeWithChannel } from "./event-channel";
 import { parseFrame, threadUrl } from "./protocol";
+import { translateStream } from "./translate";
+import { INTERRUPTED } from "./messages";
+import { collect } from "./test-utils";
 
 describe("toClientTools", () => {
   it("turns client tools into AI SDK tools the client runs", async () => {
@@ -161,5 +164,26 @@ describe("protocol", () => {
     expect(parseFrame('{"note":"mentions \\"ag-ui:run\\""}')).toBeUndefined();
     expect(parseFrame("not json ag-ui:")).toBeUndefined();
     expect(parseFrame(42)).toBeUndefined();
+  });
+});
+
+describe("translateStream", () => {
+  const resultFor = (events: BaseEvent[], toolCallId: string) =>
+    events.find((e) => e.type === EventType.TOOL_CALL_RESULT && (e as any).toolCallId === toolCallId);
+
+  it("closes the calls a cancelled run was resuming", async () => {
+    async function* parts() {
+      yield { type: "abort" };
+    }
+    const events = await collect(translateStream(parts(), { inputMessages: [], resumedToolCallIds: ["tc1"] }));
+    expect(resultFor(events, "tc1")).toMatchObject({ content: INTERRUPTED });
+  });
+
+  it("leaves the calls a failed run was resuming open, for the client to answer again", async () => {
+    async function* parts() {
+      yield { type: "error", error: new Error("overloaded") };
+    }
+    const events = await collect(translateStream(parts(), { inputMessages: [], resumedToolCallIds: ["tc1"] }));
+    expect(resultFor(events, "tc1")).toBeUndefined();
   });
 });

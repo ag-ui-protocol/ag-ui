@@ -35,14 +35,14 @@ Each AG-UI thread is one instance of the agent (one Durable Object), at `/agents
 ## What you get
 
 - **Messages, as the model needs them.** `run.messages` holds the client's conversation as AI SDK model messages: text, images, audio, video and documents, tool calls and their results.
-- **Client tools.** `run.clientTools` holds the tools the frontend runs (CopilotKit's `useFrontendTool`, `useHumanInTheLoop`, generative UI renderers) as AI SDK tools without `execute`. When the model calls one, the run ends; the client runs it and sends the result with the next run.
+- **Client tools.** `run.clientTools` holds the tools the frontend runs (CopilotKit's `useFrontendTool`, `useHumanInTheLoop`, generative UI renderers) as AI SDK tools without `execute`. When the model calls one, the run ends and `RUN_FINISHED` lists the call in `pendingToolCallIds`; the client runs it and sends the result with the next run. The agent never answers a client tool's call itself, not even one whose arguments do not parse: what to do with those is the client's call.
 - **Context.** `run.instructions(base)` adds the application's context (`useAgentContext`), the conversation's system messages and the shared state to your instructions. AI SDK v7 does not accept system messages inside `messages`, so they belong here.
 - **Shared state, kept in the Durable Object.** The agent's `state` is the thread's AG-UI state. The client's edits are saved into it, every `this.setState()` during a run reaches the client as a STATE_SNAPSHOT, and a client that comes back to the thread gets it. What the server changes between runs (a schedule, another client) is kept: the client's copy only wins when the client changed it.
 - **Reasoning that survives the round trip.** Reasoning streams as `REASONING_*` events and stays in the history. Provider data that has to come back on the next request (Anthropic's thinking signatures, Gemini's thought signatures on tool calls, OpenAI's reasoning and message items) travels in AG-UI's `encryptedValue` and is restored as `providerOptions`, so extended thinking with tools works across client tool round trips.
 - **Tool approvals as AG-UI interrupts.** A tool that needs approval (AI SDK v7 `toolApproval`, v6 `needsApproval`) ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
-- **Everything else in the stream.** Multi-step runs (`stopWhen`) with messages in order, streaming tool arguments, tool results and errors, token usage on `RUN_FINISHED`, cancellation (`RUN_FINISHED` with a `cancelled` outcome), sources and files as `CUSTOM` events.
+- **Everything else in the stream.** Multi-step runs (`stopWhen`) with messages in order, streaming tool arguments, tool results and errors, token usage on `RUN_FINISHED`, cancellation (`RUN_FINISHED` with a `cancelled` outcome), sources and files as `CUSTOM` events named `ai-sdk:source`, `ai-sdk:file` and `ai-sdk:reasoning-file`.
 
-Supports AI SDK v6 and v7, and AG-UI 1.0.
+Supports AI SDK v6 and v7, and AG-UI 1.0. Every input is checked the way AG-UI 1.0 asks: members the protocol does not define are removed (with a warning), and a malformed one is refused before the run starts (a `400` over HTTP, a `RUN_ERROR` with code `INVALID_INPUT` on the WebSocket).
 
 ## Install
 
@@ -80,7 +80,7 @@ export default {
 };
 ```
 
-**WebSocket:** `CloudflareAgentsClient` runs over the agent's WebSocket, next to the Agents SDK's own protocol. One connection per run.
+**WebSocket:** `CloudflareAgentsClient` runs over the agent's WebSocket, next to the Agents SDK's own protocol. One connection per run. The frames are tagged JSON text messages: `{ "type": "ag-ui:run", "input" }` starts a run, `{ "type": "ag-ui:abort", "runId" }` cancels it, and each event comes back as `{ "type": "ag-ui:event", "runId", "event" }`, ending with `RUN_FINISHED` or `RUN_ERROR`. A refused input comes back as a single `RUN_ERROR` frame. Frames of other types belong to the Agents SDK and are left alone.
 
 ```ts
 import { CloudflareAgentsClient } from "@ag-ui/cloudflare-agents/client";
@@ -169,7 +169,9 @@ The next run's `resume` answers it: `{ "interruptId": "<id>", "status": "resolve
 
 The reason is `tool_approval` rather than AG-UI's `tool_call` because clients treat `tool_call` answers as the tool's result; here the server runs the tool.
 
-As AG-UI's interrupt rules require, a request ends with `RUN_ERROR` (code `INVALID_RESUME`, without calling the model) when its `resume` leaves a pending approval unanswered, answers a call that is not waiting for approval, or resumes a call the conversation has already moved past. A server tool call left without a result some other way (the user stopped the run, the provider failed mid-call) is closed with a result saying it was interrupted, and the conversation carries on.
+A request is refused before the run starts, with a single `RUN_ERROR` (code `INVALID_RESUME`) and without calling the model, when it leaves a waiting approval unanswered, answers one in a way that cannot be honoured, or resumes a call the conversation has already moved past: AG-UI forbids an agent to drop an approval nobody answered. A `resume` entry for something that is not waiting for approval is ignored with a warning, as AG-UI asks.
+
+A run that stops before it finishes asks nothing. Its server tool calls without a result, a call paused for approval included, are closed with a result saying they were interrupted, and the conversation carries on. If a run resuming an approval fails (`RUN_ERROR`), the approval stays open: the client still holds its interrupt and can answer it again. If that run is cancelled, the approval is closed as interrupted.
 
 The paused call is marked in its `encryptedValue`, with the AI SDK's approval id and, if you set `experimental_toolApprovalSecret`, its signature. Keep `encryptedValue` when your client stores or forwards messages.
 
@@ -201,8 +203,8 @@ For your own wiring (an `AIChatAgent` that keeps its own clients, another runtim
 - `runAGUI(input, handler, { signal, state, approvals })`: the AG-UI events of one run, from `RUN_STARTED` to `RUN_FINISHED`/`RUN_ERROR`. `StateStore` and `ApprovalStore` say where state and paused approvals live.
 - `convertMessages(messages, { resume, clientToolNames, pendingApprovals })` / `toModelMessages(messages)`: AG-UI messages to AI SDK messages, with resume handling.
 - `toClientTools(tools)`, `buildInstructions(...)`, `formatContext(context)`.
-- `translateStream(fullStream, options)`, `streamToAGUI(input, result)`: an AI SDK stream as AG-UI events.
-- `eventStreamResponse(events)`, `parseRunAgentInput(body)`, `isAGUIRequest(request)`.
+- `translateStream(fullStream, options)`, `streamToAGUI(input, result, { signal })`: an AI SDK stream as AG-UI events. Pass the `signal` you gave `streamText`, so a cancel ends the run as cancelled.
+- `eventStreamResponse(events)`, `parseRunAgentInput(body)` (throws `InvalidInputError` for an input to refuse), `isAGUIRequest(request)`.
 
 `withAGUI` serves AG-UI requests and frames and passes everything else to the class it extends, so an `AIChatAgent` keeps serving its own clients. If you override `onRequest`, `onMessage`, `onClose` or `setState`, call `super`; `handleAGUIRequest(request)` is there to call from your own `onRequest`. It keeps two keys in the Durable Object's storage, `ag-ui:synced-state` and `ag-ui:pending-approvals`.
 
@@ -210,7 +212,7 @@ For your own wiring (an `AIChatAgent` that keeps its own clients, another runtim
 
 - Changes made to a Durable Object's state by its own WebSocket clients (`useAgent`) during an AG-UI run reach the AG-UI client at its next run, not live.
 - Preliminary tool results (tools that stream their output) are not sent; the final result is.
-- Provider file references in user messages (an uploaded file's id) reach the model as a text note.
+- Provider file references in user messages (an uploaded file's id) are not passed on: the AI SDK has no portable way to. The model gets a note that a file was attached, and the agent logs a warning.
 
 ## Upgrading from 0.0.x
 

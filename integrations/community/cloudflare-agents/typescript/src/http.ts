@@ -1,4 +1,5 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
+import { readRunAgentInput } from "./input";
 import { runAGUI, type AGUIRunHandler, type AGUIState, type ApprovalStore, type StateStore } from "./run";
 
 export interface HandleAGUIRequestOptions<State = AGUIState> {
@@ -119,22 +120,13 @@ export function isAGUIRequest(request: Request): boolean {
 }
 
 /**
- * Checks the fields every AG-UI run needs and fills the optional ones, so
- * handlers can rely on arrays being arrays.
+ * Reads a request body as a `RunAgentInput`, as AG-UI requires of an agent:
+ * members the protocol does not define are removed with a warning, a missing
+ * or malformed known field throws (answer it with a 400), and the optional
+ * fields are filled so handlers can rely on arrays being arrays.
  */
 export function parseRunAgentInput(body: unknown): RunAgentInput {
-  if (typeof body !== "object" || body === null) throw new Error("Expected a RunAgentInput object");
-  const input = body as Partial<RunAgentInput>;
-  if (typeof input.threadId !== "string" || !input.threadId) throw new Error("threadId is required");
-  if (typeof input.runId !== "string" || !input.runId) throw new Error("runId is required");
-  if (!Array.isArray(input.messages)) throw new Error("messages must be an array");
-  return {
-    ...(input as RunAgentInput),
-    tools: Array.isArray(input.tools) ? input.tools : [],
-    context: Array.isArray(input.context) ? input.context : [],
-    state: input.state ?? {},
-    forwardedProps: input.forwardedProps ?? {},
-  };
+  return readRunAgentInput(body);
 }
 
 /** Streams AG-UI events as a `text/event-stream` response. */

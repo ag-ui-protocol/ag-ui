@@ -7,6 +7,7 @@ import type {
   ToolCall,
 } from "@ag-ui/client";
 import type { ModelMessage } from "ai";
+import { warn } from "./input";
 import { decodeEnvelope, isRecord, jsonEqual, type ApprovalMarker } from "./provider-metadata";
 
 /** Result text of a gated call whose approval the user rejected. */
@@ -64,6 +65,13 @@ export interface ConvertedMessages {
   instructions: string[];
   /** Why the request cannot run (resume problems), as messages for RUN_ERROR. */
   resumeErrors: string[];
+  /**
+   * Resume entries the request carries that answer nothing this agent is
+   * waiting for. AG-UI has the run go on without them, with a warning.
+   */
+  resumeWarnings: string[];
+  /** The paused tool calls this request resumes (approved or denied), in order. */
+  resumed: string[];
   /**
    * The reason given for each call this request denies, by tool call id. The
    * AI SDK tells the model in this run; the denied call's result in the
@@ -125,9 +133,15 @@ interface OpenCall {
  *
  * Every other call without a result is closed with a result saying so: a
  * client tool the user moved on from, or a server tool cut off by a cancel or
- * an error. A request that leaves an approval unanswered, answers only some,
- * or names something that is not waiting for approval is refused
- * (`resumeErrors`), as AG-UI's interrupt rules require.
+ * an error. With `pendingApprovals` (the server's own record), that record
+ * decides which calls are still waiting for an answer; without it, the
+ * marker does.
+ *
+ * A request that leaves a waiting approval unanswered, answers it in a way
+ * that cannot be honoured, or resumes a call the conversation has moved past
+ * is refused (`resumeErrors`): AG-UI forbids an agent to drop an approval
+ * nobody answered. A resume entry for something that is not waiting is
+ * ignored (`resumeWarnings`), as AG-UI asks.
  */
 export function convertMessages(
   messages: Message[],
@@ -241,22 +255,37 @@ export function convertMessages(
   closeAssistant();
 
   const open = [...calls.values()].filter(({ call }) => !answered.has(call.id));
-  const denials = new Map<string, string>();
-  const resumeErrors = settleOpenCalls(result, open, calls, options, denials);
-  return { messages: result, instructions, resumeErrors, denials };
+  const settled = settleOpenCalls(result, open, calls, options);
+  return {
+    messages: result,
+    instructions,
+    resumeErrors: settled.errors,
+    resumeWarnings: settled.warnings,
+    resumed: settled.resumed,
+    denials: settled.denials,
+  };
 }
 
-/** Closes or resumes the calls without a result; returns why the request cannot run, if it cannot. */
+interface Settlement {
+  errors: string[];
+  warnings: string[];
+  resumed: string[];
+  denials: Map<string, string>;
+}
+
+/** Closes or resumes the calls without a result, and says why the request cannot run, if it cannot. */
 function settleOpenCalls(
   result: ModelMessage[],
   open: OpenCall[],
   calls: Map<string, OpenCall>,
   options: ConvertMessagesOptions,
-  denials: Map<string, string>,
-): string[] {
+): Settlement {
   const errors: string[] = [];
+  const warnings: string[] = [];
+  const resumed: string[] = [];
+  const denials = new Map<string, string>();
   const clientTools = new Set(options.clientToolNames ?? []);
-  const trusted = options.pendingApprovals
+  const recorded = options.pendingApprovals
     ? new Map(options.pendingApprovals.map((approval) => [approval.toolCallId, approval]))
     : undefined;
 
@@ -269,8 +298,8 @@ function settleOpenCalls(
   }
   for (const id of entries.keys()) {
     // A replayed resume for a call that already has its result is harmless
-    // (AG-UI resumes must be idempotent); an id that names no call is not.
-    if (!calls.has(id)) errors.push(`Resume names interrupt "${id}", which is not a tool call in this thread.`);
+    // (AG-UI resumes must be idempotent); one that names no call answers nothing.
+    if (!calls.has(id)) warnings.push(`Ignored the resume for "${id}": no such interrupt in this thread.`);
   }
 
   const approvals: ToolPart[] = [];
@@ -289,9 +318,15 @@ function settleOpenCalls(
 
   for (const { call, input, approval, owner } of open) {
     const entry = entries.get(call.id);
+    const record = recorded?.get(call.id);
+    // Whether this call is an approval still waiting for an answer: the
+    // server's record says so when there is one, the call's marker otherwise.
+    // A marker the record does not know is left over from a run that ended
+    // before it could ask (or was never this agent's).
+    const waiting = recorded ? record !== undefined : approval !== undefined;
 
-    if (!approval) {
-      if (entry) errors.push(`Resume names "${call.id}", which is not waiting for approval.`);
+    if (!waiting) {
+      if (entry) warnings.push(`Ignored the resume for "${call.id}": that call is not waiting for approval.`);
       close(owner, call, clientTools.has(call.function.name) ? ABANDONED : INTERRUPTED);
       continue;
     }
@@ -301,17 +336,18 @@ function settleOpenCalls(
       continue;
     }
 
-    if (trusted) {
-      const recorded = trusted.get(call.id);
-      if (
-        !recorded ||
-        recorded.approvalId !== approval.approvalId ||
-        recorded.toolName !== call.function.name ||
-        !jsonEqual(recorded.input, input)
-      ) {
-        errors.push(`Resume names "${call.id}", which does not match an approval this agent is waiting for.`);
-        continue;
-      }
+    if (!approval) {
+      errors.push(`Cannot resume "${call.id}": the request lost the call's approval marker (its encryptedValue).`);
+      continue;
+    }
+    if (
+      record &&
+      (record.approvalId !== approval.approvalId ||
+        record.toolName !== call.function.name ||
+        !jsonEqual(record.input, input))
+    ) {
+      errors.push(`Resume names "${call.id}", which does not match the approval this agent is waiting for.`);
+      continue;
     }
 
     // streamText reads approvals from the last message only, and runs the
@@ -334,6 +370,7 @@ function settleOpenCalls(
       ...(approval.signature && { signature: approval.signature }),
     } as ModelPart);
     if (!decision.approved && decision.reason) denials.set(call.id, decision.reason);
+    resumed.push(call.id);
     approvals.push({
       type: "tool-approval-response",
       approvalId: approval.approvalId,
@@ -358,7 +395,7 @@ function settleOpenCalls(
     else result.splice(index + 1, 0, { role: "tool", content: parts });
   }
   if (approvals.length > 0) appendToolParts(result, approvals);
-  return errors;
+  return { errors, warnings, resumed, denials };
 }
 
 type Decision = { approved: boolean; reason?: string } | { error: string };
@@ -402,8 +439,12 @@ function userPart(part: ContentPart): UserPart | undefined {
     isRecord(part.metadata) && typeof part.metadata.filename === "string" ? part.metadata.filename : undefined;
 
   if (source.type === "file") {
-    // A provider-side file id: AI SDK v6 has no portable way to reference it.
-    return { type: "text", text: `[${part.type} file: ${source.value}]` };
+    // A provider's file handle is opaque (AG-UI forbids reading it) and the AI
+    // SDK has no portable way to hand one on: the part is skipped, and the
+    // model is told something was attached, so it can say it cannot see it.
+    const kind = /^[aeiou]/.test(part.type) ? `An ${part.type}` : `A ${part.type}`;
+    warn(`Skipped ${kind.toLowerCase()} attached as a provider file: this agent cannot pass file handles to the model.`);
+    return { type: "text", text: `[${kind} was attached as a provider file this agent cannot read.]` };
   }
 
   const data = source.type === "url" ? toUrl(source.value) : source.value;

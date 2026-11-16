@@ -145,7 +145,9 @@ export function withAGUI<TBase extends AgentClass>(Base: TBase) {
       try {
         input = parseRunAgentInput(frame.input);
       } catch (error) {
-        if (typeof runId === "string") send(connection, runId, runErrorEvent(error, "INVALID_INPUT"));
+        // Refused before the run starts. Without a run id to address it to,
+        // the frame carries `runId: null`.
+        send(connection, typeof runId === "string" ? runId : null, runErrorEvent(error, "INVALID_INPUT"));
         return;
       }
 
@@ -261,7 +263,7 @@ function runErrorEvent(error: unknown, code: string): BaseEvent {
 }
 
 /** Sends one event frame; false when the socket is gone. */
-function send(connection: AGUIConnection, runId: string, event: BaseEvent): boolean {
+function send(connection: AGUIConnection, runId: string | null, event: BaseEvent): boolean {
   const frame: EventFrame = { type: EVENT_FRAME, runId, event };
   try {
     connection.send(JSON.stringify(frame));

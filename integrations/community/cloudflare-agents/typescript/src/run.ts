@@ -1,6 +1,7 @@
 import {
   EventType,
   PROTOCOL_VERSION,
+  randomUUID,
   type BaseEvent,
   type Context,
   type RunAgentInput,
@@ -10,11 +11,12 @@ import {
 } from "@ag-ui/client";
 import type { ModelMessage, ToolSet } from "ai";
 import { EventChannel } from "./event-channel";
+import { readRunAgentInput, warn, warnAboutProtocolVersion } from "./input";
 import { buildInstructions } from "./instructions";
-import { convertMessages, type PendingApproval } from "./messages";
+import { INTERRUPTED, convertMessages, type ConvertedMessages, type PendingApproval } from "./messages";
 import { jsonEqual } from "./provider-metadata";
 import { toClientTools } from "./tools";
-import { translateStream, type StreamTextLike } from "./translate";
+import { translateStream, type StreamTextLike, type TranslateOptions } from "./translate";
 
 /** Shared state as AG-UI carries it: any JSON value, usually an object. */
 export type AGUIState = Record<string, unknown>;
@@ -123,31 +125,45 @@ export interface RunAGUIOptions<State = AGUIState> {
  * from RUN_STARTED to RUN_FINISHED or RUN_ERROR. It always ends with one of
  * the two, whatever fails along the way.
  *
- * Before the handler runs, the previous run's interrupts are settled: answered
- * approvals become AI SDK tool approvals in `run.messages`, and a request that
- * does not answer them all ends with RUN_ERROR without calling the model.
+ * The input is checked first (members AG-UI does not define are removed, a
+ * malformed one is refused), then the previous run's interrupts are settled:
+ * answered approvals become AI SDK tool approvals in `run.messages`. A request
+ * that is malformed or leaves an approval unanswered is refused before the run
+ * starts: the stream is a single RUN_ERROR, and the model is not called.
  */
 export async function* runAGUI<State = AGUIState>(
-  input: RunAgentInput,
+  rawInput: RunAgentInput,
   handler: AGUIRunHandler<State>,
   options: RunAGUIOptions<State> = {},
 ): AsyncGenerator<BaseEvent> {
+  let input: RunAgentInput;
+  try {
+    input = readRunAgentInput(rawInput);
+  } catch (error) {
+    yield runError(error, "INVALID_INPUT");
+    return;
+  }
+  warnAboutProtocolVersion(input.protocolVersion);
+
+  const clientToolNames = input.tools.map((tool) => tool.name);
+  let converted: ConvertedMessages;
+  try {
+    const pendingApprovals = options.approvals ? await options.approvals.load() : undefined;
+    converted = convertMessages(input.messages, { resume: input.resume, clientToolNames, pendingApprovals });
+  } catch (error) {
+    yield runError(error, "INTERNAL_ERROR");
+    return;
+  }
+  if (converted.resumeErrors.length > 0) {
+    yield runError(converted.resumeErrors.join(" "), "INVALID_RESUME");
+    return;
+  }
+  for (const warning of converted.resumeWarnings) warn(warning);
+
   yield runStarted(input);
   const channel = new EventChannel();
   let unsubscribe = () => {};
   try {
-    const clientToolNames = (input.tools ?? []).map((tool) => tool.name);
-    const pendingApprovals = options.approvals ? await options.approvals.load() : undefined;
-    const converted = convertMessages(input.messages ?? [], {
-      resume: input.resume,
-      clientToolNames,
-      pendingApprovals,
-    });
-    if (converted.resumeErrors.length > 0) {
-      yield runError(converted.resumeErrors.join(" "), "INVALID_RESUME");
-      return;
-    }
-
     const store = options.state ?? memoryStateStore((input.state ?? {}) as State);
     if (options.state && hasState(input.state)) {
       // The client changed its state since the last run (or nothing says
@@ -155,9 +171,10 @@ export async function* runAGUI<State = AGUIState>(
       const synced = await options.state.synced?.();
       if (synced === undefined || !jsonEqual(input.state, synced)) store.set(input.state as State);
     }
-    if (hasState(store.get()) && !jsonEqual(store.get(), input.state ?? {})) {
-      yield stateSnapshot(store.get());
-    }
+    // The client's copy is stale (the server changed or cleared the state
+    // since): send the current one.
+    const current = store.get() ?? {};
+    if (!jsonEqual(current, input.state ?? {})) yield stateSnapshot(current);
     unsubscribe = store.subscribe((state) => channel.push(stateSnapshot(state)));
 
     const abortSignal = options.signal ?? new AbortController().signal;
@@ -188,7 +205,18 @@ export async function* runAGUI<State = AGUIState>(
       result = await handler(run);
     } catch (error) {
       yield* channel.drain();
-      yield runError(error, "AGENT_ERROR");
+      if (!abortSignal.aborted) {
+        // The approvals this run was resuming stay open: after RUN_ERROR the
+        // client still holds their interrupts and answers them again.
+        yield runError(error, "AGENT_ERROR");
+        return;
+      }
+      // A handler stopped by the cancel was cancelled, not broken. A
+      // cancelled run waits for nothing: the calls it was resuming never ran,
+      // and are closed.
+      for (const toolCallId of converted.resumed) yield toolCallResult(toolCallId, INTERRUPTED);
+      await options.approvals?.save([]);
+      yield runFinished(input, { type: "cancelled" });
       return;
     }
 
@@ -196,10 +224,13 @@ export async function* runAGUI<State = AGUIState>(
       clientToolNames,
       channel,
       denials: converted.denials,
+      abortSignal,
+      resumedToolCallIds: converted.resumed,
     });
     unsubscribe();
-    // The previous run's approvals are answered now; record this run's.
-    await options.approvals?.save(translation.approvals);
+    // The previous run's approvals are answered now; record this run's. After
+    // an error the record stays: the client answers the same approvals again.
+    if (translation.approvals) await options.approvals?.save(translation.approvals);
     await options.state?.markSynced?.(store.get());
     yield translation.terminal;
   } catch (error) {
@@ -214,53 +245,63 @@ export async function* runAGUI<State = AGUIState>(
 /**
  * Streams an AI SDK result as a complete AG-UI run, without the request
  * handling `runAGUI` does (no message conversion, no resume). For callers
- * that already ran `streamText` themselves.
+ * that already ran `streamText` themselves. The page's tools are
+ * `input.tools` unless `clientToolNames` says otherwise; pass `signal` (the
+ * one given to `streamText`) so a cancel ends the run as cancelled.
  */
 export async function* streamToAGUI(
-  input: RunAgentInput,
+  rawInput: RunAgentInput,
   result: StreamTextLike,
-  options: { clientToolNames?: Iterable<string>; channel?: EventChannel } = {},
+  options: { clientToolNames?: Iterable<string>; channel?: EventChannel; signal?: AbortSignal } = {},
 ): AsyncGenerator<BaseEvent> {
+  let input: RunAgentInput;
+  try {
+    input = readRunAgentInput(rawInput);
+  } catch (error) {
+    yield runError(error, "INVALID_INPUT");
+    return;
+  }
+  warnAboutProtocolVersion(input.protocolVersion);
   yield runStarted(input);
   if (hasState(input.state)) yield stateSnapshot(input.state);
-  const { terminal } = yield* translate(input, result, options);
+  const { terminal } = yield* translate(input, result, {
+    clientToolNames: options.clientToolNames ?? input.tools.map((tool) => tool.name),
+    channel: options.channel,
+    abortSignal: options.signal,
+  });
   yield terminal;
 }
 
-/** Streams the translated events; returns the terminal event (not yet sent) and the approvals. */
+/**
+ * Streams the translated events. Returns the terminal event (not yet sent)
+ * and the approvals to record, or undefined after an error (keep the record).
+ */
 async function* translate(
   input: RunAgentInput,
   result: StreamTextLike,
-  options: {
-    clientToolNames?: Iterable<string>;
-    channel?: EventChannel;
-    denials?: ReadonlyMap<string, string>;
-  },
-): AsyncGenerator<BaseEvent, { terminal: BaseEvent; approvals: PendingApproval[] }> {
+  options: Omit<TranslateOptions, "inputMessages">,
+): AsyncGenerator<BaseEvent, { terminal: BaseEvent; approvals?: PendingApproval[] }> {
   let translation;
   try {
-    translation = yield* translateStream(result.fullStream, {
-      inputMessages: input.messages ?? [],
-      clientToolNames: options.clientToolNames,
-      channel: options.channel,
-      denials: options.denials,
-    });
+    translation = yield* translateStream(result.fullStream, { ...options, inputMessages: input.messages });
   } catch (error) {
-    return { terminal: runError(error, "STREAM_ERROR"), approvals: [] };
+    return { terminal: runError(error, "STREAM_ERROR") };
   }
 
   const { outcome, usage, approvals } = translation;
-  if (outcome.type === "error") {
-    return { terminal: runError(outcome.message, outcome.code, usage), approvals };
-  }
+  if (outcome.type === "error") return { terminal: runError(outcome.message, outcome.code, usage) };
+  return { terminal: runFinished(input, outcome, usage), approvals };
+}
+
+function toolCallResult(toolCallId: string, content: string): BaseEvent {
   return {
-    terminal: runFinished(
-      input,
-      outcome.type === "interrupt" ? { type: "interrupt", interrupts: outcome.interrupts } : { type: outcome.type },
-      usage,
-    ),
-    approvals,
-  };
+    type: EventType.TOOL_CALL_RESULT,
+    messageId: randomUUID(),
+    toolCallId,
+    content,
+    role: "tool",
+    timestamp: Date.now(),
+  } as BaseEvent;
 }
 
 function runStarted(input: RunAgentInput): RunStartedEvent {

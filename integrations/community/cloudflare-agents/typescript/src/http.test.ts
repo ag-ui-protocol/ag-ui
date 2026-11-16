@@ -67,6 +67,9 @@ describe("handleAGUIRequest", () => {
       (await handleAGUIRequest(new Request("https://worker.example/agui", { method: "POST", body: "{" }), handler))
         .status,
     ).toBe(400);
+    const malformed = await handleAGUIRequest(post({ threadId: "t", runId: "r", messages: [], tools: "none" }), handler);
+    expect(malformed.status).toBe(400);
+    expect(await malformed.text()).toContain("Invalid RunAgentInput");
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -106,6 +109,39 @@ describe("parseRunAgentInput", () => {
     [{ threadId: "t", runId: "r" }, "messages must be an array"],
   ])("rejects %j", (body, message) => {
     expect(() => parseRunAgentInput(body)).toThrow(message);
+  });
+
+  it("strips members the protocol does not define, with a warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      parseRunAgentInput({
+        threadId: "t",
+        runId: "r",
+        messages: [{ id: "u1", role: "user", content: "Hi", futureMessageField: 1 }],
+        futureField: true,
+      }),
+    ).toEqual({
+      threadId: "t",
+      runId: "r",
+      messages: [{ id: "u1", role: "user", content: "Hi" }],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: {},
+    });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it.each([
+    ["tools that are not a list", { tools: "none" }],
+    ["context that is not a list", { context: 5 }],
+    ["a message with a numeric id", { messages: [{ id: 7, role: "user", content: "Hi" }] }],
+    ["a user message without content", { messages: [{ id: "u1", role: "user" }] }],
+  ])("rejects %s", (_, fields) => {
+    expect(() => parseRunAgentInput({ threadId: "t", runId: "r", messages: [], ...fields })).toThrow(
+      "Invalid RunAgentInput",
+    );
   });
 });
 
@@ -218,6 +254,25 @@ describe("CloudflareAgentsClient", () => {
     await result;
     expect(socket.sent).toEqual([]);
     expect(socket.readyState).toBe(3);
+  });
+
+  it("strips input members the protocol does not define before sending", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new CloudflareAgentsClient({ url: "wss://w.example/agents/a", WebSocket: Socket as any });
+    client.messages = [{ id: "u1", role: "user", content: "Hi", futureMessageField: 1 } as any];
+    const { socket } = await start(client, () => client.runAgent().catch(() => {}));
+    expect(JSON.parse(socket.sent[0]!).input.messages).toEqual([{ id: "u1", role: "user", content: "Hi" }]);
+    warn.mockRestore();
+  });
+
+  it("refuses malformed input before opening a socket", async () => {
+    // AbstractAgent logs the failed run.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = new CloudflareAgentsClient({ url: "wss://w.example/agents/a", WebSocket: Socket as any });
+    Socket.last = undefined;
+    await expect(client.runAgent({ tools: [{ name: 5 } as any] })).rejects.toThrow();
+    expect(Socket.last).toBeUndefined();
+    error.mockRestore();
   });
 
   it("ignores frames for other runs and other protocols", async () => {

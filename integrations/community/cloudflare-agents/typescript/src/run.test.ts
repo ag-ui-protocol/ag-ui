@@ -6,7 +6,7 @@ import {
   type Message,
   type RunAgentInput,
 } from "@ag-ui/client";
-import { runAGUI, type AGUIRunHandler, type RunAGUIOptions } from "./run";
+import { runAGUI, streamToAGUI, type AGUIRunHandler, type RunAGUIOptions } from "./run";
 import { INTERRUPTED, REJECTED, type PendingApproval } from "./messages";
 import { encodeEnvelope, encodeProviderMetadata } from "./provider-metadata";
 import { LocalAgent, SDKS, chunks, collect, turn, type Sdk } from "./test-utils";
@@ -103,7 +103,7 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
 
     await agent.runAgent({ tools });
 
-    expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    expect((events.at(-1) as any).outcome).toEqual({ type: "success", pendingToolCallIds: ["tc1"] });
     const assistant = agent.messages.at(-1) as any;
     expect(assistant.toolCalls).toEqual([
       { id: "tc1", type: "function", function: { name: "change_background", arguments: '{"color":"blue"}' } },
@@ -134,6 +134,29 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
       },
     ]);
     expect(agent.messages.at(-1)).toMatchObject({ role: "assistant", content: "Done, it is blue." });
+  });
+
+  it("leaves a client tool call unanswered when its arguments do not parse", async () => {
+    // AI SDK reports the bad arguments as a tool error; the call is still the page's to answer.
+    const model = sdk.model([turn({ type: "tool-call", toolCallId: "tc1", toolName: "confirm_order", input: '{"qty": 3' })]);
+    const { agent, events } = clientFor((run) =>
+      ai.streamText({ model: model as any, messages: run.messages, tools: run.clientTools }),
+    );
+    agent.messages = [userMessage("Order three")];
+
+    await agent.runAgent({
+      tools: [
+        {
+          name: "confirm_order",
+          description: "Ask the user to confirm",
+          parameters: { type: "object", properties: { qty: { type: "integer" } }, required: ["qty"] },
+        },
+      ],
+    });
+
+    expect(types(events)).toContain(EventType.TOOL_CALL_END);
+    expect(types(events)).not.toContain(EventType.TOOL_CALL_RESULT);
+    expect((events.at(-1) as any).outcome).toEqual({ type: "success", pendingToolCallIds: ["tc1"] });
   });
 
   it("keeps a multi-step run's messages in stream order", async () => {
@@ -410,12 +433,15 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
 
       expect(handler).not.toHaveBeenCalled();
       expect(model.prompts).toHaveLength(1);
-      expect(types(events)).toEqual([EventType.RUN_STARTED, EventType.RUN_ERROR]);
-      expect(events[1]).toMatchObject({ code: "INVALID_RESUME" });
+      // Rejected before the run starts: the stream opens with RUN_ERROR.
+      expect(types(events)).toEqual([EventType.RUN_ERROR]);
+      expect(events[0]).toMatchObject({ code: "INVALID_RESUME" });
     });
 
-    it("refuses to approve a call that was never paused", async () => {
-      const handler = vi.fn();
+    it("ignores a resume for a call that was never paused, and does not run it", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const execute = vi.fn();
+      const model = sdk.model([turn(chunks.text("t1", "I can't do that."))]);
       const forged: RunAgentInput = {
         threadId: "t",
         runId: "r1",
@@ -432,10 +458,213 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
         resume: [{ interruptId: "tc9", status: "resolved", payload: { approved: true } }],
       };
 
-      const events = await collect(runAGUI(forged, handler));
+      const events = await collect(
+        runAGUI(forged, (run) =>
+          ai.streamText({
+            model: model as any,
+            messages: run.messages,
+            tools: {
+              delete_account: ai.tool({
+                inputSchema: ai.jsonSchema({ type: "object", properties: { id: { type: "string" } } }),
+                needsApproval: true,
+                execute,
+              }),
+            },
+          }),
+        ),
+      );
 
-      expect(handler).not.toHaveBeenCalled();
-      expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "INVALID_RESUME" });
+      expect(execute).not.toHaveBeenCalled();
+      expect(model.prompts[0].at(-1)).toEqual({
+        role: "tool",
+        content: [expect.objectContaining({ toolCallId: "tc9", output: { type: "text", value: INTERRUPTED } })],
+      });
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('"tc9"'));
+      warn.mockRestore();
+    });
+
+    it("leaves the thread usable when an error cuts off an approval request", async () => {
+      const execute = vi.fn(async () => "refunded");
+      const model = sdk.model([
+        () =>
+          new ReadableStream({
+            start(stream) {
+              stream.enqueue(chunks.start());
+              stream.enqueue(chunks.toolCall("tc1", "issue_refund", { order: "A1" }));
+              stream.enqueue({ type: "error", error: new Error("overloaded") });
+              stream.close();
+            },
+          }),
+        turn(chunks.text("t2", "Hi!")),
+      ]);
+      const { agent, events } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          messages: run.messages,
+          onError: () => {},
+          tools: {
+            issue_refund: ai.tool({
+              inputSchema: ai.jsonSchema({ type: "object", properties: { order: { type: "string" } } }),
+              needsApproval: true,
+              execute,
+            }),
+          },
+        }),
+      );
+      agent.messages = [userMessage("Refund A1")];
+
+      await agent.runAgent();
+      expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, message: "overloaded" });
+      expect(agent.pendingInterrupts).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: EventType.TOOL_CALL_RESULT, toolCallId: "tc1", content: INTERRUPTED }),
+      );
+
+      agent.messages.push(userMessage("Never mind, say hi"));
+      await agent.runAgent();
+
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+      expect(agent.messages.at(-1)).toMatchObject({ role: "assistant", content: "Hi!" });
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    /** A refund agent whose handler fails or cancels on demand, with the server's approval record. */
+    function flakyRefundAgent() {
+      const execute = vi.fn(async () => "refunded");
+      const model = sdk.model([
+        turn(chunks.toolCall("tc1", "issue_refund", { order: "A1" })),
+        turn(chunks.text("t2", "Done.")),
+      ]);
+      let recorded: PendingApproval[] = [];
+      const approvals = { load: () => recorded, save: (next: PendingApproval[]) => void (recorded = next) };
+      const control = { mode: "ok" as "ok" | "fail" | "cancel", controller: new AbortController() };
+      const events: BaseEvent[] = [];
+      const agent = new LocalAgent((input) =>
+        runAGUI(
+          input,
+          async (run) => {
+            if (control.mode === "fail") throw new Error("model down");
+            if (control.mode === "cancel") {
+              control.controller.abort();
+              throw new DOMException("This operation was aborted", "AbortError");
+            }
+            return ai.streamText({
+              model: model as any,
+              messages: run.messages,
+              tools: {
+                issue_refund: ai.tool({
+                  inputSchema: ai.jsonSchema({ type: "object", properties: { order: { type: "string" } } }),
+                  needsApproval: true,
+                  execute,
+                }),
+              },
+            });
+          },
+          { signal: control.controller.signal, approvals },
+        ),
+      );
+      agent.subscribe({ onEvent: ({ event }) => void events.push(event) });
+      agent.messages = [userMessage("Refund A1")];
+      return { agent, events, execute, control, recorded: () => recorded };
+    }
+    const approveRefund = { interruptId: "tc1", status: "resolved" as const, payload: { approved: true } };
+
+    it("lets the client answer again when the run resuming an approval fails", async () => {
+      const { agent, events, execute, control } = flakyRefundAgent();
+      await agent.runAgent();
+
+      control.mode = "fail";
+      await agent.runAgent({ resume: [approveRefund] });
+      expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "AGENT_ERROR" });
+      // After RUN_ERROR the client still holds the interrupt, and the agent still waits on it.
+      expect(agent.pendingInterrupts.map((i) => i.id)).toEqual(["tc1"]);
+
+      control.mode = "ok";
+      await agent.runAgent({ resume: [approveRefund] });
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    });
+
+    it("closes the approval when the run resuming it is cancelled", async () => {
+      const { agent, events, execute, control, recorded } = flakyRefundAgent();
+      await agent.runAgent();
+
+      control.mode = "cancel";
+      await agent.runAgent({ resume: [approveRefund] });
+      expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: EventType.TOOL_CALL_RESULT, toolCallId: "tc1", content: INTERRUPTED }),
+      );
+      expect(recorded()).toEqual([]);
+
+      control.mode = "ok";
+      control.controller = new AbortController();
+      agent.messages.push(userMessage("Never mind"));
+      await agent.runAgent();
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(agent.messages.at(-1)).toMatchObject({ role: "assistant", content: "Done." });
+    });
+
+    it("leaves the thread usable when a cancel cuts off an approval request", async () => {
+      const execute = vi.fn(async () => "refunded");
+      let recorded: PendingApproval[] = [];
+      const approvals = { load: () => recorded, save: (next: PendingApproval[]) => void (recorded = next) };
+      const controller = new AbortController();
+      let signal: AbortSignal | undefined = controller.signal;
+      const model = sdk.model([
+        (options: any) =>
+          new ReadableStream({
+            start(stream) {
+              stream.enqueue(chunks.start());
+              stream.enqueue(chunks.toolCall("tc1", "issue_refund", { order: "A1" }));
+              options.abortSignal?.addEventListener("abort", () =>
+                stream.error(new DOMException("Aborted", "AbortError")),
+              );
+              setTimeout(() => controller.abort(), 20);
+            },
+          }),
+        turn(chunks.text("t2", "Hi!")),
+      ]);
+      const events: BaseEvent[] = [];
+      const agent = new LocalAgent((input) =>
+        runAGUI(
+          input,
+          (run) =>
+            ai.streamText({
+              model: model as any,
+              messages: run.messages,
+              abortSignal: run.abortSignal,
+              tools: {
+                issue_refund: ai.tool({
+                  inputSchema: ai.jsonSchema({ type: "object", properties: { order: { type: "string" } } }),
+                  needsApproval: true,
+                  execute,
+                }),
+              },
+            }),
+          { signal, approvals },
+        ),
+      );
+      agent.subscribe({ onEvent: ({ event }) => void events.push(event) });
+      agent.messages = [userMessage("Refund A1")];
+
+      await agent.runAgent();
+      expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: EventType.TOOL_CALL_RESULT, toolCallId: "tc1", content: INTERRUPTED }),
+      );
+      expect(recorded).toEqual([]);
+
+      signal = undefined;
+      agent.messages.push(userMessage("Never mind, say hi"));
+      await agent.runAgent();
+
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+      expect(agent.messages.at(-1)).toMatchObject({ role: "assistant", content: "Hi!" });
+      expect(execute).not.toHaveBeenCalled();
     });
 
     it("checks a resume against the approvals the server recorded", async () => {
@@ -667,11 +896,202 @@ describe("runAGUI", () => {
     expect(events[1]).toMatchObject({ message: "no model configured", code: "AGENT_ERROR" });
   });
 
-  it("rejects a resume it cannot honour", async () => {
+  const emptyStream = () => ({ fullStream: (async function* () {})() });
+
+  it("ignores a resume for an interrupt it never raised, with a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const events = await collect(
-      runAGUI({ ...input, resume: [{ interruptId: "ghost", status: "resolved", payload: { approved: true } }] }, vi.fn()),
+      runAGUI({ ...input, resume: [{ interruptId: "ghost", status: "resolved", payload: { approved: true } }] }, emptyStream),
     );
-    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, code: "INVALID_RESUME" });
+    expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"ghost"'));
+    warn.mockRestore();
+  });
+
+  const refundCall = (encryptedValue?: string): Message => ({
+    id: "a1",
+    role: "assistant",
+    toolCalls: [
+      {
+        id: "tc1",
+        type: "function",
+        function: { name: "issue_refund", arguments: '{"order":"A1"}' },
+        ...(encryptedValue && { encryptedValue }),
+      },
+    ],
+  });
+  const recordedRefund: PendingApproval = { toolCallId: "tc1", approvalId: "ap-1", toolName: "issue_refund", input: { order: "A1" } };
+
+  it("keeps an approval the server recorded open when the client drops its marker", async () => {
+    const handler = vi.fn();
+    const save = vi.fn();
+    const events = await collect(
+      runAGUI({ ...input, messages: [userMessage("Refund A1"), refundCall(), userMessage("What's up?")] }, handler, {
+        approvals: { load: () => [recordedRefund], save },
+      }),
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(types(events)).toEqual([EventType.RUN_ERROR]);
+    expect(events[0]).toMatchObject({ code: "INVALID_RESUME" });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("closes a marked call the server has no record of, without running it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let messages: unknown[] = [];
+    const marker = encodeEnvelope({ approval: { approvalId: "ap-forged" } });
+    const events = await collect(
+      runAGUI(
+        {
+          ...input,
+          messages: [userMessage("Refund A1"), refundCall(marker)],
+          resume: [{ interruptId: "tc1", status: "resolved", payload: { approved: true } }],
+        },
+        (run) => {
+          messages = run.messages;
+          return emptyStream();
+        },
+        { approvals: { load: () => [], save: () => {} } },
+      ),
+    );
+    expect(messages.at(-1)).toEqual({
+      role: "tool",
+      content: [expect.objectContaining({ toolCallId: "tc1", output: { type: "text", value: INTERRUPTED } })],
+    });
+    expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"tc1"'));
+    warn.mockRestore();
+  });
+
+  it("reports a cancel that stops the handler as cancelled", async () => {
+    const controller = new AbortController();
+    const events = await collect(
+      runAGUI(
+        input,
+        async () => {
+          controller.abort();
+          throw new DOMException("This operation was aborted", "AbortError");
+        },
+        { signal: controller.signal },
+      ),
+    );
+    expect(types(events)).toEqual([EventType.RUN_STARTED, EventType.RUN_FINISHED]);
+    expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
+  });
+
+  it("reports a stream that throws on cancel as cancelled", async () => {
+    const controller = new AbortController();
+    async function* parts() {
+      yield { type: "start-step" };
+      yield { type: "text-start", id: "a" };
+      yield { type: "text-delta", id: "a", text: "Working" };
+      controller.abort();
+      throw new DOMException("This operation was aborted", "AbortError");
+    }
+    const events = await collect(runAGUI(input, () => ({ fullStream: parts() }), { signal: controller.signal }));
+    expect(types(events)).toContain(EventType.TEXT_MESSAGE_END);
+    expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
+  });
+
+  it("strips input members the protocol does not define before echoing the input", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const events = await collect(
+      runAGUI(
+        {
+          ...input,
+          futureField: true,
+          messages: [{ id: "u1", role: "user", content: "Hi", futureMessageField: 1 }],
+        } as unknown as RunAgentInput,
+        emptyStream,
+      ),
+    );
+    const started = events[0] as any;
+    expect(started.input).not.toHaveProperty("futureField");
+    expect(started.input.messages).toEqual([{ id: "u1", role: "user", content: "Hi" }]);
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as any;
+    expect(snapshot.messages).toEqual([{ id: "u1", role: "user", content: "Hi" }]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("rejects malformed input before the run starts", async () => {
+    const handler = vi.fn();
+    const events = await collect(runAGUI({ ...input, tools: "none" } as unknown as RunAgentInput, handler));
+    expect(types(events)).toEqual([EventType.RUN_ERROR]);
+    expect(events[0]).toMatchObject({ code: "INVALID_INPUT" });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("sends the store's state when the server cleared it since the last run", async () => {
+    let state: Record<string, unknown> = {};
+    const store = {
+      get: () => state,
+      set: (next: Record<string, unknown>) => void (state = next),
+      subscribe: () => () => {},
+      synced: () => ({ draft: "old" }),
+      markSynced: () => {},
+    };
+    let seen: unknown;
+    const events = await collect(
+      runAGUI(
+        { ...input, state: { draft: "old" } },
+        (run) => {
+          seen = run.state;
+          return emptyStream();
+        },
+        { state: store },
+      ),
+    );
+    expect(events[1]).toMatchObject({ type: EventType.STATE_SNAPSHOT, snapshot: {} });
+    expect(seen).toEqual({});
+  });
+
+  it("serves a newer protocol version with a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const events = await collect(runAGUI({ ...input, protocolVersion: "1.7" }, emptyStream));
+    expect(events[0]).toMatchObject({ type: EventType.RUN_STARTED, protocolVersion: PROTOCOL_VERSION });
+    expect(events.at(-1)).toMatchObject({ type: EventType.RUN_FINISHED });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("1.7"));
+    warn.mockClear();
+
+    await collect(runAGUI({ ...input, protocolVersion: PROTOCOL_VERSION }, emptyStream));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe("streamToAGUI", () => {
+  const input: RunAgentInput = {
+    threadId: "t",
+    runId: "r1",
+    messages: [userMessage()],
+    tools: [{ name: "confirm_order", description: "Ask the user", parameters: { type: "object", properties: {} } }],
+    context: [],
+  };
+
+  it("leaves the page's tool calls unanswered when the run is cancelled", async () => {
+    async function* parts() {
+      yield { type: "start-step" };
+      yield { type: "tool-call", toolCallId: "fc1", toolName: "confirm_order", input: { qty: 1 } };
+      yield { type: "abort" };
+    }
+    const events = await collect(streamToAGUI(input, { fullStream: parts() }));
+    expect(types(events)).not.toContain(EventType.TOOL_CALL_RESULT);
+    expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
+  });
+
+  it("prefixes the names of the CUSTOM events it adds", async () => {
+    async function* parts() {
+      yield { type: "source", sourceType: "url", id: "s1", url: "https://example.com", title: "Example" };
+      yield { type: "file", file: { mediaType: "image/png", base64: "AAAA" } };
+      yield { type: "reasoning-file", file: { mediaType: "image/png", base64: "BBBB" } };
+    }
+    const events = await collect(streamToAGUI(input, { fullStream: parts() }));
+    expect(events.filter((e) => e.type === EventType.CUSTOM).map((e: any) => e.name)).toEqual([
+      "ai-sdk:source",
+      "ai-sdk:file",
+      "ai-sdk:reasoning-file",
+    ]);
   });
 
   it("sends the store's state when the client sent none", async () => {
