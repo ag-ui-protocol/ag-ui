@@ -360,7 +360,7 @@ extension HTTPResponse {
     static func mock(
         data: Data = Data(),
         statusCode: Int = 200,
-        headers: [String: String] = [:]
+        headers: [String: String] = ["Content-Type": "text/event-stream"]
     ) async throws -> HTTPResponse {
         let url = URL(string: "https://test-mock.local/response")!
 

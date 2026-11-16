@@ -13,6 +13,8 @@
 
 <a href="https://docs.ag-ui.com/talk-to-us"><img alt="Running AG-UI in production? Talk to the team" src=".github/readme/talk-to-the-team.svg" width="400"></a>
 
+<a href="https://trendshift.io/repositories/27961?utm_source=repository-badge&utm_medium=badge&utm_campaign=badge-repository-27961"><img src="https://trendshift.io/api/badge/repositories/27961" alt="ag-ui-protocol%2Fag-ui | Trendshift" width="250" height="55"></a>
+
 </div>
 
 <br>
@@ -178,7 +180,7 @@ AG-UI is adopted by Google, Microsoft, Amazon, and Oracle, and built into most a
 <a href="https://docs.ag-ui.com/integrations"><img alt="AG-UI integrations: LangChain, CrewAI, Microsoft Agent Framework, Google ADK, AWS Strands Agents, Mastra, Pydantic AI, LlamaIndex, Agno, AG2, Claude Agent SDK, and 10 more" src=".github/readme/integrations.svg" width="880"></a>
 
 **Protocols:** [A2A](https://docs.copilotkit.ai/a2a-protocol) · [MCP](middlewares/mcp-middleware) · [MCP Apps](https://docs.copilotkit.ai/generative-ui-specs/mcp-apps) · [A2UI](middlewares/a2ui-middleware)\
-**Clients:** [CopilotKit](https://github.com/CopilotKit/CopilotKit) (React, Angular, Vue, React Native) · [Slack & Teams](https://github.com/CopilotKit/channels-sdk) · [Terminal](https://docs.ag-ui.com/quickstart/clients)
+**Clients:** [CopilotKit](https://github.com/CopilotKit/CopilotKit) (React, Angular, Vue, React Native) · [Slack & Teams](https://github.com/CopilotKit/channels-sdk) · [Terminal](https://docs.ag-ui.com/quickstart/clients) · [OpenBot](https://open.bot/builders)
 
 Every framework has a live demo in the [Dojo](https://dojo.ag-ui.com). Don't see yours? [Build an integration →](https://docs.ag-ui.com/quickstart/introduction)
 
@@ -188,7 +190,7 @@ Every framework has a live demo in the [Dojo](https://dojo.ag-ui.com). Don't see
 
 - **Partners:** [LangChain](https://docs.copilotkit.ai/langgraph/) · [CrewAI](https://docs.copilotkit.ai/crewai-flows)
 - **Built in:** [Microsoft Agent Framework](https://docs.copilotkit.ai/microsoft-agent-framework) · [Google ADK](https://docs.copilotkit.ai/adk) ([JS](https://docs.ag-ui.com/integrations/google-adk-js)) · [Google Antigravity](https://docs.copilotkit.ai/google-antigravity) · [AWS Strands Agents](https://docs.copilotkit.ai/aws-strands) · [Mastra](https://docs.copilotkit.ai/mastra/) · [Pydantic AI](https://docs.copilotkit.ai/pydantic-ai/) · [Agno](https://docs.copilotkit.ai/agno/) · [LlamaIndex](https://docs.copilotkit.ai/llamaindex/) · [AG2](https://docs.copilotkit.ai/ag2/)
-- **More frameworks:** [Claude Agent SDK](integrations/claude-agent-sdk) · [Claude Managed Agents](integrations/claude-managed-agents) · [IBM watsonx Orchestrate](integrations/watsonx) · [Langroid](integrations/langroid) · [Spring AI](integrations/community/spring-ai) · [Cloudflare Agents](integrations/community/cloudflare-agents) · [Omnara](https://docs.ag-ui.com/integrations/omnara) · [Genkit (Go)](integrations/community/genkit/go)
+- **More frameworks:** [Claude Agent SDK](integrations/claude-agent-sdk) · [Claude Managed Agents](integrations/claude-managed-agents) · [IBM watsonx Orchestrate](integrations/watsonx) · [Langroid](integrations/langroid) · [Spring AI](integrations/community/spring-ai) · [Cloudflare Agents](integrations/community/cloudflare-agents) · [Omnara](https://docs.ag-ui.com/integrations/omnara) · [Genkit (Go)](integrations/community/genkit/go) · [OpenAI Agents](integrations/openai-agents)
 - **Specs:** [Oracle Agent Spec](https://go.copilotkit.ai/copilotkit-oracle-docs)
 - **Deployment:** [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui.html)
 

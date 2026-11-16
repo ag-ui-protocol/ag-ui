@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from a2ui.core import A2uiError, Catalog
 from a2ui.core.basic_catalog import BasicCatalog
 from a2ui.core.common import to_protocol_version
 from a2ui.core.schema import ProtocolVersion
-from a2ui.inference_formats.direct_json import DirectJsonFormatFactory
+from a2ui.inference_formats.direct_json import (
+    DirectJsonFormatFactory,
+    DirectJsonPromptGenerator,
+)
 from a2ui.inference_formats.direct_json.json_reader import read_json
 from a2ui.inference_formats.direct_json.schema_prompt import protocol_schema_prompt
 from a2ui.inference_formats.express import ExpressFormatFactory
@@ -38,9 +41,34 @@ _PROMPT_ALLOWED_MESSAGES: dict[ProtocolVersion, tuple[str, ...]] = {
         "UpdateComponentsMessage",
         "UpdateDataModelMessage",
     ),
+    ProtocolVersion.V1_0: (
+        "CreateSurfaceMessage",
+        "UpdateComponentsMessage",
+        "UpdateDataModelMessage",
+    ),
 }
 
 _DEFAULT_JSON_SCHEMA = "https://json-schema.org/draft/2020-12/schema"
+
+
+def catalog_protocol_version(source: Any) -> ProtocolVersion:
+    """Resolve the declaration before best-effort catalog/prompt normalization.
+
+    Only an absent declaration defaults to 0.9. The SDK itself treats some
+    malformed declarations (including null) as absent, so validate their type
+    here rather than silently emitting a different protocol.
+    """
+    if isinstance(source, str):
+        try:
+            source = json.loads(source)
+        except ValueError:
+            return ProtocolVersion.V0_9
+    if not isinstance(source, dict) or "protocolVersion" not in source:
+        return ProtocolVersion.V0_9
+    version = source["protocolVersion"]
+    if not isinstance(version, str) or not version:
+        raise ValueError("Catalog protocolVersion must be a non-empty string")
+    return to_protocol_version(version)
 
 
 def normalize_catalog_dict(
@@ -111,6 +139,8 @@ def render_catalog_instructions(
     the catalog can't be normalized/built (the caller then falls back to the raw
     catalog text — today's behavior).
     """
+    # Version errors are configuration errors, never a raw-prompt fallback.
+    version = catalog_protocol_version(source)
     normalized = normalize_catalog_dict(source, default_catalog_id=default_catalog_id)
     if normalized is None:
         return None
@@ -125,7 +155,6 @@ def render_catalog_instructions(
         # from_json retains the client's schema without strict $ref resolution.
         # Its protocol defaults to 0.9 when protocolVersion is absent.
         catalog = Catalog.from_json(normalized)
-        version = to_protocol_version(catalog.protocol_version)
         processor = A2uiRequestProcessor(
             catalogs=[catalog],
             format_factory=DirectJsonFormatFactory(
@@ -136,7 +165,7 @@ def render_catalog_instructions(
         # rules, which conflict with our forced render_a2ui tool. Since SDK 0.10
         # the catalog instructions hold only the catalog schema, so prepend the
         # protocol schemas (envelope + common types) as one schema block.
-        generator = processor.format.prompt_generator
+        generator = cast(DirectJsonPromptGenerator, processor.format.prompt_generator)
         instructions = _join_schema_blocks(
             protocol_schema_prompt(
                 generator.catalogs, allowed_messages=generator.allowed_messages
@@ -274,15 +303,18 @@ def _catalog_for_express(source: Any, *, default_catalog_id: str) -> dict[str, A
 def create_express_processor(
     source: Any, *, default_catalog_id: str, surface_id: str
 ) -> Any:
-    """Create the official upstream streaming processor for one A2UI v0.9 surface."""
+    """Create a streaming processor targeting the supplied catalog's protocol."""
+    version = catalog_protocol_version(source)
+    if version not in (ProtocolVersion.V0_9, ProtocolVersion.V1_0):
+        raise ValueError("ADK Express requires an A2UI 0.9 or 1.0 catalog")
     catalog = Catalog.from_json(
         _catalog_for_express(source, default_catalog_id=default_catalog_id)
     )
-    if to_protocol_version(catalog.protocol_version) != ProtocolVersion.V0_9:
-        raise ValueError("ADK Express currently requires an A2UI v0.9 catalog")
     return A2uiRequestProcessor(
         catalogs=[catalog],
-        format_factory=ExpressFormatFactory(surface_id=surface_id, version="v0.9"),
+        format_factory=ExpressFormatFactory(
+            surface_id=surface_id, version=version.value
+        ),
     )
 
 

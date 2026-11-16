@@ -25,9 +25,9 @@ def main() -> None:
     for package in ("a2ui-agent-sdk", "a2ui-core", "google-adk", "google-genai"):
         print(package, version(package))
 
-    for protocol in ("0.8", "0.9"):
+    for protocol in ("0.8", "0.9", "1.0"):
         properties = {"label": {"type": "string"}}
-        if protocol == "0.9":
+        if protocol != "0.8":
             properties["binding"] = {"$ref": "common_types.json#/$defs/DynamicString"}
         client_catalog = {
             "catalogId": "cat://ci-client",
@@ -43,7 +43,7 @@ def main() -> None:
         assert "<a2ui-json>" not in prompt
         expected_message = "surfaceUpdate" if protocol == "0.8" else "updateComponents"
         assert expected_message in prompt
-        if protocol == "0.9":
+        if protocol != "0.8":
             common = json.loads(
                 prompt.split("### Common Types Schema:\n", 1)[1].split(
                     "### Catalog Schema:", 1
@@ -51,7 +51,7 @@ def main() -> None:
             )
             assert {"DynamicString", "DataBinding"} <= common["$defs"].keys()
 
-    # Express consumers can use the same environment as the adapter (v0.9).
+    # Express consumers can use the same environment with a 1.0 catalog.
     express = ExpressFormatFactory().create_format(
         catalogs=[Catalog.from_json(client_catalog)]
     )

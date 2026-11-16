@@ -14,25 +14,21 @@ public enum SseParserError: Error, Equatable {
 /// and returns complete events as they become available.
 ///
 public struct SseParser {
-    /// Maximum number of UTF-8 bytes the internal buffer may hold.
+    /// Maximum number of UTF-8 bytes a single event may occupy.
     ///
-    /// If a stream sends data faster than complete events arrive — or sends a
-    /// pathologically large payload without a double-newline terminator — the
-    /// buffer is reset and `SseParserError.bufferOverflow` is thrown. This prevents
-    /// unbounded memory growth from malformed or malicious streams.
+    /// If an event grows past this limit before its blank-line terminator
+    /// arrives, the parser is reset and `SseParserError.bufferOverflow` is
+    /// thrown. This prevents unbounded memory growth from malformed or
+    /// malicious streams.
     public static let maxBufferByteCount = 10 * 1_048_576 // 10 MB
 
-    /// Internal buffer for incomplete events.
-    private var buffer: String = ""
-
-    /// True when the previous chunk's last raw character was a lone `\r`.
-    ///
-    /// Per the WHATWG SSE spec, `\r`, `\n`, and `\r\n` are all valid line
-    /// terminators. When `\r` arrives at the end of one chunk and `\n` at the
-    /// start of the next, they form a single `\r\n` line terminator — not two
-    /// separate newlines. This flag lets `parse(_:)` detect and handle that
-    /// cross-chunk `\r\n` sequence correctly.
-    private var endsWithCR = false
+    /// Bytes of the current event, with line endings normalized to `\n`.
+    private var buffer: [UInt8] = []
+    private var lineIsEmpty = true
+    private var previousWasCR = false
+    /// Leading BOM bytes matched so far; `nil` once the stream start is past.
+    private var bomBytesMatched: Int? = 0
+    private static let byteOrderMark: [UInt8] = [0xEF, 0xBB, 0xBF]
 
     /// Creates a new SSE parser.
     public init() {}
@@ -68,53 +64,52 @@ public struct SseParser {
     /// - Very long lines are supported
     /// - Multiple events in one chunk are all returned
     public mutating func parse(_ chunk: String) throws -> [SseEvent] {
-        guard !chunk.isEmpty else { return [] }
-        // WHATWG SSE spec: \r, \n, and \r\n are all valid line terminators.
-        // Normalise line endings to \n — but handle the cross-chunk case where
-        // \r arrives at the end of one chunk and \n at the start of the next.
-        // Without special handling, the lone \r would be stored as \n in the
-        // buffer and the subsequent \n would create \n\n, which the parser
-        // incorrectly reads as an event separator.
-        var toNormalize = chunk
+        try chunk.utf8.compactMap { try consume($0) }
+    }
 
-        if endsWithCR {
-            if toNormalize.hasPrefix("\n") {
-                // The preceding CR was already processed, possibly dispatching
-                // an event. Only consume its paired LF; never modify the buffer.
-                toNormalize = String(toNormalize.dropFirst())
-            }
-            endsWithCR = false
+    /// Feeds a byte without accumulating an unbounded line or UTF-8 buffer.
+    ///
+    /// WHATWG SSE spec: `\r`, `\n`, and `\r\n` are all valid line terminators.
+    /// A single leading UTF-8 BOM is stripped at stream start, before UTF-8
+    /// repair; later BOMs are kept. Invalid UTF-8 is replaced with U+FFFD.
+    /// Data after the last blank line is never dispatched, as the SSE
+    /// specification requires.
+    ///
+    /// - Throws: `SseParserError.bufferOverflow` when the current event exceeds the limit.
+    mutating func consume(_ byte: UInt8) throws -> SseEvent? {
+        guard let matched = bomBytesMatched else { return try process(byte) }
+        if byte == Self.byteOrderMark[matched] {
+            bomBytesMatched = matched + 1 == Self.byteOrderMark.count ? nil : matched + 1
+            return nil
         }
+        // Per WHATWG, only a stream-start BOM is stripped. A later U+FEFF stays in
+        // the field name, so that line is ignored as an unknown field (intended).
+        bomBytesMatched = nil
+        // Replay a partial BOM match; these bytes are never line terminators.
+        for pending in Self.byteOrderMark.prefix(matched) { _ = try process(pending) }
+        return try process(byte)
+    }
 
-        // Replace \r\n first so that any remaining lone \r is genuinely standalone.
-        let step1 = toNormalize.replacingOccurrences(of: "\r\n", with: "\n")
-        // Remember whether this chunk ends with a lone \r before it is erased.
-        endsWithCR = step1.hasSuffix("\r")
-        let normalized = step1.replacingOccurrences(of: "\r", with: "\n")
-        buffer += normalized
-
-        // Guard against unbounded buffer growth from malformed/malicious streams.
-        guard buffer.utf8.count <= Self.maxBufferByteCount else {
-            reset()
+    private mutating func process(_ byte: UInt8) throws -> SseEvent? {
+        if previousWasCR {
+            previousWasCR = false
+            if byte == 10 { return nil }
+        }
+        if byte == 13 { previousWasCR = true }
+        let isNewline = byte == 10 || byte == 13
+        if isNewline, lineIsEmpty {
+            defer { buffer.removeAll() }
+            guard !buffer.isEmpty else { return nil }
+            // Replaces invalid UTF-8 and, unlike Foundation, keeps any U+FEFF.
+            return parseEvent(String(decoding: buffer, as: UTF8.self))
+        }
+        lineIsEmpty = isNewline
+        guard buffer.count < Self.maxBufferByteCount else {
+            resetEvent()
             throw SseParserError.bufferOverflow
         }
-
-        var events: [SseEvent] = []
-
-        // Split on double newline (event separator — handles \n\n after normalization)
-        let parts = buffer.components(separatedBy: "\n\n")
-
-        // Keep the last part in buffer (might be incomplete)
-        buffer = parts.last ?? ""
-
-        // Process complete events (all parts except the last)
-        for part in parts.dropLast() where !part.isEmpty {
-            if let event = parseEvent(part) {
-                events.append(event)
-            }
-        }
-
-        return events
+        buffer.append(isNewline ? 10 : byte)
+        return nil
     }
 
     /// Parses a single complete event from its text representation.
@@ -189,7 +184,7 @@ public struct SseParser {
     /// Resets the parser, clearing any buffered incomplete events.
     ///
     /// Use this when starting a new stream or when an error requires
-    /// discarding incomplete data.
+    /// discarding incomplete data. A leading BOM is stripped again afterwards.
     ///
     /// ## Example
     ///
@@ -204,7 +199,14 @@ public struct SseParser {
     /// let events = try parser.parse("data: new\n\n")
     /// ```
     public mutating func reset() {
-        buffer = ""
-        endsWithCR = false
+        resetEvent()
+        bomBytesMatched = 0
+    }
+
+    /// Clears the current event without treating the next byte as stream start.
+    private mutating func resetEvent() {
+        buffer.removeAll()
+        lineIsEmpty = true
+        previousWasCR = false
     }
 }

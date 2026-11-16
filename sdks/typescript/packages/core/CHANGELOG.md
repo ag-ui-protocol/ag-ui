@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.4 — 2026-11-05
+
+- `zod` is now a required peer dependency (`^3.25.18 || ^4.0.0`), ensuring consumers use a single application-provided zod.
+
+### Breaking changes
+
+- `zod` must be installed by the consuming application as a peer dependency (`^3.25.18 || ^4.0.0`).
+
 ## 1.0.3 — 2026-10-15
 
 - Maintenance release; no consumer-facing changes identified.

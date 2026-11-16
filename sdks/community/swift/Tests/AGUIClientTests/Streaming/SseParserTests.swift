@@ -563,4 +563,64 @@ extension SseParserTests {
         XCTAssertTrue(try parser.parse("\n").isEmpty)
         XCTAssertEqual(try parser.parse("data: second\r\n\r\n").first?.data, "second")
     }
+
+    // MARK: - Byte Order Mark Tests
+
+    private func feed(_ bytes: [UInt8], to parser: inout SseParser) throws -> [SseEvent] {
+        try bytes.compactMap { try parser.consume($0) }
+    }
+
+    private var bom: [UInt8] { [0xEF, 0xBB, 0xBF] }
+
+    func testLeadingBOMIsStrippedBeforeInvalidUTF8Repair() throws {
+        var parser = SseParser()
+        let events = try feed(bom + Array("data: a".utf8) + [0xFF] + Array("b\n\n".utf8), to: &parser)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.data, "a\u{FFFD}b")
+    }
+
+    func testLeadingBOMWithInvalidUTF8KeepsResumeID() throws {
+        var parser = SseParser()
+        let events = try feed(bom + Array("id: 42\ndata: x".utf8) + [0xC3] + Array("\n\n".utf8), to: &parser)
+        XCTAssertEqual(events.first?.id, "42")
+        XCTAssertEqual(events.first?.data, "x\u{FFFD}")
+    }
+
+    func testLeadingBOMSplitAcrossChunksIsStripped() throws {
+        var parser = SseParser()
+        XCTAssertTrue(try feed([0xEF], to: &parser).isEmpty)
+        XCTAssertTrue(try feed([0xBB], to: &parser).isEmpty)
+        XCTAssertEqual(try feed([0xBF] + Array("data: ok\n\n".utf8), to: &parser).first?.data, "ok")
+    }
+
+    func testPartialLeadingBOMIsReplayedAsData() throws {
+        var parser = SseParser()
+        let events = try feed([0xEF, 0xBB] + Array("\ndata: ok\n\n".utf8), to: &parser)
+        XCTAssertEqual(events.map(\.data), ["ok"])
+    }
+
+    func testBOMAtLaterEventBoundaryIsNotStripped() throws {
+        var parser = SseParser()
+        let events = try feed(bom + Array("data: first\n\n".utf8) + bom + Array("data: second\n\n".utf8), to: &parser)
+        XCTAssertEqual(events.map(\.data), ["first"])
+        let withID = try feed(bom + Array("id: 7\ndata: third\n\n".utf8), to: &parser)
+        XCTAssertEqual(withID.first?.data, "third")
+        XCTAssertNil(withID.first?.id)
+    }
+
+    func testResetRestoresLeadingBOMStripping() throws {
+        var parser = SseParser()
+        _ = try feed(Array("data: first\n\n".utf8), to: &parser)
+        parser.reset()
+        let events = try feed(bom + Array("id: 1\ndata: again\n\n".utf8), to: &parser)
+        XCTAssertEqual(events.first?.id, "1")
+        XCTAssertEqual(events.first?.data, "again")
+    }
+
+    func testBufferOverflowDoesNotRestoreLeadingBOMStripping() throws {
+        var parser = SseParser()
+        _ = try parser.parse(String(repeating: "x", count: SseParser.maxBufferByteCount))
+        XCTAssertThrowsError(try parser.parse("x"))
+        XCTAssertTrue(try feed(bom + Array("data: kept\n\n".utf8), to: &parser).isEmpty)
+    }
 }

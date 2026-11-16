@@ -42,6 +42,7 @@ import com.agui.core.types.VideoPart
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -198,6 +199,66 @@ class AgUiV1Test {
             )
         }
     }
+
+    @Test
+    fun strictDecoderAcceptsValidJsonPointers() {
+        val longKey = "/" + "a".repeat(20_000)
+        val manySegments = "/a".repeat(10_000)
+        val manyEscapes = "/~0~1".repeat(5_000)
+        listOf("", "/", "//", "/a~0b~1c", "/~0~1", longKey, manySegments, manyEscapes).forEach { pointer ->
+            pointerEvents(pointer).forEach { (_, event) -> AgUiV1.decodeEvent(event) }
+        }
+    }
+
+    @Test
+    fun strictDecoderRejectsInvalidJsonPointers() {
+        val invalid = listOf(
+            "a", "a/b", "/~2", "/a~", "/~", "/a~b",
+            "/" + "a".repeat(20_000) + "~",
+            "/~0~1".repeat(5_000) + "~2",
+        )
+        invalid.forEach { pointer ->
+            pointerEvents(pointer).forEach { (label, event) ->
+                // assertFails would also accept a StackOverflowError, which is the bug this guards against.
+                assertFailsWith<IllegalArgumentException>("$label ${pointer.take(20)}") { AgUiV1.decodeEvent(event) }
+            }
+        }
+    }
+
+    /** Events that carry [pointer] in each patch position the strict decoder checks. */
+    private fun pointerEvents(pointer: String): List<Pair<String, JsonObject>> {
+        val add = patchOp("add", path = pointer)
+        val copy = patchOp("copy", path = "/target", from = pointer)
+        val move = patchOp("move", path = "/target", from = pointer)
+        return listOf(
+            "STATE_DELTA add.path" to stateDelta(add),
+            "STATE_DELTA copy.from" to stateDelta(copy),
+            "STATE_DELTA move.from" to stateDelta(move),
+            "ACTIVITY_DELTA add.path" to activityDelta(add),
+            "ACTIVITY_DELTA move.from" to activityDelta(move),
+        )
+    }
+
+    private fun patchOp(op: String, path: String, from: String? = null): JsonObject =
+        buildJsonObject {
+            put("op", op)
+            put("path", path)
+            if (from != null) put("from", from) else put("value", 1)
+        }
+
+    private fun stateDelta(op: JsonObject): JsonObject =
+        buildJsonObject {
+            put("type", "STATE_DELTA")
+            put("delta", buildJsonArray { add(op) })
+        }
+
+    private fun activityDelta(op: JsonObject): JsonObject =
+        buildJsonObject {
+            put("type", "ACTIVITY_DELTA")
+            put("messageId", "m")
+            put("activityType", "a")
+            put("patch", buildJsonArray { add(op) })
+        }
 
     @Test
     fun strictDecoderRejectsSuccessOutcomeNullPendingToolCallIds() {
