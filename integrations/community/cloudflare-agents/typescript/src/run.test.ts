@@ -9,7 +9,7 @@ import {
 import { runAGUI, streamToAGUI, type AGUIRunHandler, type RunAGUIOptions } from "./run";
 import { INTERRUPTED, REJECTED, type PendingApproval } from "./messages";
 import { encodeEnvelope, encodeProviderMetadata } from "./provider-metadata";
-import { LocalAgent, SDKS, chunks, collect, turn, type Sdk } from "./test-utils";
+import { LocalAgent, SDKS, chunks, collect, partsHandler, turn, type Sdk } from "./test-utils";
 
 /** A client agent whose runs call `handler` through `runAGUI`, recording every event. */
 function clientFor(handler: AGUIRunHandler<any>, options: RunAGUIOptions<any> = {}) {
@@ -290,6 +290,125 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
     });
   });
 
+  describe("run.streamTextOptions()", () => {
+    const changeBackground = {
+      name: "change_background",
+      description: "Change the page background",
+      parameters: { type: "object", properties: { color: { type: "string" } } },
+    };
+    const serverTool = (description: string) =>
+      ai.tool({
+        description,
+        inputSchema: ai.jsonSchema({ type: "object", properties: {} }),
+        execute: async () => "done",
+      });
+
+    it("gives the model the instructions, the conversation and every tool", async () => {
+      const model = sdk.model([turn(chunks.text("t1", "Noted."))]);
+      const { agent } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          ...run.streamTextOptions({
+            instructions: "You are a test agent.",
+            tools: { lookup: serverTool("Look up a fact") },
+          }),
+        }),
+      );
+      agent.messages = [
+        { id: "s1", role: "system", content: "Answer in German." },
+        userMessage("What's on my list?"),
+      ];
+      agent.state = { todos: ["milk"] };
+
+      await agent.runAgent({
+        tools: [changeBackground],
+        context: [{ description: "Current page", value: "/groceries" }],
+      });
+
+      const [system, user] = model.prompts[0];
+      expect(system.role).toBe("system");
+      expect(system.content).toContain("You are a test agent.");
+      expect(system.content).toContain("Answer in German.");
+      expect(system.content).toContain("- Current page: /groceries");
+      expect(system.content).toContain('"todos": [\n    "milk"\n  ]');
+      expect(user).toEqual({ role: "user", content: [{ type: "text", text: "What's on my list?" }] });
+      expect(model.calls[0].tools.map((tool: any) => tool.name)).toEqual(["change_background", "lookup"]);
+    });
+
+    it("leaves the shared state out when asked", async () => {
+      const model = sdk.model([turn(chunks.text("t1", "Noted."))]);
+      const { agent } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          ...run.streamTextOptions({ instructions: "You are a test agent.", state: false }),
+        }),
+      );
+      agent.messages = [userMessage()];
+      agent.state = { todos: ["milk"] };
+
+      await agent.runAgent();
+
+      expect(model.prompts[0][0].content).toBe("You are a test agent.");
+    });
+
+    it("sends no system message when there are no instructions", async () => {
+      const model = sdk.model([turn(chunks.text("t1", "Hello."))]);
+      const { agent } = clientFor((run) => ai.streamText({ model: model as any, ...run.streamTextOptions() }));
+      agent.messages = [userMessage()];
+
+      await agent.runAgent();
+
+      expect(model.prompts[0].map((message: any) => message.role)).toEqual(["user"]);
+    });
+
+    it("lets a server tool win a name clash with a client tool", async () => {
+      const model = sdk.model([turn(chunks.text("t1", "Hello."))]);
+      const { agent } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          ...run.streamTextOptions({ tools: { change_background: serverTool("The server's version") } }),
+        }),
+      );
+      agent.messages = [userMessage()];
+
+      await agent.runAgent({ tools: [changeBackground] });
+
+      expect(model.calls[0].tools).toEqual([
+        expect.objectContaining({ name: "change_background", description: "The server's version" }),
+      ]);
+    });
+
+    it("stops the model call when the client stops the run", async () => {
+      const controller = new AbortController();
+      let modelSignal: AbortSignal | undefined;
+      const model = sdk.model([
+        (options: any) =>
+          new ReadableStream({
+            start(stream) {
+              modelSignal = options.abortSignal;
+              stream.enqueue(chunks.start());
+              stream.enqueue({ type: "text-start", id: "t1" });
+              stream.enqueue({ type: "text-delta", id: "t1", delta: "Working" });
+              options.abortSignal?.addEventListener("abort", () =>
+                stream.error(new DOMException("Aborted", "AbortError")),
+              );
+              setTimeout(() => controller.abort(), 20);
+            },
+          }),
+      ]);
+      const input: RunAgentInput = { threadId: "t", runId: "r1", messages: [userMessage()], tools: [], context: [] };
+
+      const events = await collect(
+        runAGUI(input, (run) => ai.streamText({ model: model as any, ...run.streamTextOptions() }), {
+          signal: controller.signal,
+        }),
+      );
+
+      expect(modelSignal?.aborted).toBe(true);
+      expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
+    });
+  });
+
   describe("tool approvals", () => {
     function refundAgent(
       execute = vi.fn(async ({ order }: any) => ({ refunded: order })),
@@ -559,6 +678,7 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
                   execute,
                 }),
               },
+              abortSignal: run.abortSignal,
             });
           },
           { signal: control.controller.signal, approvals },
@@ -782,19 +902,20 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
     const { agent, events } = clientFor((run) =>
       ai.streamText({
         model: model as any,
-        messages: run.messages,
         stopWhen: ai.stepCountIs(3),
-        tools: {
-          add_todo: ai.tool({
-            inputSchema: ai.jsonSchema({ type: "object", properties: { text: { type: "string" } } }),
-            execute: async ({ text }: any) => {
-              const todos = [...((run.state as any).todos ?? []), text];
-              run.setState({ ...run.state, todos });
-              run.emit({ type: EventType.CUSTOM, name: "todo_added", value: { text } } as BaseEvent);
-              return { todos };
-            },
-          }),
-        },
+        ...run.streamTextOptions({
+          tools: {
+            add_todo: ai.tool({
+              inputSchema: ai.jsonSchema({ type: "object", properties: { text: { type: "string" } } }),
+              execute: async ({ text }: any) => {
+                const todos = [...((run.state as any).todos ?? []), text];
+                run.setState({ ...run.state, todos });
+                run.emit({ type: EventType.CUSTOM, name: "todo_added", value: { text } } as BaseEvent);
+                return { todos };
+              },
+            }),
+          },
+        }),
       }),
     );
     agent.messages = [userMessage("Add milk")];
@@ -898,6 +1019,79 @@ describe("runAGUI", () => {
 
   const emptyStream = () => ({ fullStream: (async function* () {})() });
 
+  describe("warns when the handler leaves out what the client sent", () => {
+    const richInput: RunAgentInput = {
+      ...input,
+      messages: [{ id: "s1", role: "system", content: "Answer in German." } as Message, userMessage()],
+      tools: [{ name: "change_background", description: "Change the page background", parameters: {} }],
+      context: [{ description: "Current page", value: "/groceries" }],
+      state: { todos: ["milk"] },
+    };
+    const warningsFor = async (handler: AGUIRunHandler<any>, runInput = richInput) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await collect(runAGUI(runInput, handler, { signal: new AbortController().signal }));
+        return warn.mock.calls.map((call) => String(call[0]));
+      } finally {
+        warn.mockRestore();
+      }
+    };
+
+    it("names each piece the model never got", async () => {
+      const warnings = await warningsFor((run) => {
+        void run.messages;
+        return emptyStream();
+      });
+
+      expect(warnings).toEqual([
+        expect.stringMatching(/change_background.*run\.clientTools/),
+        expect.stringMatching(
+          /run\.instructions\(\).*the conversation's system messages, the application's context and the shared state/,
+        ),
+        expect.stringMatching(/run\.abortSignal/),
+      ]);
+    });
+
+    it("says nothing when the handler spreads run.streamTextOptions()", async () => {
+      const warnings = await warningsFor((run) => {
+        void run.streamTextOptions();
+        return emptyStream();
+      });
+
+      expect(warnings).toEqual([]);
+    });
+
+    it("says nothing when the handler wires each piece itself", async () => {
+      const warnings = await warningsFor((run) => {
+        void [run.instructions("You are a test agent."), run.messages, run.clientTools, run.abortSignal];
+        return emptyStream();
+      });
+
+      expect(warnings).toEqual([]);
+    });
+
+    it("counts reading run.context and run.state as using them", async () => {
+      const warnings = await warningsFor(
+        (run) => {
+          void [run.context, run.state, run.clientTools, run.abortSignal];
+          return emptyStream();
+        },
+        { ...richInput, messages: [userMessage()] },
+      );
+
+      expect(warnings).toEqual([]);
+    });
+
+    it("says nothing about what the client did not send, or a stop that cannot happen", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await collect(runAGUI(input, () => emptyStream()));
+      const warnings = warn.mock.calls.map((call) => String(call[0]));
+      warn.mockRestore();
+
+      expect(warnings).toEqual([]);
+    });
+  });
+
   it("ignores a resume for an interrupt it never raised, with a warning", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const events = await collect(
@@ -988,7 +1182,7 @@ describe("runAGUI", () => {
       controller.abort();
       throw new DOMException("This operation was aborted", "AbortError");
     }
-    const events = await collect(runAGUI(input, () => ({ fullStream: parts() }), { signal: controller.signal }));
+    const events = await collect(runAGUI(input, partsHandler(parts), { signal: controller.signal }));
     expect(types(events)).toContain(EventType.TEXT_MESSAGE_END);
     expect((events.at(-1) as any).outcome).toEqual({ type: "cancelled" });
   });
@@ -1049,10 +1243,8 @@ describe("runAGUI", () => {
   it("leaves pendingToolCallIds out for a client older than AG-UI 1.0", async () => {
     // Pre-1.0 clients (no protocolVersion), such as @ag-ui/client 0.0.x, reject unknown outcome fields.
     const tools = [{ name: "confirm_order", description: "Ask the user", parameters: { type: "object", properties: {} } }];
-    const handler = () => ({
-      fullStream: (async function* () {
-        yield { type: "tool-call", toolCallId: "fc1", toolName: "confirm_order", input: {} };
-      })(),
+    const handler = partsHandler(async function* () {
+      yield { type: "tool-call", toolCallId: "fc1", toolName: "confirm_order", input: {} };
     });
 
     const older = await collect(runAGUI({ ...input, tools }, handler));
@@ -1113,7 +1305,7 @@ describe("streamToAGUI", () => {
   it("sends the store's state when the client sent none", async () => {
     const store = { get: () => ({ restored: true }), set: vi.fn(), subscribe: () => () => {} };
     const events = await collect(
-      runAGUI(input, () => ({ fullStream: (async function* () {})() }), { state: store }),
+      runAGUI(input, partsHandler(), { state: store }),
     );
     expect(events[1]).toMatchObject({ type: EventType.STATE_SNAPSHOT, snapshot: { restored: true } });
     expect(store.set).not.toHaveBeenCalled();
@@ -1122,9 +1314,7 @@ describe("streamToAGUI", () => {
   it("saves the client's state into the store", async () => {
     const store = { get: () => ({}), set: vi.fn(), subscribe: () => () => {} };
     await collect(
-      runAGUI({ ...input, state: { theme: "dark" } }, () => ({ fullStream: (async function* () {})() }), {
-        state: store,
-      }),
+      runAGUI({ ...input, state: { theme: "dark" } }, partsHandler(), { state: store }),
     );
     expect(store.set).toHaveBeenCalledWith({ theme: "dark" });
   });

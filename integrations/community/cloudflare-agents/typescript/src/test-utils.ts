@@ -9,6 +9,7 @@ import * as test7 from "ai/test";
 import * as ai6 from "ai-v6";
 import * as test6 from "ai-v6/test";
 import { from, type Observable } from "rxjs";
+import type { AGUIRunHandler } from "./run";
 
 export type Chunk = Record<string, unknown> & { type: string };
 
@@ -117,4 +118,16 @@ export async function collect<T>(events: AsyncIterable<T>): Promise<T[]> {
   const result: T[] = [];
   for await (const event of events) result.push(event);
   return result;
+}
+
+/**
+ * A run handler that streams `parts` (none by default) in place of a model
+ * call. It takes everything the run offers, as a handler that spreads
+ * `run.streamTextOptions()` into `streamText` does, so it raises no warnings.
+ */
+export function partsHandler(parts: () => AsyncIterable<unknown> = async function* () {}): AGUIRunHandler<any> {
+  return (run) => {
+    void run.streamTextOptions();
+    return { fullStream: parts() };
+  };
 }

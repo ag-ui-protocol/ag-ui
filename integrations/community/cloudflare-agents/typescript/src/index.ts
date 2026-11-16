@@ -13,9 +13,11 @@ export {
   type AGUIRun,
   type AGUIRunHandler,
   type AGUIState,
+  type AGUIStreamTextOptions,
   type ApprovalStore,
   type RunAGUIOptions,
   type StateStore,
+  type StreamTextOptionsInput,
 } from "./run";
 export {
   handleAGUIRequest,

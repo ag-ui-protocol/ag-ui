@@ -72,10 +72,7 @@ function internals(agent: object): Internals {
  *   onAGUIRun(run: AGUIRun<State>) {
  *     return streamText({
  *       model: openai("gpt-5-mini"),
- *       instructions: run.instructions("You are a helpful assistant."),
- *       messages: run.messages,
- *       tools: { ...run.clientTools, ...this.tools() },
- *       abortSignal: run.abortSignal,
+ *       ...run.streamTextOptions({ instructions: "You are a helpful assistant.", tools: this.tools() }),
  *     });
  *   }
  * }

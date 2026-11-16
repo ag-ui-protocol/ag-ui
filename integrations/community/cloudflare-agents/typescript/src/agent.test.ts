@@ -221,6 +221,7 @@ describe("withAGUI over HTTP", () => {
               execute: this.execute,
             }),
           },
+          abortSignal: run.abortSignal,
         });
       }
     }

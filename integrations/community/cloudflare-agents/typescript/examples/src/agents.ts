@@ -60,13 +60,9 @@ abstract class DojoAgent extends withAGUI(Agent<Env, DojoState>) {
   onAGUIRun(run: Run) {
     return streamText({
       model: this.model(),
-      instructions: run.instructions(this.prompt),
-      messages: run.messages,
-      // The client's tools first, so a server tool wins a name clash.
-      tools: { ...run.clientTools, ...this.tools(run) },
+      ...run.streamTextOptions({ instructions: this.prompt, tools: this.tools(run) }),
       toolApproval: Object.fromEntries(this.approvalRequired.map((name) => [name, "user-approval" as const])),
       stopWhen: stepCountIs(5),
-      abortSignal: run.abortSignal,
     });
   }
 }
@@ -95,11 +91,8 @@ export class AgenticChatReasoning extends DojoAgent {
   onAGUIRun(run: Run) {
     return streamText({
       model: this.model(),
-      instructions: run.instructions(this.prompt),
-      messages: run.messages,
-      tools: run.clientTools,
+      ...run.streamTextOptions({ instructions: this.prompt }),
       providerOptions: { openai: { reasoningSummary: "auto" } },
-      abortSignal: run.abortSignal,
     });
   }
 }
@@ -228,9 +221,10 @@ export class PredictiveStateUpdates extends DojoAgent {
   onAGUIRun(run: Run) {
     const writeDocument = run.clientTools.write_document;
     let streamed = "";
+    // The page's write_document, streaming its argument into the state. A
+    // tool passed to streamTextOptions replaces the client's of that name.
     const tools: ToolSet = writeDocument
       ? {
-          ...run.clientTools,
           write_document: {
             ...writeDocument,
             onInputStart: () => {
@@ -244,15 +238,12 @@ export class PredictiveStateUpdates extends DojoAgent {
             },
           },
         }
-      : run.clientTools;
+      : {};
 
     return streamText({
       model: this.model(),
-      instructions: run.instructions(this.prompt),
-      messages: run.messages,
-      tools,
+      ...run.streamTextOptions({ instructions: this.prompt, tools }),
       stopWhen: stepCountIs(5),
-      abortSignal: run.abortSignal,
     });
   }
 }

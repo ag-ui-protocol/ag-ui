@@ -26,10 +26,7 @@ export interface HandleAGUIRequestOptions<State = AGUIState> {
  *     handleAGUIRequest(request, (run) =>
  *       streamText({
  *         model: workersai("@cf/meta/llama-4-scout-17b-16e-instruct"),
- *         instructions: run.instructions("You are a helpful assistant."),
- *         messages: run.messages,
- *         tools: { ...run.clientTools },
- *         abortSignal: run.abortSignal,
+ *         ...run.streamTextOptions({ instructions: "You are a helpful assistant." }),
  *       }),
  *     ),
  * };

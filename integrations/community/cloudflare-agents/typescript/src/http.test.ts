@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EventType, HttpAgent, type BaseEvent } from "@ag-ui/client";
 import { handleAGUIRequest, isAGUIRequest, parseRunAgentInput, toThreadRequest } from "./http";
 import { CloudflareAgentsClient } from "./client";
-import { SDKS, chunks, turn } from "./test-utils";
+import { SDKS, chunks, partsHandler, turn } from "./test-utils";
 
 const sdk = SDKS[0]!;
 
@@ -35,7 +35,7 @@ describe("handleAGUIRequest", () => {
   it("writes Server-Sent Events", async () => {
     const response = await handleAGUIRequest(
       post({ threadId: "t", runId: "r", messages: [] }),
-      () => ({ fullStream: (async function* () {})() }),
+      partsHandler(),
       { headers: { "Access-Control-Allow-Origin": "*" } },
     );
     expect(response.headers.get("content-type")).toBe("text/event-stream");

@@ -99,10 +99,40 @@ export interface AGUIRun<State = AGUIState> {
    * the shared state.
    */
   instructions(base?: string, options?: { state?: boolean }): string;
+  /**
+   * Everything `streamText` needs from this run, to spread into its options:
+   * the instructions, the conversation, the client's tools followed by
+   * yours, and the abort signal.
+   *
+   * ```ts
+   * streamText({ model, ...run.streamTextOptions({ instructions: "You are a helpful assistant.", tools }) })
+   * ```
+   */
+  streamTextOptions(options?: StreamTextOptionsInput): AGUIStreamTextOptions;
   /** Replaces the shared state; the client receives it as a STATE_SNAPSHOT. */
   setState(state: State): void;
   /** Streams an extra event to the client (a CUSTOM event, for instance). */
   emit(event: BaseEvent): void;
+}
+
+export interface StreamTextOptionsInput {
+  /** The agent's own instructions, put before the run's. */
+  instructions?: string;
+  /** Your server tools. A server tool wins a name clash with a client tool. */
+  tools?: ToolSet;
+  /** `false` leaves the shared state out of the instructions. */
+  state?: boolean;
+}
+
+/** The part of `streamText`'s options that comes from the run. */
+export interface AGUIStreamTextOptions {
+  /** Left out when the run has no instructions. */
+  instructions?: string;
+  /** The same instructions for AI SDK 6, whose `streamText` reads `system`. */
+  system?: string;
+  messages: ModelMessage[];
+  tools: ToolSet;
+  abortSignal: AbortSignal;
 }
 
 export type AGUIRunHandler<State = AGUIState> = (
@@ -178,23 +208,47 @@ export async function* runAGUI<State = AGUIState>(
     unsubscribe = store.subscribe((state) => channel.push(stateSnapshot(state)));
 
     const abortSignal = options.signal ?? new AbortController().signal;
+    const clientTools = toClientTools(input.tools);
+    const context = input.context ?? [];
+    // What the handler took from the run, to warn about what it left out.
+    const used: Usage = { clientTools: false, context: false, state: false, instructions: false, abortSignal: false };
     const run: AGUIRun<State> = {
       input,
       request: options.request,
       messages: converted.messages,
-      clientTools: toClientTools(input.tools),
-      context: input.context ?? [],
+      get clientTools() {
+        used.clientTools = true;
+        return clientTools;
+      },
+      get context() {
+        used.context = true;
+        return context;
+      },
       get state() {
+        used.state = true;
         return store.get();
       },
-      abortSignal,
+      get abortSignal() {
+        used.abortSignal = true;
+        return abortSignal;
+      },
       instructions(base, instructionOptions) {
+        used.instructions = true;
         return buildInstructions({
           base,
           systemMessages: converted.instructions,
           context: input.context,
           state: instructionOptions?.state === false ? undefined : store.get(),
         });
+      },
+      streamTextOptions({ instructions, tools, state } = {}) {
+        const text = run.instructions(instructions, { state });
+        return {
+          ...(text && { instructions: text, system: text }),
+          messages: run.messages,
+          tools: { ...run.clientTools, ...tools },
+          abortSignal: run.abortSignal,
+        };
       },
       setState: (state) => store.set(state),
       emit: (event) => channel.push(event),
@@ -219,6 +273,13 @@ export async function* runAGUI<State = AGUIState>(
       yield runFinished(input, { type: "cancelled" });
       return;
     }
+    warnAboutUnusedInput(used, {
+      clientToolNames,
+      systemMessages: converted.instructions.length > 0,
+      context: context.length > 0,
+      state: hasState(current),
+      stoppable: options.signal !== undefined,
+    });
 
     const translation = yield* translate(input, result, {
       clientToolNames,
@@ -365,6 +426,57 @@ function runError(error: unknown, code: string, usage?: RunErrorEvent["usage"]):
 
 function stateSnapshot(snapshot: unknown): BaseEvent {
   return { type: EventType.STATE_SNAPSHOT, snapshot, timestamp: Date.now() } as BaseEvent;
+}
+
+/** The parts of a run the handler read. */
+interface Usage {
+  clientTools: boolean;
+  context: boolean;
+  state: boolean;
+  instructions: boolean;
+  abortSignal: boolean;
+}
+
+/**
+ * Warns about what the client sent that never reached the model: a handler
+ * that passes only `run.messages` to `streamText` runs without errors, but
+ * the model cannot call the page's tools, never sees the context, and keeps
+ * generating after a stop.
+ */
+function warnAboutUnusedInput(
+  used: Usage,
+  sent: { clientToolNames: string[]; systemMessages: boolean; context: boolean; state: boolean; stoppable: boolean },
+): void {
+  const fix = "Spread run.streamTextOptions() into streamText's options";
+  if (sent.clientToolNames.length > 0 && !used.clientTools) {
+    warn(
+      `The client offered tools (${sent.clientToolNames.join(", ")}), but the run handler never read ` +
+        `run.clientTools, so the model cannot call them. ${fix}, or add run.clientTools to its tools.`,
+    );
+  }
+  if (!used.instructions) {
+    const missed = [
+      sent.systemMessages && "the conversation's system messages",
+      sent.context && !used.context && "the application's context",
+      sent.state && !used.state && "the shared state",
+    ].filter((part): part is string => !!part);
+    if (missed.length > 0) {
+      warn(
+        `The run handler never called run.instructions(), so the model does not see ${listOf(missed)}. ` +
+          `${fix}, or pass run.instructions() as its instructions (system in AI SDK 6).`,
+      );
+    }
+  }
+  if (sent.stoppable && !used.abortSignal) {
+    warn(
+      `The run handler never read run.abortSignal, so stopping the run does not stop the model call. ` +
+        `${fix}, or pass run.abortSignal as its abortSignal.`,
+    );
+  }
+}
+
+function listOf(parts: string[]): string {
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 function hasState(state: unknown): boolean {

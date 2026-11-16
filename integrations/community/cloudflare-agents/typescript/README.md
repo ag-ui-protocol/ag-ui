@@ -16,10 +16,7 @@ export class Assistant extends withAGUI(Agent<Env, State>) {
   onAGUIRun(run: AGUIRun<State>) {
     return streamText({
       model: createWorkersAI({ binding: this.env.AI })("@cf/meta/llama-4-scout-17b-16e-instruct"),
-      instructions: run.instructions("You are a helpful assistant."),
-      messages: run.messages,
-      tools: { ...run.clientTools },
-      abortSignal: run.abortSignal,
+      ...run.streamTextOptions({ instructions: "You are a helpful assistant." }),
     });
   }
 }
@@ -32,11 +29,13 @@ export default {
 
 Each AG-UI thread is one instance of the agent (one Durable Object), at `/agents/assistant/<threadId>`.
 
+`run.streamTextOptions()` gives `streamText` everything the client sent: the instructions with the application's context and the shared state, the conversation, the frontend's tools (followed by yours, passed as `tools`) and the signal that stops the model when the user stops the run.
+
 ## What you get
 
 - **Messages, as the model needs them.** `run.messages` holds the client's conversation as AI SDK model messages: text, images, audio, video and documents, tool calls and their results.
-- **Client tools.** `run.clientTools` holds the tools the frontend runs (CopilotKit's `useFrontendTool`, `useHumanInTheLoop`, generative UI renderers) as AI SDK tools without `execute`. When the model calls one, the run ends and `RUN_FINISHED` lists the call in `pendingToolCallIds`; the client runs it and sends the result with the next run. The agent never answers a client tool's call itself, not even one whose arguments do not parse: what to do with those is the client's call.
-- **Context.** `run.instructions(base)` adds the application's context (`useAgentContext`), the conversation's system messages and the shared state to your instructions. AI SDK v7 does not accept system messages inside `messages`, so they belong here.
+- **Client tools.** `run.clientTools` (included by `run.streamTextOptions()`) holds the tools the frontend runs (CopilotKit's `useFrontendTool`, `useHumanInTheLoop`, generative UI renderers) as AI SDK tools without `execute`. When the model calls one, the run ends and `RUN_FINISHED` lists the call in `pendingToolCallIds`; the client runs it and sends the result with the next run. The agent never answers a client tool's call itself, not even one whose arguments do not parse: what to do with those is the client's call.
+- **Context.** `run.instructions(base)` (included by `run.streamTextOptions()`) adds the application's context (`useAgentContext`), the conversation's system messages and the shared state to your instructions. AI SDK v7 does not accept system messages inside `messages`, so they belong here.
 - **Shared state, kept in the Durable Object.** The agent's `state` is the thread's AG-UI state. The client's edits are saved into it, every `this.setState()` during a run reaches the client as a STATE_SNAPSHOT, and a client that comes back to the thread gets it. What the server changes between runs (a schedule, another client) is kept: the client's copy only wins when the client changed it.
 - **Reasoning that survives the round trip.** Reasoning streams as `REASONING_*` events and stays in the history. Provider data that has to come back on the next request (Anthropic's thinking signatures, Gemini's thought signatures on tool calls, OpenAI's reasoning and message items) travels in AG-UI's `encryptedValue` and is restored as `providerOptions`, so extended thinking with tools works across client tool round trips.
 - **Tool approvals as AG-UI interrupts.** A tool that needs approval (AI SDK v7 `toolApproval`, v6 `needsApproval`) ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
@@ -98,6 +97,7 @@ const agent = new CloudflareAgentsClient({
 
 | Field | |
 |---|---|
+| `run.streamTextOptions({ instructions?, tools?, state? })` | What to spread into `streamText`'s options: `instructions` (and `system`, for AI SDK v6) built by `run.instructions(instructions, { state })`, `messages`, `tools` (the client's, then yours) and `abortSignal`. |
 | `run.messages` | The conversation as AI SDK `ModelMessage[]`. |
 | `run.clientTools` | The client's tools, without `execute`. Spread your server tools after them, so a server tool wins a name clash. |
 | `run.instructions(base?, { state? })` | `base`, the conversation's system messages, the application's context and the shared state (leave it out with `{ state: false }`). |
@@ -108,6 +108,8 @@ const agent = new CloudflareAgentsClient({
 | `run.input` | The `RunAgentInput` as sent. |
 | `run.request` | The HTTP request the run came in on, for its headers (undefined over a WebSocket). |
 
+To wire `streamText` yourself, pass all four: `instructions: run.instructions(base)` (`system` in AI SDK v6), `messages: run.messages`, `tools: { ...run.clientTools, ...yours }` and `abortSignal: run.abortSignal`. Leaving one out breaks a feature without an error, so the agent logs a warning when a run's handler did not use something the client sent: tools it never read from `run.clientTools`, context, system messages or state that never went through `run.instructions()` (reading `run.context` or `run.state` counts), or a stop it never read from `run.abortSignal`.
+
 ### Shared state
 
 ```ts
@@ -115,20 +117,19 @@ export class Chef extends withAGUI(Agent<Env, { recipe?: Recipe }>) {
   onAGUIRun(run: AGUIRun<{ recipe?: Recipe }>) {
     return streamText({
       model,
-      instructions: run.instructions("You help the user build the recipe shown next to the chat."),
-      messages: run.messages,
-      tools: {
-        ...run.clientTools,
-        save_recipe: tool({
-          inputSchema: recipeSchema,
-          execute: async (recipe) => {
-            this.setState({ ...this.state, recipe }); // streams to the client, and persists
-            return "Saved.";
-          },
-        }),
-      },
+      ...run.streamTextOptions({
+        instructions: "You help the user build the recipe shown next to the chat.",
+        tools: {
+          save_recipe: tool({
+            inputSchema: recipeSchema,
+            execute: async (recipe) => {
+              this.setState({ ...this.state, recipe }); // streams to the client, and persists
+              return "Saved.";
+            },
+          }),
+        },
+      }),
       stopWhen: stepCountIs(5),
-      abortSignal: run.abortSignal,
     });
   }
 }
@@ -140,14 +141,15 @@ A tool can update the state several times while it runs (a plan whose steps comp
 
 ```ts
 streamText({
-  // ...
-  tools: {
-    ...run.clientTools,
-    issue_refund: tool({
-      inputSchema: z.object({ order_id: z.string() }),
-      execute: async ({ order_id }) => refund(order_id),
-    }),
-  },
+  model,
+  ...run.streamTextOptions({
+    tools: {
+      issue_refund: tool({
+        inputSchema: z.object({ order_id: z.string() }),
+        execute: async ({ order_id }) => refund(order_id),
+      }),
+    },
+  }),
   toolApproval: { issue_refund: "user-approval" }, // AI SDK v6: `needsApproval: true` on the tool
 });
 ```
@@ -185,13 +187,7 @@ import { handleAGUIRequest } from "@ag-ui/cloudflare-agents";
 export default {
   fetch: (request, env) =>
     handleAGUIRequest(request, (run) =>
-      streamText({
-        model,
-        instructions: run.instructions("You are a helpful assistant."),
-        messages: run.messages,
-        tools: run.clientTools,
-        abortSignal: run.abortSignal,
-      }),
+      streamText({ model, ...run.streamTextOptions({ instructions: "You are a helpful assistant." }) }),
     ),
 };
 ```
