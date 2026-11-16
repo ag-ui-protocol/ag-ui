@@ -3872,10 +3872,24 @@ class ADKAgent:
             # Create RunConfig
             run_config = self._run_config_factory(input)
 
+            # Only a JSON object maps onto session state.
+            # ``RunAgentInput.state`` is typed ``Any``, and ``dict()`` would
+            # turn an array of ``[key, value]`` pairs back into keys,
+            # including ``app:``/``user:`` keys the endpoint's object-only
+            # scope check never saw. The endpoint rejects such state with a
+            # 422; this guards direct ``run()`` callers.
+            if input.state is not None and not isinstance(input.state, dict):
+                logger.warning(
+                    "Ignoring run state of type "
+                    f"{type(input.state).__name__} for thread "
+                    f"{input.thread_id}; state must be a JSON object."
+                )
             # Prepare state with context included
             # Context from RunAgentInput is stored under _ag_ui_context key,
             # making it accessible via tool_context.state['_ag_ui_context']
-            state_with_context = dict(input.state) if input.state else {}
+            state_with_context = (
+                dict(input.state) if isinstance(input.state, dict) else {}
+            )
             # Strip backend-managed keys so stale frontend state cannot
             # overwrite internal metadata (e.g. lro_tool_call_id_remap).
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168

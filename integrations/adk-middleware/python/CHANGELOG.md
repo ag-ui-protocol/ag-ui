@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Run state that is not a JSON object or null is now rejected with a 422.
+  `RunAgentInput.state` is typed `Any`, so an array of `[key, value]` pairs
+  passed validation. The endpoint's `app:`/`user:` scope check only read
+  object keys, and `ADKAgent.run()` then turned the pairs back into keys. With
+  `allow_scoped_state_keys=True`, a client could write app-wide and user-wide
+  state this way. `ADKAgent.run()` now also ignores non-object state from
+  direct callers.
+- `/agents/state` no longer returns backend error text when the session read
+  fails for a thread already in the session lookup cache. It returns the same
+  fixed message as the uncached path.
+
 ### Changed
 
 - Migrate A2UI catalog prompts to the published SDK 0.9 `Catalog`, request
