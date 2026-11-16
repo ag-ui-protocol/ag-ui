@@ -141,6 +141,10 @@ jobs:
     # sits above its WAIT_SECONDS approval window) by enough for the setup steps
     # and the cleanup. Raise them together.
     timeout-minutes: 180
+    # DEVOPS_BOT_PRIVATE_KEY lives in this environment, not in repo secrets,
+    # so only jobs bound to it can read the key. Its branch rules must allow
+    # the non-main branches canary runs from (Guard ref rejects main).
+    environment: devops-bot-canary
     permissions:
       contents: read
       # The job has no checkout and runs no repo code.
@@ -444,12 +448,7 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: "Iv23liBNyieHVFKABrJ3"
-          # secrets-outside-env: the same repo-level key as the first mint in
-          # this job. Phase 2 of the security remediation plan moves it into a
-          # protected environment. That environment must allow canary's
-          # non-main branches (Guard ref rejects main), so a main-only one
-          # cannot serve this job.
-          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env] see comment above
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
           # contents:write deletes the canary ref. Nothing else.
           permission-contents: write
 

@@ -2199,6 +2199,9 @@ jobs:
        needs['publish-maven'].result == 'success' || needs['publish-kotlin'].result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # DEVOPS_BOT_PRIVATE_KEY lives in this environment, not in repo secrets,
+    # so only jobs bound to it can read the key. Its branch rules allow main only.
+    environment: devops-bot-release
     # The job token is not used: the delete runs as the devops-bot app.
     permissions: {}
     steps:
@@ -2211,10 +2214,7 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: "Iv23liBNyieHVFKABrJ3"
-          # secrets-outside-env: a repo-level key, read in a job that runs no
-          # repo code. Phase 2 of the security remediation plan moves it into a
-          # protected, main-only environment.
-          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env] see comment above
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
           # contents:write deletes release/next. Nothing else.
           permission-contents: write
 

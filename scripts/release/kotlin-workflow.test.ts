@@ -375,12 +375,12 @@ process.exit(0);
   }
 }
 
-test("release/next cleanup runs in its own job with no checkout, no repo code and no job token", () => {
+test("release/next cleanup runs in its own main-only environment job with no checkout, no repo code and no job token", () => {
   const job = publishWorkflow.jobs[CLEANUP_JOB];
   assert.ok(job, `missing ${CLEANUP_JOB} job`);
   assert.deepEqual(job.needs, ["build", "build-kotlin", ...LANES]);
   assert.deepEqual(job.permissions, {});
-  assert.equal(job.environment, undefined);
+  assert.equal(job.environment, "devops-bot-release");
   assert.deepEqual(
     job.steps.map((s: any) => s.name),
     [MINT, DELETE, WARN],

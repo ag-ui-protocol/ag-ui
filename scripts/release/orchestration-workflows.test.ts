@@ -33,10 +33,33 @@ const canaryJob = canaryWorkflow.jobs.canary;
 const APP_TOKEN =
   "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510";
 
-test("create-release-pr binds no deployment environment", () => {
+test("create-release-pr binds the main-only devops-bot-release environment", () => {
   const job = prepareWorkflow.jobs["create-release-pr"];
   assert.ok(job, "missing create-release-pr job");
-  assert.equal(job.environment, undefined);
+  assert.equal(job.environment, "devops-bot-release");
+});
+
+test("canary binds the devops-bot-canary environment", () => {
+  assert.equal(canaryJob.environment, "devops-bot-canary");
+});
+
+// DEVOPS_BOT_PRIVATE_KEY lives in environment secrets, not repo secrets, so a
+// job can read it only through its environment binding. Pin the full list of
+// readers and the environment each one binds: a new reader must pick one.
+test("only environment-bound jobs read DEVOPS_BOT_PRIVATE_KEY", () => {
+  const dir = ".github/workflows";
+  const readers: string[] = [];
+  for (const file of readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+    const wf = parseYaml(readFileSync(join(dir, file), "utf8"));
+    for (const [name, job] of Object.entries<any>(wf.jobs ?? {}))
+      if (JSON.stringify(job).includes("secrets.DEVOPS_BOT_PRIVATE_KEY"))
+        readers.push(`${file}: ${name}: ${job.environment}`);
+  }
+  assert.deepEqual(readers.sort(), [
+    "canary.yml: canary: devops-bot-canary",
+    "prepare-release.yml: create-release-pr: devops-bot-release",
+    "publish-release.yml: cleanup-release-next: devops-bot-release",
+  ]);
 });
 
 test("canary reads and cancels runs with its own job token, scoped to the canary job", () => {
@@ -257,7 +280,12 @@ function runCanary(
       inputs: { scope: "sdk-ts", suffix: "", dry_run: false },
       secrets: { DEVOPS_BOT_PRIVATE_KEY: "pem" },
     };
-    const job = runJob(canaryWorkflow, job0, ctx, { bin, mintFails });
+    // The environment binding is pinned by its own test above.
+    const job = runJob(canaryWorkflow, job0, ctx, {
+      bin,
+      mintFails,
+      jobConditionEvaluatedByCaller: true,
+    });
     const calls = readFileSync(log, "utf8")
       .split("\n")
       .filter(Boolean)
