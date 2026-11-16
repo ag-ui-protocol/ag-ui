@@ -967,7 +967,6 @@ export class LangGraphAgent extends AbstractAgent {
     // only the channels of the graph's input schema. With the schema
     // unavailable there is no allowlist, so there is no continue either.
     const inputKeys = this.activeRun!.schemaKeys?.input;
-    let continueValues: State | undefined;
     if (continueFromNode && !inputKeys) {
       console.warn(
         `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the graph's input schema is unavailable; starting a new run instead.`,
@@ -975,7 +974,7 @@ export class LangGraphAgent extends AbstractAgent {
       continueFromNode = undefined;
     }
     if (continueFromNode && inputKeys) {
-      continueValues = filterObjectBySchemaKeys(inputState ?? {}, [
+      const continueValues = filterObjectBySchemaKeys(inputState ?? {}, [
         ...DEFAULT_SCHEMA_KEYS,
         ...inputKeys,
       ]);
@@ -1002,8 +1001,12 @@ export class LangGraphAgent extends AbstractAgent {
     const mode = continueFromNode ? "continue" : "start";
 
     if (mode === "continue") {
+      // Nothing the client sent changes the thread's values, so write none of
+      // it. Writing an equal value is not always a no-op: a channel with a
+      // reducer (an add reducer, say) would combine it with the stored value
+      // into one the nodes before have not seen.
       await this.client.threads.updateState(threadId, {
-        values: continueValues,
+        values: {},
         asNode: continueFromNode,
       });
     }

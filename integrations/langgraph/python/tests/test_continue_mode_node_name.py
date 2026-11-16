@@ -6,6 +6,7 @@ goes on from its successors. These tests run a real graph with a gate node, so
 they show what a client-chosen node name and state can and cannot do.
 """
 
+import operator
 from typing import Annotated, Any
 
 from fastapi import FastAPI
@@ -432,3 +433,69 @@ def test_continue_with_unchanged_input_goes_on_past_the_check():
 
     assert response.status_code == 200
     assert ran == [("gate", "public"), ("act", "public", True)]
+
+
+class AmountState(TypedDict, total=False):
+    messages: Annotated[list, add_messages]
+    amount: Annotated[int, operator.add]
+    approved: bool
+
+
+class AmountInput(TypedDict, total=False):
+    messages: Annotated[list, add_messages]
+    amount: Annotated[int, operator.add]
+
+
+def _amount_gate_client(ran: list):
+    """START -> gate -> (approved ? act : END), paused before ``act``.
+
+    ``amount`` has a reducer (``operator.add``): a write adds to the stored
+    value, it does not replace it. ``gate`` approves an amount up to 100.
+    """
+
+    def gate(state: AmountState) -> dict:
+        ran.append(("gate", state.get("amount")))
+        return {"approved": state.get("amount", 0) <= 100}
+
+    def route(state: AmountState) -> str:
+        return "act" if state.get("approved") else END
+
+    def act(state: AmountState) -> dict:
+        ran.append(("act", state.get("amount"), state.get("approved")))
+        return {}
+
+    builder = StateGraph(AmountState, input_schema=AmountInput)
+    builder.add_node("gate", gate)
+    builder.add_node("act", act)
+    builder.add_edge(START, "gate")
+    builder.add_conditional_edges("gate", route, ["act", END])
+    builder.add_edge("act", END)
+    graph = builder.compile(checkpointer=MemorySaver(), interrupt_before=["act"])
+    return _client_for(graph), graph
+
+
+def test_continue_does_not_write_an_unchanged_value_through_a_reducer():
+    """The gate approved 100. A continue that re-sends 100 looks unchanged,
+    but writing it through the ``operator.add`` reducer makes the stored
+    amount 200, which the gate never checked. The continue must not write it:
+    ``act`` runs on the amount the gate approved."""
+    ran: list = []
+    client, graph = _amount_gate_client(ran)
+
+    first = client.post(
+        "/agent", json=_same_turn_body("amt", "r1", {"amount": 100}, {})
+    )
+    assert first.status_code == 200
+    assert ran == [("gate", 100)]
+
+    second = client.post(
+        "/agent",
+        json=_same_turn_body("amt", "r2", {"amount": 100}, {"nodeName": "gate"}),
+    )
+
+    assert second.status_code == 200
+    assert "RUN_ERROR" not in second.text
+    assert ("act", 200, True) not in ran
+    assert ran == [("gate", 100), ("act", 100, True)]
+    state = graph.get_state({"configurable": {"thread_id": "amt"}})
+    assert state.values["amount"] == 100

@@ -491,4 +491,25 @@ describe("client control over where and how a LangGraph run resumes", () => {
     expect(updateState).toHaveBeenCalledTimes(1);
     expect(updateState.mock.calls[0][1].asNode).toBe("check_permission");
   });
+  it("a continue writes none of an unchanged input, so a reducer cannot change it", async () => {
+    // check_permission approved amount 100. `amount` has an add reducer on the
+    // graph, so writing the equal 100 again would store 200, which the check
+    // never saw. The continue goes on but writes no client value.
+    const { agent, updateState } = buildAgent({
+      history: historyAfter("check_permission"),
+      stateValues: { ...SAME_TURN, amount: 100, approved: true },
+      inputProperties: { messages: {}, amount: {} },
+    });
+    withClientNodeName(agent);
+
+    await agent.runAgentStream(
+      input({ nodeName: "check_permission" }, { amount: 100 }),
+      subscriber(),
+    );
+
+    expect(updateState).toHaveBeenCalledTimes(1);
+    const [, body] = updateState.mock.calls[0];
+    expect(body.asNode).toBe("check_permission");
+    expect(body.values).toEqual({});
+  });
 });

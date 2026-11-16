@@ -2521,7 +2521,11 @@ class LangGraphAgent:
                 self.active_run["mode"] = "start"
                 self.active_run["node_name"] = None
             else:
-                await self.graph.aupdate_state(config, continue_state, as_node=self.active_run.get("node_name"))
+                # Nothing the client sent changes the state, so write none of
+                # it. Writing an equal value is not always a no-op: a channel
+                # with a reducer (``operator.add``, say) would combine it with
+                # the stored value into one the nodes before have not seen.
+                await self.graph.aupdate_state(config, {}, as_node=self.active_run.get("node_name"))
 
         if has_resume_input:
             if agui_resume is not None:
