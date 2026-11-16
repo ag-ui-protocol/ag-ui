@@ -137,33 +137,6 @@ AG-UI is one of three open, complementary agentic protocols. **MCP** gives agent
 > [!NOTE]
 > **AG-UI or A2UI?** They work together. [A2UI](https://github.com/google/A2UI), MCP Apps, and Open-JSON-UI are *generative UI specs*: they describe what UI an agent wants to show. AG-UI is the *runtime protocol* that carries those payloads, along with everything else, between the agent and the app. [Learn more →](https://docs.ag-ui.com/concepts/generative-ui-specs)
 
-## How it works
-
-![Diagram of how AG-UI works: your app (CopilotKit, React, mobile, terminal, Slack or any client) sends a single RunAgentInput with messages, tools, state and context to your agent (LangChain, CrewAI, Mastra, Google ADK, Pydantic AI or any framework), and the agent streams back typed AG-UI events for lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom and raw data, over any transport such as SSE, WebSockets or HTTP binary (Protobuf).](.github/readme/how-it-works.svg)
-
-Your app starts a run by sending the agent a single `RunAgentInput`: the conversation, the tools the frontend offers, shared state, and context. The agent answers with a stream of typed events from eight families: run lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom events ([full list](#event-reference)). Only the run lifecycle is required, so a minimal agent emits a handful of events and grows from there.
-
-AG-UI is transport-agnostic. The spec defines [HTTP + SSE](https://docs.ag-ui.com/spec/1.0/basic/transports/http-sse) and a binary [HTTP + Protobuf](https://docs.ag-ui.com/spec/1.0/basic/transports/http-protobuf) binding, and middleware can adapt events from any source. Read the [architecture overview](https://docs.ag-ui.com/concepts/architecture) for the full picture.
-
-## Features: what you can build
-
-Each building block maps to events in the spec, and each has a live demo in the [AG-UI Dojo](https://dojo.ag-ui.com).
-
-| Building block | What it does | Try it |
-| --- | --- | --- |
-| **Streaming chat** | Token-by-token messages across multi-turn sessions, with cancel and resume | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/agentic_chat) |
-| **Generative UI** | Agents render typed components, or declarative UI with [A2UI](https://github.com/google/A2UI) and MCP Apps | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/tool_based_generative_ui) |
-| **Shared state** | A typed store the agent and app both read and write, synced with snapshots and JSON Patch deltas | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
-| **Frontend tools** | The agent calls tools that run in the app, and gets the result back | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/human_in_the_loop) |
-| **Human in the loop** | Runs end with an `interrupt` outcome; the user approves, edits, or rejects, and the next run resumes | [Demo](https://dojo.ag-ui.com/mastra/feature/interrupt) |
-| **Reasoning** | Show the agent's reasoning as it works, including encrypted reasoning round-trips | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/agentic_chat_reasoning) |
-| **Subagents** | Nested delegation, with every event attributed to the subagent run that produced it | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/deepagents_subagents) |
-| **Multimodal** | Images, audio, video, and documents in user input and tool results | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/agentic_chat_multimodal) |
-
-Tool output streaming, backend tool rendering, activity progress, token usage, and custom events are covered in the [docs](https://docs.ag-ui.com/concepts/events). Here's a quick tour of the Dojo:
-
-https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
-
 ## Integrations
 
 AG-UI is adopted by Google, Microsoft, Amazon, and Oracle, and built into most agent frameworks. Every framework below has a live demo in the [Dojo](https://dojo.ag-ui.com).
@@ -219,6 +192,33 @@ Source for every integration lives in [`integrations/`](integrations) and [`midd
 | **.NET** | `dotnet add package AGUI.Client` | [Docs](https://docs.ag-ui.com/sdk/dotnet/client/overview) · [Source](sdks/dotnet) |
 
 **Community SDKs:** [Kotlin](sdks/community/kotlin) · [Go](sdks/community/go) · [Java](sdks/community/java) · [Dart](sdks/community/dart) · [Rust](sdks/community/rust) · [Ruby](sdks/community/ruby) · [C++](sdks/community/c++) · [Swift](sdks/community/swift)
+
+## Features: what you can build
+
+Each building block maps to events in the spec, and each has a live demo in the [AG-UI Dojo](https://dojo.ag-ui.com).
+
+| Building block | What it does | Try it |
+| --- | --- | --- |
+| **Streaming chat** | Token-by-token messages across multi-turn sessions, with cancel and resume | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/agentic_chat) |
+| **Generative UI** | Agents render typed components, or declarative UI with [A2UI](https://github.com/google/A2UI) and MCP Apps | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/tool_based_generative_ui) |
+| **Shared state** | A typed store the agent and app both read and write, synced with snapshots and JSON Patch deltas | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/shared_state) |
+| **Frontend tools** | The agent calls tools that run in the app, and gets the result back | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/human_in_the_loop) |
+| **Human in the loop** | Runs end with an `interrupt` outcome; the user approves, edits, or rejects, and the next run resumes | [Demo](https://dojo.ag-ui.com/mastra/feature/interrupt) |
+| **Reasoning** | Show the agent's reasoning as it works, including encrypted reasoning round-trips | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/agentic_chat_reasoning) |
+| **Subagents** | Nested delegation, with every event attributed to the subagent run that produced it | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/deepagents_subagents) |
+| **Multimodal** | Images, audio, video, and documents in user input and tool results | [Demo](https://dojo.ag-ui.com/langgraph-fastapi/feature/agentic_chat_multimodal) |
+
+Tool output streaming, backend tool rendering, activity progress, token usage, and custom events are covered in the [docs](https://docs.ag-ui.com/concepts/events). Here's a quick tour of the Dojo:
+
+https://github.com/user-attachments/assets/c298eea8-3f39-4a94-b968-7712429b0c49
+
+## How it works
+
+![Diagram of how AG-UI works: your app (CopilotKit, React, mobile, terminal, Slack or any client) sends a single RunAgentInput with messages, tools, state and context to your agent (LangChain, CrewAI, Mastra, Google ADK, Pydantic AI or any framework), and the agent streams back typed AG-UI events for lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom and raw data, over any transport such as SSE, WebSockets or HTTP binary (Protobuf).](.github/readme/how-it-works.svg)
+
+Your app starts a run by sending the agent a single `RunAgentInput`: the conversation, the tools the frontend offers, shared state, and context. The agent answers with a stream of typed events from eight families: run lifecycle, text messages, tool calls, state, reasoning, activity, subagents, and custom events ([full list](#event-reference)). Only the run lifecycle is required, so a minimal agent emits a handful of events and grows from there.
+
+AG-UI is transport-agnostic. The spec defines [HTTP + SSE](https://docs.ag-ui.com/spec/1.0/basic/transports/http-sse) and a binary [HTTP + Protobuf](https://docs.ag-ui.com/spec/1.0/basic/transports/http-protobuf) binding, and middleware can adapt events from any source. Read the [architecture overview](https://docs.ag-ui.com/concepts/architecture) for the full picture.
 
 ## Event reference
 
