@@ -18,6 +18,7 @@
             "pages": [
               "introduction",
               "agentic-protocols",
+              "openbot",
               {
                 "group": "Quickstart",
                 "pages": [
