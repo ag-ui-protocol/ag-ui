@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `extract_headers` / `make_extract_headers`: the real request header now
+  decides the `state.headers` key of every configured header. Before, a value
+  the client sent under the same key in the run body (`state.headers`) replaced
+  the request header, so a setup that read the user ID from
+  `state.headers.user_id` (as the documentation showed) let an authenticated
+  client act as any other user ID. A client value under a configured key is now
+  dropped, also when the header is missing. Other `state.headers` keys stay
+  client-supplied. The documentation examples now read identity from
+  `request.headers` in a custom `extract_state_from_request`.
+
+  **Breaking change:** clients can no longer override a configured header
+  through `state.headers` in the run body. Do not read identity or
+  authorization data from client-supplied run state.
+
 ### Changed
 
 - Migrate A2UI catalog prompts to the published SDK 0.9 `Catalog`, request

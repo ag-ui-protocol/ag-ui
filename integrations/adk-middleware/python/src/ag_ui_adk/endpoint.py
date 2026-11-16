@@ -385,17 +385,33 @@ def make_extract_headers(headers_to_extract: list[str]) -> Callable[[Request, Ru
         # Extract headers into state.headers if list provided
         if headers_to_extract:
             headers_dict = {}
+            configured_keys = set()
             for header_name in headers_to_extract:
+                state_key = _header_to_key(header_name)
+                configured_keys.add(state_key)
                 value = request.headers.get(header_name)
                 if value is not None:
-                    state_key = _header_to_key(header_name)
                     headers_dict[state_key] = value
 
-            if headers_dict:
-                existing_state = input_data.state if isinstance(input_data.state, dict) else {}
-                existing_headers = existing_state.get("headers", {}) if isinstance(existing_state.get("headers"), dict) else {}
-                # Client headers take precedence over extracted headers
-                merged_headers = {**headers_dict, **existing_headers}
+            existing_state = (
+                input_data.state if isinstance(input_data.state, dict) else {}
+            )
+            existing_headers = existing_state.get("headers")
+            if not isinstance(existing_headers, dict):
+                existing_headers = {}
+            # A configured header is the server's to set. The request header
+            # decides its key, and a value the run body put in
+            # ``state.headers`` under that key is dropped, also when the
+            # header is absent: extractors read identity from here
+            # (``user_id``, ``tenant_id``), so a body value that survived
+            # would let a client name another user.
+            client_headers = {
+                key: value
+                for key, value in existing_headers.items()
+                if key not in configured_keys
+            }
+            if headers_dict or len(client_headers) != len(existing_headers):
+                merged_headers = {**client_headers, **headers_dict}
                 merged_state = {**existing_state, "headers": merged_headers}
                 return merged_state
 

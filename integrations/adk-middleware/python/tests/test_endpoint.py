@@ -830,8 +830,15 @@ class TestExtractHeaders:
         assert captured_input[0].state["existing_key"] == "existing_value"
         assert captured_input[0].state["another_key"] == "another_value"
 
-    def test_extract_headers_client_headers_take_precedence(self, mock_agent):
-        """Test that client-provided state.headers takes precedence over extracted headers."""
+    def test_extract_headers_request_header_wins_over_client_state(
+        self, mock_agent
+    ):
+        """A configured header decides its key; the body cannot override it.
+
+        Extractors read identity from ``state.headers`` (``user_id``), so a
+        body value that won would let a client behind an authenticating gateway
+        name another user.
+        """
         captured_input = []
 
         async def mock_agent_run(input_data):
@@ -870,8 +877,53 @@ class TestExtractHeaders:
 
         assert response.status_code == 200
         assert len(captured_input) == 1
-        # Client state.headers should take precedence
-        assert captured_input[0].state["headers"]["user_id"] == "client_user"
+        assert captured_input[0].state["headers"]["user_id"] == "header_user"
+
+    def test_extract_headers_drops_client_value_when_header_is_absent(
+        self, mock_agent
+    ):
+        """Without the header, a body value for a configured key is dropped."""
+        captured_input = []
+
+        async def mock_agent_run(input_data):
+            captured_input.append(input_data)
+            yield RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id="test_thread",
+                run_id="test_run"
+            )
+
+        mock_agent.run = mock_agent_run
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, mock_agent, "/test",
+            extract_state_from_request=make_extract_headers(["x-user-id"])
+        )
+
+        input_naming_a_user = RunAgentInput(
+            thread_id="test_thread",
+            run_id="test_run",
+            messages=[UserMessage(id="1", role="user", content="Hello")],
+            tools=[],
+            context=[],
+            state={
+                "headers": {"user_id": "client_user", "locale": "pt-BR"},
+                "plain": 1,
+            },
+            forwarded_props={}
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/test", json=input_naming_a_user.model_dump()
+        )
+
+        assert response.status_code == 200
+        assert len(captured_input) == 1
+        # Keys that are not configured headers stay the client's.
+        assert captured_input[0].state["headers"] == {"locale": "pt-BR"}
+        assert captured_input[0].state["plain"] == 1
 
     def test_no_extract_headers_backward_compatible(self, mock_agent, sample_input):
         """Test that omitting extract_headers works as before."""

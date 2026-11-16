@@ -89,25 +89,42 @@ agent = ADKAgent(
 )
 ```
 
-### Using Extracted Headers
+### Using Request Headers for Identity
 
-When combined with `extract_headers` (see [Header Extraction](#header-extraction)), extractors can use HTTP headers for identification:
+To take the user ID from a trusted request header (for example one set by an
+authenticating gateway), read it from `request.headers` in a custom
+`extract_state_from_request` and write it as a top-level state key. Values that
+the extractor returns replace client-supplied state keys with the same name.
+Always return the key, also when the header is missing, so that a client cannot
+supply it in the run body:
 
 ```python
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from ag_ui.core import RunAgentInput
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+
+async def extract_identity(request: Request, input_data: RunAgentInput) -> dict:
+    # The request header is the only source of the user ID.
+    return {"user_id": request.headers.get("x-user-id") or "anonymous"}
+
 
 agent = ADKAgent(
     adk_agent=my_agent,
-    user_id_extractor=lambda input: input.state.get("headers", {}).get("user_id", "anonymous"),
+    user_id_extractor=lambda input: input.state["user_id"],
 )
 
 app = FastAPI()
 add_adk_fastapi_endpoint(
     app, agent, "/chat",
-    extract_headers=["x-user-id"]  # x-user-id header becomes state.headers.user_id
+    extract_state_from_request=extract_identity,
 )
 ```
+
+Do not read identity or authorization data from client-supplied run state. With
+`extract_headers` (see [Header Extraction](#header-extraction)), only the
+`state.headers` keys of the configured headers come from the request; all other
+`state.headers` keys are client-supplied.
 
 ## Session Management
 
@@ -450,9 +467,9 @@ tool-history messages or arbitrary run-body state.
 
 For trusted tenant, authorization, or data-boundary routing, read from
 `request.headers` directly or use a custom `extract_state_from_request` that
-writes authoritative top-level routing keys. Do not route from `state.headers`
-when using legacy `extract_headers`; client-provided `state.headers` values take
-precedence over extracted header values for backwards compatibility.
+writes authoritative top-level routing keys. With legacy `extract_headers`, a
+configured header decides its `state.headers` key and a value the run body sent
+under that key is dropped; other `state.headers` keys remain client-supplied.
 
 This is useful for tenant routing, request-header routing, and agent registries
 where each target owns a separate middleware configuration. It does not replace
@@ -506,23 +523,12 @@ add_adk_fastapi_endpoint(
 - `x-` prefix is stripped: `x-user-id` → `user_id`
 - Hyphens converted to underscores: `x-tenant-id` → `tenant_id`
 - Missing headers are silently skipped
-- Client-provided `state.headers` values take precedence
+- A configured header decides its key: a `state.headers` value the client sent under that key is dropped, also when the header is missing
 
-**Example with user_id extractor:**
-
-```python
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
-
-agent = ADKAgent(
-    adk_agent=my_agent,
-    user_id_extractor=lambda input: input.state.get("headers", {}).get("user_id", "anonymous"),
-)
-
-add_adk_fastapi_endpoint(
-    app, agent, "/chat",
-    extract_headers=["x-user-id", "x-tenant-id"]
-)
-```
+To take the user ID from a request header, do not read it from `state.headers`
+in a `user_id_extractor`. Use a custom `extract_state_from_request` that reads
+`request.headers` and writes a top-level `user_id` key, as shown in
+[Using Request Headers for Identity](#using-request-headers-for-identity).
 
 Client request:
 ```
