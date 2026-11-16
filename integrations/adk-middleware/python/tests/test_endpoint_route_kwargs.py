@@ -117,6 +117,24 @@ class TestEndpointRouteKwargs:
         for route_path in ("/", "/capabilities", "/agents/state"):
             assert len(routes[route_path].dependencies) == 1
 
+    def test_async_dependency_guards_agents_state(self, seeded_agent):
+        """An async guard must block ``/agents/state`` too, so thread state
+        does not leak to an unauthenticated caller."""
+
+        async def deny():
+            raise HTTPException(status_code=401, detail="nope")
+
+        app = FastAPI()
+        add_adk_fastapi_endpoint(
+            app, seeded_agent, path="/", dependencies=[Depends(deny)]
+        )
+        client = TestClient(app)
+
+        body = {"threadId": THREAD_ID, "appName": APP_NAME, "userId": USER_ID}
+        response = client.post("/agents/state", json=body)
+        assert response.status_code == 401
+        assert "s3cr3t" not in response.text
+
     def test_authenticated_requests_reach_every_route(self, seeded_agent):
         """GHSA-jhvp-j8pf-5vh5: an unauthenticated caller must not read
         thread state or capabilities, and an authenticated caller still can."""
