@@ -428,7 +428,9 @@ def add_adk_fastapi_endpoint(
             the default agent.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
             ``tags``, ``operation_id``, ``dependencies``, ``include_in_schema``,
-            ...). They do not apply to the other routes this helper registers,
+            ...). ``dependencies`` also guards ``/capabilities`` and
+            ``/agents/state``, so authentication applies to every route this
+            helper registers. The other kwargs apply to the agent route only,
             because values such as ``operation_id`` and ``name`` must stay
             unique per operation.
 
@@ -485,6 +487,14 @@ def add_adk_fastapi_endpoint(
 
     default_agent = agent
 
+    # Route dependencies are how applications attach authentication, so they
+    # must guard every route this helper registers, not only the agent route.
+    # Identity kwargs such as ``name`` and ``operation_id`` stay on the agent
+    # route because they must be unique per operation.
+    guard_kwargs: dict[str, Any] = {}
+    if "dependencies" in kwargs:
+        guard_kwargs["dependencies"] = kwargs["dependencies"]
+
     @app.post(path, **kwargs)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
         """ADK middleware endpoint.
@@ -525,7 +535,7 @@ def add_adk_fastapi_endpoint(
 
     capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
 
-    @app.get(capabilities_path)
+    @app.get(capabilities_path, **guard_kwargs)
     async def capabilities_endpoint(request: Request):
         """Return the agent's declared capabilities.
 
@@ -563,7 +573,7 @@ def add_adk_fastapi_endpoint(
                 content={"error": f"Failed to retrieve capabilities: {str(e)}"}
             )
 
-    @app.post("/agents/state")
+    @app.post("/agents/state", **guard_kwargs)
     async def agents_state_endpoint(request_data: AgentStateRequest, request: Request):
         """EXPERIMENTAL: Retrieve thread state and message history.
 
@@ -768,7 +778,9 @@ def create_adk_app(
             the default agent.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
             ``tags``, ``operation_id``, ``dependencies``, ``include_in_schema``,
-            ...). They do not apply to the other routes this helper registers,
+            ...). ``dependencies`` also guards ``/capabilities`` and
+            ``/agents/state``, so authentication applies to every route this
+            helper registers. The other kwargs apply to the agent route only,
             because values such as ``operation_id`` and ``name`` must stay
             unique per operation.
 
