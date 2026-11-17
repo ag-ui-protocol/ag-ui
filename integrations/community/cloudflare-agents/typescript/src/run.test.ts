@@ -9,7 +9,7 @@ import {
 import { runAGUI, streamToAGUI, type AGUIRunHandler, type RunAGUIOptions } from "./run";
 import { INTERRUPTED, REJECTED, type PendingApproval } from "./messages";
 import { encodeEnvelope, encodeProviderMetadata } from "./provider-metadata";
-import { LocalAgent, SDKS, chunks, collect, partsHandler, turn, type Sdk } from "./test-utils";
+import { LocalAgent, SDKS, chunks, collect, partsHandler, turn, type MockModel, type Sdk } from "./test-utils";
 
 /** A client agent whose runs call `handler` through `runAGUI`, recording every event. */
 function clientFor(handler: AGUIRunHandler<any>, options: RunAGUIOptions<any> = {}) {
@@ -378,6 +378,104 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
       ]);
     });
 
+    /** A model that calls change_background, then answers. */
+    const changeBackgroundModel = () =>
+      sdk.model([
+        turn(chunks.toolCall("tc1", "change_background", { color: "blue" })),
+        turn(chunks.text("t2", "Done.")),
+      ]);
+
+    it("keeps the result of a server tool that replaces a client tool", async () => {
+      const model = changeBackgroundModel();
+      const { agent, events } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          stopWhen: ai.stepCountIs(3),
+          ...run.streamTextOptions({ tools: { change_background: serverTool("The server's version") } }),
+        }),
+      );
+      agent.messages = [userMessage()];
+
+      await agent.runAgent({ tools: [changeBackground] });
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: EventType.TOOL_CALL_RESULT, toolCallId: "tc1", content: "done" }),
+      );
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+      expect(agent.messages.at(-1)).toMatchObject({ role: "assistant", content: "Done." });
+    });
+
+    it("keeps the error of a server tool that replaces a client tool", async () => {
+      const model = changeBackgroundModel();
+      const failing = ai.tool({
+        description: "The server's version",
+        inputSchema: ai.jsonSchema({ type: "object", properties: {} }),
+        execute: async (): Promise<string> => {
+          throw new Error("no paint left");
+        },
+      });
+      const { agent, events } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          stopWhen: ai.stepCountIs(3),
+          ...run.streamTextOptions({ tools: { change_background: failing } }),
+        }),
+      );
+      agent.messages = [userMessage()];
+
+      await agent.runAgent({ tools: [changeBackground] });
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: EventType.TOOL_CALL_RESULT,
+          toolCallId: "tc1",
+          content: JSON.stringify({ error: "no paint left" }),
+        }),
+      );
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    });
+
+    it("leaves a client tool the handler wraps (no execute) to the page", async () => {
+      // The arguments do not parse: the AI SDK reports a tool error, and the call is still the page's.
+      const model = sdk.model([
+        turn({ type: "tool-call", toolCallId: "tc1", toolName: "change_background", input: '{"color": ' }),
+      ]);
+      const { agent, events } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          ...run.streamTextOptions({
+            tools: { change_background: { ...run.clientTools.change_background!, onInputStart: () => {} } },
+          }),
+        }),
+      );
+      agent.messages = [userMessage()];
+
+      await agent.runAgent({ tools: [changeBackground] });
+
+      expect(types(events)).not.toContain(EventType.TOOL_CALL_RESULT);
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success", pendingToolCallIds: ["tc1"] });
+    });
+
+    it("keeps the result of a server tool that replaces a client tool in tools wired by hand", async () => {
+      const model = changeBackgroundModel();
+      const { agent, events } = clientFor((run) =>
+        ai.streamText({
+          model: model as any,
+          stopWhen: ai.stepCountIs(3),
+          messages: run.messages,
+          tools: { ...run.clientTools, change_background: serverTool("The server's version") },
+        }),
+      );
+      agent.messages = [userMessage()];
+
+      await agent.runAgent({ tools: [changeBackground] });
+
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: EventType.TOOL_CALL_RESULT, toolCallId: "tc1", content: "done" }),
+      );
+      expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    });
+
     it("stops the model call when the client stops the run", async () => {
       const controller = new AbortController();
       let modelSignal: AbortSignal | undefined;
@@ -410,19 +508,14 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
   });
 
   describe("tool approvals", () => {
-    function refundAgent(
-      execute = vi.fn(async ({ order }: any) => ({ refunded: order })),
-      options: RunAGUIOptions<any> = {},
-    ) {
-      const model = sdk.model([
-        turn(chunks.toolCall("tc1", "issue_refund", { order: "A1" })),
-        turn(chunks.text("t2", "All set.")),
-      ]);
-      const client = clientFor((run) =>
+    /** A handler whose model may call issue_refund, a tool that needs approval. */
+    function refundHandler(model: MockModel, execute: (input: any) => unknown): AGUIRunHandler<any> {
+      return (run) =>
         ai.streamText({
           model: model as any,
           messages: run.messages,
           stopWhen: ai.stepCountIs(3),
+          onError: () => {},
           tools: {
             issue_refund: ai.tool({
               inputSchema: ai.jsonSchema({ type: "object", properties: { order: { type: "string" } } }),
@@ -430,9 +523,18 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
               execute,
             }),
           },
-        }),
-        options,
-      );
+        });
+    }
+
+    function refundAgent(
+      execute: (input: any) => unknown = vi.fn(async ({ order }: any) => ({ refunded: order })),
+      options: RunAGUIOptions<any> = {},
+      model = sdk.model([
+        turn(chunks.toolCall("tc1", "issue_refund", { order: "A1" })),
+        turn(chunks.text("t2", "All set.")),
+      ]),
+    ) {
+      const client = clientFor(refundHandler(model, execute), options);
       client.agent.messages = [userMessage("Refund A1")];
       return { ...client, model, execute };
     }
@@ -822,6 +924,80 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
       expect(execute).toHaveBeenCalledOnce();
       expect(recorded).toEqual([]);
     });
+
+    /** The approvals a Durable Object would record, in memory. */
+    const approvalRecord = () => {
+      let recorded: PendingApproval[] = [];
+      return {
+        load: () => recorded,
+        save: (next: PendingApproval[]) => void (recorded = next),
+        recorded: () => recorded,
+      };
+    };
+    const resumeInput = (runId: string, messages: Message[]): RunAgentInput => ({
+      threadId: "t",
+      runId,
+      messages,
+      tools: [],
+      context: [],
+      resume: [approveRefund],
+    });
+
+    it("runs an approved tool once when two requests resume it at the same time", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let finishRefund!: () => void;
+      const refundSent = new Promise<void>((resolve) => (finishRefund = resolve));
+      // The refund waits on the payment API; a second call lets it through, so a failing test cannot hang.
+      const execute = vi.fn(async () => {
+        if (execute.mock.calls.length > 1) finishRefund();
+        await refundSent;
+        return "refunded";
+      });
+      const approvals = approvalRecord();
+      const { agent, model } = refundAgent(execute, { approvals });
+      await agent.runAgent();
+      const paused = structuredClone(agent.messages);
+      const handler = refundHandler(model, execute);
+
+      const first = collect(runAGUI(resumeInput("r2", paused), handler, { approvals }));
+      await vi.waitFor(() => expect(execute).toHaveBeenCalled());
+      const second = await collect(runAGUI(resumeInput("r3", paused), handler, { approvals }));
+      finishRefund();
+      const firstEvents = await first;
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(firstEvents).toContainEqual(
+        expect.objectContaining({ type: EventType.TOOL_CALL_RESULT, toolCallId: "tc1", content: "refunded" }),
+      );
+      expect(second).not.toContainEqual(expect.objectContaining({ content: "refunded" }));
+      warn.mockRestore();
+    });
+
+    it("does not run an approved tool again after the run that ran it fails", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const execute = vi.fn(async () => "refunded");
+      const approvals = approvalRecord();
+      const model = sdk.model([
+        turn(chunks.toolCall("tc1", "issue_refund", { order: "A1" })),
+        [chunks.start(), { type: "error", error: new Error("overloaded") }],
+        turn(chunks.text("t3", "Refunded.")),
+      ]);
+      const { agent, events } = refundAgent(execute, { approvals }, model);
+      await agent.runAgent();
+      const paused = structuredClone(agent.messages);
+
+      await agent.runAgent({ resume: [approveRefund] });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(events.at(-1)).toMatchObject({ type: EventType.RUN_ERROR, message: "overloaded" });
+
+      // The connection dropped before the result arrived: the client answers
+      // its interrupt again, with the history it had.
+      const retry = await collect(runAGUI(resumeInput("r3", paused), refundHandler(model, execute), { approvals }));
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(retry.at(-1)).toMatchObject({ type: EventType.RUN_FINISHED, outcome: { type: "success" } });
+      warn.mockRestore();
+    });
   });
 
   it("closes a server call an error cut off, and carries on", async () => {
@@ -1128,6 +1304,40 @@ describe("runAGUI", () => {
     expect(types(events)).toEqual([EventType.RUN_ERROR]);
     expect(events[0]).toMatchObject({ code: "INVALID_RESUME" });
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["answering nothing", undefined],
+    ["approving it", [{ interruptId: "tc1", status: "resolved" as const, payload: { approved: true } }]],
+  ])("keeps an approval the server recorded open when the client leaves its call out, %s", async (_, resume) => {
+    const handler = vi.fn();
+    const save = vi.fn();
+    const events = await collect(
+      runAGUI({ ...input, messages: [userMessage("Something else")], resume }, handler, {
+        approvals: { load: () => [recordedRefund], save },
+      }),
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(types(events)).toEqual([EventType.RUN_ERROR]);
+    expect(events[0]).toMatchObject({ code: "INVALID_RESUME", message: expect.stringContaining('"tc1"') });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("lets the client abandon a recorded approval whose call it no longer has", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let recorded = [recordedRefund];
+    const events = await collect(
+      runAGUI(
+        { ...input, messages: [userMessage("Something else")], resume: [{ interruptId: "tc1", status: "cancelled" }] },
+        emptyStream,
+        { approvals: { load: () => recorded, save: (next) => void (recorded = next) } },
+      ),
+    );
+    expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+    expect(recorded).toEqual([]);
+    // The answer is to an interrupt this agent raised: nothing to warn about.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it("closes a marked call the server has no record of, without running it", async () => {

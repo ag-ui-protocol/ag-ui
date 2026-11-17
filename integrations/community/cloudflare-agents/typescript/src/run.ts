@@ -46,6 +46,12 @@ export interface StateStore<State = AGUIState> {
  * Where a server records the tool calls it paused for approval, so a resume
  * can only approve calls the model actually made. A Durable Object agent
  * keeps them in its storage.
+ *
+ * A run claims the approvals its request answers before anything runs (it
+ * loads the record and saves it without them, back to back), so an approved
+ * tool runs once. If the run fails before a claimed tool returns, the
+ * approval is saved back for the client to answer again. Only a store that
+ * serves one request at a time, like a Durable Object, makes the claim atomic.
  */
 export interface ApprovalStore {
   load(): PendingApproval[] | Promise<PendingApproval[]>;
@@ -118,7 +124,11 @@ export interface AGUIRun<State = AGUIState> {
 export interface StreamTextOptionsInput {
   /** The agent's own instructions, put before the run's. */
   instructions?: string;
-  /** Your server tools. A server tool wins a name clash with a client tool. */
+  /**
+   * Your tools. One with `execute` replaces the client tool of the same name,
+   * and the server answers its calls; one without `execute` (a client tool
+   * you wrapped, to watch its arguments) stays the client's.
+   */
   tools?: ToolSet;
   /** `false` leaves the shared state out of the instructions. */
   state?: boolean;
@@ -177,9 +187,10 @@ export async function* runAGUI<State = AGUIState>(
 
   const clientToolNames = input.tools.map((tool) => tool.name);
   let converted: ConvertedMessages;
+  let recorded: PendingApproval[] | undefined;
   try {
-    const pendingApprovals = options.approvals ? await options.approvals.load() : undefined;
-    converted = convertMessages(input.messages, { resume: input.resume, clientToolNames, pendingApprovals });
+    recorded = options.approvals ? await options.approvals.load() : undefined;
+    converted = convertMessages(input.messages, { resume: input.resume, clientToolNames, pendingApprovals: recorded });
   } catch (error) {
     yield runError(error, "INTERNAL_ERROR");
     return;
@@ -190,9 +201,44 @@ export async function* runAGUI<State = AGUIState>(
   }
   for (const warning of converted.resumeWarnings) warn(warning);
 
+  // The approvals this request answers leave the record before anything
+  // runs, so a second request answering one of them (a retry, another tab)
+  // finds it answered and cannot run its tool again. Nothing is awaited
+  // between reading the record and writing it: in a Durable Object, no other
+  // request can come in between.
+  const resumed = new Set(converted.resumed);
+  const claimed = recorded?.filter((approval) => resumed.has(approval.toolCallId)) ?? [];
+  if (options.approvals && recorded && (claimed.length > 0 || converted.abandoned.length > 0)) {
+    const answering = new Set([...converted.resumed, ...converted.abandoned]);
+    try {
+      await options.approvals.save(recorded.filter((approval) => !answering.has(approval.toolCallId)));
+    } catch (error) {
+      yield runError(error, "INTERNAL_ERROR");
+      return;
+    }
+  }
+  /**
+   * Puts back the claimed approvals whose tools did not return, after a run
+   * that failed: the client still holds their interrupts and answers again.
+   * One whose tool returned stays answered, so it never runs twice.
+   */
+  const reopen = async (returned: Iterable<string> = []) => {
+    const done = new Set(returned);
+    const open = claimed.filter((approval) => !done.has(approval.toolCallId));
+    if (!options.approvals || open.length === 0) return;
+    const ids = new Set(open.map((approval) => approval.toolCallId));
+    try {
+      const current = await options.approvals.load();
+      await options.approvals.save([...current.filter((approval) => !ids.has(approval.toolCallId)), ...open]);
+    } catch (error) {
+      warn(`Could not reopen the approvals of a failed run (${[...ids].join(", ")}): ${errorText(error)}`);
+    }
+  };
+
   yield runStarted(input);
   const channel = new EventChannel();
   let unsubscribe = () => {};
+  let handlerCalled = false;
   try {
     const store = options.state ?? memoryStateStore((input.state ?? {}) as State);
     if (options.state && hasState(input.state)) {
@@ -212,6 +258,10 @@ export async function* runAGUI<State = AGUIState>(
     const context = input.context ?? [];
     // What the handler took from the run, to warn about what it left out.
     const used: Usage = { clientTools: false, context: false, state: false, instructions: false, abortSignal: false };
+    // Tools with `execute` handed to streamTextOptions(): one named like a
+    // client tool replaces it, and the server answers its calls. One without
+    // `execute` (a client tool the handler wrapped) stays the page's.
+    const serverToolNames = new Set<string>();
     const run: AGUIRun<State> = {
       input,
       request: options.request,
@@ -242,6 +292,9 @@ export async function* runAGUI<State = AGUIState>(
         });
       },
       streamTextOptions({ instructions, tools, state } = {}) {
+        for (const [name, tool] of Object.entries(tools ?? {})) {
+          if (typeof tool?.execute === "function") serverToolNames.add(name);
+        }
         const text = run.instructions(instructions, { state });
         return {
           ...(text && { instructions: text, system: text }),
@@ -256,12 +309,13 @@ export async function* runAGUI<State = AGUIState>(
 
     let result: StreamTextLike;
     try {
+      handlerCalled = true;
       result = await handler(run);
     } catch (error) {
       yield* channel.drain();
       if (!abortSignal.aborted) {
-        // The approvals this run was resuming stay open: after RUN_ERROR the
-        // client still holds their interrupts and answers them again.
+        // No tool ran: the approvals this run was resuming open again.
+        await reopen();
         yield runError(error, "AGENT_ERROR");
         return;
       }
@@ -282,7 +336,7 @@ export async function* runAGUI<State = AGUIState>(
     });
 
     const translation = yield* translate(input, result, {
-      clientToolNames,
+      clientToolNames: clientToolNames.filter((name) => !serverToolNames.has(name)),
       channel,
       denials: converted.denials,
       abortSignal,
@@ -290,13 +344,16 @@ export async function* runAGUI<State = AGUIState>(
     });
     unsubscribe();
     // The previous run's approvals are answered now; record this run's. After
-    // an error the record stays: the client answers the same approvals again.
+    // an error, the approvals whose tools did not return open again: the
+    // client still holds their interrupts and answers them again.
     if (translation.approvals) await options.approvals?.save(translation.approvals);
+    else if (translation.returned) await reopen(translation.returned);
     await options.state?.markSynced?.(store.get());
     yield translation.terminal;
   } catch (error) {
     // Nothing above may leave the client without a terminal event.
     yield* channel.drain();
+    if (!handlerCalled) await reopen();
     yield runError(error, "INTERNAL_ERROR");
   } finally {
     unsubscribe();
@@ -335,13 +392,14 @@ export async function* streamToAGUI(
 
 /**
  * Streams the translated events. Returns the terminal event (not yet sent)
- * and the approvals to record, or undefined after an error (keep the record).
+ * and the approvals to record; after an error, the tool calls that returned
+ * instead, unless the translation itself broke and nobody can tell.
  */
 async function* translate(
   input: RunAgentInput,
   result: StreamTextLike,
   options: Omit<TranslateOptions, "inputMessages">,
-): AsyncGenerator<BaseEvent, { terminal: BaseEvent; approvals?: PendingApproval[] }> {
+): AsyncGenerator<BaseEvent, { terminal: BaseEvent; approvals?: PendingApproval[]; returned?: string[] }> {
   let translation;
   try {
     translation = yield* translateStream(result.fullStream, { ...options, inputMessages: input.messages });
@@ -349,8 +407,10 @@ async function* translate(
     return { terminal: runError(error, "STREAM_ERROR") };
   }
 
-  const { outcome, usage, approvals } = translation;
-  if (outcome.type === "error") return { terminal: runError(outcome.message, outcome.code, usage) };
+  const { outcome, usage, approvals, answeredToolCallIds } = translation;
+  if (outcome.type === "error") {
+    return { terminal: runError(outcome.message, outcome.code, usage), returned: answeredToolCallIds };
+  }
   return { terminal: runFinished(input, outcome, usage), approvals };
 }
 
@@ -414,10 +474,14 @@ function downgradeOutcome(
   return older;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function runError(error: unknown, code: string, usage?: RunErrorEvent["usage"]): RunErrorEvent {
   return {
     type: EventType.RUN_ERROR,
-    message: error instanceof Error ? error.message : String(error),
+    message: errorText(error),
     code,
     timestamp: Date.now(),
     ...(usage && usage.length > 0 && { usage }),

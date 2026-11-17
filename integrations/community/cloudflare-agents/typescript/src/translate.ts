@@ -61,6 +61,8 @@ export interface TranslationResult {
   usage: TokenUsage[];
   /** The calls this run paused for approval, for a server that records them. */
   approvals: PendingApproval[];
+  /** The tool calls this run gave a result (or a denial), resumed calls included. */
+  answeredToolCallIds: string[];
 }
 
 type Part = { type: string } & Record<string, unknown>;
@@ -234,16 +236,19 @@ class Translation {
 
       case "tool-result":
         if (part.preliminary === true) break;
-        yield* this.toolResult(String(part.toolCallId), stringifyOutput(part.output));
+        // Only a tool with `execute` returns a result, so whatever its name,
+        // this is a server tool's (one that replaces a page's tool, say).
+        yield* this.toolResult(String(part.toolCallId), stringifyOutput(part.output), { serverTool: true });
         break;
       case "tool-error": {
         const message = errorMessage(part.error);
-        yield* this.toolResult(String(part.toolCallId), JSON.stringify({ error: message }), message);
+        yield* this.toolResult(String(part.toolCallId), JSON.stringify({ error: message }), { error: message });
         break;
       }
       case "tool-output-denied": {
+        // Only a server tool asks for approval.
         const toolCallId = String(part.toolCallId);
-        yield* this.toolResult(toolCallId, this.options.denials?.get(toolCallId) ?? REJECTED);
+        yield* this.toolResult(toolCallId, this.options.denials?.get(toolCallId) ?? REJECTED, { serverTool: true });
         break;
       }
       case "tool-approval-request":
@@ -350,10 +355,11 @@ class Translation {
       ? aggregateTokenUsage(this.stepUsage)
       : [tokenUsageFromAiSdkUsage(this.totalUsage, {})].filter((u): u is TokenUsage => !!u);
     const approvals = this.error || this.cancelled ? [] : this.approvals;
-    if (this.error) return { outcome: { type: "error", ...this.error }, usage, approvals };
-    if (this.cancelled) return { outcome: { type: "cancelled" }, usage, approvals };
+    const answeredToolCallIds = [...this.answered];
+    if (this.error) return { outcome: { type: "error", ...this.error }, usage, approvals, answeredToolCallIds };
+    if (this.cancelled) return { outcome: { type: "cancelled" }, usage, approvals, answeredToolCallIds };
     if (this.interrupts.length > 0) {
-      return { outcome: { type: "interrupt", interrupts: this.interrupts }, usage, approvals };
+      return { outcome: { type: "interrupt", interrupts: this.interrupts }, usage, approvals, answeredToolCallIds };
     }
     // The calls this run made and left for the page to answer, in order.
     const pending = [...this.calls.keys()].filter((id) => !this.answered.has(id));
@@ -361,6 +367,7 @@ class Translation {
       outcome: { type: "success", ...(pending.length > 0 && { pendingToolCallIds: pending }) },
       usage,
       approvals,
+      answeredToolCallIds,
     };
   }
 
@@ -524,12 +531,16 @@ class Translation {
     yield* this.emitCallEnvelope(call);
   }
 
-  private *toolResult(toolCallId: string, content: string, error?: string): Generator<BaseEvent> {
+  private *toolResult(
+    toolCallId: string,
+    content: string,
+    { error, serverTool = false }: { error?: string; serverTool?: boolean } = {},
+  ): Generator<BaseEvent> {
     if (this.answered.has(toolCallId)) return;
     // AG-UI forbids an agent to answer the page's tools, even a call whose
     // arguments did not parse (the AI SDK reports that as a tool error).
     const call = this.calls.get(toolCallId);
-    if (call && this.clientTools.has(call.toolCall.function.name)) return;
+    if (!serverTool && call && this.clientTools.has(call.toolCall.function.name)) return;
     this.answered.add(toolCallId);
     const message: ToolMessage = {
       id: randomUUID(),

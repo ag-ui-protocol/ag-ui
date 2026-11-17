@@ -97,7 +97,7 @@ const agent = new CloudflareAgentsClient({
 
 | Field | |
 |---|---|
-| `run.streamTextOptions({ instructions?, tools?, state? })` | What to spread into `streamText`'s options: `instructions` (and `system`, for AI SDK v6) built by `run.instructions(instructions, { state })`, `messages`, `tools` (the client's, then yours) and `abortSignal`. |
+| `run.streamTextOptions({ instructions?, tools?, state? })` | What to spread into `streamText`'s options: `instructions` (and `system`, for AI SDK v6) built by `run.instructions(instructions, { state })`, `messages`, `tools` (the client's, then yours) and `abortSignal`. A tool of yours with `execute` replaces the client's tool of the same name, and the server answers its calls; one without `execute` (a client tool you wrapped, to watch its arguments) stays the client's. |
 | `run.messages` | The conversation as AI SDK `ModelMessage[]`. |
 | `run.clientTools` | The client's tools, without `execute`. Spread your server tools after them, so a server tool wins a name clash. |
 | `run.instructions(base?, { state? })` | `base`, the conversation's system messages, the application's context and the shared state (leave it out with `{ state: false }`). |
@@ -137,6 +137,8 @@ export class Chef extends withAGUI(Agent<Env, { recipe?: Recipe }>) {
 
 A tool can update the state several times while it runs (a plan whose steps complete one by one); each update streams at once. For state that follows a tool's arguments as the model writes them, update it from the tool's `onInputDelta`.
 
+An empty state (`{}`) from the client means it has none: it is what every new client sends, so the client gets the thread's state back rather than wiping it. To clear the state from the client, send its empty shape (`{ todos: [] }`); the server can always `this.setState()` whatever it likes.
+
 ### Tool approvals
 
 ```ts
@@ -171,15 +173,17 @@ The next run's `resume` answers it: `{ "interruptId": "<id>", "status": "resolve
 
 The reason is `tool_approval` rather than AG-UI's `tool_call` because clients treat `tool_call` answers as the tool's result; here the server runs the tool.
 
-A request is refused before the run starts, with a single `RUN_ERROR` (code `INVALID_RESUME`) and without calling the model, when it leaves a waiting approval unanswered, answers one in a way that cannot be honoured, or resumes a call the conversation has already moved past: AG-UI forbids an agent to drop an approval nobody answered. A `resume` entry for something that is not waiting for approval is ignored with a warning, as AG-UI asks.
+A request is refused before the run starts, with a single `RUN_ERROR` (code `INVALID_RESUME`) and without calling the model, when it leaves a waiting approval unanswered, leaves its call out of the conversation, answers one in a way that cannot be honoured, or resumes a call the conversation has already moved past: AG-UI forbids an agent to drop an approval nobody answered. A client that no longer has the call can still reject or cancel the approval. A `resume` entry for something that is not waiting for approval is ignored with a warning, as AG-UI asks.
 
-A run that stops before it finishes asks nothing. Its server tool calls without a result, a call paused for approval included, are closed with a result saying they were interrupted, and the conversation carries on. If a run resuming an approval fails (`RUN_ERROR`), the approval stays open: the client still holds its interrupt and can answer it again. If that run is cancelled, the approval is closed as interrupted.
+An approved tool runs at most once. The request that answers an approval claims it before anything runs, so a second request answering it too (a retry after a dropped connection, a second tab) cannot run the tool again; its copy of the call is closed as interrupted. A Durable Object makes the claim atomic. For a tool whose effect must never repeat, pass the tool call id (`execute`'s second argument has `toolCallId`) as the idempotency key of the API it calls.
 
-The paused call is marked in its `encryptedValue`, with the AI SDK's approval id and, if you set `experimental_toolApprovalSecret`, its signature. Keep `encryptedValue` when your client stores or forwards messages.
+A run that stops before it finishes asks nothing. Its server tool calls without a result, a call paused for approval included, are closed with a result saying they were interrupted, and the conversation carries on. If a run resuming an approval fails (`RUN_ERROR`) before the tool returns, the approval opens again: the client still holds its interrupt and can answer it again. Once the tool has returned, the approval stays answered, even if the run fails afterwards. If the run is cancelled, the approval is closed as interrupted.
+
+The paused call is marked in its `encryptedValue`, with the AI SDK's approval id and, with AI SDK v7's `experimental_toolApprovalSecret`, its signature. Keep `encryptedValue` when your client stores or forwards messages.
 
 ## Without Durable Objects
 
-In a plain Worker, `handleAGUIRequest` serves one run per request; the state lives for the length of the request. Pass `approvals` (an `ApprovalStore` on KV or D1) or set AI SDK's `experimental_toolApprovalSecret` if tools need approval: otherwise a resume trusts the tool calls in the client's history. `headers` adds headers (CORS) to every response, and preflight requests are answered.
+In a plain Worker, `handleAGUIRequest` serves one run per request; the state lives for the length of the request. If tools need approval, pass `approvals` (an `ApprovalStore` on KV or D1): otherwise a resume trusts the tool calls in the client's history. On AI SDK v7, signing approvals with `experimental_toolApprovalSecret` also stops a client from approving a call the model never made; AI SDK v6 has no such option, so there you need the store. Outside a Durable Object nothing makes claiming an approval atomic, so two requests answering the same approval at the same moment could both run its tool: give such tools an idempotency key (the tool call id). `headers` adds headers (CORS) to every response, and preflight requests are answered.
 
 ```ts
 import { handleAGUIRequest } from "@ag-ui/cloudflare-agents";
@@ -207,6 +211,7 @@ For your own wiring (an `AIChatAgent` that keeps its own clients, another runtim
 ## Limitations
 
 - Changes made to a Durable Object's state by its own WebSocket clients (`useAgent`) during an AG-UI run reach the AG-UI client at its next run, not live.
+- A thread keeps one record of the state its client last had, so it tells one client's edit from a stale copy, not two clients' copies apart. When two AG-UI clients take turns on a thread, a client that sends a copy from before the other's last run overwrites the other's changes: the last one to run wins.
 - Preliminary tool results (tools that stream their output) are not sent; the final result is.
 - Provider file references in user messages (an uploaded file's id) are not passed on: the AI SDK has no portable way to. The model gets a note that a file was attached, and the agent logs a warning.
 

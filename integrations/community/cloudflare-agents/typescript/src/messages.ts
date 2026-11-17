@@ -73,6 +73,11 @@ export interface ConvertedMessages {
   /** The paused tool calls this request resumes (approved or denied), in order. */
   resumed: string[];
   /**
+   * Recorded approvals the request rejects or cancels without carrying their
+   * calls (a client that no longer has them). The record can forget them.
+   */
+  abandoned: string[];
+  /**
    * The reason given for each call this request denies, by tool call id. The
    * AI SDK tells the model in this run; the denied call's result in the
    * history carries it from then on.
@@ -137,11 +142,13 @@ interface OpenCall {
  * decides which calls are still waiting for an answer; without it, the
  * marker does.
  *
- * A request that leaves a waiting approval unanswered, answers it in a way
- * that cannot be honoured, or resumes a call the conversation has moved past
- * is refused (`resumeErrors`): AG-UI forbids an agent to drop an approval
- * nobody answered. A resume entry for something that is not waiting is
- * ignored (`resumeWarnings`), as AG-UI asks.
+ * A request that leaves a waiting approval unanswered, leaves out the call of
+ * an approval the server recorded, answers one in a way that cannot be
+ * honoured, or resumes a call the conversation has moved past is refused
+ * (`resumeErrors`): AG-UI forbids an agent to drop an approval nobody
+ * answered. A recorded approval whose call the request no longer carries can
+ * still be rejected or cancelled (`abandoned`). A resume entry for something
+ * that is not waiting is ignored (`resumeWarnings`), as AG-UI asks.
  */
 export function convertMessages(
   messages: Message[],
@@ -262,6 +269,7 @@ export function convertMessages(
     resumeErrors: settled.errors,
     resumeWarnings: settled.warnings,
     resumed: settled.resumed,
+    abandoned: settled.abandoned,
     denials: settled.denials,
   };
 }
@@ -270,6 +278,7 @@ interface Settlement {
   errors: string[];
   warnings: string[];
   resumed: string[];
+  abandoned: string[];
   denials: Map<string, string>;
 }
 
@@ -299,7 +308,9 @@ function settleOpenCalls(
   for (const id of entries.keys()) {
     // A replayed resume for a call that already has its result is harmless
     // (AG-UI resumes must be idempotent); one that names no call answers nothing.
-    if (!calls.has(id)) warnings.push(`Ignored the resume for "${id}": no such interrupt in this thread.`);
+    if (!calls.has(id) && !recorded?.has(id)) {
+      warnings.push(`Ignored the resume for "${id}": no such interrupt in this thread.`);
+    }
   }
 
   const approvals: ToolPart[] = [];
@@ -381,9 +392,26 @@ function settleOpenCalls(
 
   if (unanswered.length > 0) {
     errors.push(
-      `The thread has approvals waiting for an answer, and the request's resume does not answer ${unanswered
-        .map((id) => `"${id}"`)
-        .join(", ")}.`,
+      `The thread has approvals waiting for an answer, and the request's resume does not answer ${quoted(unanswered)}.`,
+    );
+  }
+
+  // A recorded approval whose call the request leaves out is still waiting:
+  // leaving a call out does not abandon it. A client that no longer has the
+  // call can still reject or cancel it, but cannot approve it.
+  const abandoned: string[] = [];
+  const missing: string[] = [];
+  for (const id of recorded?.keys() ?? []) {
+    if (calls.has(id)) continue;
+    const entry = entries.get(id);
+    const decision = entry && readDecision(entry);
+    if (decision && !("error" in decision) && !decision.approved) abandoned.push(id);
+    else missing.push(id);
+  }
+  if (missing.length > 0) {
+    errors.push(
+      `The thread has approvals waiting for an answer, and the request's history leaves out their calls: ` +
+        `${quoted(missing)}. Send the conversation with the calls, or cancel the approvals.`,
     );
   }
 
@@ -395,7 +423,11 @@ function settleOpenCalls(
     else result.splice(index + 1, 0, { role: "tool", content: parts });
   }
   if (approvals.length > 0) appendToolParts(result, approvals);
-  return { errors, warnings, resumed, denials };
+  return { errors, warnings, resumed, abandoned, denials };
+}
+
+function quoted(ids: string[]): string {
+  return ids.map((id) => `"${id}"`).join(", ");
 }
 
 type Decision = { approved: boolean; reason?: string } | { error: string };
