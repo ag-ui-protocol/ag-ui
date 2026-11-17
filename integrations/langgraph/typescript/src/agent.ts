@@ -195,6 +195,13 @@ export interface LangGraphAgentConfig extends AgentConfig {
    * typed AG-UI events. AG-UI event metadata is preserved. Defaults to true.
    */
   emitRawEvents?: boolean;
+  /**
+   * The run's checkpoint durability (`runs.stream` `durability`). Unset, the
+   * LangGraph server's default applies (`"async"`). The adapter reads
+   * checkpoints by this value, so it must be the one the run uses. A client
+   * cannot set it: `forwardedProps.durability` is dropped.
+   */
+  durability?: Durability;
 }
 
 const ROOT_SUBGRAPH_NAME = "root";
@@ -209,7 +216,7 @@ const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
  * `command.resume` only. Everything else in a LangGraph run payload (config,
  * context, checkpoint, durability, webhook, interrupts, multitask and
  * completion options, metadata) is the operator's: set it with
- * `assistantConfig` or in a subclass.
+ * `assistantConfig`, the `durability` option, or in a subclass.
  */
 const CLIENT_RUN_PROPS = ["streamSubgraphs"] as const;
 
@@ -323,6 +330,8 @@ export class LangGraphAgent extends AbstractAgent {
   enableLegacyOnInterruptEvent: boolean;
   emitInterruptOutcome: boolean;
   emitRawEvents: boolean;
+  /** The operator's run durability; see `LangGraphAgentConfig.durability`. */
+  durability?: Durability;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -331,6 +340,7 @@ export class LangGraphAgent extends AbstractAgent {
       config.enableLegacyOnInterruptEvent ?? true;
     this.emitInterruptOutcome = config.emitInterruptOutcome ?? false;
     this.emitRawEvents = config.emitRawEvents ?? true;
+    this.durability = config.durability;
     this.messagesInProcess = {};
     this.agentName = config.agentName;
     this.graphId = config.graphId;
@@ -388,6 +398,7 @@ export class LangGraphAgent extends AbstractAgent {
       enableLegacyOnInterruptEvent: this.enableLegacyOnInterruptEvent,
       emitInterruptOutcome: this.emitInterruptOutcome,
       emitRawEvents: this.emitRawEvents,
+      durability: this.durability,
 
       assistant: this.assistant,
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
@@ -803,6 +814,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const payload = {
       ...this.clientRunProps(forwardedProps).restProps,
+      ...(this.durability ? { durability: this.durability } : {}),
       input: this.langGraphDefaultMergeState(
         timeTravelCheckpoint.values,
         [messageCheckpoint],
@@ -1117,6 +1129,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const payload: Record<string, unknown> = {
       ...restProps,
+      ...(this.durability ? { durability: this.durability } : {}),
       command: effectiveCommand,
       streamMode,
       input: payloadInput,
@@ -1361,7 +1374,10 @@ export class LangGraphAgent extends AbstractAgent {
             : typeof metadata.langgraph_step === "number"
               ? metadata.langgraph_step - 1
               : undefined;
-          const durability = input.forwardedProps?.durability ?? "async";
+          // The run's durability, which decides when its checkpoints are
+          // saved. It is the operator's: the run never gets a client
+          // `forwardedProps.durability`, so the adapter must not read one.
+          const durability = this.durability ?? "async";
           // Root values and event callbacks are multiplexed independently. A
           // future values pulse can therefore arrive before the first nested
           // callback reveals that an outer node is a subgraph. When the outer

@@ -52,6 +52,8 @@ interface Setup {
   inputProperties?: Record<string, unknown>;
   /** The thread's pending tasks (`threads.getState`), interrupts included. */
   tasks?: any[];
+  /** The operator's run durability (`LangGraphAgentConfig.durability`). */
+  durability?: string;
 }
 
 // The thread already holds the message `input()` sends, so a request built
@@ -64,11 +66,13 @@ function buildAgent({
   stateValues = { messages: [] },
   inputProperties = { messages: {} },
   tasks = [],
+  durability,
 }: Setup = {}) {
   const agent = new LangGraphAgent({
     graphId: "gate",
     deploymentUrl: "http://localhost:8000",
     ...(assistantConfig ? { assistantConfig } : {}),
+    ...(durability ? { durability } : {}),
   } as any);
 
   (agent as any).assistant = {
@@ -677,6 +681,35 @@ describe("client control over where and how a LangGraph run resumes", () => {
       await agent.runAgentStream(input({ durability: "exit" }), subscriber());
 
       expect(streamCalls[0]).not.toHaveProperty("durability");
+    });
+
+    it("the operator's durability reaches the run, and a client value does not change it", async () => {
+      const { agent, streamCalls } = buildAgent({ durability: "exit" });
+
+      await agent.runAgentStream(input({ durability: "sync" }), subscriber());
+
+      expect(streamCalls[0].durability).toBe("exit");
+    });
+
+    it("a regenerate run uses the operator's durability too", async () => {
+      const { agent, streamCalls } = buildAgent({ durability: "exit" });
+      (agent as any).activeRun = { id: "run-1", threadId: "thread-1" };
+      (agent as any).activeRun.schemaKeys = await agent.getSchemaKeys();
+      (agent as any).getCheckpointByMessage = vi.fn().mockResolvedValue({
+        values: { messages: [] },
+        next: ["check_permission"],
+        checkpoint: { checkpoint_id: "ck-1" },
+      });
+
+      await agent.prepareRegenerateStream(
+        {
+          ...input({ durability: "sync" }),
+          messageCheckpoint: { id: "m1", type: "human", content: "go" },
+        } as any,
+        ["values"] as any,
+      );
+
+      expect(streamCalls[0].durability).toBe("exit");
     });
   });
 });
