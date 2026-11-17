@@ -62,21 +62,27 @@ test("only environment-bound jobs read DEVOPS_BOT_PRIVATE_KEY", () => {
   ]);
 });
 
-test("canary reads and cancels runs with its own job token, scoped to the canary job", () => {
-  // actions: write lets the wait step cancel a publish run that is still
-  // pending at the approval deadline. Only the canary job gets it.
+test("canary reads runs with its own job token and never cancels them", () => {
+  // The wait step only reads the publish run: a cancel sent on a stale
+  // `waiting` read could stop a publish that was approved right after it.
   assert.deepEqual(canaryWorkflow.permissions, { contents: "read" });
   assert.deepEqual(Object.keys(canaryWorkflow.jobs), ["canary"]);
   assert.deepEqual(canaryJob.permissions, {
     contents: "read",
-    actions: "write",
+    actions: "read",
   });
   const wait = stepNamed(canaryJob, "Wait for the publish run");
   assert.doesNotMatch(
     wait.run,
     /pending=/,
-    "no `pending` output: a pending run is cancelled, never reported green",
+    "no `pending` output: a pending run is never reported green",
   );
+  for (const step of canaryJob.steps)
+    assert.doesNotMatch(
+      String(step.run ?? ""),
+      /^\s*gh run cancel/m,
+      `${step.name}: no step cancels a run`,
+    );
   assert.equal(canaryJob["timeout-minutes"], 180, "the agreed 180 minutes");
   assert.ok(wait["timeout-minutes"] > 60, "outlasts the one-hour app token");
   assert.ok(
@@ -158,6 +164,10 @@ type JobFake = {
   // `gh run cancel`: "ok" makes every later status read report the run as
   // completed (conclusion cancelled); anything else fails the request.
   cancel?: "ok" | "error";
+  // A stateful backend: the run starts in `status`. Right after the Nth status
+  // read returns `waiting`, the deployment is approved and the run moves to
+  // `in_progress` before the workflow's next command.
+  approveAfterRead?: number;
 };
 
 function fakeGh(dir: string, fake: JobFake): string {
@@ -171,7 +181,16 @@ const fs = require("node:fs");
 const fake = ${JSON.stringify(fake)};
 const args = process.argv.slice(2);
 const token = process.env.GH_TOKEN ?? "";
-fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ token, args }) + "\\n");
+const stateFile = ${JSON.stringify(join(dir, "state"))};
+const readsFile = ${JSON.stringify(join(dir, "reads"))};
+const cancelled = ${JSON.stringify(join(dir, "cancelled"))};
+// The backend's run status at the moment of this call.
+const state = fs.existsSync(cancelled)
+  ? "completed"
+  : fs.existsSync(stateFile)
+    ? fs.readFileSync(stateFile, "utf8")
+    : fake.status;
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ token, args, state }) + "\\n");
 const perms = Object.fromEntries(
   token.replace(/^\\w+:/, "").split(",").filter(Boolean).map((p) => p.split("=")),
 );
@@ -182,7 +201,6 @@ const deny = () => {
   process.exit(1);
 };
 const cmd = args.slice(0, 2).join(" ");
-const cancelled = ${JSON.stringify(join(dir, "cancelled"))};
 if (cmd === "api run") process.exit(2);
 if (cmd === "run cancel") {
   if (!can("actions", "write")) deny();
@@ -226,8 +244,12 @@ if (cmd === "run view") {
     process.stdout.write(both ? "completed cancelled\\n" : "completed\\n");
     process.exit(0);
   }
-  if (fake.status === null) process.exit(1);
-  process.stdout.write(fake.status + "\\n");
+  if (state === null) process.exit(1);
+  process.stdout.write(state + "\\n");
+  const reads = (fs.existsSync(readsFile) ? Number(fs.readFileSync(readsFile, "utf8")) : 0) + 1;
+  fs.writeFileSync(readsFile, String(reads));
+  if (reads === fake.approveAfterRead && state === "waiting")
+    fs.writeFileSync(stateFile, "in_progress");
   process.exit(0);
 }
 if (cmd === "run watch") {
@@ -286,13 +308,23 @@ function runCanary(
       mintFails,
       jobConditionEvaluatedByCaller: true,
     });
-    const calls = readFileSync(log, "utf8")
+    const logged = readFileSync(log, "utf8")
       .split("\n")
       .filter(Boolean)
-      .map((l) => JSON.parse(l) as { token: string; args: string[] });
+      .map(
+        (l) =>
+          JSON.parse(l) as {
+            token: string;
+            args: string[];
+            state: string | null;
+          },
+      );
+    const calls = logged.map(({ token, args }) => ({ token, args }));
+    // The backend's run status when each call was made, in call order.
+    const backend = logged;
     const ran = (name: string) =>
       job.log.find((l: any) => l.step.name === name);
-    return { job, calls, ran };
+    return { job, calls, backend, ran };
   } finally {
     rmSync(bin, { recursive: true, force: true });
   }
@@ -454,7 +486,7 @@ test("canary job: a run that was never located is never cleaned up", () => {
 const isCancel = (c: { args: string[] }) =>
   c.args.slice(0, 2).join(" ") === "run cancel";
 
-test("canary job: a run still pending at the deadline is cancelled, the job is red, the ref deleted", () => {
+test("canary job: a run still pending at the deadline times out uncancelled, the job is red, the ref kept", () => {
   const { job, calls, ran } = runCanary(
     { runs: "4242", status: "waiting", cancel: "ok", del: "ok" },
     undefined,
@@ -463,41 +495,18 @@ test("canary job: a run still pending at the deadline is cancelled, the job is r
   assert.equal(job.status, "failure");
   const wait = ran("Wait for the publish run")!;
   assert.equal(wait.outcome, "failure");
-  const cancel = calls.filter(isCancel);
-  assert.deepEqual(cancel, [
-    { token: JOB_TOKEN, args: ["run", "cancel", "4242", "--repo", "o/r"] },
-  ]);
-  assert.match(JOB_TOKEN, /actions=write/);
-  assert.match(
+  assert.equal(calls.filter(isCancel).length, 0);
+  assert.ok(
+    wait.stdout.includes(
+      `::error::Timed out waiting for publish run 4242: not approved within the 0-minute approval window (status: waiting). It was not cancelled, as an approval can start the publish at any moment. Run 4242 and the canary ref ${BRANCH} are kept.`,
+    ),
     wait.stdout,
-    /::error::Publish run 4242 was not approved within the 0-minute approval window \(status: waiting\)\. Cancelled run 4242 so it stops holding the release-publish-prerelease concurrency group\./,
+  );
+  assert.ok(
+    wait.stdout.includes("cancel it with: gh run cancel 4242 --repo o/r"),
+    wait.stdout,
   );
   assert.equal(job.steps.wait.outputs.pending, undefined);
-  // The Delete step then sees the cancelled run as completed.
-  const del = calls.filter(isDelete);
-  assert.equal(del.length, 1);
-  assert.equal(del[0].token, CLEANUP_TOKEN);
-  assert.match(
-    ran("Delete canary ref")!.stdout,
-    new RegExp(`Deleted ${BRANCH}`),
-  );
-});
-
-test("canary job: a failed cancel at the deadline is red, names the command, and keeps the ref", () => {
-  const { job, calls, ran } = runCanary(
-    { runs: "4242", status: "waiting", cancel: "error", del: "ok" },
-    undefined,
-    { WAIT_SECONDS: "0" },
-  );
-  assert.equal(job.status, "failure");
-  assert.equal(calls.filter(isCancel).length, 1);
-  const wait = ran("Wait for the publish run")!;
-  assert.match(wait.stdout, /::error::Publish run 4242 was not approved/);
-  assert.match(wait.stdout, /the cancel request failed/);
-  assert.ok(
-    wait.stdout.includes("Cancel it with: gh run cancel 4242 --repo o/r"),
-    wait.stdout,
-  );
   assert.equal(calls.filter(isDelete).length, 0);
   assert.ok(
     ran("Delete canary ref")!.stdout.includes(`Leaving ${BRANCH} in place`),
@@ -522,6 +531,71 @@ test("canary job: an approved run still publishing at the deadline is not cancel
   assert.equal(calls.filter(isDelete).length, 0);
   assert.ok(
     ran("Delete canary ref")!.stdout.includes(`Leaving ${BRANCH} in place`),
+  );
+});
+
+// The approval race at the deadline: the status read says `waiting`, and the
+// deployment is approved right after it, so the publish run is `in_progress`
+// before the workflow's next command. Any cancel sent on that stale read would
+// stop a package push partway. Approval is also tried right after each later
+// status read, so a re-read before a cancel does not close the race either.
+for (const read of [1, 2, 3]) {
+  test(`canary job: an approval right after status read ${read} at the deadline is never cancelled, and the ref stays while it publishes`, () => {
+    const { job, backend, ran } = runCanary(
+      {
+        runs: "4242",
+        status: "waiting",
+        approveAfterRead: read,
+        cancel: "ok",
+        del: "ok",
+      },
+      undefined,
+      { WAIT_SECONDS: "0" },
+    );
+    assert.deepEqual(
+      backend.filter(isCancel).map((c) => c.state),
+      [],
+      "no cancel request, whatever state the run was in",
+    );
+    assert.deepEqual(
+      backend
+        .filter((c) => isDelete(c) && c.state !== "completed")
+        .map((c) => c.state),
+      [],
+      "no ref DELETE while the publish run is not completed",
+    );
+    // Approved after the wait step's only read: the cleanup's own fresh read
+    // sees the run publishing.
+    if (read === 1)
+      assert.equal(backend.filter(isStatus).at(-1)!.state, "in_progress");
+    assert.equal(job.status, "failure");
+    const wait = ran("Wait for the publish run")!;
+    assert.equal(wait.outcome, "failure");
+    assert.ok(
+      wait.stdout.includes(
+        `::error::Timed out waiting for publish run 4242: not approved within the 0-minute approval window (status: waiting). It was not cancelled`,
+      ),
+      wait.stdout,
+    );
+    assert.ok(wait.stdout.includes(`canary ref ${BRANCH}`), wait.stdout);
+    const del = ran("Delete canary ref")!;
+    assert.equal(del.status, 0);
+    assert.ok(del.stdout.includes(`Leaving ${BRANCH} in place`), del.stdout);
+  });
+}
+
+test("canary job: a completed/success run stays green and its ref is deleted", () => {
+  const { job, backend } = runCanary({
+    runs: "4242",
+    status: "completed",
+    watch: "success",
+    del: "ok",
+  });
+  assert.equal(job.status, "success");
+  assert.equal(backend.filter(isCancel).length, 0);
+  assert.deepEqual(
+    backend.filter(isDelete).map((c) => c.state),
+    ["completed"],
   );
 });
 
@@ -641,6 +715,7 @@ function runCanaryStep(
 // The step contexts the wait and cleanup steps read; run id 42.
 const STEP_GITHUB = { repository: "o/r", token: "job-token" };
 const DISPATCHED = { outputs: { run_id: "42", located: "true" } };
+const SLUG = { outputs: { branch: "canary/x-1-1" } };
 
 function runWait(
   fake: StepFake,
@@ -648,7 +723,10 @@ function runWait(
   timeoutMs?: number,
 ) {
   return runCanaryStep("Wait for the publish run", fake, {
-    ctx: { github: STEP_GITHUB, steps: { dispatch: DISPATCHED } },
+    ctx: {
+      github: STEP_GITHUB,
+      steps: { dispatch: DISPATCHED, slug: SLUG },
+    },
     // Fast, bounded retries in place of the workflow's real settings.
     set: {
       WAIT_SECONDS: "60",
@@ -667,15 +745,11 @@ test("canary wait settings fit inside the step's approval window", () => {
   const base = Number(wait.env.RETRY_BASE_SECONDS);
   const attempts = Number(wait.env.MAX_WATCH_ATTEMPTS);
   assert.ok(waitSeconds > 60 * 60, "wait must outlast the one-hour app token");
-  const cancelSeconds =
-    Number(wait.env.CANCEL_POLLS) * Number(wait.env.CANCEL_POLL_SECONDS);
+  for (const key of Object.keys(wait.env))
+    assert.doesNotMatch(key, /^CANCEL_/, "the wait step never cancels");
   assert.ok(
-    cancelSeconds > 0 && cancelSeconds <= 60,
-    "the cancel is confirmed within about a minute",
-  );
-  assert.ok(
-    waitSeconds + cancelSeconds <= stepSeconds - 120,
-    "own deadline and the cancel finish before the step timeout",
+    waitSeconds <= stepSeconds - 120,
+    "own deadline comes before the step timeout",
   );
   assert.ok(
     base > 0 && attempts > 1,
@@ -731,36 +805,17 @@ function runDeadline(fake: StepFake, set: Record<string, string> = {}) {
   );
 }
 
-test("canary wait cancels a publish run still pending at the approval deadline, then fails", () => {
-  const r = runDeadline({
-    view: ["waiting ", "completed cancelled"],
-    cancel: ["ok"],
-  });
-  assert.equal(r.status, 1, r.out);
-  assert.match(r.log, /^run cancel 42 --repo o\/r$/m);
-  const msg =
-    "Publish run 42 was not approved within the 0-minute approval window (status: waiting). Cancelled run 42 so it stops holding the release-publish-prerelease concurrency group. Re-run this canary and approve the deployment within the window.";
-  assert.ok(r.out.includes(`::error::${msg}`), r.out);
-  assert.ok(r.summary.includes(msg), r.summary);
-  assert.equal(r.outputs.pending, undefined);
-});
-
-// Every status of a run that has not started publishing is cancelled at the
-// deadline; `waiting` is the approval gate itself (tested above).
-for (const status of ["queued", "pending", "requested"]) {
-  test(`canary wait cancels a run still ${status} at the approval deadline, then fails`, () => {
-    const r = runDeadline({
-      view: [`${status} `, "completed cancelled"],
-      cancel: ["ok"],
-    });
+// Every status of a run that has not started publishing times out at the
+// deadline, uncancelled, with the run and the canary ref kept.
+for (const status of ["waiting", "queued", "pending", "requested"]) {
+  test(`canary wait times out a run still ${status} at the approval deadline, without a cancel`, () => {
+    const r = runDeadline({ view: [`${status} `], cancel: ["ok"] });
     assert.equal(r.status, 1, r.out);
-    assert.equal(r.log.match(/^run cancel 42 --repo o\/r$/gm)?.length, 1);
-    assert.ok(
-      r.out.includes(
-        `::error::Publish run 42 was not approved within the 0-minute approval window (status: ${status}). Cancelled run 42`,
-      ),
-      r.out,
-    );
+    assert.doesNotMatch(r.log, /^run cancel /m, "no cancel, ever");
+    const msg = `Timed out waiting for publish run 42: not approved within the 0-minute approval window (status: ${status}). It was not cancelled, as an approval can start the publish at any moment. Run 42 and the canary ref canary/x-1-1 are kept. Approve it to publish, or, only while it still waits for approval, cancel it with: gh run cancel 42 --repo o/r. Until it ends it holds the release-publish-prerelease concurrency group and blocks every later canary. Then re-run this canary.`;
+    assert.ok(r.out.includes(`::error::${msg}`), r.out);
+    assert.ok(r.summary.includes(msg), r.summary);
+    assert.equal(r.outputs.pending, undefined);
   });
 }
 
@@ -771,7 +826,7 @@ test("canary wait fails an approved run still in progress at the deadline, witho
   assert.equal(r.status, 1, r.out);
   assert.doesNotMatch(r.log, /^run cancel /m, "no cancel of a publishing run");
   const msg =
-    "Publish run 42 was approved and is still publishing at the end of the 0-minute approval window (status: in_progress). Not cancelled, so the publish is not stopped partway. Check that run for its outcome.";
+    "Publish run 42 was approved and is still publishing at the end of the 0-minute approval window (status: in_progress). Not cancelled, so the publish is not stopped partway. Run 42 and the canary ref canary/x-1-1 are kept. Check that run for its outcome.";
   assert.ok(r.out.includes(`::error::${msg}`), r.out);
   assert.ok(r.summary.includes(msg), r.summary);
   assert.doesNotMatch(r.out, /not approved/);
@@ -783,55 +838,22 @@ test("canary wait fails a run in an unknown status at the deadline, without a ca
   assert.doesNotMatch(r.log, /^run cancel /m);
   assert.ok(
     r.out.includes(
-      "::error::Publish run 42 is in an unexpected status at the end of the 0-minute approval window (status: mystery). Not cancelled. Check that run; if it is still pending, cancel it with: gh run cancel 42 --repo o/r",
+      "::error::Publish run 42 is in an unexpected status at the end of the 0-minute approval window (status: mystery). Not cancelled. Run 42 and the canary ref canary/x-1-1 are kept. Check that run; if it is still waiting for approval, cancel it with: gh run cancel 42 --repo o/r",
     ),
     r.out,
   );
 });
 
-test("canary wait fails with the cancel command when the cancel request fails", () => {
-  const r = runDeadline({ view: ["waiting "], cancel: ["err"] });
-  assert.equal(r.status, 1, r.out);
-  assert.equal(r.log.match(/^run cancel /gm)?.length, 1);
-  assert.equal(
-    r.log.match(/^run view /gm)?.length,
-    1,
-    "no status polling after a failed cancel",
-  );
-  assert.match(r.out, /::error::Publish run 42 was not approved/);
-  assert.match(r.out, /the cancel request failed/);
-  assert.match(r.out, /blocks every later canary/);
-  assert.ok(
-    r.out.includes("Cancel it with: gh run cancel 42 --repo o/r"),
-    r.out,
-  );
-  assert.match(r.summary, /gh run cancel 42 --repo o\/r/);
-});
-
-test("canary wait fails with the cancel command when the run does not stop after the cancel", () => {
-  const r = runDeadline(
-    { view: ["waiting "], cancel: ["ok"] },
-    { CANCEL_POLLS: "3", CANCEL_POLL_SECONDS: "0" },
-  );
-  assert.equal(r.status, 1, r.out);
-  assert.equal(r.log.match(/^run cancel /gm)?.length, 1);
-  assert.equal(r.log.match(/^run view /gm)?.length, 1 + 3, "bounded polling");
-  assert.match(
-    r.out,
-    /had not stopped within 0 s of the cancel \(status: waiting\)/,
-  );
-  assert.ok(
-    r.out.includes("Cancel it with: gh run cancel 42 --repo o/r"),
-    r.out,
-  );
-});
-
-test("canary wait fails at the deadline on an API error and names the cancel command", () => {
+test("canary wait times out on an API error at the deadline and names the cancel command", () => {
   const r = runDeadline({ view: ["err"] });
   assert.equal(r.status, 1, r.out);
   assert.doesNotMatch(r.log, /^run cancel /m, "no cancel of an unknown run");
-  assert.match(r.out, /could not read the status of publish run 42/);
+  assert.match(
+    r.out,
+    /::error::Timed out waiting for publish run 42: stopped after the 0-minute approval window and could not read its status/,
+  );
   assert.ok(r.out.includes("gh run cancel 42 --repo o/r"), r.out);
+  assert.ok(r.out.includes("canary ref canary/x-1-1 are kept"), r.out);
 });
 
 test("canary wait succeeds when the run completes at the deadline, without a cancel", () => {
