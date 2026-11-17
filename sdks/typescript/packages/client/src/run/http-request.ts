@@ -1,5 +1,6 @@
 import { Observable, from, defer, throwError } from "rxjs";
 import { mergeMap, switchMap } from "rxjs/operators";
+import { resolveIdleTimeoutMs } from "../agent/types";
 
 export enum HttpEventType {
   HEADERS = "headers",
@@ -58,29 +59,98 @@ export const runHttpRequest = (
   fetchResponse: () => Promise<Response>,
   options?: RunHttpRequestOptions,
 ): Observable<HttpEvent> => {
+  const idleTimeoutMs = resolveIdleTimeoutMs(options?.idleTimeoutMs);
+  if (idleTimeoutMs === undefined) {
+    return buildHttpRequest(fetchResponse);
+  }
+
+  return withIdleTimeout(
+    (onActivity) => buildHttpRequest(fetchResponse, onActivity),
+    idleTimeoutMs,
+    options,
+  );
+};
+
+function buildHttpError(status: number, contentType: string, text: string): Error {
+  let payload: unknown = text;
+  if (contentType.includes("application/json")) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      /* keep raw text */
+    }
+  }
+  const err: Error & { status?: number; payload?: unknown } = new Error(
+    `HTTP ${status}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`,
+  );
+  err.status = status;
+  err.payload = payload;
+  return err;
+}
+
+function readErrorBody(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  status: number,
+  contentType: string,
+  onActivity: () => void,
+): Observable<never> {
+  return new Observable<never>((subscriber) => {
+    let settled = false;
+    const decoder = new TextDecoder();
+    const chunks: string[] = [];
+
+    (async () => {
+      try {
+        while (!subscriber.closed) {
+          const { done, value } = await reader.read();
+          if (done) {
+            settled = true;
+            break;
+          }
+          if (subscriber.closed) {
+            break;
+          }
+          onActivity();
+          if (value !== undefined) {
+            chunks.push(decoder.decode(value, { stream: true }));
+          }
+        }
+        if (!subscriber.closed) {
+          chunks.push(decoder.decode());
+          subscriber.error(buildHttpError(status, contentType, chunks.join("")));
+        }
+      } catch (error) {
+        settled = true;
+        subscriber.error(error);
+      }
+    })();
+
+    return () => {
+      if (settled) return;
+      void reader.cancel().catch(() => {});
+    };
+  });
+}
+
+function buildHttpRequest(
+  fetchResponse: () => Promise<Response>,
+  onActivity?: () => void,
+): Observable<HttpEvent> {
   // Defer the fetch so that it's executed when subscribed to
-  const request$ = defer(() => from(fetchResponse())).pipe(
+  return defer(() => from(fetchResponse())).pipe(
     switchMap((response) => {
+      onActivity?.();
       if (!response.ok) {
         const contentType = response.headers.get("content-type") || "";
+        if (onActivity) {
+          const reader = response.body?.getReader?.();
+          if (reader) {
+            return readErrorBody(reader, response.status, contentType, onActivity);
+          }
+        }
         // Read the (small) error body once, then error the stream
         return from(response.text()).pipe(
-          mergeMap((text) => {
-            let payload: unknown = text;
-            if (contentType.includes("application/json")) {
-              try {
-                payload = JSON.parse(text);
-              } catch {
-                /* keep raw text */
-              }
-            }
-            const err: Error & { status?: number; payload?: unknown } = new Error(
-              `HTTP ${response.status}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`,
-            );
-            err.status = response.status;
-            err.payload = payload;
-            return throwError(() => err);
-          }),
+          mergeMap((text) => throwError(() => buildHttpError(response.status, contentType, text))),
         );
       }
       // Emit headers event first
@@ -108,6 +178,7 @@ export const runHttpRequest = (
                 settled = true;
                 break;
               }
+              onActivity?.();
               // Emit data event instead of raw Uint8Array
               const dataEvent: HttpDataEvent = {
                 type: HttpEventType.DATA,
@@ -139,23 +210,17 @@ export const runHttpRequest = (
       });
     }),
   );
-
-  const idleTimeoutMs = options?.idleTimeoutMs;
-  if (idleTimeoutMs === undefined) {
-    return request$;
-  }
-
-  return withIdleTimeout(request$, idleTimeoutMs, options);
-};
+}
 
 /**
- * Arms a timer on subscribe (time-to-headers) and resets it on every HttpEvent
- * (headers, then every body chunk). Parsed AG-UI events are irrelevant; an SSE
- * `: ping` comment is still a DATA chunk. Completing, erroring, unsubscribing,
- * or a user abort all clear the timer so it cannot fire after the run ends.
+ * Arms a timer on subscribe (time-to-headers) and resets it on `onActivity`
+ * (response headers, then every body chunk across both 2xx and error responses).
+ * Parsed AG-UI events are irrelevant; an SSE `: ping` comment is still a body
+ * chunk. Completing, erroring, unsubscribing, or a user abort all clear the
+ * timer so it cannot fire after the run ends.
  */
 function withIdleTimeout(
-  source$: Observable<HttpEvent>,
+  buildSource: (onActivity: () => void) => Observable<HttpEvent>,
   idleTimeoutMs: number,
   options?: RunHttpRequestOptions,
 ): Observable<HttpEvent> {
@@ -171,11 +236,16 @@ function withIdleTimeout(
       }
     };
 
+    const isExternallyAborted = () =>
+      Boolean(abortSignal?.aborted && !(abortSignal.reason instanceof HttpAgentIdleTimeoutError));
+
     const armIdleTimer = () => {
       clearIdleTimer();
+      if (timedOut || subscriber.closed || isExternallyAborted()) {
+        return;
+      }
       timer = setTimeout(() => {
-        if (timedOut) return;
-        if (abortSignal?.aborted && !(abortSignal.reason instanceof HttpAgentIdleTimeoutError)) {
+        if (timedOut || isExternallyAborted()) {
           return;
         }
         timedOut = true;
@@ -193,10 +263,9 @@ function withIdleTimeout(
     abortSignal?.addEventListener("abort", onAbort);
 
     armIdleTimer();
-    const subscription = source$.subscribe({
+    const subscription = buildSource(armIdleTimer).subscribe({
       next: (event) => {
         if (timedOut) return;
-        armIdleTimer();
         subscriber.next(event);
       },
       error: (err) => {

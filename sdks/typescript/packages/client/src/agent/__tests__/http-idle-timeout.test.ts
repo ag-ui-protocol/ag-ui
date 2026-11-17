@@ -2,8 +2,8 @@ import { EventType, AGUIError } from "@ag-ui/core";
 import * as encoder from "@ag-ui/encoder";
 import * as proto from "@ag-ui/proto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HttpAgent } from "../http";
-import { HttpAgentIdleTimeoutError } from "../../run/http-request";
+import { HttpAgent, MAX_IDLE_TIMEOUT_MS } from "../index";
+import { HttpAgentIdleTimeoutError, runHttpRequest } from "../../run/http-request";
 import type { HttpAgentFetchFn } from "../types";
 import type { AgentSubscriber } from "../subscriber";
 import type { BaseEvent } from "@ag-ui/core";
@@ -47,6 +47,7 @@ function hangingHeadersFetch(): HttpAgentFetchFn {
 function streamingFetch(
   headers: HeadersInit,
   onReady: (body: BodyHandle) => void,
+  status = 200,
 ): HttpAgentFetchFn {
   return (_url, init) => {
     let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -66,7 +67,7 @@ function streamingFetch(
       push: (chunk) => controller.enqueue(chunk),
       close: () => controller.close(),
     });
-    return Promise.resolve(new Response(stream, { status: 200, headers }));
+    return Promise.resolve(new Response(stream, { status, headers }));
   };
 }
 
@@ -380,5 +381,168 @@ describe("HttpAgent idleTimeoutMs", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(HttpAgentIdleTimeoutError);
+  });
+
+  it("enforces MAX_IDLE_TIMEOUT_MS on HttpAgent and runHttpRequest", () => {
+    const url = "https://example.test/agent";
+    expect(MAX_IDLE_TIMEOUT_MS).toBe(2_147_483_647);
+
+    const maxAgent = new HttpAgent({ url, idleTimeoutMs: 2_147_483_647 });
+    expect(maxAgent.idleTimeoutMs).toBe(2_147_483_647);
+
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1_000;
+    for (const idleTimeoutMs of [2_147_483_648, thirtyDaysMs]) {
+      expect(() => new HttpAgent({ url, idleTimeoutMs })).toThrow(AGUIError);
+      expect(() => new HttpAgent({ url, idleTimeoutMs })).toThrow(/idleTimeoutMs/);
+      expect(() => new HttpAgent({ url, idleTimeoutMs })).toThrow(/2147483647/);
+    }
+
+    const unusedFetch = vi.fn();
+    expect(() => runHttpRequest(unusedFetch, { idleTimeoutMs: 2_147_483_648 })).toThrow(AGUIError);
+    expect(() => runHttpRequest(unusedFetch, { idleTimeoutMs: 2_147_483_648 })).toThrow(
+      /idleTimeoutMs/,
+    );
+    expect(unusedFetch).not.toHaveBeenCalled();
+  });
+
+  it("resets the idle timer per chunk on a slow streaming non-2xx error body", async () => {
+    let body: BodyHandle | undefined;
+    const agent = new HttpAgent({
+      url: "https://example.test/agent",
+      fetch: streamingFetch(
+        { "content-type": "application/json" },
+        (handle) => {
+          body = handle;
+        },
+        503,
+      ),
+      idleTimeoutMs: 2_000,
+    });
+
+    const onRunFailed = vi.fn();
+    const run = agent.runAgent({ runId: "slow-503" }, { onRunFailed });
+    const caught = run.then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(body).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    body!.push(textEncoder.encode('{"error":'));
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(onRunFailed).not.toHaveBeenCalled();
+
+    body!.push(textEncoder.encode('"service '));
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(onRunFailed).not.toHaveBeenCalled();
+
+    body!.push(textEncoder.encode('unavailable"}'));
+    body!.close();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const err = await caught;
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(HttpAgentIdleTimeoutError);
+    expect(err).toMatchObject({
+      status: 503,
+      payload: { error: "service unavailable" },
+    });
+    expect((err as Error).message).toBe('HTTP 503: {"error":"service unavailable"}');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("falls back to response.text() on a non-2xx response without a body reader", async () => {
+    const mockResponse = {
+      ok: false,
+      status: 502,
+      headers: new Headers({ "content-type": "application/json" }),
+      body: null,
+      text: vi.fn().mockResolvedValue('{"error":"bad gateway"}'),
+    } as unknown as Response;
+
+    const agent = new HttpAgent({
+      url: "https://example.test/agent",
+      fetch: () => Promise.resolve(mockResponse),
+      idleTimeoutMs: 2_000,
+    });
+
+    await expect(agent.runAgent({ runId: "no-reader-502" })).rejects.toMatchObject({
+      status: 502,
+      payload: { error: "bad gateway" },
+    });
+    expect(mockResponse.text).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("times out a non-2xx response whose error body stalls after one chunk", async () => {
+    let body: BodyHandle | undefined;
+    const agent = new HttpAgent({
+      url: "https://example.test/agent",
+      fetch: streamingFetch(
+        { "content-type": "application/json" },
+        (handle) => {
+          body = handle;
+        },
+        503,
+      ),
+      idleTimeoutMs: 2_000,
+    });
+
+    const onRunFailed = vi.fn();
+    const run = agent.runAgent({ runId: "stalled-503" }, { onRunFailed });
+    const rejected = expect(run).rejects.toBeInstanceOf(HttpAgentIdleTimeoutError);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    body!.push(textEncoder.encode('{"error":'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(onRunFailed).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+    await expect(run).rejects.toMatchObject({
+      code: "IDLE_TIMEOUT",
+      idleTimeoutMs: 2_000,
+    });
+    expect(onRunFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the idle timer and removes the abort listener on unsubscribe", async () => {
+    const abortController = new AbortController();
+    const addListenerSpy = vi.spyOn(abortController.signal, "addEventListener");
+    const removeListenerSpy = vi.spyOn(abortController.signal, "removeEventListener");
+    const cancel = vi.fn(() => Promise.resolve());
+    const neverEndingStream = new ReadableStream<Uint8Array>({ cancel });
+    const onIdleTimeout = vi.fn();
+    const errors: unknown[] = [];
+
+    const subscription = runHttpRequest(
+      () => Promise.resolve(new Response(neverEndingStream, { status: 200, headers: sseHeaders })),
+      {
+        idleTimeoutMs: 2_000,
+        abortSignal: abortController.signal,
+        onIdleTimeout,
+      },
+    ).subscribe({
+      error: (err) => errors.push(err),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(1);
+    const abortCall = addListenerSpy.mock.calls.find(([type]) => type === "abort");
+    expect(abortCall).toBeDefined();
+
+    subscription.unsubscribe();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(removeListenerSpy).toHaveBeenCalledWith("abort", abortCall![1]);
+    expect(cancel).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(errors).toEqual([]);
+    expect(onIdleTimeout).not.toHaveBeenCalled();
   });
 });
