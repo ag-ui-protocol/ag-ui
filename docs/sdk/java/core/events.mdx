@@ -1,44 +1,135 @@
 ---
 title: "Events"
-description: "Java event types used by the Agent User Interaction Protocol"
+description: "The AG-UI event model in the Java SDK"
 ---
 
 # Events
 
-All events live in `com.agui.core.event` and share `BaseEvent` with a `type` and `timestamp`.
+All events live in `com.agui.community.core.event`. `Event` is a sealed interface, and each event type is a record that implements it. Every event has these base fields:
 
-## Lifecycle Events
+| Accessor | Type | Description |
+|----------|------|-------------|
+| `type()` | `EventType` | The discriminator, for example `EventType.RUN_STARTED`. `type().value()` returns the wire string. |
+| `timestamp()` | `Long` | Creation time in epoch milliseconds, or `null` |
+| `rawEvent()` | `Object` | The original upstream event, or `null` |
 
-- `RunStartedEvent`
-- `RunFinishedEvent`
-- `RunErrorEvent`
-- `StepStartedEvent`
-- `StepFinishedEvent`
+Each record has a short constructor that leaves out `timestamp` and `rawEvent`, and usually other optional fields too. Use the canonical constructor when you need them.
 
-## Text Message Events
+## Handling events
 
-- `TextMessageStartEvent` — Begin of a streamed assistant message
-- `TextMessageContentEvent` — Incremental content chunks (`delta`)
-- `TextMessageEndEvent` — Message finished
+Because `Event` is sealed, you can handle events with a `switch`:
 
-## Tool Call Events
+```java
+String describe(Event event) {
+    return switch (event) {
+        case RunStartedEvent e         -> "run started: " + e.runId();
+        case TextMessageContentEvent e -> "text: " + e.delta();
+        case ToolCallStartEvent e      -> "tool call: " + e.toolCallName();
+        case RunErrorEvent e           -> "error: " + e.message();
+        case RunFinishedEvent e        -> "run finished";
+        default                        -> event.type().value();
+    };
+}
+```
 
-- `ToolCallStartEvent`
-- `ToolCallArgsEvent`
-- `ToolCallEndEvent`
-- `ToolCallResultEvent`
+Remove the `default` branch to have the compiler check that you handle every event type.
 
-## State Management Events
+<Note>
+Pattern matching for `switch` requires Java 21. On Java 17, use `instanceof` patterns instead: `if (event instanceof TextMessageContentEvent e) { ... }`.
+</Note>
 
-- `StateSnapshotEvent`
-- `StateDeltaEvent`
-- `MessagesSnapshotEvent`
+## Lifecycle events
 
-## Special Events
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `RunStartedEvent` | `threadId`, `runId`, `parentRunId`, `input` | `(threadId, runId)` |
+| `RunFinishedEvent` | `threadId`, `runId`, `outcome`, `result` | `(threadId, runId)` |
+| `RunErrorEvent` | `message`, `code` | `(message)` |
+| `StepStartedEvent` | `stepName` | `(stepName)` |
+| `StepFinishedEvent` | `stepName` | `(stepName)` |
 
-- `RawEvent` — Raw payload passthrough
-- `CustomEvent` — Application-specific event
+`RunFinishedEvent.outcome` is a `RunOutcome` (`SuccessOutcome` or `InterruptOutcome`). See [Interrupts](/sdk/java/core/types#interrupts).
 
-See also: `AgentSubscriber` callbacks in the client docs for handling these events.
+## Text message events
 
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `TextMessageStartEvent` | `messageId`, `role` | `(messageId, role)` |
+| `TextMessageContentEvent` | `messageId`, `delta` | `(messageId, delta)` |
+| `TextMessageEndEvent` | `messageId` | `(messageId)` |
+| `TextMessageChunkEvent` | `messageId`, `role`, `delta` (all optional) | `(messageId, role, delta)` |
 
+```java
+String id = UUID.randomUUID().toString();
+publisher.submit(new TextMessageStartEvent(id, Role.ASSISTANT));
+publisher.submit(new TextMessageContentEvent(id, "Hello, "));
+publisher.submit(new TextMessageContentEvent(id, "world!"));
+publisher.submit(new TextMessageEndEvent(id));
+```
+
+## Tool call events
+
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `ToolCallStartEvent` | `toolCallId`, `toolCallName`, `parentMessageId` | `(toolCallId, toolCallName)` |
+| `ToolCallArgsEvent` | `toolCallId`, `delta` | `(toolCallId, delta)` |
+| `ToolCallEndEvent` | `toolCallId` | `(toolCallId)` |
+| `ToolCallResultEvent` | `messageId`, `toolCallId`, `content`, `role` | `(messageId, toolCallId, content)` |
+| `ToolCallChunkEvent` | `toolCallId`, `toolCallName`, `parentMessageId`, `delta` (all optional) | `(toolCallId, toolCallName, delta)` |
+
+`ToolCallArgsEvent.delta` values are fragments of a JSON string. Concatenate them to get the full arguments.
+
+## Reasoning events
+
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `ReasoningStartEvent` | `messageId` | `(messageId)` |
+| `ReasoningMessageStartEvent` | `messageId`, `role` (always `Role.REASONING`) | `(messageId)` |
+| `ReasoningMessageContentEvent` | `messageId`, `delta` | `(messageId, delta)` |
+| `ReasoningMessageEndEvent` | `messageId` | `(messageId)` |
+| `ReasoningMessageChunkEvent` | `messageId`, `delta` | `(messageId, delta)` |
+| `ReasoningEndEvent` | `messageId` | `(messageId)` |
+| `ReasoningEncryptedValueEvent` | `subtype`, `entityId`, `encryptedValue` | `(subtype, entityId, encryptedValue)` |
+
+`ReasoningMessageStartEvent` defaults `role` to `REASONING` and rejects any other role.
+
+## State management events
+
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `StateSnapshotEvent` | `snapshot` (any JSON value) | `(snapshot)` |
+| `StateDeltaEvent` | `delta` (`List<JsonPatchOperation>`) | `(delta)` |
+| `MessagesSnapshotEvent` | `messages` (`List<Message>`) | `(messages)` |
+
+`StateDeltaEvent` carries an [RFC 6902](https://datatracker.ietf.org/doc/html/rfc6902) JSON Patch:
+
+```java
+public record JsonPatchOperation(String op, String path, String from, Object value)
+
+publisher.submit(new StateDeltaEvent(List.of(
+        new JsonPatchOperation("replace", "/counter", 43),
+        new JsonPatchOperation("add", "/items/-", "new item"))));
+```
+
+## Activity events
+
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `ActivitySnapshotEvent` | `messageId`, `activityType`, `content`, `replace` | `(messageId, activityType, content)` |
+| `ActivityDeltaEvent` | `messageId`, `activityType`, `patch` (`List<JsonPatchOperation>`) | `(messageId, activityType, patch)` |
+
+## Special events
+
+| Record | Fields | Short constructor |
+|--------|--------|-------------------|
+| `RawEvent` | `event`, `source` | `(event)` |
+| `CustomEvent` | `name`, `value` | `(name, value)` |
+| `MetaEvent` | `metaType`, `payload` | `(metaType, payload)` |
+
+## EventType
+
+`EventType` lists every type: `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`, `STEP_STARTED`, `STEP_FINISHED`, `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END`, `TEXT_MESSAGE_CHUNK`, `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, `TOOL_CALL_CHUNK`, `TOOL_CALL_RESULT`, `REASONING_START`, `REASONING_END`, `REASONING_MESSAGE_START`, `REASONING_MESSAGE_CONTENT`, `REASONING_MESSAGE_END`, `REASONING_MESSAGE_CHUNK`, `REASONING_ENCRYPTED_VALUE`, `STATE_SNAPSHOT`, `STATE_DELTA`, `MESSAGES_SNAPSHOT`, `ACTIVITY_SNAPSHOT`, `ACTIVITY_DELTA`, `RAW`, `CUSTOM` and `META_EVENT`.
+
+The wire value of each constant is its name. `EventType.fromValue("RUN_STARTED")` converts a wire value back to the constant.
+
+For what each event means in the protocol, see [Events](/concepts/events).

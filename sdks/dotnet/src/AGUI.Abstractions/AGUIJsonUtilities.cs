@@ -21,10 +21,10 @@ public static class AGUIJsonUtilities
     /// when composing your own <see cref="JsonSerializerOptions"/>. The context's
     /// <c>DefaultIgnoreCondition</c> lives on the context's own
     /// <see cref="JsonSerializerContext.Options"/> and does not follow the context into a
-    /// different options instance, so a plain
-    /// <c>options.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default)</c>
-    /// would start writing <c>"parentMessageId": null</c> and similar — the exact wire
-    /// divergence that receiving SDKs have had to be patched to tolerate.
+    /// different options instance. The AG-UI wire types also carry a per-property
+    /// <c>[JsonIgnore(WhenWritingNull)]</c> on every nullable property, so a host that
+    /// inserts the bare context (as Microsoft Agent Framework does) still omits them; this
+    /// resolver additionally covers any nullable property that lacks one.
     /// </para>
     /// <para>
     /// The rule is applied per property by a type-info modifier rather than by setting

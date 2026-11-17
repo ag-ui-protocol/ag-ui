@@ -21,12 +21,9 @@ from typing import Any, Iterable, Literal, Mapping, Tuple
 from .client_proxy_tool import PROXY_RESULT_PLACEHOLDER
 from .interrupt_checkpoint import parked_tool_results, publish_parked_tool_results
 
-try:
-    from strands.session.snapshot_session_manager import (
-        SnapshotSessionManager as _SnapshotSessionManager,
-    )
-except ImportError:  # SDK releases before snapshot sessions (< 1.51)
-    _SnapshotSessionManager = None
+from strands.session.snapshot_session_manager import (
+    SnapshotSessionManager as _SnapshotSessionManager,
+)
 
 # Key under which the adapter stores the ids of the frontend tool calls it has
 # emitted, as a JSON list on the Strands agent's session state. Namespaced to
@@ -103,9 +100,7 @@ def _supports_repository_reconciliation(session_manager: Any, agent: Any) -> boo
 
 def _supports_snapshot_reconciliation(session_manager: Any, agent: Any) -> bool:
     """Return whether *session_manager* persists the whole agent as a snapshot."""
-    if _SnapshotSessionManager is None or not isinstance(
-        session_manager, _SnapshotSessionManager
-    ):
+    if not isinstance(session_manager, _SnapshotSessionManager):
         return False
     try:
         session_id = session_manager.session_id

@@ -93,7 +93,7 @@ The LangGraph integration now supports the AG-UI standard interrupt protocol. Ke
 
 ### Detecting a paused run
 
-When the structured outcome is enabled (`emitInterruptOutcome: true`, opt-in — see the callout below), `RunFinishedEvent.outcome.type === "interrupt"` is the canonical signal that a run has paused for human input. The `outcome.interrupts` array contains AG-UI `Interrupt` objects with `id`, `reason`, `message`, `toolCallId`, `responseSchema`, `expiresAt`, and `metadata` fields. LangGraph-specific data (raw interrupt value, `ns`, `resumable`, `when`) is preserved under `metadata.langgraph`.
+When the structured outcome is enabled (`emitInterruptOutcome: true`, opt-in — see the callout below), `RunFinishedEvent.outcome.type === "interrupt"` is the canonical signal that a run has paused for human input. The `outcome.interrupts` array contains AG-UI `Interrupt` objects with `id`, `reason`, `message`, `toolCallId`, `responseSchema`, `expiresAt`, and `metadata` fields. LangGraph-specific data (raw interrupt value, `ns`, `resumable`, `when`) is preserved under `metadata.langgraph`. `responseSchema` is LangGraph's own `Interrupt.response_schema` (set by `interrupt(value, response_schema=...)`, langgraph >= 1.2.12) when present, and otherwise a `responseSchema` or `response_schema` key in a dict interrupt value.
 
 ```ts
 // New: read interrupts from outcome

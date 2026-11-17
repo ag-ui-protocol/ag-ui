@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1 — 2026-10-12
+
+- Released alongside `AGUI.Abstractions` and `AGUI.Server` 1.0.1; no changes in this package.
+
+### Breaking changes
+
+None.
+
 ## 1.0.0 — 2026-09-17
 
 - Client now declares the protocol version it speaks: every `RunAgentInput` carries "1.0", read from the generated `AGUIProtocol.Version`.

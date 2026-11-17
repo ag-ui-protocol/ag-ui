@@ -367,7 +367,10 @@ describe("streamServerToolCalls (opt-in live server-tool calls)", () => {
       events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
     ).toHaveLength(0);
     // The interrupt itself still surfaces.
-    expect(events.filter((e) => e.type === EventType.CUSTOM)).toHaveLength(1);
+    const finished = events.find(
+      (e) => e.type === EventType.RUN_FINISHED,
+    ) as any;
+    expect(finished.outcome?.interrupts).toHaveLength(1);
   });
 
   it("closes a live-streamed call when the tool goes to the background", async () => {
@@ -394,9 +397,10 @@ describe("streamServerToolCalls (opt-in live server-tool calls)", () => {
     expect(
       events.filter((e) => e.type === EventType.TOOL_CALL_END),
     ).toHaveLength(1);
+    // Answered when the run ends, so it is not left pending for the app.
     expect(
       events.filter((e) => e.type === EventType.TOOL_CALL_RESULT),
-    ).toHaveLength(0);
+    ).toMatchObject([{ toolCallId: "tc-s3" }]);
     // The work continues as an activity.
     expect(
       events.filter((e) => e.type === EventType.ACTIVITY_SNAPSHOT),

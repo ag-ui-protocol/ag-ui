@@ -150,34 +150,85 @@ def _describe(error: BaseException) -> str:
         return type(error).__name__
 
 
-async def _settle_and_close(iterator, step) -> None:
-    """Close an agent left running after its consumer was cancelled.
+class _AgentDriver:
+    """Runs every step of one agent iterator, and its close, in one task.
 
-    Runs detached from the cancelled scope, so the agent's own teardown can
-    await without being cut short.
+    One task, not one per step, because a task runs in its own copy of the
+    `contextvars.Context`. Strands holds OpenTelemetry context tokens across
+    its yields (`stream_async` and each event-loop cycle sit inside
+    `trace_api.use_span`), and a token can only be reset from the Context that
+    created it. With a task per step, every span that outlived one step failed
+    to detach and OpenTelemetry logged `Failed to detach context`.
 
-    The in-flight step has to settle before the close: closing an async
-    generator while another task sits inside `__anext__` is an error, not
-    merely a race. It also has to be cancelled to settle at all, because a
-    step waiting on something that never arrives, a model call that hangs,
-    would otherwise hold the agent open for as long as it stayed blocked.
-
-    Cancelling it here rather than letting the request's cancellation reach it
-    is the whole point: this task is not itself being cancelled, so the
-    CancelledError lands once and the agent's teardown can await afterwards.
+    The task is also outside the request's cancel scope, so a client
+    disconnect does not cancel the agent directly. Awaited directly, the
+    cancellation lands inside the agent, its teardown starts, and the first
+    `await` in that teardown is cancelled too, which leaves whatever it
+    releases after that point released by nobody. anyio's cancel scope
+    re-delivers on every await, so there is no recovering from it after the
+    fact: the agent has to be outside the scope to begin with. `abandon`
+    cancels this task instead, once, so the CancelledError lands in the agent
+    a single time and the close that follows can still await.
     """
-    if not step.done():
-        step.cancel()
-    try:
-        await step
-    except BaseException:
-        pass
-    closer = getattr(iterator, "aclose", None)
-    if closer is not None:
+
+    def __init__(self, iterator) -> None:
+        self._iterator = iterator
+        self._requests: asyncio.Queue = asyncio.Queue()
+        self._abandoned = False
+        self._task = asyncio.ensure_future(self._drive())
+        # A close that fails after `abandon` has nobody awaiting it. Read the
+        # outcome here so asyncio does not log it as never retrieved.
+        self._task.add_done_callback(
+            lambda task: task.cancelled() or task.exception()
+        )
+
+    async def _drive(self) -> None:
         try:
-            await closer()
-        except BaseException:
-            pass
+            while True:
+                reply = await self._requests.get()
+                if reply is None:
+                    return
+                try:
+                    event = await self._iterator.__anext__()
+                except Exception as e:
+                    # StopAsyncIteration included. Either way the stream is
+                    # over, so stop waiting for requests: after `abandon`
+                    # none would come, and nobody would read the reply.
+                    if not reply.done() and not self._abandoned:
+                        reply.set_exception(e)
+                    return
+                except BaseException:
+                    reply.cancel()
+                    raise
+                else:
+                    if not reply.done():
+                        reply.set_result(event)
+        finally:
+            closer = getattr(self._iterator, "aclose", None)
+            if closer is not None:
+                await closer()
+
+    async def next(self):
+        """The agent's next event. Raises StopAsyncIteration at the end."""
+        reply = asyncio.get_running_loop().create_future()
+        self._requests.put_nowait(reply)
+        # Shielded so a cancelled request does not cancel the reply; the
+        # driver still owns the step and `abandon` decides what happens to it.
+        return await asyncio.shield(reply)
+
+    def abandon(self) -> None:
+        """Cancel the agent's in-flight step, then close it, without waiting."""
+        self._abandoned = True
+        self._task.cancel()
+
+    async def close(self) -> None:
+        """Close the agent and wait for its teardown to finish."""
+        if self._abandoned:
+            return
+        self._requests.put_nowait(None)
+        # Shielded so a request cancelled while waiting here leaves the
+        # teardown running rather than cutting it short.
+        await asyncio.shield(self._task)
 
 
 def _binary_encoder(encoder: EventEncoder):
@@ -301,36 +352,29 @@ def add_strands_fastapi_endpoint(
                     else {}
                 )
                 stream = agent.run(input_data, **run_kwargs)
-                iterator = stream.__aiter__()
+                # Drive the iterator, not the iterable it came from: an
+                # iterable whose __aiter__ builds a generator would otherwise
+                # leave the agent open when the driver closes it.
+                driver = _AgentDriver(stream.__aiter__())
             except Exception as e:
                 # Headers are already committed, so a failure to even start
                 # the agent has to be reported in the body like any other.
-                iterator = None
+                driver = None
                 failure = ("STRANDS_ERROR", _describe(e))
 
             try:
-                while iterator is not None:
-                    # Each step runs in its own task, awaited through a
-                    # shield, so a client disconnect cancels this handler
-                    # without cancelling the agent. Awaited directly, the
-                    # cancellation lands inside the agent, its teardown starts,
-                    # and the first `await` in that teardown is cancelled too,
-                    # which leaves whatever it releases after that point
-                    # released by nobody. anyio's cancel scope re-delivers on
-                    # every await, so there is no recovering from it after the
-                    # fact: the agent has to be outside the scope to begin with.
-                    #
-                    # Costs one task per event. Cheap next to encoding a frame
-                    # and writing it to a socket.
-                    step = asyncio.ensure_future(iterator.__anext__())
+                while driver is not None:
+                    # The agent runs in the driver's task, outside this
+                    # handler's cancel scope; see `_AgentDriver` for why.
                     try:
-                        event = await asyncio.shield(step)
+                        event = await driver.next()
                     except StopAsyncIteration:
                         break
                     except asyncio.CancelledError:
-                        # Hand the agent to a task outside this scope so its
-                        # teardown can finish, then let the cancellation go.
-                        asyncio.ensure_future(_settle_and_close(iterator, step))
+                        # Leave the agent to the driver, which cancels its
+                        # step and closes it outside this scope, so its
+                        # teardown can finish. Then let the cancellation go.
+                        driver.abandon()
                         raise
                     except Exception as e:
                         # The agent converts its own failures into RUN_ERROR.
@@ -362,21 +406,18 @@ def add_strands_fastapi_endpoint(
                     emitted_any = True
                     yield chunk
             finally:
-                # Close the iterator, not the iterable it came from: an
-                # iterable whose __aiter__ builds a generator would otherwise
-                # leave the agent open. In a `finally`, as the TypeScript peer
-                # does, so it runs on every way out including the consumer
-                # closing this generator early. Awaiting here is safe even
-                # while this generator is itself being closed; only yielding
-                # again during teardown would raise.
+                # In a `finally`, as the TypeScript peer does, so the agent is
+                # closed on every way out including the consumer closing this
+                # generator early. Awaiting here is safe even while this
+                # generator is itself being closed; only yielding again during
+                # teardown would raise.
                 #
                 # The disconnect path does not arrive here with work left to
-                # do: it is handed to `_settle_and_close` above, which owns the
-                # close from outside the cancelled scope.
-                closer = getattr(iterator, "aclose", None)
-                if closer is not None:
+                # do: `abandon` above handed the close to the driver, which
+                # owns it from outside the cancelled scope.
+                if driver is not None:
                     try:
-                        await closer()
+                        await driver.close()
                     except Exception:
                         # A throwing agent cleanup must not abort the body
                         # before the frame explaining the failure has been

@@ -1,0 +1,85 @@
+{
+  "name": "tool-result-error-survives-snapshot",
+  "area": "tool-calls",
+  "description": "a failed TOOL_CALL_RESULT mints a tool message carrying its error, and a later MESSAGES_SNAPSHOT that restates the same message with the same error leaves the failure in place, with no warning",
+  "specPage": "/spec/draft/events/tool-calls#error",
+  "kill": "drop error from tool messages when reconciling a MESSAGES_SNAPSHOT",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-toolerr-snapshot",
+      "runId": "toolerr-snapshot-r1"
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "toolerr-snapshot-c1",
+      "toolCallName": "get_weather",
+      "parentMessageId": "toolerr-snapshot-a1"
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "toolCallId": "toolerr-snapshot-c1",
+      "delta": "{\"city\":\"Oslo\"}"
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "toolCallId": "toolerr-snapshot-c1"
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "messageId": "toolerr-snapshot-t1",
+      "toolCallId": "toolerr-snapshot-c1",
+      "content": "Error: weather service timed out after 10s",
+      "error": "weather service timed out after 10s"
+    },
+    {
+      "type": "MESSAGES_SNAPSHOT",
+      "messages": [
+        {
+          "id": "toolerr-snapshot-a1",
+          "role": "assistant",
+          "toolCalls": [
+            {
+              "id": "toolerr-snapshot-c1",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Oslo\"}"
+              }
+            }
+          ]
+        },
+        {
+          "id": "toolerr-snapshot-t1",
+          "role": "tool",
+          "toolCallId": "toolerr-snapshot-c1",
+          "content": "Error: weather service timed out after 10s",
+          "error": "weather service timed out after 10s"
+        }
+      ]
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-toolerr-snapshot",
+      "runId": "toolerr-snapshot-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 2,
+    "messages": [
+      {
+        "id": "toolerr-snapshot-a1",
+        "role": "assistant"
+      },
+      {
+        "id": "toolerr-snapshot-t1",
+        "role": "tool",
+        "toolCallId": "toolerr-snapshot-c1",
+        "content": "Error: weather service timed out after 10s",
+        "error": "weather service timed out after 10s"
+      }
+    ]
+  }
+}

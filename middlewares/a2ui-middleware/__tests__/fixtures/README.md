@@ -1,6 +1,7 @@
 # Parallel flight/dashboard regression traces (PNI-490)
 
-These are recorded protocol traces, not hand-authored tool sequences. Both tools
+The original three traces below are recorded protocol traces, not hand-authored
+tool sequences. Both tools
 belong to the same native assistant message and retain its `parentMessageId`.
 Only the run boundaries and `search_flights` / `render_a2ui` events are retained;
 transport debug metadata, import provenance, timestamps and unrelated tools are
@@ -36,10 +37,49 @@ own flight call. Existing recovery tests cover the legacy nested-render path
 where adapters omit parent message IDs. Separate synthetic unit events exercise
 out-of-order ordinary results and failure envelopes.
 
-## Parallel-call limitation
+## Live sibling calls with distinct message IDs (PNI-679)
 
-Sibling detection requires matching, nonempty `parentMessageId` values on both
-`TOOL_CALL_START` events. If an adapter omits either parent ID, the middleware
-retains the legacy nesting fallback, so independent parallel calls may still
-share an activity or have their output suppressed. Adapters should preserve the
-originating assistant message ID on each sibling call.
+`strands-ts-live.json` retains all tool start/args/end/result events, in order,
+from the October 16 deterministic Strands TypeScript SDK 1.20.0 capture used to
+reproduce the failure in middleware 0.0.12. Run boundaries are retained; message
+and state snapshots are omitted. The five sibling calls each have a distinct
+`parentMessageId`, and all calls finish emitting arguments before results arrive.
+The flight envelope includes both DL123 and AA456. No AWS access is needed to
+replay this synthetic capture.
+
+A parent message ID identifies an assistant message, not a parent tool call.
+Calls sharing a nonempty message ID are siblings. Distinct IDs remain ambiguous.
+The live Strands regression opts into `a2uiGenerationToolNames: []`, because this
+capture has no nested generation wrappers. This separates the dashboard and
+flight activities without changing existing consumers' default nesting behavior.
+See the [configuration guide](../../README.md#optional-sibling-call-disambiguation).
+Omitting the option preserves custom wrappers without migration. Missing/empty
+identities retain the legacy fallback in either mode. Distinct-ID siblings
+involving a listed wrapper and a direct render can still be mistaken for nested
+calls and suppress valid output; concurrent wrappers remain heuristic as well.
+
+`langgraph-nested-recovery.json` extracts the first run's tool events from the
+committed Dojo LangGraph TypeScript recovery traces (successful retry and
+exhaustion). Generated activities and synthetic inner results are excluded so
+the middleware regenerates them. Tool IDs, distinct parent message IDs, argument
+chunks, and result order are preserved; catalog IDs alone are normalized to
+`copilotkit://app-dashboard-catalog`. Tests assert that retries and final success
+or failure replace one wrapper activity. The same traces also exercise a custom
+wrapper name with and without explicit configuration. These regressions reproduce the initial PR's CI failure
+without starting a server or calling a provider.
+
+## ADK Express native 1.0 capture (published CopilotKit 1.87.0 validation)
+
+`adk-express-1.0-live.json` retains both runs of the 2026-11-11 published-package
+validation: ag-ui-adk candidate `f889498` (PR #3378) driving `gemini-3.8-flash`
+through the Express inference format against the native A2UI 1.0 basic catalog
+that CopilotKit 1.87.0 ships as the schema context entry. Run boundaries, the
+`generate_a2ui` call events, the adapter's own complete `a2ui-surface`
+activities, the canonical tool results and the assistant text are retained in
+order; reasoning and state snapshots are removed. The update run's canonical
+result is update-only by design, so the regression asserts that the activity the
+middleware leaves behind still carries the creation and replays on its own.
+
+`a2ui-1.0-basic-catalog.json` is the catalog object from that capture's schema
+context entry (the A2UI 1.0 basic catalog with `protocolVersion: "1.0"`), used to
+validate native 1.0 components in the Direct JSON regressions.

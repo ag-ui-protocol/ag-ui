@@ -658,7 +658,7 @@ PARK_SECONDS=180 uv run pytest tests/test_parking_gate.py -m live
 ```bash
 # terminal 1
 cd examples
-GEMINI_API_KEY=... uv run dev     # serves on :8027
+GEMINI_API_KEY=... uv run dev     # serves on :8029
 
 # terminal 2
 cd apps/dojo && pnpm dev

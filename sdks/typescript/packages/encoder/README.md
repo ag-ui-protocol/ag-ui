@@ -7,10 +7,14 @@ Event encoding utilities for the **Agent-User Interaction (AG-UI) Protocol**.
 ## Installation
 
 ```bash
-npm install @ag-ui/encoder
-pnpm add @ag-ui/encoder
-yarn add @ag-ui/encoder
+npm install @ag-ui/encoder zod
+pnpm add @ag-ui/encoder zod
+yarn add @ag-ui/encoder zod
 ```
+
+zod (3.25.18+ or 4.x) is a peer dependency. Protobuf encoding validates each
+event with the schemas on `@ag-ui/core/schemas`, using the zod your application
+installs rather than a bundled copy.
 
 ## Features
 

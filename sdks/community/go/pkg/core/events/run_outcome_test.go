@@ -82,3 +82,32 @@ func TestRunFinishedOutcomeUnaffectedCases(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "outcome")
 }
+
+// TestRunFinishedSuccessOutcomeKeepsPendingToolCallIDs guards the success
+// outcome's pendingToolCallIds, the frontend tool calls the application must
+// answer in its next input. The outcome struct had no field for it, so the
+// list was lost whenever a Go service decoded and re-emitted RUN_FINISHED.
+func TestRunFinishedSuccessOutcomeKeepsPendingToolCallIDs(t *testing.T) {
+	payload := `{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":{"type":"success","pendingToolCallIds":["call-1","call-2"]}}`
+
+	event, err := EventFromJSON([]byte(payload))
+	require.NoError(t, err)
+	require.NoError(t, event.Validate())
+
+	encoded, err := event.ToJSON()
+	require.NoError(t, err)
+	assert.JSONEq(t, payload, string(encoded))
+}
+
+// TestRunFinishedInterruptOutcomeDropsPendingToolCallIDs keeps the key off the
+// closed interrupt variant, which peers reject when it carries extra keys.
+func TestRunFinishedInterruptOutcomeDropsPendingToolCallIDs(t *testing.T) {
+	payload := `{"type":"RUN_FINISHED","threadId":"t1","runId":"r1","outcome":{"type":"interrupt","interrupts":[{"id":"i1","reason":"approval"}],"pendingToolCallIds":["call-1"]}}`
+
+	event, err := EventFromJSON([]byte(payload))
+	require.NoError(t, err)
+
+	encoded, err := event.ToJSON()
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "pendingToolCallIds")
+}

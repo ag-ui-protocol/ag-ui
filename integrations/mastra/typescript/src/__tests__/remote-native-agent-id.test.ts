@@ -123,12 +123,13 @@ describe("remote native agent identity", () => {
     await collectEvents(
       cloned,
       makeInput({
-        forwardedProps: {
-          command: {
-            resume: { approved: true },
-            interruptEvent: { toolCallId: "native-tool", runId: "native-run" },
+        resume: [
+          {
+            interruptId: "native-run::native-tool",
+            status: "resolved",
+            payload: { approved: true },
           },
-        },
+        ],
       }),
     );
     expect(requests.at(-1)?.url.pathname).toBe(

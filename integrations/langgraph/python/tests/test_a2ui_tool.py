@@ -24,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 
 from langchain_core.messages import AIMessageChunk
 from langchain_core.messages.tool import tool_call_chunk
@@ -47,6 +49,8 @@ VALID_ARGS = {
     ],
     "data": {},
 }
+
+REQUEST_CONTEXT = ContextVar("a2ui_test_request_context", default=None)
 
 
 def _arg_chunks(args: dict, parts: int = 3) -> list[str]:
@@ -97,6 +101,64 @@ class FakeModel:
 
     def bind_tools(self, tools, tool_choice=None):
         return _StreamingBoundModel(self)
+
+
+class LoopBoundModel(FakeModel):
+    """Fail if the render stream runs outside the tool caller's event loop."""
+
+    def __init__(self, args_by_attempt):
+        super().__init__(args_by_attempt[0])
+        self.args_by_attempt = args_by_attempt
+        self.call_count = 0
+
+    def bind_tools(self, tools, tool_choice=None):
+        caller_loop = asyncio.get_running_loop()
+        parent = self
+
+        class BoundModel:
+            async def astream(self, messages):
+                if asyncio.get_running_loop() is not caller_loop:
+                    raise RuntimeError("model stream ran on a different event loop")
+                parent.captured_prompts.append(messages[0].content)
+                args = parent.args_by_attempt[parent.call_count]
+                parent.call_count += 1
+                for index, fragment in enumerate(_arg_chunks(args)):
+                    yield AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            tool_call_chunk(
+                                name="render_a2ui" if index == 0 else None,
+                                args=fragment,
+                                id="call-1" if index == 0 else None,
+                                index=0,
+                            )
+                        ],
+                    )
+
+        return BoundModel()
+
+
+class OffloadingModel(FakeModel):
+    """Model stream that needs a worker from the caller loop's default pool."""
+
+    def __init__(self):
+        super().__init__(VALID_ARGS)
+        self.stream_tasks = []
+        self.context_values = []
+
+    def bind_tools(self, tools, tool_choice=None):
+        parent = self
+        bound = super().bind_tools(tools, tool_choice)
+
+        class BoundModel:
+            async def astream(self, messages):
+                parent.stream_tasks.append(asyncio.current_task())
+                parent.context_values.append(REQUEST_CONTEXT.get())
+                await asyncio.to_thread(lambda: None)
+                async for chunk in bound.astream(messages):
+                    yield chunk
+
+        return BoundModel()
 
 
 class FakeRuntime:
@@ -169,6 +231,50 @@ class TestGetA2UITools(unittest.TestCase):
         self.assertEqual(default_tool.name, "generate_a2ui")
         custom_tool, _ = self._make(tool_name="render_ui")
         self.assertEqual(custom_tool.name, "render_ui")
+
+    def test_recovery_streams_on_caller_loop_across_retries(self):
+        model = LoopBoundModel([{"components": []}, VALID_ARGS])
+        attempts = []
+        tool = get_a2ui_tools({"model": model, "on_a2ui_attempt": attempts.append})
+
+        envelope = _invoke_tool(tool, FakeRuntime({"messages": []}), intent="create")
+
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual([attempt["ok"] for attempt in attempts], [False, True])
+        self.assertIn(A2UI_OPERATIONS_KEY, json.loads(envelope))
+
+    def test_recovery_does_not_exhaust_model_worker_pool(self):
+        model = OffloadingModel()
+        tool = get_a2ui_tools({"model": model})
+
+        async def run_concurrent_calls():
+            loop = asyncio.get_running_loop()
+            executor = ThreadPoolExecutor(max_workers=2)
+            loop.set_default_executor(executor)
+            token = REQUEST_CONTEXT.set("request-context")
+            tasks = [
+                asyncio.create_task(tool.coroutine(FakeRuntime({"messages": []})))
+                for _ in range(2)
+            ]
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks), timeout=5
+                )
+                self.assertTrue(
+                    all(A2UI_OPERATIONS_KEY in json.loads(result) for result in results)
+                )
+                self.assertEqual(model.context_values, ["request-context"] * 2)
+            finally:
+                REQUEST_CONTEXT.reset(token)
+                # A failed assertion must not leave blocked recovery threads behind.
+                for stream_task in model.stream_tasks:
+                    if not stream_task.done():
+                        stream_task.cancel()
+                await asyncio.gather(*model.stream_tasks, return_exceptions=True)
+                await asyncio.gather(*tasks, return_exceptions=True)
+                executor.shutdown(wait=False)
+
+        asyncio.run(run_concurrent_calls())
 
 
 class TestStreamRenderSubagent(unittest.TestCase):

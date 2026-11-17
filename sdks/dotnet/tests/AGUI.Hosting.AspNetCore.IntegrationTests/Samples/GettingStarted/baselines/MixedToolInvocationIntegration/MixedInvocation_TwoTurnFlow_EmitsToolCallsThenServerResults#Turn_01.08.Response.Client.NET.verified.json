@@ -9,7 +9,8 @@
     "rawRepresentation": {
       "type": "RUN_STARTED",
       "threadId": "thread_Id_1",
-      "runId": "run_Id_1"
+      "runId": "run_Id_1",
+      "protocolVersion": "1.0"
     }
   },
   {
@@ -194,7 +195,8 @@
     "rawRepresentation": {
       "type": "RUN_STARTED",
       "threadId": "thread_Id_1",
-      "runId": "run_Id_2"
+      "runId": "run_Id_2",
+      "protocolVersion": "1.0"
     }
   },
   {

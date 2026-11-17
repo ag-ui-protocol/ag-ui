@@ -7,6 +7,7 @@ import { Middleware } from "@/middleware";
 import { enforceEvents, enforceOutgoingInput, isRecognizedEvent } from "../enforce";
 import { stripUnknown } from "../strip";
 import { EventSchema } from "@ag-ui/core/schemas";
+import { ZodError } from "zod/v4";
 
 class MemoryAgent extends AbstractAgent {
   constructor(private events: BaseEvent[]) {
@@ -56,6 +57,31 @@ afterEach(() => {
 });
 
 describe("the enforcement boundary (in-memory path)", () => {
+  it("drops unknown events without serializing their payload in verbose debug mode", async () => {
+    const toJSON = vi.fn(() => {
+      throw new Error("Rejected payload must not be serialized");
+    });
+    const unknown = {
+      type: "SOME_FUTURE_EVENT",
+      payload: { toJSON },
+    } as unknown as BaseEvent;
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+
+    try {
+      const events = await lastValueFrom(enforceEvents(true)(of(unknown)).pipe(toArray()));
+
+      expect(events).toEqual([]);
+      expect(toJSON).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("SOME_FUTURE_EVENT"));
+      expect(debugSpy).toHaveBeenCalledExactlyOnceWith(
+        "[ENFORCE] Unrecognised event dropped:",
+        JSON.stringify({ type: "SOME_FUTURE_EVENT" }),
+      );
+    } finally {
+      debugSpy.mockRestore();
+    }
+  });
+
   it("unknown material reaches middleware, and subscribers never see it", async () => {
     // The whole point of running enforcement AFTER middleware: the unknown
     // event demonstrably arrives at a middleware, and demonstrably does not
@@ -158,6 +184,46 @@ describe("enforceEvents (unit)", () => {
       finishReason: null,
       nested: { deep: [1, null] },
     });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves a supported RUN_FINISHED outcome and strips an unrecognised string variant", async () => {
+    const supported = await lastValueFrom(
+      of({ ...FINISH, outcome: { type: "success" } } as unknown as BaseEvent).pipe(
+        enforceEvents(),
+        toArray(),
+      ),
+    );
+    expect(supported).toEqual([{ ...FINISH, outcome: { type: "success" } }]);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    const future = await lastValueFrom(
+      of({ ...FINISH, outcome: { type: "future" } } as unknown as BaseEvent).pipe(
+        enforceEvents(),
+        toArray(),
+      ),
+    );
+    expect(future).toEqual([FINISH]);
+    expect(warnSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes("/outcome"))).toBe(true);
+  });
+
+  it.each([
+    ["a numeric", { type: 1 }],
+    ["a missing", {}],
+    ["a null", { type: null }],
+    ["an inherited", Object.assign(Object.create({ type: "success" }), { xExtra: 1 })],
+  ])("rejects %s outcome discriminator without emitting or warning", (_label, outcome) => {
+    warnSpy.mockClear();
+    const next = vi.fn();
+    const error = vi.fn();
+    of({ ...FINISH, outcome } as unknown as BaseEvent)
+      .pipe(enforceEvents())
+      .subscribe({ next, error });
+
+    expect(next).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledOnce();
+    expect(error.mock.calls[0][0]).toBeInstanceOf(ZodError);
+    expect((error.mock.calls[0][0] as ZodError).issues[0].path).toEqual(["outcome", "type"]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
@@ -305,7 +371,12 @@ describe("enforcement runs before chunk expansion", () => {
   it("rejects a malformed value on a chunk, as it does on a plain event", async () => {
     const chunked = new MemoryAgent([
       START,
-      { type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: 0, delta: "hi" } as unknown as BaseEvent,
+      {
+        type: EventType.TEXT_MESSAGE_CHUNK,
+        messageId: "m1",
+        role: 0,
+        delta: "hi",
+      } as unknown as BaseEvent,
       FINISH,
     ]);
     const plain = new MemoryAgent([
@@ -348,7 +419,12 @@ describe("expansion does not repair, whichever stage reaches it first", () => {
   // whether a producer's defect was reported would otherwise depend on whether
   // the consumer happened to install a middleware.
   const chunk = (extra: Record<string, unknown>) =>
-    ({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi", ...extra }) as unknown as BaseEvent;
+    ({
+      type: EventType.TEXT_MESSAGE_CHUNK,
+      messageId: "m1",
+      delta: "hi",
+      ...extra,
+    }) as unknown as BaseEvent;
 
   it("keeps a malformed role fatal with a middleware installed", async () => {
     const withMiddleware = new MemoryAgent([START, chunk({ role: null }), FINISH]);

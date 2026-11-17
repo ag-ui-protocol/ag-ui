@@ -633,6 +633,21 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  "openai-agents-python": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/openai-agents/python/examples/agents_examples/${agentId}.py`,
+          ),
+        ],
+      }),
+      {},
+    );
+  },
   // claude-managed-agents serves every feature from one server per language,
   // driven by the shared agent specs.
   "claude-managed-agents-dotnet": (agentKeys: string[]) => {
@@ -721,6 +736,40 @@ const agentFilesMapper: Record<
       ),
     ],
   }),
+  "cloudflare-agents": (agentKeys: string[]) =>
+    agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/index.ts`,
+          ),
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/cloudflare-agents/typescript/examples/src/agents.ts`,
+          ),
+        ],
+      }),
+      {},
+    ),
+  // omnara runs one in-process OmnaraAgent per feature (defined in src/agents.ts)
+  // — no per-feature server files
+  omnara: (agentKeys: string[]) =>
+    Object.fromEntries(
+      agentKeys.map((agentId) => [
+        agentId,
+        [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            `/community/omnara/typescript/src/agent.ts`,
+          ),
+        ],
+      ]),
+    ),
   langroid: (agentKeys: string[]) => {
     return agentKeys.reduce(
       (acc, agentId) => ({

@@ -16,7 +16,7 @@ wheels = [
 
 [[package]]
 name = "ag-ui-watsonx"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "ag-ui-protocol" },

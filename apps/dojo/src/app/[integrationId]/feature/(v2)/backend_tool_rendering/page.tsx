@@ -2,7 +2,7 @@
 import React from "react";
 import "@copilotkit/react-core/v2/styles.css";
 import "./style.css";
-import { 
+import {
   useRenderTool,
   useConfigureSuggestions,
   CopilotChat,
@@ -37,18 +37,21 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
       showDevConsole={false}
       agent="backend_tool_rendering"
     >
-      <Chat />
+      <Chat integrationId={integrationId} />
     </CopilotKit>
   );
 };
 
-const Chat = () => {
+const Chat = ({ integrationId }: { integrationId: string }) => {
   useRenderTool({
-    
-    name: "get_weather",
+    name:
+      integrationId === "claude-agent-sdk-python" ||
+      integrationId === "claude-agent-sdk-typescript"
+        ? "mcp__weather__get_weather"
+        : "get_weather",
     parameters: z.object({
       location: z.string(),
-    })  ,
+    }),
     render: ({ parameters, result, status }) => {
       if (status !== "complete") {
         return (
@@ -169,7 +172,10 @@ function WeatherCard({
       <div className="bg-white/20 p-4 w-full">
         <div className="flex items-center justify-between">
           <div>
-            <h3 data-testid="weather-city" className="text-xl font-bold text-white capitalize">
+            <h3
+              data-testid="weather-city"
+              className="text-xl font-bold text-white capitalize"
+            >
               {location}
             </h3>
             <p className="text-white">Current Weather</p>
@@ -185,7 +191,9 @@ function WeatherCard({
               {((result.temperature * 9) / 5 + 32).toFixed(1)}° F
             </span>
           </div>
-          <div className="text-sm text-white capitalize">{result.conditions}</div>
+          <div className="text-sm text-white capitalize">
+            {result.conditions}
+          </div>
         </div>
 
         <div className="mt-4 pt-4 border-t border-white">
@@ -212,7 +220,10 @@ function WeatherCard({
 function WeatherIcon({ conditions }: { conditions: string }) {
   if (!conditions) return null;
 
-  if (conditions.toLowerCase().includes("clear") || conditions.toLowerCase().includes("sunny")) {
+  if (
+    conditions.toLowerCase().includes("clear") ||
+    conditions.toLowerCase().includes("sunny")
+  ) {
     return <SunIcon />;
   }
 
@@ -289,7 +300,10 @@ function CloudIcon() {
       fill="currentColor"
       className="w-14 h-14 text-gray-200"
     >
-      <path d="M7 15a4 4 0 0 1 0-8 5 5 0 0 1 10 0 4 4 0 0 1 0 8H7z" fill="currentColor" />
+      <path
+        d="M7 15a4 4 0 0 1 0-8 5 5 0 0 1 10 0 4 4 0 0 1 0 8H7z"
+        fill="currentColor"
+      />
     </svg>
   );
 }

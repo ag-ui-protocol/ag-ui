@@ -4,6 +4,12 @@ This package exposes a lightweight wrapper that lets any `@strands-agents/sdk` `
 
 ## Prerequisites
 
+- `@strands-agents/sdk>=1.1.0`. The adapter uses `AfterToolsEvent.endTurn`
+  (introduced in 1.1.0) and `SessionManager.saveSnapshot`; the Python SDK's
+  version numbers do not apply to TypeScript.
+
+See [SDK compatibility](../SDK_COMPATIBILITY.md) for API evidence and validation.
+
 - Node.js 20+ if you import this package as ESM. That is
   `@strands-agents/sdk`'s own floor (`engines.node: ">=20.0.0"`). This package
   declares no `engines` of its own, so nothing warns you below it and the failure
@@ -83,6 +89,30 @@ The integration has three main layers:
 - **Transport helpers** – `createStrandsApp` and `addStrandsExpressEndpoint` expose the agent via SSE. They are thin shells over the shared `@ag-ui/encoder` `EventEncoder`. Imported from `@ag-ui/aws-strands/server` — kept off the main entry so client-side bundlers (Next.js, Vite) don't pull Express into the browser graph.
 
 See [../ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
+
+## A2UI models without forced tool choice
+
+By default, `generate_a2ui` forces its inner model to call `render_a2ui`.
+For a model that rejects forced tool choice, set `forceToolChoice: false`:
+
+```typescript
+import { getA2UITools } from "@ag-ui/aws-strands";
+
+// Auto-injection configuration for StrandsAgent({ config, ... }).
+const config = {
+  a2ui: { injectA2UITool: true, forceToolChoice: false },
+};
+
+// Or explicitly add the generated tool to your Strands agent's tools.
+const generateUI = getA2UITools({ model, forceToolChoice: false });
+```
+
+This omits the `toolChoice` property from the inner model request, leaving the
+choice behavior to the model implementation. The render tool specification and
+prompt remain present. Generation still uses one model turn per attempt;
+text-only responses and invalid render arguments use the existing bounded
+recovery loop (three total attempts by default). Exhaustion returns
+`a2ui_recovery_exhausted`. There is no automatic compatibility fallback.
 
 ## Key Files
 

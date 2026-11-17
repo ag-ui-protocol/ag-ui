@@ -1,59 +1,144 @@
 ---
 title: "Overview"
-description: "Core concepts in the Agent User Interaction Protocol SDK"
+description: "Core concepts of the AG-UI Java SDK: agents, streaming, and serialization"
 ---
 
-# ag-ui-core
+# java-core
 
-
-The Agent User Interaction Protocol SDK uses a streaming event-based
-architecture with strongly typed data structures. This package provides the
-foundation for connecting to agent systems.
+`java-core` defines the protocol's data model and the `Agent` abstraction. It has no third-party runtime dependencies. Streaming uses the JDK's `java.util.concurrent.Flow`, and JSON is left to a pluggable `Serializer`.
 
 ```xml
 <dependency>
-  <groupId>com.ag-ui</groupId>
-  <artifactId>core</artifactId>
-  <version>0.0.1</version>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>java-core</artifactId>
+  <version>0.1.1</version>
 </dependency>
 ```
 
-## Types
+## Packages
 
-Core data structures that represent the building blocks of the system:
+| Package | Contents |
+|---------|----------|
+| `com.agui.community.core.agent` | `Agent`, `RunAgentInput`, `Context` |
+| `com.agui.community.core.message` | The sealed `Message` hierarchy, `Role`, `ToolCall`, `FunctionCall` |
+| `com.agui.community.core.tool` | `Tool`, `ToolParameters` |
+| `com.agui.community.core.event` | The sealed `Event` hierarchy, `EventType`, `JsonPatchOperation` |
+| `com.agui.community.core.interrupt` | Human-in-the-loop types: `RunOutcome`, `Interrupt`, `Resume` |
+| `com.agui.community.core.serialization` | `Serializer`, `SerializationException` |
 
-- RunAgentInput — Input parameters for running agents
-- Message — User/assistant communication and tool usage
-- Context — Contextual information provided to agents
-- Tool — Defines functions that agents can call
-- State — Agent state management
+## The Agent interface
 
-<Card
-  title="Types Reference"
-  icon="cube"
-  href="/sdk/java/core/types"
-  color="#3B82F6"
-  iconType="solid"
->
-  Complete documentation of core types in the Java SDK
-</Card>
+```java
+@FunctionalInterface
+public interface Agent {
+    Flow.Publisher<Event> run(RunAgentInput input);
+}
+```
 
-## Events
+Everything in the SDK is an `Agent`: your own implementation, the remote `HttpAgent` client, and the Spring AI `SpringAiAgent`. This means a client and a server agent are interchangeable. For example, you can put a remote agent behind your own server, or test a front-end integration against a local stub.
 
-Events that power communication between agents and frontends:
+The contract is:
 
-- Lifecycle Events — Run and step tracking
-- Text Message Events — Assistant message streaming
-- Tool Call Events — Function call lifecycle
-- State Management Events — Agent state updates
-- Special Events — Raw and custom events
+- Each subscription to the returned publisher is **one run**.
+- The publisher emits the run's events in order, then calls `onComplete`.
+- If the run fails, the publisher calls `onError`. The server modules convert this into a terminal `RUN_ERROR` event for the client.
 
-<Card
-  title="Events Reference"
-  icon="cube"
-  href="/sdk/java/core/events"
-  color="#3B82F6"
-  iconType="solid"
->
-  Complete documentation of all events in the Java SDK
-</Card>
+Because `Flow.Publisher` is the JDK's copy of the Reactive Streams interface, you can convert it at the edges of your application:
+
+```java
+// Project Reactor
+Flux<Event> flux = JdkFlowAdapter.flowPublisherToFlux(agent.run(input));
+
+// RxJava 3 (via org.reactivestreams.FlowAdapters)
+Flowable<Event> flowable = Flowable.fromPublisher(FlowAdapters.toPublisher(agent.run(input)));
+```
+
+### Implementing an agent
+
+Without a reactive library, `SubmissionPublisher` is the easiest way to produce events. Create one per subscription so that each subscriber gets its own run:
+
+```java
+Agent agent = input -> subscriber -> {
+    SubmissionPublisher<Event> publisher = new SubmissionPublisher<>();
+    publisher.subscribe(subscriber);
+    CompletableFuture.runAsync(() -> {
+        try {
+            publisher.submit(new RunStartedEvent(input.threadId(), input.runId()));
+            // ... emit text, tool call, or state events
+            publisher.submit(new RunFinishedEvent(input.threadId(), input.runId()));
+            publisher.close();
+        } catch (Exception e) {
+            publisher.closeExceptionally(e);
+        }
+    });
+};
+```
+
+With Project Reactor you can build the stream as a `Flux` and convert it once:
+
+```java
+Agent agent = input -> JdkFlowAdapter.publisherToFlowPublisher(
+        Flux.just(
+                new RunStartedEvent(input.threadId(), input.runId()),
+                new RunFinishedEvent(input.threadId(), input.runId())));
+```
+
+A well-formed run starts with `RUN_STARTED` and ends with `RUN_FINISHED` or `RUN_ERROR`. See [Events](/sdk/java/core/events) for the full set of events.
+
+## Serialization
+
+The core does not depend on a JSON library. Client and server components take a `Serializer`:
+
+```java
+public interface Serializer {
+    String serialize(Object value);
+    <T> T deserialize(String json, Class<T> type);
+    <T> List<T> deserializeList(String json, Class<T> elementType);
+}
+```
+
+An implementation must:
+
+- Handle the sealed hierarchies polymorphically: `Event` uses the `type` discriminator (`"RUN_STARTED"`, …), `Message` uses `role` (`"user"`, …), and `RunOutcome` uses `type` (`"success"`, `"interrupt"`).
+- Write enums (`Role`, `EventType`, `OutcomeType`, `ResumeStatus`) by their wire value.
+- Be thread-safe.
+- Wrap library-specific failures in `SerializationException`. The server modules map this exception to `400 Bad Request`.
+
+### JacksonSerializer
+
+You usually don't need to write a serializer yourself. `JacksonSerializer` in `ag-ui-spring-server-core` does all of the above with Jackson. Despite the artifact name, it does not depend on Spring:
+
+```xml
+<dependency>
+  <groupId>com.ag-ui.community</groupId>
+  <artifactId>ag-ui-spring-server-core</artifactId>
+  <version>4.1.0</version>
+</dependency>
+```
+
+```java
+import com.agui.community.spring.server.core.JacksonSerializer;
+
+Serializer serializer = new JacksonSerializer();            // fresh ObjectMapper
+Serializer custom = new JacksonSerializer(myObjectMapper);  // configures a copy of yours
+```
+
+It ignores unknown properties and omits `null` fields, so a `RunAgentInput` serializes as:
+
+```json
+{
+  "threadId": "thread-1",
+  "runId": "run-1",
+  "messages": [{ "role": "user", "id": "msg-1", "content": "Hello!" }],
+  "tools": [],
+  "context": [],
+  "resume": []
+}
+```
+
+If you want to configure your own `ObjectMapper` the same way, call `JacksonSerializer.configure(mapper)`.
+
+## Next
+
+- [Types](/sdk/java/core/types)
+- [Events](/sdk/java/core/events)

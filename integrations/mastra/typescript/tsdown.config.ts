@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     copilotkit: "src/copilotkit.ts",
+    "copilotkit-2": "src/copilotkit-2.ts",
     // Bridge-free entry: server-side / remote agents import getA2UITools +
     // planA2UIInjection from "@ag-ui/mastra/a2ui" WITHOUT pulling the
     // AbstractAgent bridge (and its @ag-ui/client → uuid runtime dep), which the

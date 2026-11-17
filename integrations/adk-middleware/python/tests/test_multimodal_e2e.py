@@ -475,7 +475,11 @@ class TestMultimodalE2E:
             for part in content.get("parts", [])
             if "inlineData" in part
         ]
-        assert [p["mimeType"] for p in sent_inline] == [m for _, m, _, _ in attachments]
+        # google-genai 1.x renames the Blob's fields to camelCase (mimeType);
+        # 2.x passes the Blob through with its proto field names (mime_type).
+        # The Gemini API accepts both spellings.
+        sent_mime_types = [p.get("mimeType", p.get("mime_type")) for p in sent_inline]
+        assert sent_mime_types == [m for _, m, _, _ in attachments]
 
         session = await session_service.get_session(
             app_name="multimodal_test_app",

@@ -14,6 +14,7 @@ import { a2uiFixedSchemaAgent } from "./agents/a2ui-fixed";
 import { sharedStateAgent } from "./agents/shared-state";
 import { observationalMemoryAgent } from "./agents/observational-memory";
 import { toolApprovalAgent } from "./agents/tool-approval";
+import { generativeUIAgent } from "./agents/generative-ui";
 
 export const mastra = new Mastra({
   server: {
@@ -34,6 +35,7 @@ export const mastra = new Mastra({
     shared_state: sharedStateAgent,
     observational_memory: observationalMemoryAgent,
     tool_approval: toolApprovalAgent,
+    generative_ui: generativeUIAgent,
   },
   // File-backed (not ":memory:"): suspend/resume persists the agentic-loop
   // workflow snapshot to instance storage and loads it on resumeStream. An

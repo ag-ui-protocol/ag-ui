@@ -136,6 +136,38 @@ agent = ADKAgent(
 
 Cleanup and eviction never delete a session without the `_ag_ui_thread_id` stamp (one created outside the middleware, or by a version before the 0.4.1 release of 2026-01-06); they only stop tracking it. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, unless the run found it after the session cached for the thread was gone.
 
+### Disabling Cleanup and Session Tracking
+
+The cleanup task reads every tracked session from the session service on each
+interval. With a persistent session service (for example `DatabaseSessionService`)
+where sessions should be kept, that is load on the database for nothing. Two
+options turn it off:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    session_service=DatabaseSessionService(db_url="postgresql://..."),
+
+    # Sessions never expire: the cleanup task is never started.
+    # Sessions are still tracked in memory, so max_sessions_per_user keeps working.
+    session_timeout_seconds=None,
+
+    # Or go further: no in-memory session index and no cleanup task.
+    track_sessions=False,
+)
+```
+
+With `track_sessions=False`, `max_sessions_per_user` cannot be set (a `ValueError`
+is raised), and `SessionManager.get_session_count()`, `get_user_session_count()`
+and `bulk_update_user_state()` see no sessions. Sessions stay in the session
+service until something else deletes them. Per-run behaviour is unchanged:
+session lookup, state updates and processed-message tracking still work.
+
+If you pass your own `session_manager=`, set these options on the `SessionManager`
+instead; `ADKAgent` ignores its own session-cleanup arguments in that case.
+
 ### State and Session Mapping
 
 #### Thread ID → Session ID
@@ -150,6 +182,17 @@ The `state` field in `RunAgentInput` initializes and synchronizes session state:
 - **Existing Session**: `state` is merged with existing session state on each request
 
 This enables passing frontend context (user preferences, selected items, UI state) to the backend agent before execution begins.
+
+#### Initial History
+
+`RunAgentInput.messages` is the complete history the client shows. On the first run of a thread that has no ADK session yet, the messages before the latest user message are written into the new session, so the model sees them and later runs keep them. This covers a conversation started from something that happened elsewhere, such as a greeting or earlier turns imported from another system.
+
+- Assistant turns are attributed to the root agent.
+- A tool call is kept only together with its result, since Gemini rejects one without the other.
+- ADK protocol calls (`adk_request_confirmation`, `adk_request_credential`, `adk_request_input`) and the middleware's `confirm_changes` are left out, as are system, developer, reasoning and activity messages.
+- An existing session is the source of truth: history sent for a thread that already has a session is not written into it.
+
+Set `seed_first_run_history=False` to start a new session from the latest user message only.
 
 ## Service Configuration
 

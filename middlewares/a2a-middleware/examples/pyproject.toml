@@ -7,8 +7,8 @@ description = "HelloWorld agent example that only returns Messages"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "a2a-sdk>=0.2.6",
-    "ag-ui-adk>=0.1.0",
+    "a2a-sdk[http-server]>=1.2.2",
+    "ag-ui-adk>=0.9.0",
     "click>=8.1.8",
     "dotenv>=0.9.9",
     "fastapi>=0.104.0",

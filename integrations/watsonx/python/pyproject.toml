@@ -1,6 +1,6 @@
 [project]
 name = "ag_ui_watsonx"
-version = "0.0.1"
+version = "0.0.2"
 description = "AG-UI integration for IBM watsonx orchestrate agents"
 license = "MIT"
 license-files = ["LICENSE"]

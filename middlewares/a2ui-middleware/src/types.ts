@@ -7,6 +7,11 @@
 export interface A2UIInlineCatalogSchema {
   /** Catalog identifier */
   catalogId: string;
+  /**
+   * Declared A2UI protocol ("0.9" or "1.0"). Selects the version label of the
+   * operations the middleware streams for this catalog; absent means v0.9.
+   */
+  protocolVersion?: string;
   /** Component schemas keyed by component name */
   components: Record<string, Record<string, unknown>>;
 }
@@ -89,6 +94,18 @@ export interface A2UIMiddlewareConfig {
   a2uiToolNames?: string[];
 
   /**
+   * Opt into identifying generation wrappers by name when calls have distinct,
+   * nonempty parentMessageId values. Listed wrappers retain nested ownership;
+   * other tools stay independent. Use [] when there are no generation wrappers.
+   * Omit to preserve legacy nesting for all tool names, including custom wrappers.
+   * No configuration change is required for existing consumers.
+   * Same-message calls remain siblings; missing identities retain the legacy
+   * fallback. Distinct-message siblings involving a listed wrapper and a direct
+   * render remain ambiguous and can still be incorrectly combined.
+   */
+  a2uiGenerationToolNames?: string[];
+
+  /**
    * Catalog id used when the middleware creates a surface from a STREAMED
    * render tool call.
    *
@@ -103,7 +120,6 @@ export interface A2UIMiddlewareConfig {
    * streamed args, then to the v0.9 basic catalog.
    */
   defaultCatalogId?: string;
-
 }
 
 /**
@@ -138,7 +154,11 @@ export interface A2UIForwardedProps {
 /**
  * A2UI message types (v0.9)
  */
-export type A2UIMessageType = "createSurface" | "updateComponents" | "updateDataModel" | "deleteSurface";
+export type A2UIMessageType =
+  | "createSurface"
+  | "updateComponents"
+  | "updateDataModel"
+  | "deleteSurface";
 
 /**
  * A2UI message structure (v0.9)
@@ -163,4 +183,3 @@ export interface A2UIMessage {
     surfaceId: string;
   };
 }
-
