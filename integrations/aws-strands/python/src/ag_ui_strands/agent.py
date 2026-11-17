@@ -7927,6 +7927,15 @@ class StrandsAgent:
                 suspended=pending_interrupt_outcome is not None
             ):
                 yield _subagent_event
+            # Inline sub-agents have no _Run for close_all() to settle, so a
+            # wrapper that failed mid-arguments leaves its inner call open;
+            # end those here, before RUN_FINISHED (issue #3311). Attributed
+            # calls are already ended by close_all() above and hidden ones
+            # never opened, so this is a no-op for both.
+            for _inline_end in subagents.close_inline_tool_calls(
+                inner_tool_calls_seen
+            ):
+                yield _inline_end
             _subagent_messages_published = False
             for _spawning_tool, _subagent_messages in (
                 subagents.take_remaining_snapshot_messages()
