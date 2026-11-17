@@ -74,7 +74,8 @@ export interface ConvertedMessages {
   resumed: string[];
   /**
    * Recorded approvals the request rejects or cancels without carrying their
-   * calls (a client that no longer has them). The record can forget them.
+   * calls open (a client that no longer has them, or has results for them).
+   * The record can forget them.
    */
   abandoned: string[];
   /**
@@ -143,12 +144,13 @@ interface OpenCall {
  * marker does.
  *
  * A request that leaves a waiting approval unanswered, leaves out the call of
- * an approval the server recorded, answers one in a way that cannot be
- * honoured, or resumes a call the conversation has moved past is refused
- * (`resumeErrors`): AG-UI forbids an agent to drop an approval nobody
- * answered. A recorded approval whose call the request no longer carries can
- * still be rejected or cancelled (`abandoned`). A resume entry for something
- * that is not waiting is ignored (`resumeWarnings`), as AG-UI asks.
+ * an approval the server recorded or sends a result for it, answers one in a
+ * way that cannot be honoured, or resumes a call the conversation has moved
+ * past is refused (`resumeErrors`): AG-UI forbids an agent to drop an
+ * approval nobody answered. A recorded approval whose call the request no
+ * longer carries, or carries with a result, can still be rejected or
+ * cancelled (`abandoned`). A resume entry for something that is not waiting
+ * is ignored (`resumeWarnings`), as AG-UI asks.
  */
 export function convertMessages(
   messages: Message[],
@@ -396,22 +398,31 @@ function settleOpenCalls(
     );
   }
 
-  // A recorded approval whose call the request leaves out is still waiting:
-  // leaving a call out does not abandon it. A client that no longer has the
-  // call can still reject or cancel it, but cannot approve it.
+  // A recorded approval is still waiting when the request leaves its call out,
+  // or sends a result for it (the tool never ran): neither abandons it. A
+  // client in that state can still reject or cancel it, but cannot approve it.
+  const settled = new Set(open.map(({ call }) => call.id));
   const abandoned: string[] = [];
   const missing: string[] = [];
+  const resulted: string[] = [];
   for (const id of recorded?.keys() ?? []) {
-    if (calls.has(id)) continue;
+    if (settled.has(id)) continue;
     const entry = entries.get(id);
     const decision = entry && readDecision(entry);
     if (decision && !("error" in decision) && !decision.approved) abandoned.push(id);
+    else if (calls.has(id)) resulted.push(id);
     else missing.push(id);
   }
   if (missing.length > 0) {
     errors.push(
       `The thread has approvals waiting for an answer, and the request's history leaves out their calls: ` +
         `${quoted(missing)}. Send the conversation with the calls, or cancel the approvals.`,
+    );
+  }
+  if (resulted.length > 0) {
+    errors.push(
+      `The thread has approvals waiting for an answer, and the request's history has results for their calls: ` +
+        `${quoted(resulted)}. Send the conversation without those results, or cancel the approvals.`,
     );
   }
 

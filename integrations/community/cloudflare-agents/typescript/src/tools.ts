@@ -27,14 +27,16 @@ export function toClientTools(tools: Tool[] | undefined): ToolSet {
   return set;
 }
 
-/** Providers require tool parameters to be a JSON Schema object. */
+/**
+ * Providers require tool parameters to be a JSON Schema object. A schema
+ * without a root type (one built with `allOf` or `$ref`, say) keeps what it
+ * declares and gets the object type.
+ */
 function toObjectSchema(parameters: unknown): Parameters<typeof jsonSchema>[0] {
   if (typeof parameters !== "object" || parameters === null || Array.isArray(parameters)) {
     return { ...EMPTY_OBJECT_SCHEMA };
   }
   const schema = parameters as Record<string, unknown>;
-  if (schema.type === undefined && schema.properties === undefined) {
-    return { ...EMPTY_OBJECT_SCHEMA };
-  }
+  if (schema.type === undefined) return { ...EMPTY_OBJECT_SCHEMA, ...schema };
   return schema as Parameters<typeof jsonSchema>[0];
 }

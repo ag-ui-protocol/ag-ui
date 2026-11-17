@@ -36,6 +36,30 @@ describe("toClientTools", () => {
     expect(await asSchema(tools.ping!.inputSchema).jsonSchema).toEqual({ type: "object", properties: {} });
   });
 
+  it("keeps a parameter schema without a root type, and gives it the object type providers require", async () => {
+    const args = { type: "object", properties: { color: { type: "string" } }, required: ["color"] };
+    const tools = toClientTools([
+      { name: "all_of", description: "Composed", parameters: { allOf: [args] } },
+      { name: "ref", description: "By reference", parameters: { $ref: "#/$defs/Args", $defs: { Args: args } } },
+      { name: "untyped", description: "No type", parameters: { properties: { color: { type: "string" } } } },
+    ]);
+    expect(await asSchema(tools.all_of!.inputSchema).jsonSchema).toEqual({
+      type: "object",
+      properties: {},
+      allOf: [args],
+    });
+    expect(await asSchema(tools.ref!.inputSchema).jsonSchema).toEqual({
+      type: "object",
+      properties: {},
+      $ref: "#/$defs/Args",
+      $defs: { Args: args },
+    });
+    expect(await asSchema(tools.untyped!.inputSchema).jsonSchema).toEqual({
+      type: "object",
+      properties: { color: { type: "string" } },
+    });
+  });
+
   it("accepts no tools", () => {
     expect(toClientTools(undefined)).toEqual({});
   });

@@ -135,6 +135,8 @@ class Translation {
   private readonly reasoning = new Map<string, ReasoningState>();
   private readonly calls = new Map<string, CallState>();
   private readonly answered = new Set<string>();
+  /** Calls whose arguments did not parse. */
+  private readonly invalidCalls = new Set<string>();
   private readonly interrupts: Interrupt[] = [];
   private readonly approvals: PendingApproval[] = [];
   private readonly stepUsage: TokenUsage[] = [];
@@ -231,6 +233,7 @@ class Translation {
         break;
       }
       case "tool-call":
+        if (part.invalid === true) this.invalidCalls.add(String(part.toolCallId));
         yield* this.toolCall(part);
         break;
 
@@ -241,8 +244,15 @@ class Translation {
         yield* this.toolResult(String(part.toolCallId), stringifyOutput(part.output), { serverTool: true });
         break;
       case "tool-error": {
+        // The AI SDK reports arguments that do not parse as a tool error,
+        // after marking the call invalid; any other tool error comes from
+        // `execute`, so it is a server tool's, whatever its name.
+        const toolCallId = String(part.toolCallId);
         const message = errorMessage(part.error);
-        yield* this.toolResult(String(part.toolCallId), JSON.stringify({ error: message }), { error: message });
+        yield* this.toolResult(toolCallId, JSON.stringify({ error: message }), {
+          error: message,
+          serverTool: !this.invalidCalls.has(toolCallId),
+        });
         break;
       }
       case "tool-output-denied": {
