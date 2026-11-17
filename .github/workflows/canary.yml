@@ -108,7 +108,7 @@ on:
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
       suffix:
-        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = publish-release uses a unix timestamp plus its own run id and attempt. Allowed: [a-zA-Z0-9._-]+. Reuse a suffix only if the base version moved, else the publish collides."
+        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = publish-release uses its own run id x 1000 + attempt. Allowed: [a-zA-Z0-9._-]+. Reuse a suffix only if the base version moved, else the publish collides."
         required: false
         type: string
       dry_run:
@@ -174,7 +174,7 @@ jobs:
           # the WHOLE string (grep matches per line and would accept a multi-line
           # value whose first line is valid).
           if ! [[ "$SUFFIX" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            echo "::error::Invalid suffix '$SUFFIX'. Allowed: [a-zA-Z0-9._-]+ (blank = unix timestamp plus the publish run id and attempt)."
+            echo "::error::Invalid suffix '$SUFFIX'. Allowed: [a-zA-Z0-9._-]+ (blank = the publish run id x 1000 + attempt)."
             exit 1
           fi
 

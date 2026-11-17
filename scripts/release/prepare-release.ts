@@ -254,6 +254,26 @@ function bumpPythonVersion(
   }
 }
 
+// The pinned uv parser stores each release and dev number in a u64 and
+// reserves u64::MAX, so it rejects a `.devN` above this.
+const PEP440_MAX_DEV = 18446744073709551614n;
+
+/**
+ * Refuse a converted Python version whose `.devN` uv cannot parse: N must be
+ * numeric and at most PEP440_MAX_DEV. The canary converter joins the preid's
+ * components into one N, so an unbounded preid would otherwise be written and
+ * fail only at publish time.
+ */
+function checkPythonDevNumber(name: string, version: string): void {
+  const dev = version.match(/\.dev(.*)$/);
+  if (!dev) return;
+  if (/^[0-9]+$/.test(dev[1]) && BigInt(dev[1]) <= PEP440_MAX_DEV) return;
+  console.error(
+    `ERROR: ${name}: Python version ${version} has a .devN that is not a number from 0 to ${PEP440_MAX_DEV}, so uv cannot parse it. Use a shorter numeric prerelease suffix.`,
+  );
+  process.exit(1);
+}
+
 // ---------------------------------------------------------------------------
 // Config types
 // ---------------------------------------------------------------------------
@@ -852,6 +872,8 @@ function main(): void {
       const relPath = path.relative(repoRoot, filePath);
 
       const versionToWrite = pkg.ecosystem === 'python' ? toPep440(newVersion) : newVersion;
+      if (pkg.ecosystem === "python")
+        checkPythonDevNumber(pkg.name, versionToWrite);
 
       if (!sharedVersionSourceFile && !args.dryRun) {
         recordWritten(writeVersion(repoRoot, pkg, versionToWrite, scopeConfig.versionSource));
@@ -883,6 +905,8 @@ function main(): void {
       const newVersion = computeNewVersion(currentVersion, args.bump, args.preid, pkg.ecosystem);
 
       console.error(`[${args.scope}] ${pkg.name}: ${currentVersion} -> ${newVersion}`);
+      if (pkg.ecosystem === "python")
+        checkPythonDevNumber(pkg.name, newVersion);
 
       if (!args.dryRun) {
         recordWritten(writeVersion(repoRoot, pkg, newVersion, scopeConfig.versionSource));

@@ -6,8 +6,10 @@ import {
   mkdtempSync,
   writeFileSync,
   chmodSync,
+  mkdirSync,
   rmSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -1088,6 +1090,165 @@ test("two canary runs in the same second with a blank suffix get distinct versio
   assert.match(a, /^canary\.[0-9.]+$/);
   assert.notEqual(a, b, "different runs must not share a version");
   assert.notEqual(a, c, "a re-run must not reuse the first attempt's version");
+});
+
+// The pinned uv parser keeps each release and dev number in a u64 and
+// reserves u64::MAX, so a `.devN` above this is rejected.
+const UV_MAX_DEV = 18446744073709551614n;
+
+function haveUv(): boolean {
+  const probe = spawnSync("uv", ["--version"], { stdio: "ignore" });
+  return !probe.error && probe.status === 0;
+}
+
+// Runs the real "Compute prerelease version and bump" step, with a pinned
+// clock, through the REAL prepare-release.ts and its Python conversion,
+// against a fixture holding one independent uv-managed Python scope shaped
+// like integration-aws-strands-py (sharedVersion: false) at 0.1.0. Returns
+// the version written to the fixture's pyproject.toml and whether uv, offline,
+// parses that pyproject.
+function canaryPythonVersion({
+  suffix = "",
+  timestamp,
+  runId,
+  runAttempt,
+}: {
+  suffix?: string;
+  timestamp: number;
+  runId: number;
+  runAttempt: number;
+}): { version: string; uv: { status: number | null; out: string } | null } {
+  const root = mkdtempSync(join(tmpdir(), "canary-python-"));
+  try {
+    const fixture = join(root, "fixture");
+    const pkg = join(fixture, "integrations/aws-strands/python");
+    mkdirSync(join(fixture, "scripts/release"), { recursive: true });
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(fixture, "scripts/release/release.config.json"),
+      JSON.stringify({
+        prereleaseTag: "alpha",
+        scopes: {
+          "integration-aws-strands-py": {
+            description: "Fixture shaped like integration-aws-strands-py",
+            sharedVersion: false,
+            packages: [
+              {
+                name: "ag_ui_strands",
+                path: "integrations/aws-strands/python",
+                ecosystem: "python",
+                buildSystem: "uv",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(pkg, "pyproject.toml"),
+      [
+        "[project]",
+        'name = "ag_ui_strands"',
+        'version = "0.1.0"',
+        'requires-python = ">=3.10"',
+        "dependencies = []",
+        "",
+      ].join("\n"),
+    );
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const tool = (name: string, body: string) => {
+      writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`);
+      chmodSync(join(bin, name), 0o755);
+    };
+    tool("date", `echo ${timestamp}`);
+    // `pnpm tsx <script> <args>` runs the real script against the fixture.
+    tool(
+      "pnpm",
+      [
+        '[ "$1" = tsx ] || { echo "fake pnpm: unexpected $*" >&2; exit 3; }',
+        "shift",
+        `PREPARE_RELEASE_ROOT='${fixture}' exec '${process.execPath}' --import tsx "$@"`,
+      ].join("\n"),
+    );
+    const job = publishWorkflow.jobs.build;
+    const bump = stepNamed(job, "Compute prerelease version and bump");
+    const r = runModelStep(
+      {
+        ...bump,
+        run: bump.run.replaceAll(
+          "/tmp/bump-result.json",
+          join(root, "bump-result.json"),
+        ),
+      },
+      {
+        github: { run_id: runId, run_attempt: runAttempt },
+        inputs: { scope: "integration-aws-strands-py", suffix },
+      },
+      { workflow: publishWorkflow, job, bin },
+    );
+    const written = readFileSync(join(pkg, "pyproject.toml"), "utf8").match(
+      /^version = "([^"]+)"$/m,
+    )![1];
+    if (r.status !== 0)
+      return { version: written, uv: { status: r.status, out: r.stderr } };
+    const result = JSON.parse(
+      readFileSync(join(root, "bump-result.json"), "utf8"),
+    );
+    assert.equal(result.packages[0].newVersion, written);
+    if (!haveUv()) return { version: written, uv: null };
+    const uv = spawnSync(
+      "uv",
+      ["--no-config", "--offline", "--no-cache", "version", "--project", pkg],
+      { encoding: "utf8" },
+    );
+    return {
+      version: written,
+      uv: { status: uv.status, out: (uv.stdout ?? "") + (uv.stderr ?? "") },
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function assertUvDev(
+  label: string,
+  { version, uv }: ReturnType<typeof canaryPythonVersion>,
+): bigint {
+  const m = version.match(/^0\.1\.1\.dev([0-9]+)$/);
+  assert.ok(m, `${label}: ${version} is not 0.1.1.devN with a numeric N`);
+  const n = BigInt(m[1]);
+  assert.ok(n <= UV_MAX_DEV, `${label}: ${version} is past uv's bound`);
+  if (uv) {
+    assert.equal(uv.status, 0, `${label}: uv rejected ${version}: ${uv.out}`);
+    assert.ok(uv.out.includes(version), uv.out);
+  }
+  return n;
+}
+
+test("blank-suffix Python canaries get distinct .devN versions that uv accepts", () => {
+  const inputs = [
+    { timestamp: 1700000000, runId: 33068467612, runAttempt: 1 },
+    { timestamp: 1700000000, runId: 33068467613, runAttempt: 1 },
+    { timestamp: 1700000000, runId: 33068467612, runAttempt: 2 },
+  ];
+  const versions = inputs.map((input) => {
+    const out = canaryPythonVersion(input);
+    assertUvDev(JSON.stringify(input), out);
+    return out.version;
+  });
+  assert.equal(new Set(versions).size, 3, versions.join(", "));
+});
+
+test("a timestamp-only Python canary suffix is a valid .devN (fixture control)", () => {
+  const out = canaryPythonVersion({
+    suffix: "1700000000",
+    timestamp: 1700000000,
+    runId: 33068467612,
+    runAttempt: 1,
+  });
+  assert.equal(out.version, "0.1.1.dev1700000000");
+  assertUvDev("timestamp-only", out);
 });
 
 test("an explicit canary suffix is used as given", () => {
