@@ -105,6 +105,9 @@ export class HttpAgent extends AbstractAgent {
     // transmits enforced input. Unknown material is stripped with a warning;
     // a malformed known field fails the run before a byte leaves the process.
     const idleTimeoutMs = this.idleTimeoutMs;
+    // Capture this run's controller so a later reassignment of the public
+    // field cannot redirect the idle-timeout abort to a different run.
+    const abortController = this.abortController;
     const fetchResponse = () =>
       this.fetch(
         this.url,
@@ -117,10 +120,10 @@ export class HttpAgent extends AbstractAgent {
         ? runHttpRequest(fetchResponse)
         : runHttpRequest(fetchResponse, {
             idleTimeoutMs,
-            abortSignal: this.abortController.signal,
+            abortSignal: abortController.signal,
             onIdleTimeout: (error) => {
-              if (!this.abortController.signal.aborted) {
-                this.abortController.abort(error);
+              if (!abortController.signal.aborted) {
+                abortController.abort(error);
               }
             },
           });

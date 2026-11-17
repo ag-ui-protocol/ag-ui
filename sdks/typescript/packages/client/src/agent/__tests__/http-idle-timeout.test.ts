@@ -545,4 +545,28 @@ describe("HttpAgent idleTimeoutMs", () => {
     expect(errors).toEqual([]);
     expect(onIdleTimeout).not.toHaveBeenCalled();
   });
+
+  it("aborts the stalled run's own controller even if the field is reassigned", async () => {
+    let requestSignal: AbortSignal | null | undefined;
+    const agent = new HttpAgent({
+      url: "https://example.test/agent",
+      fetch: (url, init) => {
+        requestSignal = init?.signal;
+        return hangingHeadersFetch()(url, init);
+      },
+      idleTimeoutMs: 2_000,
+    });
+    const run = agent.runAgent({ runId: "reassigned-controller" });
+    const rejected = expect(run).rejects.toBeInstanceOf(HttpAgentIdleTimeoutError);
+    await vi.advanceTimersByTimeAsync(0);
+    const originalController = agent.abortController;
+    const replacement = new AbortController();
+    agent.abortController = replacement;
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await rejected;
+    expect(originalController.signal.aborted).toBe(true);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(replacement.signal.aborted).toBe(false);
+  });
 });
