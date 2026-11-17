@@ -58,8 +58,11 @@ is a valid `ReplayAgent` constructor argument.
 
 - `recordEvents(agent)` stays subscribed until `stop()`. `stop()` is idempotent;
   it is a no-op for `createEventRecorder()`.
-- A recording may hold several runs. Each `runAgent()` call plays exactly one
-  run, in order (first call → first run, next call → next run).
+- A recording may hold several runs. A recorded run ends at `RUN_STARTED` of the
+  next run or after a `RUN_FINISHED`/`RUN_ERROR`, and each `run()` invocation
+  advances the playback cursor even when that playback is aborted or fails, so
+  the next `runAgent()` plays the following recorded run. Each `runAgent()` call
+  plays one run, in order (first call → first run, next call → next run).
 - After the last recorded run, the next `runAgent()` emits a `RUN_ERROR` whose
   message says there are no more recorded runs. It does not hang or complete
   silently.
@@ -69,6 +72,7 @@ is a valid `ReplayAgent` constructor argument.
 - `abortRun()` stops playback promptly, including while waiting on `delayMs`. An
   in-flight abort emits `RUN_ERROR` with `code: "abort"`, the same marker a
   cancelled HTTP run uses.
+- An exception thrown by a `delayMs` function errors the run.
 - Events still go through verify and apply, so a malformed recording fails the
   same way a malformed server stream does.
 - `clone()` copies the recording, the delay, and the playback cursor. The clone

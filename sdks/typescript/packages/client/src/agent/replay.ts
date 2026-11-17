@@ -35,17 +35,24 @@ const LIFECYCLE_TYPES = new Set<EventType>([
 
 /**
  * A recording is a flat event list, the same shape as a conformance fixture's
- * `stream` array. Each `RUN_STARTED` after the first event begins a new run.
+ * `stream` array. A run ends after `RUN_FINISHED` or `RUN_ERROR`, so any
+ * following event begins a new run; `RUN_STARTED` also begins a new run when
+ * the current run is non-empty.
  */
 export function splitRecordedRuns(events: readonly BaseEvent[]): BaseEvent[][] {
   const runs: BaseEvent[][] = [];
   let current: BaseEvent[] = [];
+  let ended = false;
   for (const event of events) {
-    if (event.type === EventType.RUN_STARTED && current.length > 0) {
+    if (current.length > 0 && (ended || event.type === EventType.RUN_STARTED)) {
       runs.push(current);
       current = [];
+      ended = false;
     }
     current.push(event);
+    if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
+      ended = true;
+    }
   }
   if (current.length > 0) {
     runs.push(current);
@@ -181,28 +188,43 @@ function playEvents(
       subscriber.complete();
     };
 
+    const fail = (err: unknown) => {
+      if (stopped) return;
+      stopped = true;
+      stopTimer();
+      subscriber.error(err);
+    };
+
     const onAbort = () => finishAbort();
     signal.addEventListener("abort", onAbort);
 
     const schedule = () => {
-      while (!stopped && index < events.length) {
-        const event = events[index];
-        const delay = resolveDelay(delayMs, event, index);
-        index += 1;
-        if (delay > 0) {
-          timer = setTimeout(() => {
-            timer = undefined;
-            if (stopped) return;
-            subscriber.next(event);
-            schedule();
-          }, delay);
-          return;
+      try {
+        while (!stopped && index < events.length) {
+          const event = events[index];
+          const delay = resolveDelay(delayMs, event, index);
+          index += 1;
+          if (delay > 0) {
+            timer = setTimeout(() => {
+              timer = undefined;
+              if (stopped) return;
+              try {
+                subscriber.next(event);
+                schedule();
+              } catch (err) {
+                fail(err);
+              }
+            }, delay);
+            return;
+          }
+          subscriber.next(event);
         }
-        subscriber.next(event);
-      }
-      if (!stopped) {
-        stopped = true;
-        subscriber.complete();
+        if (!stopped) {
+          stopped = true;
+          subscriber.complete();
+        }
+      } catch (err) {
+        fail(err);
       }
     };
 
@@ -220,10 +242,12 @@ function playEvents(
  * Plays a recorded event stream through the normal `AbstractAgent` pipeline
  * (enforce, verify, apply, subscribers, middleware) with no network.
  *
- * Each `runAgent()` call consumes the next recorded run, in order. Calling
- * past the last run emits a `RUN_ERROR` rather than hanging or completing
- * silently. `abortRun()` stops playback promptly, including while waiting on
- * `delayMs`.
+ * A recorded run ends at `RUN_STARTED` of the next run or after `RUN_FINISHED`
+ * or `RUN_ERROR`. Each `runAgent()` call consumes the next recorded run, in
+ * order, and advances the playback cursor even when playback is aborted or
+ * fails. Calling past the last run emits a `RUN_ERROR` rather than hanging or
+ * completing silently. `abortRun()` stops playback promptly, including while
+ * waiting on `delayMs`.
  */
 export class ReplayAgent extends AbstractAgent {
   public events: BaseEvent[];

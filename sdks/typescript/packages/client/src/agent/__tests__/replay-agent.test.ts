@@ -93,6 +93,40 @@ describe("splitRecordedRuns", () => {
     ];
     expect(splitRecordedRuns(errorOnly)).toEqual([errorOnly]);
   });
+
+  it("splits a successful run followed by an error-only run", () => {
+    const first = textRun({
+      threadId: "t",
+      runId: "r1",
+      messageId: "m1",
+      text: "ok",
+    });
+    const second: BaseEvent[] = [{ type: EventType.RUN_ERROR, message: "boom" } as RunErrorEvent];
+    expect(splitRecordedRuns([...first, ...second])).toEqual([first, second]);
+  });
+
+  it("splits two consecutive error-only runs", () => {
+    const first: BaseEvent[] = [
+      { type: EventType.RUN_ERROR, message: "first error" } as RunErrorEvent,
+    ];
+    const second: BaseEvent[] = [
+      { type: EventType.RUN_ERROR, message: "second error" } as RunErrorEvent,
+    ];
+    expect(splitRecordedRuns([...first, ...second])).toEqual([first, second]);
+  });
+
+  it("splits an error-only run followed by a successful run", () => {
+    const first: BaseEvent[] = [
+      { type: EventType.RUN_ERROR, message: "first error" } as RunErrorEvent,
+    ];
+    const second = textRun({
+      threadId: "t",
+      runId: "r2",
+      messageId: "m2",
+      text: "recovered",
+    });
+    expect(splitRecordedRuns([...first, ...second])).toEqual([first, second]);
+  });
 });
 
 describe("recordEvents and ReplayAgent", () => {
@@ -173,6 +207,70 @@ describe("recordEvents and ReplayAgent", () => {
     const second = await agent.runAgent({ runId: "new-2" });
     expect(second.newMessages.map((message) => message.content)).toEqual(["second"]);
     expect(agent.messages.map((message) => message.content)).toEqual(["first", "second"]);
+  });
+
+  it("plays a successful run then an error-only run across two runAgent() calls", async () => {
+    const recording: BaseEvent[] = [
+      ...textRun({ threadId: "t", runId: "r1", messageId: "m1", text: "ok" }),
+      { type: EventType.RUN_ERROR, message: "later failure" } as RunErrorEvent,
+    ];
+    const agent = new ReplayAgent(recording, { threadId: "t", debug: false });
+    const errors: string[] = [];
+    agent.subscribe({
+      onRunErrorEvent: ({ event }) => {
+        errors.push(event.message);
+      },
+    });
+
+    const first = await agent.runAgent({ runId: "play-1" });
+    expect(first.newMessages.map((message) => message.content)).toEqual(["ok"]);
+    expect(errors).toEqual([]);
+
+    const second = await agent.runAgent({ runId: "play-2" });
+    expect(second.newMessages).toEqual([]);
+    expect(errors).toEqual(["later failure"]);
+  });
+
+  it("plays two error-only runs across two runAgent() calls without verifier failure", async () => {
+    const recording: BaseEvent[] = [
+      { type: EventType.RUN_ERROR, message: "err-1" } as RunErrorEvent,
+      { type: EventType.RUN_ERROR, message: "err-2" } as RunErrorEvent,
+    ];
+    const agent = new ReplayAgent(recording, { threadId: "t", debug: false });
+    const errors: string[] = [];
+    agent.subscribe({
+      onRunErrorEvent: ({ event }) => {
+        errors.push(event.message);
+      },
+    });
+
+    await agent.runAgent({ runId: "play-1" });
+    expect(errors).toEqual(["err-1"]);
+
+    await agent.runAgent({ runId: "play-2" });
+    expect(errors).toEqual(["err-1", "err-2"]);
+  });
+
+  it("plays an error-only run then a successful run across two runAgent() calls", async () => {
+    const recording: BaseEvent[] = [
+      { type: EventType.RUN_ERROR, message: "err-1" } as RunErrorEvent,
+      ...textRun({ threadId: "t", runId: "r2", messageId: "m2", text: "recovered" }),
+    ];
+    const agent = new ReplayAgent(recording, { threadId: "t", debug: false });
+    const errors: string[] = [];
+    agent.subscribe({
+      onRunErrorEvent: ({ event }) => {
+        errors.push(event.message);
+      },
+    });
+
+    const first = await agent.runAgent({ runId: "play-1" });
+    expect(first.newMessages).toEqual([]);
+    expect(errors).toEqual(["err-1"]);
+
+    const second = await agent.runAgent({ runId: "play-2" });
+    expect(second.newMessages.map((message) => message.content)).toEqual(["recovered"]);
+    expect(errors).toEqual(["err-1"]);
   });
 
   it("emits RUN_ERROR when every recorded run has already been played", async () => {
@@ -369,6 +467,28 @@ describe("ReplayAgent abort and delay", () => {
     await agent.runAgent({ runId: "r1" });
     expect(delays[0]).toEqual({ type: EventType.RUN_STARTED, index: 0 });
     expect(delays.length).toBeGreaterThan(1);
+  });
+
+  it("rejects runAgent() and clears timers when delayMs throws on a later event", async () => {
+    const delayError = new Error("delay boom");
+    const agent = new ReplayAgent(
+      textRun({ threadId: "t", runId: "r1", messageId: "m1", text: "x" }),
+      {
+        threadId: "t",
+        debug: false,
+        delayMs: (_event, index) => {
+          if (index === 0) return 10;
+          throw delayError;
+        },
+      },
+    );
+
+    const rejected = expect(agent.runAgent({ runId: "r1" })).rejects.toThrow("delay boom");
+    await vi.advanceTimersByTimeAsync(10);
+    await rejected;
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(agent.isRunning).toBe(false);
   });
 });
 
