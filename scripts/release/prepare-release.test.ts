@@ -965,3 +965,85 @@ test("a Python canary preid that is not numeric is refused, not written", async 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A scope that lists a TypeScript package before a Python one. The Python
+// .devN is checked only after the TS version is computed, so a check inside
+// the write loop would leave the TS package.json bumped when it refuses.
+function mixedScopeFixture(): { root: string; files: string[] } {
+  const root = mkdtempSync(join(tmpdir(), "prepare-release-mixed-"));
+  const ts = join(root, "sdks/typescript/pkg");
+  const py = join(root, "sdks/python");
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  mkdirSync(ts, { recursive: true });
+  mkdirSync(py, { recursive: true });
+  writeFileSync(
+    join(root, "scripts/release/release.config.json"),
+    JSON.stringify({
+      prereleaseTag: "alpha",
+      scopes: {
+        mixed: {
+          description: "Fixture with a TS package before a Python one",
+          sharedVersion: false,
+          packages: [
+            {
+              name: "@ag-ui/fixture",
+              path: "sdks/typescript/pkg",
+              ecosystem: "typescript",
+            },
+            {
+              name: "ag_ui_fixture",
+              path: "sdks/python",
+              ecosystem: "python",
+              buildSystem: "uv",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(ts, "package.json"),
+    JSON.stringify({ name: "@ag-ui/fixture", version: "0.1.0" }, null, 2) +
+      "\n",
+  );
+  writeFileSync(
+    join(py, "pyproject.toml"),
+    [
+      "[project]",
+      'name = "ag_ui_fixture"',
+      'version = "0.1.0"',
+      'requires-python = ">=3.10"',
+      "dependencies = []",
+      "",
+    ].join("\n"),
+  );
+  return {
+    root,
+    files: [join(ts, "package.json"), join(py, "pyproject.toml")],
+  };
+}
+
+for (const [label, preid] of [
+  ["not numeric", "canary.rc1"],
+  ["past uv's bound", "canary.1700000000.33068467612.1"],
+] as const) {
+  test(`a mixed scope whose Python .devN is ${label} is refused before any package is written`, async () => {
+    const { root, files } = mixedScopeFixture();
+    try {
+      const before = files.map((f) => readFileSync(f, "utf8"));
+      const r = await runPrepareRelease(
+        ["--scope", "mixed", "--bump", "prerelease", "--preid", preid],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+      assert.match(r.stderr, /ag_ui_fixture: Python version 0\.1\.1\.dev/);
+      assert.deepEqual(
+        files.map((f) => readFileSync(f, "utf8")),
+        before,
+        "no package file changed",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

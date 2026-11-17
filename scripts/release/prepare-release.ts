@@ -828,6 +828,13 @@ function main(): void {
 
     console.error(`[${args.scope}] Shared version: ${currentVersion} -> ${newVersion}`);
 
+    // Check every Python package before anything is written, so a refusal
+    // leaves no package half-bumped.
+    for (const pkg of scopeConfig.packages) {
+      if (pkg.ecosystem === "python")
+        checkPythonDevNumber(pkg.name, toPep440(newVersion));
+    }
+
     if (versionSourceEcosystem === "dotnet" && args.bump !== "prerelease" && !args.dryRun) {
       recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion, versionSourceBuildSystem));
       const written = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
@@ -872,8 +879,6 @@ function main(): void {
       const relPath = path.relative(repoRoot, filePath);
 
       const versionToWrite = pkg.ecosystem === 'python' ? toPep440(newVersion) : newVersion;
-      if (pkg.ecosystem === "python")
-        checkPythonDevNumber(pkg.name, versionToWrite);
 
       if (!sharedVersionSourceFile && !args.dryRun) {
         recordWritten(writeVersion(repoRoot, pkg, versionToWrite, scopeConfig.versionSource));
@@ -897,16 +902,20 @@ function main(): void {
       });
     }
   } else {
-    // Each package has its own version
-    for (const pkg of scopeConfig.packages) {
-      const filePath = getVersionFilePath(repoRoot, pkg, scopeConfig.versionSource);
-      const relPath = path.relative(repoRoot, filePath);
+    // Each package has its own version. Compute and check every package
+    // before anything is written, so a refusal leaves no package half-bumped.
+    const planned = scopeConfig.packages.map((pkg) => {
       const currentVersion = readVersion(repoRoot, pkg, scopeConfig.versionSource);
       const newVersion = computeNewVersion(currentVersion, args.bump, args.preid, pkg.ecosystem);
-
       console.error(`[${args.scope}] ${pkg.name}: ${currentVersion} -> ${newVersion}`);
       if (pkg.ecosystem === "python")
         checkPythonDevNumber(pkg.name, newVersion);
+      return { pkg, currentVersion, newVersion };
+    });
+
+    for (const { pkg, currentVersion, newVersion } of planned) {
+      const filePath = getVersionFilePath(repoRoot, pkg, scopeConfig.versionSource);
+      const relPath = path.relative(repoRoot, filePath);
 
       if (!args.dryRun) {
         recordWritten(writeVersion(repoRoot, pkg, newVersion, scopeConfig.versionSource));
