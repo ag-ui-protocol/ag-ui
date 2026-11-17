@@ -1,1 +1,1 @@
-export { defaultApplyEvents } from "./default";
+export { defaultApplyEvents, type ApplyEventsOptions } from "./default";
