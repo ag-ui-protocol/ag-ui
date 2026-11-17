@@ -451,6 +451,34 @@ describe("ReplayAgent abort and delay", () => {
     expect(agent.isRunning).toBe(false);
   });
 
+  it("emits an abort error when the signal aborts between run() and subscribe", async () => {
+    const agent = new ReplayAgent(
+      textRun({ threadId: "t", runId: "r1", messageId: "m1", text: "late" }),
+      { threadId: "t", debug: false },
+    );
+    const stream = agent.run({
+      threadId: "t",
+      runId: "r1",
+      messages: [],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: {},
+    });
+    agent.abortRun();
+
+    const types: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      stream.subscribe({
+        next: (event) => types.push(event.type),
+        error: reject,
+        complete: resolve,
+      });
+    });
+
+    expect(types).toEqual([EventType.RUN_ERROR]);
+  });
+
   it("honours a per-event delayMs function", async () => {
     const delays: Array<{ type: string; index: number }> = [];
     const agent = new ReplayAgent(

@@ -161,14 +161,19 @@ function playEvents(
   delayMs: ReplayDelayMs,
   signal: AbortSignal,
 ): Observable<BaseEvent> {
-  if (signal.aborted) {
-    return of(abortEvent(signal));
-  }
-  if (events.length === 0) {
-    return of();
-  }
-
   return new Observable<BaseEvent>((subscriber) => {
+    // Checked at subscribe time: the signal may abort between run() and
+    // subscription, and its one "abort" event would then be missed.
+    if (signal.aborted) {
+      subscriber.next(abortEvent(signal));
+      subscriber.complete();
+      return;
+    }
+    if (events.length === 0) {
+      subscriber.complete();
+      return;
+    }
+
     let index = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
