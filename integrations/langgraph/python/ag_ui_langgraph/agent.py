@@ -92,6 +92,7 @@ from ag_ui.core import (
     token_usage_from_langchain_metadata,
 )
 from .interrupts import lg_interrupts_to_agui, DEFAULT_RESUME_SENTINEL_CANCELLED, DEFAULT_RESUME_SENTINEL_MAP
+from .middlewares.frontend_tools import FRONTEND_TOOLS_CONFIG_KEY
 from ag_ui.encoder import EventEncoder
 from ag_ui_a2ui_toolkit import split_a2ui_schema_context
 
@@ -1759,6 +1760,23 @@ class LangGraphAgent:
             config = ensure_config(self.config.copy() if self.config else {})
             config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
+            # Frontend tools for create_agent() graphs (#892): a plain
+            # create_agent() graph's AgentState has no tools channel, so the
+            # tools merged into state["tools"] by langgraph_default_merge_state
+            # are dropped by LangGraph as unknown input keys before any node
+            # or middleware sees them. Carry them on the run config instead --
+            # the one per-run channel every graph carries -- so
+            # FrontendToolsMiddleware can bind them to the model call. The
+            # dicts are JSON-safe (Tool.model_dump()), and the checkpointer
+            # ignores unknown configurable keys. Set once per run, before any
+            # stream is built; prepare_regenerate_stream inherits it through
+            # merge_configs.
+            if input.tools:
+                config["configurable"][FRONTEND_TOOLS_CONFIG_KEY] = [
+                    tool.model_dump() if hasattr(tool, "model_dump") else tool
+                    for tool in input.tools
+                ]
+
             agent_state = await self.graph.aget_state(config)
             command_input = forwarded_props.get('command', {}) if forwarded_props else {}
             legacy_command_resume = (
@@ -2511,7 +2529,10 @@ class LangGraphAgent:
             message_checkpoint: HumanMessage,
             config: RunnableConfig
     ) -> PreparedStream:
-        tools = input.tools or []
+        # NOTE: the frontend tools travel on the run config (see the
+        # FRONTEND_TOOLS_CONFIG_KEY stash in _handle_stream_events), not
+        # through a local -- an earlier revision read input.tools here and
+        # never used it. Fixes #892.
         thread_id = input.thread_id
 
         # ``HumanMessage.id`` is Optional at the type level; narrow here so

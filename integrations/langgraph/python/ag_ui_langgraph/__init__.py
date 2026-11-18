@@ -24,6 +24,7 @@ from .types import (
 from .utils import json_safe_stringify, make_json_safe
 from .endpoint import add_langgraph_fastapi_endpoint
 from .middlewares.state_streaming import StateStreamingMiddleware, StateItem
+from .middlewares.frontend_tools import FrontendToolsMiddleware, FRONTEND_TOOLS_CONFIG_KEY
 from .a2ui_tool import (
     get_a2ui_tools,
     A2UIToolParams,
@@ -60,6 +61,8 @@ __all__ = [
     "add_langgraph_fastapi_endpoint",
     "StateStreamingMiddleware",
     "StateItem",
+    "FrontendToolsMiddleware",
+    "FRONTEND_TOOLS_CONFIG_KEY",
     "json_safe_stringify",
     "make_json_safe"
 ]
