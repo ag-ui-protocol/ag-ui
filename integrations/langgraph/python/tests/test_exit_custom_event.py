@@ -222,6 +222,7 @@ async def _run(stream_events, interrupts=None, **agent_kwargs):
     if interrupts:
         task = MagicMock()
         task.interrupts = list(interrupts)
+        task.result = None  # pending, like a real PregelTask
         final_state.tasks = [task]
         final_state.next = ("model",)
     else:
