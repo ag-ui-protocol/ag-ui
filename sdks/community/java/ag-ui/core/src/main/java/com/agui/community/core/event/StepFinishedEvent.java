@@ -11,12 +11,20 @@ import java.util.Objects;
  *                  {@code null} (optional)
  * @param rawEvent  the original event this was transformed from, or
  *                  {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
-public record StepFinishedEvent(String stepName, Long timestamp, Object rawEvent) implements Event {
+public record StepFinishedEvent(String stepName, Long timestamp, Object rawEvent,
+                                String subagentRunId) implements Event {
 
     public StepFinishedEvent {
         Objects.requireNonNull(stepName, "stepName must not be null");
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public StepFinishedEvent(String stepName, Long timestamp, Object rawEvent) {
+        this(stepName, timestamp, rawEvent, null);
     }
 
     /**

@@ -15,10 +15,13 @@ import java.util.Objects;
  *                     {@code null} (optional)
  * @param rawEvent     the original event this was transformed from, or
  *                     {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
 public record ActivityDeltaEvent(String messageId, String activityType,
-                                 List<JsonPatchOperation> patch, Long timestamp, Object rawEvent)
+                                 List<JsonPatchOperation> patch, Long timestamp, Object rawEvent,
+                                 String subagentRunId)
         implements Event {
 
     public ActivityDeltaEvent {
@@ -26,6 +29,12 @@ public record ActivityDeltaEvent(String messageId, String activityType,
         Objects.requireNonNull(activityType, "activityType must not be null");
         Objects.requireNonNull(patch, "patch must not be null");
         patch = List.copyOf(patch);
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public ActivityDeltaEvent(String messageId, String activityType, List<JsonPatchOperation> patch,
+            Long timestamp, Object rawEvent) {
+        this(messageId, activityType, patch, timestamp, rawEvent, null);
     }
 
     /**

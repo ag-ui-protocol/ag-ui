@@ -49,7 +49,12 @@ public enum EventType {
     // Special
     RAW,
     CUSTOM,
-    META_EVENT;
+    META_EVENT,
+
+    // Subagent lifecycle (appended to retain existing enum ordinals)
+    SUBAGENT_STARTED,
+    SUBAGENT_FINISHED,
+    SUBAGENT_ERROR;
 
     /**
      * @return the wire value of this event type as used in the AG-UI protocol

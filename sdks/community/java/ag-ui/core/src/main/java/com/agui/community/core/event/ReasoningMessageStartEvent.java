@@ -13,9 +13,12 @@ import java.util.Objects;
  *                  {@code null} (optional)
  * @param rawEvent  the original event this was transformed from, or
  *                  {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
-public record ReasoningMessageStartEvent(String messageId, Role role, Long timestamp, Object rawEvent)
+public record ReasoningMessageStartEvent(String messageId, Role role, Long timestamp, Object rawEvent,
+                                         String subagentRunId)
         implements Event {
 
     public ReasoningMessageStartEvent {
@@ -24,6 +27,11 @@ public record ReasoningMessageStartEvent(String messageId, Role role, Long times
         if (role != Role.REASONING) {
             throw new IllegalArgumentException("role must be " + Role.REASONING + " but was " + role);
         }
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public ReasoningMessageStartEvent(String messageId, Role role, Long timestamp, Object rawEvent) {
+        this(messageId, role, timestamp, rawEvent, null);
     }
 
     /**

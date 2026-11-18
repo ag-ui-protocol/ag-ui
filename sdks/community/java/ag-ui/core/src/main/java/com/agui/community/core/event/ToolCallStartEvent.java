@@ -13,14 +13,23 @@ import java.util.Objects;
  *                        {@code null} (optional)
  * @param rawEvent        the original event this was transformed from, or
  *                        {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
 public record ToolCallStartEvent(String toolCallId, String toolCallName, String parentMessageId,
-                                 Long timestamp, Object rawEvent) implements Event {
+                                 Long timestamp, Object rawEvent,
+                                 String subagentRunId) implements Event {
 
     public ToolCallStartEvent {
         Objects.requireNonNull(toolCallId, "toolCallId must not be null");
         Objects.requireNonNull(toolCallName, "toolCallName must not be null");
+    }
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public ToolCallStartEvent(String toolCallId, String toolCallName, String parentMessageId, Long timestamp,
+            Object rawEvent) {
+        this(toolCallId, toolCallName, parentMessageId, timestamp, rawEvent, null);
     }
 
     /**
