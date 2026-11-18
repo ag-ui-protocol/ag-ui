@@ -101,4 +101,65 @@ describe("on_tool_end output shapes", () => {
     expect(events.every((event) => event.toolCallId === "call-1")).toBe(true);
     expect(events[3].content).toBe("found it");
   });
+
+  it("carries a ToolMessage artifact on TOOL_CALL_RESULT metadata", () => {
+    const { agent, events } = buildAgent();
+
+    agent.handleSingleEvent(
+      onToolEnd({
+        type: "tool",
+        tool_call_id: "call-1",
+        name: "search",
+        content: "found it",
+        artifact: { rows: [1, 2] },
+        additional_kwargs: { secret: "x" },
+      }),
+    );
+
+    expect(events[3].metadata).toEqual({
+      langgraph: { artifact: { rows: [1, 2] } },
+    });
+  });
+
+  it("carries a LangChain-serialized ToolMessage artifact", () => {
+    const { agent, events } = buildAgent();
+
+    agent.handleSingleEvent(
+      onToolEnd({
+        lc: 1,
+        type: "constructor",
+        id: ["langchain_core", "messages", "ToolMessage"],
+        kwargs: {
+          tool_call_id: "call-serialized",
+          name: "search",
+          content: "found it",
+          artifact: { rows: [1, 2] },
+        },
+      }),
+    );
+
+    expect(events[3].metadata).toEqual({
+      langgraph: { artifact: { rows: [1, 2] } },
+    });
+  });
+
+  it("omits metadata when the artifact is null", () => {
+    const { agent, events } = buildAgent();
+
+    agent.handleSingleEvent(
+      onToolEnd({
+        type: "tool",
+        tool_call_id: "call-1",
+        name: "search",
+        content: "found it",
+        additional_kwargs: {},
+        response_metadata: {},
+        artifact: null,
+        status: "success",
+      }),
+    );
+
+    expect(events[3].type).toBe("TOOL_CALL_RESULT");
+    expect("metadata" in events[3]).toBe(false);
+  });
 });
