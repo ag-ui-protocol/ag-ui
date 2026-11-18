@@ -71,8 +71,9 @@ export interface EventRecorder {
   readonly events: BaseEvent[];
   toJSON(): BaseEvent[];
   /**
-   * Detach from the agent `recordEvents` subscribed this recorder to. Safe to
-   * call more than once. A no-op when the recorder was created with
+   * Detach from the agent `recordEvents` subscribed this recorder to and stop
+   * collecting, including events from a run already in progress. Safe to call
+   * more than once. A no-op when the recorder was created with
    * {@link createEventRecorder} and never attached.
    */
   stop(): void;
@@ -85,6 +86,9 @@ function createRecorder(onStop?: () => void): EventRecorder {
     events,
     subscriber: {
       onEvent({ event }) {
+        // A run copies the agent's subscriber list when it starts, so an
+        // attached recorder can still be called after stop() detaches it.
+        if (stopped && onStop) return;
         events.push(structuredClone_(event));
       },
     },

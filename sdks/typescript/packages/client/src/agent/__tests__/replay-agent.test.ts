@@ -194,6 +194,36 @@ describe("recordEvents and ReplayAgent", () => {
     }).not.toThrow();
   });
 
+  it("stop() during a run drops the rest of that run's events", async () => {
+    const agent = new ReplayAgent(
+      textRun({ threadId: "t", runId: "r1", messageId: "m1", text: "partial" }),
+      { threadId: "t", debug: false },
+    );
+    const recorder = recordEvents(agent);
+    agent.subscribe({
+      onEvent({ event }) {
+        if (event.type === EventType.TEXT_MESSAGE_START) {
+          recorder.stop();
+        }
+      },
+    });
+
+    await agent.runAgent({ runId: "r1" });
+    expect(recorder.events.map((event) => event.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_START,
+    ]);
+
+    const detached = createEventRecorder();
+    detached.stop();
+    const source = new ReplayAgent(
+      textRun({ threadId: "t", runId: "r2", messageId: "m2", text: "kept" }),
+      { threadId: "t", debug: false },
+    );
+    await source.runAgent({ runId: "r2" }, detached.subscriber);
+    expect(detached.events.length).toBeGreaterThan(0);
+  });
+
   it("plays one recorded run per runAgent() call, in order", async () => {
     const recording = [
       ...textRun({ threadId: "t", runId: "r1", messageId: "m1", text: "first" }),
