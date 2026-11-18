@@ -190,11 +190,10 @@ const LANES = {
   langchain: { npm: ["@ag-ui/langchain"] },
   watsonx: { npm: ["@ag-ui/watsonx"] },
   "cloudflare-agents": {
-    // The Worker uses the withAGUI API, which npm `latest` (0.0.2) predates,
-    // so there is no release to switch it to yet: it links the adapter from
-    // this checkout. Once the next release is out, this goes back to
-    // `npm: ["@ag-ui/cloudflare-agents"]` with the examples dir as npmRoots.
-    note: "the withAGUI release of @ag-ui/cloudflare-agents is not on npm yet; the Worker links it from this checkout",
+    npm: ["@ag-ui/cloudflare-agents"],
+    // The Worker is a standalone project (own lockfile) that links the adapter
+    // and client from this checkout; published mode pins both to npm latest.
+    npmRoots: ["integrations/community/cloudflare-agents/typescript/examples"],
   },
   "claude-managed-agents-python": {
     python: {
