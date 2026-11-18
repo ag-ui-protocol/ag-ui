@@ -47,9 +47,9 @@ import {
   type ToolMessage,
 } from "@ag-ui/core";
 import jsonpatch from "fast-json-patch";
-import { EMPTY, of } from "rxjs";
+import { EMPTY, concat, of, throwError } from "rxjs";
 import type { Observable } from "rxjs";
-import { defaultIfEmpty } from "rxjs/operators";
+import { catchError, defaultIfEmpty } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
 import { applyInOrder, type Backlog } from "./apply-in-order";
@@ -481,7 +481,8 @@ export interface ApplyEventsOptions {
    * current messages and state; what is merged is the emitted updates, and
    * with them `agent.messages`, `agent.state`, `onMessagesChanged` and
    * `onStateChanged`. Events that arrive one at a time still emit one update
-   * each. Off by default.
+   * each. If the stream fails while events of a burst are waiting, the update
+   * for the events applied so far is emitted before the error. Off by default.
    */
   coalesce?: boolean;
 }
@@ -591,6 +592,11 @@ export const defaultApplyEvents = (
     if (coalesce && backlog.waiting > 0) {
       return EMPTY;
     }
+    return emitCollected();
+  };
+
+  // The update collected so far, whatever is still waiting.
+  const emitCollected = () => {
     const result: AgentStateMutation = {};
     if (currentMutation.messages !== undefined) {
       result.messages = snapshotMessages(currentMutation.messages);
@@ -2035,6 +2041,12 @@ export const defaultApplyEvents = (
       const _exhaustiveCheck: never = event.type;
       return emitUpdates();
     }, backlog),
+    // With `coalesce`, an update can still be held back when the stream fails:
+    // events of the burst were applied, and their update waited for the rest.
+    // Emit it before the error, as it would have been without `coalesce`.
+    coalesce
+      ? catchError((error: unknown) => concat(emitCollected(), throwError(() => error)))
+      : <T>(stream: T) => stream,
     // Only use defaultIfEmpty when there are subscribers to avoid emitting empty updates
     // when patches fail and there are no subscribers (like in state patching test)
     subscribers.length > 0 ? defaultIfEmpty({} as AgentStateMutation) : <T>(stream: T) => stream,

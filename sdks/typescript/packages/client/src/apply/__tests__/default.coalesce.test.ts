@@ -82,6 +82,31 @@ describe("defaultApplyEvents coalesce", () => {
     expect(seen).toContain("end:Hello");
   });
 
+  it("emits what it applied before the source failed in the middle of a burst", async () => {
+    const source = new Subject<BaseEvent>();
+    // The stream fails while the fourth event of the burst is being applied
+    // and the rest are still waiting.
+    const failOnFourth: AgentSubscriber = {
+      onEvent: ({ event }) => {
+        if (event === events[3]) source.error(new Error("stream failed"));
+      },
+    };
+    const updates: { messages?: Message[]; state?: unknown }[] = [];
+    const error = new Promise<unknown>((resolve) =>
+      defaultApplyEvents(input, source, agent(), [failOnFourth], undefined, {
+        coalesce: true,
+      }).subscribe({
+        next: (update) => updates.push(update),
+        error: resolve,
+      }),
+    );
+    for (const event of events) source.next(event);
+
+    expect(await error).toEqual(new Error("stream failed"));
+    expect(updates).toHaveLength(1);
+    expect(updates[0].messages?.map((m) => [m.id, m.content])).toEqual([["m1", "Hel"]]);
+  });
+
   it("emits per event when events arrive one at a time", async () => {
     const source = new Subject<BaseEvent>();
     const updates: unknown[] = [];
