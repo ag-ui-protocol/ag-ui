@@ -250,6 +250,81 @@ class TestWorkflowRootDetection:
         adk_agent._adk_agent = wf
         assert adk_agent._root_agent_is_workflow() is True
 
+    @pytest.mark.parametrize("use_subclass", [False, True])
+    def test_llm_root_with_workflow_node_tool_is_workflow(self, use_subclass: bool) -> None:
+        """Real NodeTools, including subclasses and aliases, are discovered."""
+        try:
+            from google.adk.tools._node_tool import NodeTool
+            from google.adk.workflow import Workflow
+        except ImportError:
+            pytest.skip("NodeTool requires ADK >= 2.8")
+
+        class InstrumentedNodeTool(NodeTool):
+            pass
+
+        wf = Workflow(
+            name="hs_classifier",
+            description="Classify an item.",
+            input_schema=str,
+        )
+        tool_type = InstrumentedNodeTool if use_subclass else NodeTool
+        root_agent = Agent(
+            name="coordinator",
+            instruction="coordinate",
+            tools=[tool_type(wf, name="run_classifier")],
+        )
+        adk_agent = ADKAgent(
+            adk_agent=root_agent,
+            app_name="t",
+            user_id="u",
+            use_in_memory_services=True,
+        )
+        assert adk_agent._root_agent_is_workflow() is True
+        assert ADKAgent._collect_node_tool_names(root_agent) == {"run_classifier"}
+
+    def test_workflow_sub_agent_or_graph_node_is_not_workflow_root(self) -> None:
+        """Only a Workflow root or a NodeTool Workflow on tools disables the
+        #1534 pre-append workaround. A Workflow reachable through sub_agents
+        or graph.nodes must keep it (ag-ui#2674 review)."""
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+        except ImportError:
+            pytest.skip("Workflow not available on this ADK version (1.x)")
+        from types import SimpleNamespace
+
+        wf = Workflow(name="inner_wf")
+        # Workflow is not a BaseAgent in this ADK, so a stand-in tree is used
+        # for the sub_agents shape.
+        with_sub_agent = SimpleNamespace(sub_agents=[wf], tools=[], graph=None)
+        assert ADKAgent._agent_tree_contains_workflow(with_sub_agent) is False
+
+        graph_holder = SimpleNamespace(graph=SimpleNamespace(nodes=[wf]), tools=[], sub_agents=[])
+        assert ADKAgent._agent_tree_contains_workflow(graph_holder) is False
+
+    def test_collect_node_tool_names_uses_exposed_name_only(self) -> None:
+        """NodeTool(name=classify) wrapping Workflow(check_status) must not
+        also filter a sibling LongRunningFunctionTool named check_status.
+        """
+        try:
+            from google.adk.workflow import Workflow  # type: ignore[import-not-found]
+            from google.adk.tools._node_tool import NodeTool
+        except ImportError:
+            pytest.skip("Workflow/NodeTool not available on this ADK version (1.x)")
+
+        class SubNodeTool(NodeTool):
+            def __init__(self, name, node):
+                self.name = name
+                self.node = node
+
+        wf = Workflow(name="check_status")
+        root = MagicMock()
+        root.tools = [SubNodeTool("classify", wf)]
+        root.sub_agents = []
+        root.graph = None
+        names = ADKAgent._collect_node_tool_names(root)
+        assert "classify" in names
+        assert "check_status" not in names
+
 
 # ---------------------------------------------------------------------------
 # ag-ui#1669 — End-to-end: Workflow root HITL resume carries FunctionResponse
