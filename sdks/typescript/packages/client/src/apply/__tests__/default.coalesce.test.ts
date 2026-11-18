@@ -107,6 +107,72 @@ describe("defaultApplyEvents coalesce", () => {
     expect(updates[0].messages?.map((m) => [m.id, m.content])).toEqual([["m1", "Hel"]]);
   });
 
+  it("emits a burst's update when the source fails before it was passed on", async () => {
+    // The update is passed on a few microtasks after the last event of the
+    // burst is applied. Fail the source at each microtask in turn: the first
+    // snapshot is applied before the second one starts, so it must not be lost.
+    const first = { type: EventType.STATE_SNAPSHOT, snapshot: { step: 1 } } as BaseEvent;
+    const second = { type: EventType.STATE_SNAPSHOT, snapshot: { step: 2 } } as BaseEvent;
+    for (let ticks = 0; ticks < 20; ticks += 1) {
+      const source = new Subject<BaseEvent>();
+      const failAfter = (left: number): void =>
+        queueMicrotask(() =>
+          left === 0 ? source.error(new Error("stream failed")) : failAfter(left - 1),
+        );
+      const failDuringSecond: AgentSubscriber = {
+        onStateSnapshotEvent: ({ event }) => {
+          if (event === second) failAfter(ticks);
+        },
+      };
+      const states: unknown[] = [];
+      const error = new Promise<unknown>((resolve) =>
+        defaultApplyEvents(input, source, agent(), [failDuringSecond], undefined, {
+          coalesce: true,
+        }).subscribe({
+          next: (update) => {
+            if (update.state !== undefined) states.push(update.state);
+          },
+          error: resolve,
+        }),
+      );
+      source.next(first);
+      source.next(second);
+
+      expect(await error).toEqual(new Error("stream failed"));
+      expect(states, `source failed after ${ticks} microtasks`).not.toHaveLength(0);
+    }
+  });
+
+  it("emits only the error, as without coalesce, when an event that arrived alone fails", async () => {
+    // The activity is added before `onNewMessage` runs, and the hook fails.
+    const activity = {
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: "a1",
+      activityType: "card",
+      content: { step: 1 },
+    } as BaseEvent;
+    const failingHook: AgentSubscriber = {
+      onNewMessage: () => {
+        throw new Error("hook failed");
+      },
+    };
+    const run = (coalesce: boolean) => {
+      const updates: unknown[] = [];
+      const error = new Promise<unknown>((resolve) =>
+        defaultApplyEvents(input, from([activity]), agent(), [failingHook], undefined, {
+          coalesce,
+        }).subscribe({ next: (update) => updates.push(update), error: resolve }),
+      );
+      return error.then((error) => ({ updates, error }));
+    };
+
+    const separate = await run(false);
+    const coalesced = await run(true);
+    expect(coalesced.error).toEqual(new Error("hook failed"));
+    expect(separate.updates).toEqual([]);
+    expect(coalesced.updates).toEqual(separate.updates);
+  });
+
   it("emits per event when events arrive one at a time", async () => {
     const source = new Subject<BaseEvent>();
     const updates: unknown[] = [];

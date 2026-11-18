@@ -47,7 +47,7 @@ import {
   type ToolMessage,
 } from "@ag-ui/core";
 import jsonpatch from "fast-json-patch";
-import { EMPTY, concat, of, throwError } from "rxjs";
+import { EMPTY, concat, defer, of, throwError } from "rxjs";
 import type { Observable } from "rxjs";
 import { catchError, defaultIfEmpty } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
@@ -481,8 +481,9 @@ export interface ApplyEventsOptions {
    * current messages and state; what is merged is the emitted updates, and
    * with them `agent.messages`, `agent.state`, `onMessagesChanged` and
    * `onStateChanged`. Events that arrive one at a time still emit one update
-   * each. If the stream fails while events of a burst are waiting, the update
-   * for the events applied so far is emitted before the error. Off by default.
+   * each. If the stream fails before the update of a burst is emitted, the
+   * update for the events applied so far is emitted before the error. Off by
+   * default.
    */
   coalesce?: boolean;
 }
@@ -586,13 +587,23 @@ export const defaultApplyEvents = (
       return copy;
     });
 
+  // With `coalesce`: whether events that finished applying changed messages or
+  // state that no update has passed on yet. A stream error emits them first.
+  let unemitted = false;
+
   const emitUpdates = () => {
+    if (!coalesce) {
+      return emitCollected();
+    }
+    unemitted = currentMutation.messages !== undefined || currentMutation.state !== undefined;
     // More events are already waiting: keep collecting into currentMutation,
     // and let the last of them emit the combined update.
-    if (coalesce && backlog.waiting > 0) {
+    if (backlog.waiting > 0) {
       return EMPTY;
     }
-    return emitCollected();
+    // Collected when it is passed on, a few microtasks later: if the stream
+    // fails first, the error path below still finds the update to emit.
+    return defer(emitCollected);
   };
 
   // The update collected so far, whatever is still waiting.
@@ -610,6 +621,7 @@ export const defaultApplyEvents = (
       result.state = structuredClone_(currentMutation.state);
     }
     currentMutation = {};
+    unemitted = false;
     if (result.messages !== undefined || result.state !== undefined) {
       return of(result);
     }
@@ -2043,9 +2055,13 @@ export const defaultApplyEvents = (
     }, backlog),
     // With `coalesce`, an update can still be held back when the stream fails:
     // events of the burst were applied, and their update waited for the rest.
-    // Emit it before the error, as it would have been without `coalesce`.
+    // Emit it before the error, as their own updates would have been without
+    // `coalesce`. The event being applied at that moment edits the same
+    // messages and state, so what it changed so far goes with them.
     coalesce
-      ? catchError((error: unknown) => concat(emitCollected(), throwError(() => error)))
+      ? catchError((error: unknown) =>
+          concat(unemitted ? emitCollected() : EMPTY, throwError(() => error)),
+        )
       : <T>(stream: T) => stream,
     // Only use defaultIfEmpty when there are subscribers to avoid emitting empty updates
     // when patches fail and there are no subscribers (like in state patching test)
