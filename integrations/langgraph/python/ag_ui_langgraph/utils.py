@@ -775,6 +775,14 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
     agui_messages: List[AGUIMessage] = []
     for message in messages:
         if isinstance(message, HumanMessage):
+            # Deep Agents pins skills into the graph state as a HumanMessage
+            # marked additional_kwargs={"lc_source": "pinned_skill"} (#3343).
+            # That block is internal context for the model, not conversation:
+            # converting it to a plain AG-UI user message surfaces the raw
+            # <skill name=...> block as a user bubble in chat UIs. Skip it
+            # here; the message stays in state, so the model still sees it.
+            if message.additional_kwargs.get("lc_source") == "pinned_skill":
+                continue
             # Handle multimodal content
             if isinstance(message.content, list):
                 content = convert_langchain_multimodal_to_agui(
