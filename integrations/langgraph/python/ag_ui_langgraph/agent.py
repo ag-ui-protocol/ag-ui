@@ -1699,6 +1699,7 @@ class LangGraphAgent:
             "mode": "start",
             "reasoning_processes": {},
             "pending_reasoning_ids": {},
+            "pending_reasoning_parent_ids": {},
             "current_text_message_ids": {},
             "current_text_message_nodes": {},
             "node_name": None,
@@ -1913,6 +1914,21 @@ class LangGraphAgent:
                     sub_events = []
                 for sub_ev in sub_events:
                     yield self._dispatch_event(sub_ev)
+
+                # A failed `task` boundary belongs to the parent lane, while a
+                # model stream interrupted inside that task belongs to the child.
+                # Close the child's stream before _finish_subagent_on_task_end
+                # restores the parent lane and emits SUBAGENT_ERROR. The
+                # OnToolError handler calls this helper again for ordinary tool
+                # failures; clearing is idempotent, so the second call is a no-op.
+                is_failed_task = (
+                    event.get("event") == LangGraphEventTypes.OnToolError.value
+                    and event.get("run_id")
+                    in (self.active_run.get("subagent_task_runs") or {})
+                )
+                if is_failed_task:
+                    for end_ev in self._close_streams_interrupted_by_tool_error(event):
+                        yield self._dispatch_event(end_ev)
 
                 # Finish a subagent as soon as its `task` delegation returns, so
                 # its reported status tracks the subagent's own lifecycle rather
@@ -2640,6 +2656,98 @@ class LangGraphAgent:
         lanes = self.messages_in_process.get(run_id)
         if lanes is not None:
             lanes[lane] = None
+
+    def _close_streams_interrupted_by_tool_error(
+        self, event: dict
+    ) -> List[ProcessedEvents]:
+        """Close every stream descended from a failed tool, in its owning lane."""
+        if event.get("event") != LangGraphEventTypes.OnToolError.value:
+            return []
+        data = event.get("data") or {}
+        failed_tool_run_id = event.get("run_id")
+        if (
+            not failed_tool_run_id
+            or isinstance(data.get("error"), GraphBubbleUp)
+            or self.active_run is None
+        ):
+            return []
+
+        events: List[ProcessedEvents] = []
+        run_id = self.active_run["id"]
+        message_lanes = self.messages_in_process.get(run_id) or {}
+        for lane, stream in list(message_lanes.items()):
+            if (
+                not stream
+                or failed_tool_run_id not in (stream.get("parent_ids") or [])
+            ):
+                continue
+            owner = None if lane == _ROOT_LANE else lane
+            if stream.get("tool_call_id"):
+                events.append(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=stream["tool_call_id"],
+                        subagent_run_id=owner,
+                        raw_event=event,
+                    )
+                )
+            elif stream.get("id"):
+                events.append(
+                    TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        message_id=stream["id"],
+                        subagent_run_id=owner,
+                        raw_event=event,
+                    )
+                )
+            self.clear_message_in_progress(run_id, lane)
+
+        reasoning_lanes = self.active_run.get("reasoning_processes") or {}
+        for lane, process in list(reasoning_lanes.items()):
+            if (
+                not process
+                or failed_tool_run_id not in (process.get("parent_ids") or [])
+            ):
+                continue
+            owner = None if lane == _ROOT_LANE else lane
+            reasoning_message_id = process["message_id"]
+            if process.get("signature"):
+                events.append(
+                    ReasoningEncryptedValueEvent(
+                        type=EventType.REASONING_ENCRYPTED_VALUE,
+                        subtype="message",
+                        entity_id=reasoning_message_id,
+                        encrypted_value=process["signature"],
+                        subagent_run_id=owner,
+                    )
+                )
+            if process.get("type"):
+                events.append(
+                    ReasoningMessageEndEvent(
+                        type=EventType.REASONING_MESSAGE_END,
+                        message_id=reasoning_message_id,
+                        subagent_run_id=owner,
+                    )
+                )
+            events.append(
+                ReasoningEndEvent(
+                    type=EventType.REASONING_END,
+                    message_id=reasoning_message_id,
+                    subagent_run_id=owner,
+                )
+            )
+            self._set_reasoning_process(None, lane)
+
+        pending_ids = self.active_run.get("pending_reasoning_ids") or {}
+        pending_parent_ids = (
+            self.active_run.get("pending_reasoning_parent_ids") or {}
+        )
+        for lane, parent_ids in list(pending_parent_ids.items()):
+            if failed_tool_run_id not in parent_ids:
+                continue
+            pending_ids.pop(lane, None)
+            pending_parent_ids.pop(lane, None)
+        return events
 
     def has_any_message_in_progress(self, run_id: str) -> bool:
         """True if any lane in this run has an open in-flight message/tool call.
@@ -3439,7 +3547,9 @@ class LangGraphAgent:
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
             if reasoning_data:
-                for event_str in self.handle_reasoning_event(reasoning_data):
+                for event_str in self.handle_reasoning_event(
+                    reasoning_data, list(event.get("parent_ids") or [])
+                ):
                     yield event_str
                 return
 
@@ -3594,7 +3704,12 @@ class LangGraphAgent:
                     )
                     self.set_message_in_progress(
                         self.active_run["id"],
-                        MessageInProgress(id=public_parent_id, tool_call_id=public_call_id, tool_call_name=tool_call_data["name"])
+                        MessageInProgress(
+                            id=public_parent_id,
+                            tool_call_id=public_call_id,
+                            tool_call_name=tool_call_data["name"],
+                            parent_ids=list(event.get("parent_ids") or []),
+                        )
                     )
                 return
 
@@ -3637,7 +3752,8 @@ class LangGraphAgent:
                         MessageInProgress(
                             id=message_id,
                             tool_call_id=None,
-                            tool_call_name=None
+                            tool_call_name=None,
+                            parent_ids=list(event.get("parent_ids") or []),
                         )
                     )
                     current_stream = self.get_message_in_progress(self.active_run["id"])
@@ -3829,13 +3945,15 @@ class LangGraphAgent:
             self.active_run["model_made_tool_call"] = False
             self.active_run["state_reliable"] = True
             self.active_run["has_function_streaming"] = False
+            data = event.get("data") or {}
+            for end_ev in self._close_streams_interrupted_by_tool_error(event):
+                yield self._dispatch_event(end_ev)
             # OnToolEnd never fires for this call. When ToolNode handles the
             # error it returns an error ToolMessage instead, which OnChainEnd
             # below streams as the call's result. A GraphBubbleUp (an
             # interrupt, or a Command for the parent graph) is control flow,
             # not a failure: ToolNode re-raises it and the call has no result,
             # so it is not recorded.
-            data = event.get("data") or {}
             key = _tool_invocation_key(event, data.get("tool_call_id"))
             if key is not None and not isinstance(data.get("error"), GraphBubbleUp):
                 self.active_run.setdefault("failed_tool_calls", {})[key] = event
@@ -3923,7 +4041,11 @@ class LangGraphAgent:
             )
         )
 
-    def handle_reasoning_event(self, reasoning_data: LangGraphReasoning) -> Generator[ProcessedEvents, Any, None]:
+    def handle_reasoning_event(
+        self,
+        reasoning_data: LangGraphReasoning,
+        parent_ids: Optional[List[str]] = None,
+    ) -> Generator[ProcessedEvents, Any, None]:
         # Invariant: reasoning events are dispatched from _handle_single_event,
         # which itself runs inside an active run.
         if self.active_run is None:
@@ -3949,6 +4071,9 @@ class LangGraphAgent:
         if not reasoning_data["text"]:
             if reasoning_data.get("id"):
                 self.active_run.setdefault("pending_reasoning_ids", {})[lane] = reasoning_data["id"]
+                self.active_run.setdefault("pending_reasoning_parent_ids", {})[lane] = list(
+                    parent_ids or []
+                )
             return
 
         reasoning_step_index = reasoning_data.get("index", 0)
@@ -3982,9 +4107,15 @@ class LangGraphAgent:
             # under that id, and only a matching id lets the client reconcile
             # the streamed copy with the snapshot copy instead of rendering
             # both.
+            pending_reasoning_id = (
+                self.active_run.get("pending_reasoning_ids") or {}
+            ).pop(lane, None)
+            (self.active_run.get("pending_reasoning_parent_ids") or {}).pop(
+                lane, None
+            )
             raw_reasoning_id = (
                 reasoning_data.get("id")
-                or (self.active_run.get("pending_reasoning_ids") or {}).pop(lane, None)
+                or pending_reasoning_id
                 or str(uuid.uuid4())
             )
             # Public, not raw: reasoning ids are run-global on the client (its
@@ -4004,6 +4135,7 @@ class LangGraphAgent:
             reasoning_process = {
                 "index": reasoning_step_index,
                 "message_id": message_id,
+                "parent_ids": list(parent_ids or []),
             }
             self._set_reasoning_process(reasoning_process, lane)
 
