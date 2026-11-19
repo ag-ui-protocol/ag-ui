@@ -125,7 +125,7 @@ public static class ChatResponseUpdateAGUIExtensions
                     eventCount++;
                     terminalEventEmitted = true;
                     RecordError(activity, error, eventCount);
-                    yield return CreateStreamingError(usageTracker.Build());
+                    yield return CreateStreamingError(error, context, usageTracker.Build());
                     yield break;
                 }
 
@@ -212,7 +212,7 @@ public static class ChatResponseUpdateAGUIExtensions
 
                 if (error is not null)
                 {
-                    yield return CreateStreamingError(usageTracker.Build());
+                    yield return CreateStreamingError(error, context, usageTracker.Build());
                     yield break;
                 }
 
@@ -230,14 +230,18 @@ public static class ChatResponseUpdateAGUIExtensions
         }
     }
 
-    private static RunErrorEvent CreateStreamingError(IList<TokenUsage>? usage) =>
+    private static RunErrorEvent CreateStreamingError(Exception exception, ChatRequestContext context, IList<TokenUsage>? usage)
+    {
+        context.StreamOptions.NotifyStreamingError(exception, context);
+
         // Keep exception details server-side; the wire error is stable and sanitized.
-        new()
+        return new()
         {
             Code = StreamingErrorCode,
             Message = StreamingErrorMessage,
             Usage = usage,
         };
+    }
 
     private static async IAsyncEnumerable<BaseEvent> CoreAsync(
         IAsyncEnumerable<ChatResponseUpdate> updates,
