@@ -1,0 +1,157 @@
+---
+title: "Middleware"
+description: "Change the AG-UI event stream between the agent and the wire"
+---
+
+# Middleware
+
+An `AGUIMiddleware` sits between your agent and the wire. It receives the run
+input and the next stage, and returns the events that continue toward the
+client. It can change the input before the agent runs, and it can drop, change
+or add events on the way out. This is the .NET counterpart of the TypeScript
+SDK's `Middleware`.
+
+Middleware runs on AG-UI events, after `AsAGUIEventStreamAsync` has converted
+the `ChatResponseUpdate` stream. The model, function invocation and anything
+that stores the chat history still see the complete stream. To work on
+`ChatResponseUpdate`s instead, write a `DelegatingChatClient`.
+
+## Build a pipeline
+
+`AsAGUIRunDelegate` turns a chat client into an `AGUIRunDelegate`, a function
+that runs one AG-UI run and returns its events. Without middleware, the
+endpoint calls it directly:
+
+```csharp
+var run = chatClient.AsAGUIRunDelegate(jsonSerializerOptions);
+
+app.MapPost("/agent", ([FromBody] RunAgentInput input, HttpContext httpContext, CancellationToken ct) =>
+    AGUIResults.Events(run(input, ct), httpContext, ct));
+```
+
+With middleware, register it on an `AGUIMiddlewarePipeline` and build the
+pipeline around the same delegate. The endpoint does not change. The first
+middleware registered is the outermost: it sees the input first and the events
+last.
+
+```csharp
+var run = new AGUIMiddlewarePipeline()
+    .Use(FilterToolCallsMiddleware.Disallow(["lookup_customer_record"]))
+    .Build(chatClient.AsAGUIRunDelegate(jsonSerializerOptions));
+
+app.MapPost("/agent", ([FromBody] RunAgentInput input, HttpContext httpContext, CancellationToken ct) =>
+    AGUIResults.Events(run(input, ct), httpContext, ct));
+```
+
+The delegate adapts whatever input it receives, so a middleware that rewrites
+the input changes what the model sees. When the innermost stage needs more than
+the chat client, such as server tools for one endpoint, write it yourself:
+
+```csharp
+var run = pipeline.Build((input, ct) =>
+{
+    var ctx = input.ToChatRequestContext(jsonSerializerOptions);
+    ctx.ChatOptions.Tools ??= [];
+    ctx.ChatOptions.Tools.Add(searchTool);
+    return chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, ct)
+        .AsAGUIEventStreamAsync(ctx, ct);
+});
+```
+
+The samples' `MapAGUI` helper accepts the pipeline directly:
+
+```csharp
+app.MapAGUI("/", middleware => middleware
+    .Use(FilterToolCallsMiddleware.Disallow(["lookup_customer_record"])));
+```
+
+## Write a middleware
+
+Derive from `AGUIMiddleware`, or pass a function to `Use`. One instance serves
+every run, so keep per-run state in locals of `RunAsync`, not in fields. An
+async iterator gets fresh locals for each run.
+
+```csharp
+public sealed class RunLoggingMiddleware(ILogger<RunLoggingMiddleware> logger) : AGUIMiddleware
+{
+    public override async IAsyncEnumerable<BaseEvent> RunAsync(
+        RunAgentInput input,
+        AGUIRunDelegate next,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Run {RunId} started with {Count} messages", input.RunId, input.Messages.Count);
+
+        await foreach (var evt in next(input, cancellationToken))
+        {
+            if (evt is RunErrorEvent error)
+            {
+                logger.LogWarning("Run {RunId} failed: {Message}", input.RunId, error.Message);
+            }
+
+            yield return evt;
+        }
+    }
+}
+```
+
+Text arrives as `TEXT_MESSAGE_CONTENT` deltas of a few tokens each, so a
+middleware that rewrites text has to buffer across deltas. A pattern can span
+two of them.
+
+```csharp
+pipeline.Use((input, next, ct) => AddTimestamps(next(input, ct)));
+```
+
+## Hide tool calls
+
+`FilterToolCallsMiddleware` keeps selected tool calls off the wire while the
+agent still runs them. Create it with an allow list or a block list:
+
+```csharp
+// Only these tools are visible to the client.
+FilterToolCallsMiddleware.Allow(["get_weather", "generate_report"]);
+
+// These tools are hidden from the client.
+FilterToolCallsMiddleware.Disallow(["lookup_customer_record", "internal_route"]);
+```
+
+For a hidden call the middleware drops `TOOL_CALL_START`, `TOOL_CALL_ARGS`,
+`TOOL_CALL_END`, `TOOL_CALL_RESULT` and `TOOL_CALL_CHUNK`. It also closes the
+other routes the call could reach the client by:
+
+- **Message snapshots.** A `MESSAGES_SNAPSHOT` loses the hidden calls and their
+  tool messages. An assistant message left with neither content nor tool calls
+  is removed.
+- **Raw event data.** The hosting layer attaches the serialized
+  `ChatResponseUpdate` to events as `rawEvent`. When an update carried text next
+  to a hidden call or result, the text event is sent without its `rawEvent`.
+- **`RAW` events.** A `RAW` event whose payload mentions a hidden call is
+  dropped.
+
+Events from `MapCall` and `MapResult` carry no tool call ID and still pass
+through. That lets you project a hidden tool into a sanitized state or
+activity event:
+
+```csharp
+var streamOptions = new AGUIStreamOptions()
+    .MapResult("lookup_customer_record", result => [new StateSnapshotEvent { Snapshot = ToPublicTier(result) }]);
+```
+
+<Note>
+  Which tools to hide is your decision. Hiding a client tool keeps the client
+  from running it. Hiding a tool that needs approval hides its call events, but
+  the run's interrupt outcome still describes the call.
+</Note>
+
+<Note>
+  `TOOL_CALL_CHUNK` continuations that carry neither a `toolCallId` nor a
+  `subagentRunId` are dropped while any hidden chunked call is open, because the
+  client could attach them to it. Chunks are never rewritten. Producers that
+  interleave chunked calls should give every chunk its `toolCallId`.
+</Note>
+
+<Note>
+  When the client sends the conversation back on the next turn, it cannot
+  include calls it never saw. If the model needs hidden results on later turns,
+  keep the history on the server.
+</Note>

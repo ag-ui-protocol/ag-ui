@@ -29,8 +29,34 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
     public static IEndpointConventionBuilder MapAGUI(
         this IEndpointRouteBuilder endpoints,
-        string pattern)
+        string pattern) =>
+        endpoints.MapAGUI(pattern, static _ => { });
+
+    /// <summary>
+    /// Maps an AG-UI <c>POST</c> endpoint at <paramref name="pattern"/> whose runs pass through the
+    /// <see cref="AGUIMiddleware"/> registered by <paramref name="configureMiddleware"/> before the
+    /// events reach the wire. The first middleware registered is the outermost.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// app.MapAGUI("/", middleware => middleware
+    ///     .Use(new AuditMiddleware()));
+    /// </code>
+    /// </example>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The route pattern to map.</param>
+    /// <param name="configureMiddleware">Registers the middleware every run on this endpoint goes through.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    public static IEndpointConventionBuilder MapAGUI(
+        this IEndpointRouteBuilder endpoints,
+        string pattern,
+        Action<AGUIMiddlewarePipeline> configureMiddleware)
     {
+        ArgumentNullException.ThrowIfNull(configureMiddleware);
+
+        var pipeline = new AGUIMiddlewarePipeline();
+        configureMiddleware(pipeline);
+
         return endpoints.MapPost(pattern, (
             [FromBody] RunAgentInput input,
             [FromServices] IChatClient chatClient,
@@ -38,15 +64,9 @@ public static class AGUIEndpointRouteBuilderExtensions
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
-            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+            var run = pipeline.Build(chatClient.AsAGUIRunDelegate(jsonOptions.Value.SerializerOptions));
 
-            var ctx = input.ToChatRequestContext(jsonSerializerOptions);
-
-            var updates = chatClient.GetStreamingResponseAsync(ctx.Messages, ctx.ChatOptions, cancellationToken);
-
-            var events = updates.AsAGUIEventStreamAsync(ctx, cancellationToken);
-
-            return AGUIResults.Events(events, httpContext, cancellationToken);
+            return AGUIResults.Events(run(input, cancellationToken), httpContext, cancellationToken);
         });
     }
 }
