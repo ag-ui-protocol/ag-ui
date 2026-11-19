@@ -196,11 +196,38 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 }
             }
 
-            // Re-emit each deferred user message right after the tool result
-            // for the call its response answered; anything with no matching
-            // result is appended at the end so no user input is lost.
+            // Re-emit each deferred user message only after every result
+            // in its owning assistant batch has been emitted, in original
+            // order; anything with no matching result is appended at the
+            // end so no user input is lost.
             if (deferred.Count > 0)
             {
+                // Batches are read from the rewritten history: pending
+                // calls are dropped from it, so only completed calls in
+                // the same rewritten assistant message gate the release.
+                var assistantCallBatches = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+                foreach (var message in filtered)
+                {
+                    if (message.Role != ChatRole.Assistant)
+                    {
+                        continue;
+                    }
+
+                    var callIds = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var call in message.Contents.OfType<FunctionCallContent>())
+                    {
+                        if (call.CallId is not null)
+                        {
+                            callIds.Add(call.CallId);
+                        }
+                    }
+
+                    foreach (var callId in callIds)
+                    {
+                        assistantCallBatches[callId] = callIds;
+                    }
+                }
+
                 var seenResultCallIds = new HashSet<string>(StringComparer.Ordinal);
                 var reordered = new List<ChatMessage>(filtered.Count + deferred.Count);
                 foreach (var message in filtered)
@@ -214,13 +241,17 @@ public sealed class AGUIChatClient : DelegatingChatClient
                         }
                     }
 
-                    for (var i = deferred.Count - 1; i >= 0; i--)
+                    for (var i = 0; i < deferred.Count;)
                     {
                         var (deferredMessage, answeredIds) = deferred[i];
-                        if (answeredIds.Count == 0 || answeredIds.IsSubsetOf(seenResultCallIds))
+                        if (IsAnsweredBatchComplete(answeredIds, assistantCallBatches, seenResultCallIds))
                         {
                             reordered.Add(deferredMessage);
                             deferred.RemoveAt(i);
+                        }
+                        else
+                        {
+                            i++;
                         }
                     }
                 }
@@ -297,6 +328,41 @@ public sealed class AGUIChatClient : DelegatingChatClient
         ArgumentNullThrowHelper.ThrowIfNull(options);
 
         return options.Transport;
+    }
+
+    // True when every result in the owning assistant batch of the
+    // answered calls has been seen. An empty answered set still waits
+    // for the first result; a call with no recorded batch waits for
+    // its own result.
+    private static bool IsAnsweredBatchComplete(
+        HashSet<string> answeredCallIds,
+        Dictionary<string, HashSet<string>> assistantCallBatches,
+        HashSet<string> seenResultCallIds)
+    {
+        if (seenResultCallIds.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var answeredId in answeredCallIds)
+        {
+            if (assistantCallBatches.TryGetValue(answeredId, out var batch))
+            {
+                foreach (var batchId in batch)
+                {
+                    if (!seenResultCallIds.Contains(batchId))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!seenResultCallIds.Contains(answeredId))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static FunctionInvokingChatClient CreateInnerClient(

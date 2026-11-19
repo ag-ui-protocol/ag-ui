@@ -280,7 +280,40 @@ public static class AGUIChatMessageExtensions
         var deferredUserMessages = new List<(AGUIUserMessage Message, HashSet<string> AnsweredCallIds)>();
         var seenResultCallIds = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var message in chatMessages)
+        // Calls issued by the same assistant message form one batch: a
+        // deferred user message is released only after every result in
+        // its batch has been emitted, so it never lands between two
+        // results of the same assistant turn.
+        var messageList = chatMessages.ToList();
+        var assistantCallBatches = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var message in messageList)
+        {
+            if (message.Role != ChatRole.Assistant)
+            {
+                continue;
+            }
+
+            var callIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionCallContent functionCall && functionCall.CallId is not null)
+                {
+                    callIds.Add(functionCall.CallId);
+                }
+                else if (content is ToolApprovalRequestContent { ToolCall: FunctionCallContent wrappedCall }
+                    && wrappedCall.CallId is not null)
+                {
+                    callIds.Add(wrappedCall.CallId);
+                }
+            }
+
+            foreach (var callId in callIds)
+            {
+                assistantCallBatches[callId] = callIds;
+            }
+        }
+
+        foreach (var message in messageList)
         {
             AGUIMessage aguiMessage;
             var deferUserMessage = false;
@@ -463,15 +496,19 @@ public static class AGUIChatMessageExtensions
                     seenResultCallIds.Add(functionResult.CallId);
                 }
 
-                // Flush deferred user messages whose answered calls now all
-                // have their tool results emitted, right after those results.
-                for (var i = deferredUserMessages.Count - 1; i >= 0; i--)
+                // Release deferred user messages whose entire owning
+                // batch now has results, in their original order.
+                for (var i = 0; i < deferredUserMessages.Count;)
                 {
                     var (deferredMessage, answeredIds) = deferredUserMessages[i];
-                    if (answeredIds.Count == 0 || answeredIds.IsSubsetOf(seenResultCallIds))
+                    if (IsAnsweredBatchComplete(answeredIds, assistantCallBatches, seenResultCallIds))
                     {
                         yield return deferredMessage;
                         deferredUserMessages.RemoveAt(i);
+                    }
+                    else
+                    {
+                        i++;
                     }
                 }
 
@@ -510,6 +547,41 @@ public static class AGUIChatMessageExtensions
         {
             yield return deferredMessage;
         }
+    }
+
+    // True when every result in the owning assistant batch of the
+    // answered calls has been seen. An empty answered set still waits
+    // for the first result; a call with no recorded batch waits for
+    // its own result.
+    private static bool IsAnsweredBatchComplete(
+        HashSet<string> answeredCallIds,
+        Dictionary<string, HashSet<string>> assistantCallBatches,
+        HashSet<string> seenResultCallIds)
+    {
+        if (seenResultCallIds.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var answeredId in answeredCallIds)
+        {
+            if (assistantCallBatches.TryGetValue(answeredId, out var batch))
+            {
+                foreach (var batchId in batch)
+                {
+                    if (!seenResultCallIds.Contains(batchId))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!seenResultCallIds.Contains(answeredId))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static AGUIMediaInputContent ConvertMediaContent(

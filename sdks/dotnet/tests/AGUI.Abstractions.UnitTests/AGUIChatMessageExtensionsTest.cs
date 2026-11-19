@@ -399,6 +399,106 @@ public sealed class AGUIChatMessageExtensionsTest
     }
 
     [Fact]
+    public void AsAGUIMessages_TwoDeferredMessagesWithOneBatchedResult_PreservesOriginalOrder()
+    {
+        // CodeRabbit follow-up on issue #3364: when one batched tool-result
+        // message makes two deferred user messages eligible in the same pass,
+        // they must be emitted in their original order — "Use metric" before
+        // "Actually, use imperial" — not reversed.
+        var callA = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var callB = new FunctionCallContent("confirm-2", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approvalA = new ToolApprovalRequestContent("approval-1", callA);
+        var approvalB = new ToolApprovalRequestContent("approval-2", callB);
+        var history = new ChatMessage[]
+        {
+            new ChatMessage(ChatRole.User, "Start"),
+            new ChatMessage(ChatRole.Assistant, [approvalA, approvalB]),
+            new ChatMessage(ChatRole.User,
+            [
+                approvalA.CreateResponse(true),
+                new TextContent("Use metric."),
+            ]),
+            new ChatMessage(ChatRole.User,
+            [
+                approvalB.CreateResponse(true),
+                new TextContent("Actually, use imperial."),
+            ]),
+            new ChatMessage(ChatRole.Tool,
+            [
+                new FunctionResultContent("confirm-1", "Completed."),
+                new FunctionResultContent("confirm-2", "Completed."),
+            ]),
+            new ChatMessage(ChatRole.Assistant, "Acknowledged."),
+        };
+
+        var aguiMessages = history.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        var assistantIndex = aguiMessages.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndexB = aguiMessages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-2");
+        Assert.True(assistantIndex >= 0, "Assistant message carrying the approval-wrapped calls is missing.");
+        Assert.Equal(assistantIndex + 2, toolIndexB);
+        Assert.Equal(
+            ["Start", "Use metric.", "Actually, use imperial."],
+            aguiMessages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+    }
+
+    [Fact]
+    public void AsAGUIMessages_DeferredTextWaitsForAllResultsInAssistantTurn()
+    {
+        // CodeRabbit follow-up on issue #3364: with parallel calls A and B
+        // answered by separate tool messages, the deferred text for A must
+        // not land between result A and result B — it is released only after
+        // every result in the owning assistant turn has been emitted.
+        var callA = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var callB = new FunctionCallContent("confirm-2", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approvalA = new ToolApprovalRequestContent("approval-1", callA);
+        var approvalB = new ToolApprovalRequestContent("approval-2", callB);
+        var history = new ChatMessage[]
+        {
+            new ChatMessage(ChatRole.User, "Start"),
+            new ChatMessage(ChatRole.Assistant, [approvalA, approvalB]),
+            new ChatMessage(ChatRole.User,
+            [
+                approvalA.CreateResponse(true),
+                new TextContent("Proceed with both."),
+            ]),
+            new ChatMessage(ChatRole.Tool,
+            [
+                new FunctionResultContent("confirm-1", "Completed.")
+            ]),
+            new ChatMessage(ChatRole.Tool,
+            [
+                new FunctionResultContent("confirm-2", "Completed.")
+            ]),
+            new ChatMessage(ChatRole.Assistant, "Acknowledged."),
+        };
+
+        var aguiMessages = history.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        var toolIndexB = aguiMessages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-2");
+        var textIndex = aguiMessages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && ((AGUITextInputContent)user.Content[0]).Text == "Proceed with both.");
+        Assert.True(toolIndexB >= 0, "Tool message for the second call is missing.");
+        Assert.Equal(toolIndexB + 1, textIndex);
+        Assert.Equal(
+            ["Start", "Proceed with both."],
+            aguiMessages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+    }
+
+    [Fact]
     public void RoundTrip_MultiTurnToolCallConversation_PreservesStructure()
     {
         // Simulate: User -> Assistant(toolCall) -> Tool(result) -> Assistant(response)

@@ -461,6 +461,144 @@ public sealed class AGUIChatClientTest
         Assert.Equal(0, executions);
     }
 
+    // CodeRabbit follow-up on issue #3364: with parallel calls A and B
+    // answered by separate tool messages, the deferred text for A must not
+    // land between result A and result B — it is released only after every
+    // result in the owning assistant turn has been emitted.
+    [Fact]
+    public async Task GetStreamingResponse_DeferredTextWaitsForAllResultsInAssistantTurn()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var callA = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var callB = new FunctionCallContent("confirm-2", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approvalA = new ToolApprovalRequestContent("approval-1", callA);
+        var approvalB = new ToolApprovalRequestContent("approval-2", callB);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-3", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Start"),
+            new(ChatRole.Assistant, [approvalA, approvalB]),
+            new(ChatRole.User,
+            [
+                approvalA.CreateResponse(true),
+                new TextContent("Proceed with both."),
+            ]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-2", "Completed.")]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User, [pendingApproval.CreateResponse(true)]),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var toolIndexB = messages!.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-2");
+        var textIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Proceed with both."));
+        Assert.True(toolIndexB >= 0, "Tool message for the second call is missing.");
+        Assert.Equal(toolIndexB + 1, textIndex);
+        Assert.Equal(["Start", "Proceed with both."],
+            messages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-3", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
+    // CodeRabbit follow-up on issue #3364: when one batched tool-result
+    // message makes two deferred user messages eligible in the same pass,
+    // they must be emitted in their original order — "Use metric" before
+    // "Actually, use imperial" — not reversed.
+    [Fact]
+    public async Task GetStreamingResponse_TwoDeferredMessagesWithOneBatchedResult_PreservesOriginalOrder()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var callA = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var callB = new FunctionCallContent("confirm-2", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approvalA = new ToolApprovalRequestContent("approval-1", callA);
+        var approvalB = new ToolApprovalRequestContent("approval-2", callB);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-3", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Start"),
+            new(ChatRole.Assistant, [approvalA, approvalB]),
+            new(ChatRole.User,
+            [
+                approvalA.CreateResponse(true),
+                new TextContent("Use metric."),
+            ]),
+            new(ChatRole.User,
+            [
+                approvalB.CreateResponse(true),
+                new TextContent("Actually, use imperial."),
+            ]),
+            new(ChatRole.Tool,
+            [
+                new FunctionResultContent("confirm-1", "Completed."),
+                new FunctionResultContent("confirm-2", "Completed."),
+            ]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User, [pendingApproval.CreateResponse(true)]),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var toolIndexB = messages!.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-2");
+        var firstTextIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Use metric."));
+        Assert.True(toolIndexB >= 0, "Tool message for the second call is missing.");
+        Assert.Equal(toolIndexB + 1, firstTextIndex);
+        Assert.Equal(["Start", "Use metric.", "Actually, use imperial."],
+            messages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-3", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
     // A caller-supplied Resume takes precedence over the interrupt-response translation
     // too, matching the approval path. Previously the interrupt block appended
     // unconditionally, so a caller Resume dropped approvals but kept interrupts (#2177).
