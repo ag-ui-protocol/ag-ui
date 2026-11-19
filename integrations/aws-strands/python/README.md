@@ -832,8 +832,8 @@ take an `Agent`. The adapter detects the orchestrator structurally (it has no
 `model`) and drives its `stream_async()` directly instead of cloning a
 per-thread agent, so per-thread caching, session managers and proxy-tool sync do
 not apply: the orchestrator owns its own nodes. Both bridges do this; see
-Strands' [Graph](https://strandsagents.com/docs/user-guide/concepts/multi-agent/graph/)
-and [Swarm](https://strandsagents.com/docs/user-guide/concepts/multi-agent/swarm/)
+Strands' [Graph](https://strandsagents.com/docs/user-guide/sdk/multi-agent/graph/)
+and [Swarm](https://strandsagents.com/docs/user-guide/sdk/multi-agent/swarm/)
 guides for what each pattern is for. `/multi-agent` in the demo server is a live
 example.
 

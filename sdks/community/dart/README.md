@@ -68,7 +68,7 @@ await for (final event in client.runAgent('agentic_chat', input)) {
 ## Documentation
 
 - Concepts & architecture: [`docs/concepts`](https://docs.ag-ui.com/concepts/architecture)
-- Full API reference: [`docs/sdk/dart`](https://docs.ag-ui.com/sdk/dart/client/overview)
+- Full API reference: [`docs/sdk/dart`](https://docs.ag-ui.com/sdk/dart/overview)
 
 ## Core Usage
 
