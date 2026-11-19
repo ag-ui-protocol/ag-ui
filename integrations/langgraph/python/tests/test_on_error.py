@@ -2,6 +2,7 @@
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, RunStartedEvent, UserMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -206,6 +207,76 @@ class TestOnErrorHook(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.type for e in events], [EventType.RUN_STARTED, EventType.RUN_ERROR])
         assert isinstance(events[-1], RunErrorEvent)
         self.assertEqual(events[-1].message, "bad input")
+
+
+class TestOnErrorDispatch(unittest.IsolatedAsyncioTestCase):
+    async def test_hook_raw_event_is_dropped_when_disabled(self):
+        for started in (False, True):
+            with self.subTest(started=started):
+                error_event = RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message="The model is busy.",
+                    code="rate_limited",
+                    raw_event={"request_id": "req_abc123"},
+                )
+                agent = LangGraphAgent(
+                    name="t", graph=_failing_graph(), emit_raw_events=False,
+                    on_error=lambda exc: error_event,
+                )
+                if not started:
+                    agent.prepare_stream = AsyncMock(side_effect=ValueError("bad input"))
+
+                with self.assertLogs("ag_ui_langgraph.agent", level="ERROR"):
+                    events = [e async for e in agent.run(_input())]
+
+                self.assertEqual(events[0].type, EventType.RUN_STARTED)
+                self.assertEqual(
+                    [e.type for e in events if e.type in (EventType.RUN_ERROR, EventType.RUN_FINISHED)],
+                    [EventType.RUN_ERROR],
+                )
+                self.assertIs(events[-1], error_event)
+                self.assertIsNone(events[-1].raw_event)
+                self.assertEqual(error_event.message, "The model is busy.")
+                self.assertEqual(error_event.code, "rate_limited")
+
+    async def test_hook_raw_event_is_made_json_safe_when_enabled(self):
+        for started in (False, True):
+            with self.subTest(started=started):
+                request_id = UUID(int=1)
+                error_event = RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message="The model is busy.",
+                    raw_event={"request_id": request_id, "details": ("busy",)},
+                )
+                agent = LangGraphAgent(
+                    name="t", graph=_failing_graph(), emit_raw_events=True,
+                    on_error=lambda exc: error_event,
+                )
+                if not started:
+                    agent.prepare_stream = AsyncMock(side_effect=ValueError("bad input"))
+
+                with self.assertLogs("ag_ui_langgraph.agent", level="ERROR"):
+                    events = [e async for e in agent.run(_input())]
+
+                self.assertEqual(events[-1].type, EventType.RUN_ERROR)
+                self.assertEqual(
+                    events[-1].raw_event,
+                    {"request_id": str(request_id), "details": ["busy"]},
+                )
+
+    async def test_none_dispatch_result_is_not_yielded(self):
+        error_event = _rate_limited_event(None)
+        agent = LangGraphAgent(
+            name="t", graph=_mock_graph(), on_error=lambda exc: error_event,
+        )
+        agent.prepare_stream = AsyncMock(side_effect=ValueError("bad input"))
+        agent._dispatch_event = MagicMock(return_value=None)
+
+        with self.assertLogs("ag_ui_langgraph.agent", level="ERROR"):
+            events = [e async for e in agent.run(_input())]
+
+        agent._dispatch_event.assert_called_once_with(error_event)
+        self.assertEqual([e.type for e in events], [EventType.RUN_STARTED])
 
 
 class Narrow(LangGraphAgent):

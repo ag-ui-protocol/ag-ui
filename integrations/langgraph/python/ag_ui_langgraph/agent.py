@@ -1712,7 +1712,9 @@ class LangGraphAgent:
                 ) from exc
             if not started:
                 yield _run_started_event(thread_id=input.thread_id, run_id=input.run_id)
-            yield error_event
+            dispatched_error = self._dispatch_event(error_event)
+            if dispatched_error is not None:
+                yield dispatched_error
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[ProcessedEvents, None]:
         thread_id = input.thread_id or str(uuid.uuid4())
