@@ -231,3 +231,19 @@ describe("the TOOL_CALL_ARGS orphan warning", () => {
     expect(warnings).toEqual([]);
   });
 });
+
+describe("a state patch the bridge cannot apply", () => {
+  it("warns with the failing operation, not the state or the patch values", async () => {
+    const { warnings } = await bridge([
+      { type: EventType.STATE_SNAPSHOT, snapshot: { profile: { email: "doc-secret" } } } as StateSnapshotEvent,
+      {
+        type: EventType.STATE_DELTA,
+        delta: [{ op: "replace", path: "/missing/key", value: "patch-secret" }],
+      } as StateDeltaEvent,
+    ]);
+    const warned = warnings.join("\n");
+    expect(warned).toContain("[ag-ui][legacy] Failed to apply state patch");
+    expect(warned).toContain("operation 1 of 1: replace /missing/key");
+    expect(warned).not.toMatch(/doc-secret|patch-secret/);
+  });
+});
