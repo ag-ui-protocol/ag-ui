@@ -220,8 +220,11 @@ mod enabled {
                     if let Some(id) = &payload.message_id {
                         // Self-contained: a chunk needs no bracketing events,
                         // but it still says who the message belongs to.
-                        self.messages.remove(id);
+                        if self.messages.contains_key(id) {
+                            self.require(event, Kind::Message, id, &payload.subagent_run_id)?;
+                        }
                         self.claim(event, Kind::Message, id, &payload.subagent_run_id)?;
+                        self.messages.remove(id);
                     }
                 }
 
@@ -267,8 +270,16 @@ mod enabled {
                 }
                 Event::ReasoningMessageChunk(payload) => {
                     if let Some(id) = &payload.message_id {
-                        self.reasoning_messages.remove(id);
+                        if self.reasoning_messages.contains_key(id) {
+                            self.require(
+                                event,
+                                Kind::ReasoningMessage,
+                                id,
+                                &payload.subagent_run_id,
+                            )?;
+                        }
                         self.claim(event, Kind::ReasoningMessage, id, &payload.subagent_run_id)?;
+                        self.reasoning_messages.remove(id);
                     }
                 }
 

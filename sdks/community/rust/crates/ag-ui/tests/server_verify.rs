@@ -721,3 +721,40 @@ fn an_activity_is_owned_by_its_snapshot_and_only_a_replacing_one_reowns_it() {
     ctx.emit(Event::activity_delta("a1", "progress", patch).with_subagent_run_id("s2"))
         .unwrap();
 }
+
+#[test]
+fn rejected_chunk_preserves_the_open_message_for_its_owner() {
+    for reasoning in [false, true] {
+        let (mut ctx, _events) = context();
+        let start = if reasoning {
+            Event::reasoning_message_start("m")
+        } else {
+            Event::text_message_start("m", Default::default())
+        };
+        ctx.emit(start.with_subagent_run_id("worker-a")).unwrap();
+        let chunk = if reasoning {
+            Event::reasoning_message_chunk(Some("m".into()), Some("hello".into()))
+        } else {
+            Event::text_message_chunk(Some("m".into()), Some("hello".into()))
+        };
+        assert_eq!(
+            rule(
+                ctx.emit(chunk.with_subagent_run_id("worker-b"))
+                    .unwrap_err()
+            ),
+            Rule::OwnerMismatch
+        );
+        let content = if reasoning {
+            Event::reasoning_message_content("m", "hello")
+        } else {
+            Event::text_message_content("m", "hello")
+        };
+        ctx.emit(content.with_subagent_run_id("worker-a")).unwrap();
+        let end = if reasoning {
+            Event::reasoning_message_end("m")
+        } else {
+            Event::text_message_end("m")
+        };
+        ctx.emit(end.with_subagent_run_id("worker-a")).unwrap();
+    }
+}
