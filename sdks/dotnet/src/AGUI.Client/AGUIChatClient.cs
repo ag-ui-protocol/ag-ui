@@ -82,25 +82,34 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
         }
 
-        if (approvalResponses is { Count: > 0 })
+        // Completed approval-wrapped calls are normalized on every turn, not
+        // only after a fresh approval response: on an ordinary turn the history
+        // still carries the ToolApprovalRequestContent wrapper, and MEAI's
+        // FunctionInvokingChatClient strips it downstream while keeping the
+        // FunctionResultContent — leaving an orphaned tool result that
+        // providers reject with HTTP 400 on each later turn that replays it
+        // (CodeRabbit review 2026-11-19T13:14:36Z, Major).
+        //
+        // A request whose call already completed must be preserved: dropping
+        // it while its FunctionResultContent survives leaves an orphaned tool
+        // result that providers reject.
+        //
+        // The completed call is preserved as a plain FunctionCallContent,
+        // not as the original ToolApprovalRequestContent: MEAI 10.9.0's
+        // FunctionInvokingChatClient strips approval request/response contents
+        // from the history it forwards, so keeping the wrapper would still
+        // drop the call downstream. Unwrapping keeps the call visible to the
+        // server, and FunctionInvokingChatClient never invokes function calls
+        // found in request history — it only invokes calls from the response
+        // stream and approval responses without a matching
+        // FunctionResultContent (which it skips via its functionResultCallIds
+        // set) — so a completed call is not re-executed locally.
+        //
+        // Pending requests are dropped only when a fresh approval response
+        // arrived in the last message (its resume payload is carried in
+        // AdditionalProperties instead); on an ordinary turn they pass
+        // through untouched, as before.
         {
-            // A fresh approval response arrived in the last message. The pending
-            // request it answers is dropped from the outgoing history — its resume
-            // payload is carried in AdditionalProperties instead. But a request
-            // whose call already completed must be preserved: dropping it while
-            // its FunctionResultContent survives leaves an orphaned tool result
-            // that providers reject.
-            //
-            // The completed call is preserved as a plain FunctionCallContent,
-            // not as the original ToolApprovalRequestContent: MEAI 10.9.0's
-            // FunctionInvokingChatClient strips approval request/response contents
-            // from the history it forwards, so keeping the wrapper would still
-            // drop the call downstream. Unwrapping keeps the call visible to the
-            // server, and FunctionInvokingChatClient never invokes function calls
-            // found in request history — it only invokes calls from the response
-            // stream and approval responses without a matching
-            // FunctionResultContent (which it skips via its functionResultCallIds
-            // set) — so a completed call is not re-executed locally.
             var completedCallIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var message in messagesList)
             {
@@ -149,8 +158,16 @@ public sealed class AGUIChatClient : DelegatingChatClient
                             newContents.Add(call);
                         }
 
-                        // Pending requests are dropped; the fresh response travels
-                        // via AdditionalProperties as the resume payload.
+                        else if (approvalResponses is not { Count: > 0 })
+                        {
+                            // No fresh response: keep the pending request
+                            // untouched, as on an ordinary turn before.
+                            newContents.Add(content);
+                        }
+
+                        // Otherwise the pending request is dropped: the fresh
+                        // response travels via AdditionalProperties as the
+                        // resume payload.
                     }
                     else if (content is ToolApprovalResponseContent response)
                     {
@@ -261,6 +278,12 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
 
             messagesList = filtered;
+        }
+
+        if (approvalResponses is { Count: > 0 })
+        {
+            // A fresh approval response arrived in the last message: its
+            // resume payload travels via AdditionalProperties.
             innerOptions = (innerOptions ?? options)?.Clone() ?? new ChatOptions();
             innerOptions.AdditionalProperties ??= [];
             innerOptions.AdditionalProperties[AGUIClientInternalKeys.ApprovalResponses] = approvalResponses;

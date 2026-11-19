@@ -461,6 +461,69 @@ public sealed class AGUIChatClientTest
         Assert.Equal(0, executions);
     }
 
+    // CodeRabbit follow-up (review 2026-11-19T13:14:36Z, Major): on an
+    // ordinary turn — the last message is a plain user message, no fresh
+    // approval response — a completed approval-wrapped call must still be
+    // unwrapped. The call stays immediately ahead of its tool result and
+    // the residual text of the answered message moves after the result,
+    // instead of the wrapper being stripped downstream and orphaning the
+    // result. No resume payload travels on an ordinary turn.
+    [Fact]
+    public async Task GetStreamingResponse_OrdinaryTurnAfterApproval_UnwrapsCompletedApprovalWrappedCall()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var completedCall = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var completedApproval = new ToolApprovalRequestContent("approval-1", completedCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Confirm"),
+            new(ChatRole.Assistant, [completedApproval]),
+            new(ChatRole.User,
+            [
+                completedApproval.CreateResponse(true),
+                new TextContent("Looks good, proceed."),
+            ]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.User, "What is the status?"),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var assistantIndex = messages!.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+        Assert.True(assistantIndex >= 0, "Completed approval-wrapped call was dropped from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+
+        var userTexts = messages.OfType<AGUIUserMessage>()
+            .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+            .ToList();
+        Assert.Equal(["Confirm", "Looks good, proceed.", "What is the status?"], userTexts);
+        var movedTextIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Looks good, proceed."));
+        Assert.Equal(toolIndex + 1, movedTextIndex);
+
+        // No fresh approval response on this turn: nothing travels via resume.
+        Assert.Null(transport.LastInput!.Resume);
+
+        Assert.Equal(0, executions);
+    }
+
     // CodeRabbit follow-up on issue #3364: with parallel calls A and B
     // answered by separate tool messages, the deferred text for A must not
     // land between result A and result B — it is released only after every
