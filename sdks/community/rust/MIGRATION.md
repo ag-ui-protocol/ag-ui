@@ -145,6 +145,12 @@ enforcement. A matching modern media part avoids a duplicate; an ID-only legacy
 part has no 1.0 source, so it remains unchanged on requests and is removed by
 incoming schema enforcement. Low-level transport requests are passed as supplied.
 
+The HTTP transport reads at most 2 KiB of a non-success response body and
+returns the received prefix after at most one second of body reading.
+Successful SSE responses retain their configured streaming timeout.
+
+The default HTTP client does not follow redirects. A caller-supplied client keeps
+its own redirect policy. Transport and builder Debug output redact headers.
 The SSE frame cap counts UTF-8 field and comment bytes, excluding line terminators
 and the initial byte-order mark, and also applies when finishing a stream.
 

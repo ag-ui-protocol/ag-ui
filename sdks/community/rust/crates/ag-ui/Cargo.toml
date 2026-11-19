@@ -53,7 +53,7 @@ client = ["dep:futures-core", "dep:futures-util", "dep:json-patch", "dep:getrand
 # reqwest-backed HTTP transport. What most consumers want; leave it off for
 # wasm or a custom transport. Implies `sse`, because the transport negotiates
 # the SSE media type on every request.
-http = ["client", "sse", "dep:reqwest"]
+http = ["client", "sse", "dep:reqwest", "dep:tokio"]
 
 # ---- axum: mount a hosted agent on a router ----
 axum = ["server", "sse", "dep:axum", "dep:futures-util"]
@@ -72,6 +72,7 @@ futures-util = { workspace = true, optional = true }
 json-patch = { workspace = true, optional = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std"], optional = true }
 reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
 axum = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -69,3 +69,21 @@ async fn error_response(app: Router) -> (u16, String) {
         _ => panic!("expected an HTTP error"),
     }
 }
+
+#[tokio::test]
+async fn a_short_pending_error_body_returns_its_available_prefix() {
+    let app = Router::new().route(
+        "/agent",
+        post(|| async {
+            let body = stream::once(async { Ok::<_, Infallible>("temporarily unavailable") })
+                .chain(stream::pending());
+            Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Body::from_stream(body))
+                .unwrap()
+        }),
+    );
+    let (status, body) = error_response(app).await;
+    assert_eq!(status, 503);
+    assert_eq!(body, "temporarily unavailable");
+}

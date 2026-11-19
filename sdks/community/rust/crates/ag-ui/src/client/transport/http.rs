@@ -20,9 +20,11 @@ use crate::client::transport::{
 
 /// Maximum number of response bytes retained before decoding an HTTP error body.
 const MAX_ERROR_BODY: usize = 2048;
+/// Total budget for reading a non-success response body, not an SSE run.
+const ERROR_BODY_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// POSTs a run to an HTTP endpoint and streams the response.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HttpTransport {
     client: Client,
     url: Url,
@@ -30,8 +32,19 @@ pub struct HttpTransport {
     timeout: Option<Duration>,
 }
 
+impl std::fmt::Debug for HttpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpTransport")
+            .field("url", &self.url)
+            .field("timeout", &self.timeout)
+            .field("headers", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
 impl HttpTransport {
     /// A transport pointed at an agent's run endpoint, with default settings.
+    /// The default client does not follow redirects.
     ///
     /// # Errors
     ///
@@ -85,13 +98,16 @@ impl Transport for HttpTransport {
             if !status.is_success() {
                 let mut stream = response.bytes_stream();
                 let mut body = Vec::with_capacity(MAX_ERROR_BODY);
-                while body.len() < MAX_ERROR_BODY {
-                    let Some(Ok(chunk)) = stream.next().await else {
-                        break;
-                    };
-                    let remaining = MAX_ERROR_BODY - body.len();
-                    body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-                }
+                let _ = tokio::time::timeout(ERROR_BODY_TIMEOUT, async {
+                    while body.len() < MAX_ERROR_BODY {
+                        let Some(Ok(chunk)) = stream.next().await else {
+                            break;
+                        };
+                        let remaining = MAX_ERROR_BODY - body.len();
+                        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                    }
+                })
+                .await;
                 return Err(Error::Http {
                     status: status.as_u16(),
                     body: String::from_utf8_lossy(&body).into_owned(),
@@ -124,13 +140,24 @@ impl Transport for HttpTransport {
 /// Header values are validated when [`HttpTransportBuilder::build`] is called,
 /// so a chain of setters stays a chain and does not thread a `Result` through
 /// every step.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HttpTransportBuilder {
     url: String,
     headers: Vec<(String, String)>,
     timeout: Option<Duration>,
     connect_timeout: Option<Duration>,
     client: Option<Client>,
+}
+
+impl std::fmt::Debug for HttpTransportBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpTransportBuilder")
+            .field("url", &self.url)
+            .field("timeout", &self.timeout)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("headers", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl HttpTransportBuilder {
@@ -185,6 +212,9 @@ impl HttpTransportBuilder {
 
     /// Uses a caller-supplied client, for proxies, custom TLS roots, or a
     /// connection pool shared with the rest of an application.
+    ///
+    /// The supplied client retains its redirect policy. Choose that policy
+    /// carefully: redirects can resend the request body and custom headers.
     #[must_use]
     pub fn client(mut self, client: Client) -> Self {
         self.client = Some(client);
@@ -215,7 +245,7 @@ impl HttpTransportBuilder {
         let client = match self.client {
             Some(client) => client,
             None => {
-                let mut builder = Client::builder();
+                let mut builder = Client::builder().redirect(reqwest::redirect::Policy::none());
                 if let Some(timeout) = self.connect_timeout {
                     builder = builder.connect_timeout(timeout);
                 }

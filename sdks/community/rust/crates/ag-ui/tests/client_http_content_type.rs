@@ -92,3 +92,68 @@ async fn start(app: Router) -> (HttpTransport, tokio::task::JoinHandle<()>) {
     let transport = HttpTransport::new(format!("http://{address}/agent")).unwrap();
     (transport, server)
 }
+
+#[test]
+fn debug_omits_header_values_in_both_formats() {
+    let builder = HttpTransport::builder("http://localhost/agent")
+        .header("x-example", "synthetic-header-value");
+    for debug in [format!("{builder:?}"), format!("{builder:#?}")] {
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("synthetic-header-value"));
+    }
+    let transport = builder.build().unwrap();
+    assert_eq!(transport.headers()["x-example"], "synthetic-header-value");
+    for debug in [format!("{transport:?}"), format!("{transport:#?}")] {
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("synthetic-header-value"));
+    }
+}
+
+#[tokio::test]
+async fn default_client_returns_a_redirect_response() {
+    // A benign same-origin redirect exercises the default policy.
+    let app = Router::new()
+        .route(
+            "/agent",
+            post(|| async {
+                Response::builder()
+                    .status(StatusCode::TEMPORARY_REDIRECT)
+                    .header("location", "/destination")
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        )
+        .route("/destination", post(|| async { StatusCode::NO_CONTENT }));
+    let (transport, server) = start(app).await;
+    let result = transport.run(RunAgentInput::new("t", "r")).await;
+    server.abort();
+    assert!(matches!(result, Err(Error::Http { status: 307, .. })));
+}
+
+#[tokio::test]
+async fn a_successful_sse_body_can_pause_longer_than_the_error_body_budget() {
+    let app = Router::new().route(
+        "/agent",
+        post(|| async {
+            let body = stream::once(async {
+                tokio::time::sleep(Duration::from_millis(1200)).await;
+                let event = ag_ui::Event::run_started("t", "r");
+                Ok::<_, Infallible>(format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&event).unwrap()
+                ))
+            });
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from_stream(body))
+                .unwrap()
+        }),
+    );
+    let (transport, server) = start(app).await;
+    let mut events = transport.run(RunAgentInput::new("t", "r")).await.unwrap();
+    assert!(matches!(
+        events.next().await,
+        Some(Ok(ag_ui::Event::RunStarted(_)))
+    ));
+    server.abort();
+}
