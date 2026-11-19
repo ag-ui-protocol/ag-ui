@@ -188,8 +188,15 @@ The base class still handles `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` ordering, le
 
 ## To run the dojo examples
 
+See [`examples/README.md`](examples/README.md) for the full run
+instructions. In short, from the repository root:
+
 ```bash
-cd python/ag_ui_langgraph/examples
-poetry install
-poetry run dev
+cd integrations/langgraph/python/examples
 ```
+
+First create a `.env` file from `.env.example` with the required keys,
+then run one of the following:
+
+- LangGraph Platform: `pnpx @langchain/langgraph-cli@1.1.13 dev`
+- FastAPI: `uv sync` then `uv run dev`
