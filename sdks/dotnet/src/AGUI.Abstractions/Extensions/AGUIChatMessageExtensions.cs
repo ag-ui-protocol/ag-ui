@@ -270,9 +270,21 @@ public static class AGUIChatMessageExtensions
         }
 #endif
 
+        // Residual user content that shared a message with a
+        // ToolApprovalResponseContent must not sit between the restored
+        // assistant tool call and its tool result: providers reject a
+        // tool result that does not immediately follow its call. Defer
+        // it and emit it as its own user message right after the tool
+        // result for the call the response answers; anything with no
+        // matching result is emitted at the end so no user input is lost.
+        var deferredUserMessages = new List<(AGUIUserMessage Message, HashSet<string> AnsweredCallIds)>();
+        var seenResultCallIds = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var message in chatMessages)
         {
             AGUIMessage aguiMessage;
+            var deferUserMessage = false;
+            var answeredCallIds = new HashSet<string>(StringComparer.Ordinal);
             if (message.Role == ChatRole.User)
             {
                 var userMsg = new AGUIUserMessage { Name = message.AuthorName };
@@ -282,7 +294,7 @@ public static class AGUIChatMessageExtensions
                 {
                     switch (content)
                     {
-                        case ToolApprovalResponseContent:
+                        case ToolApprovalResponseContent response:
                             // An approval response is not user input: it is consumed
                             // by the approval flow (resume payload) and must not
                             // surface as a text part. Leaving it in place emits a
@@ -290,6 +302,12 @@ public static class AGUIChatMessageExtensions
                             // and its tool result, which providers reject — a tool
                             // result must immediately follow its call.
                             sawApprovalResponse = true;
+                            if (response.ToolCall is FunctionCallContent answered
+                                && answered.CallId is not null)
+                            {
+                                answeredCallIds.Add(answered.CallId);
+                            }
+
                             break;
                         case TextContent textContent:
                             parts.Add(new AGUITextInputContent { Text = textContent.Text ?? string.Empty });
@@ -346,6 +364,13 @@ public static class AGUIChatMessageExtensions
                 }
 
                 userMsg.Content = parts;
+                if (sawApprovalResponse)
+                {
+                    // Residual user content: defer it past the tool result
+                    // instead of leaving it between the call and its result.
+                    deferUserMessage = true;
+                }
+
                 aguiMessage = userMsg;
             }
             else if (message.Role == ChatRole.Assistant)
@@ -414,6 +439,14 @@ public static class AGUIChatMessageExtensions
                 // rather than synthesizing a message with an empty toolCallId.
                 foreach (var functionResult in message.Contents.OfType<FunctionResultContent>())
                 {
+                    if (functionResult.CallId is null)
+                    {
+                        // A result without a call id has no call to attach to;
+                        // skip it rather than synthesizing a message with an
+                        // empty toolCallId.
+                        continue;
+                    }
+
                     yield return new AGUIToolMessage
                     {
                         Id = functionResult.CallId,
@@ -427,6 +460,19 @@ public static class AGUIChatMessageExtensions
                                 ? toolSubagentRunId
                                 : null,
                     };
+                    seenResultCallIds.Add(functionResult.CallId);
+                }
+
+                // Flush deferred user messages whose answered calls now all
+                // have their tool results emitted, right after those results.
+                for (var i = deferredUserMessages.Count - 1; i >= 0; i--)
+                {
+                    var (deferredMessage, answeredIds) = deferredUserMessages[i];
+                    if (answeredIds.Count == 0 || answeredIds.IsSubsetOf(seenResultCallIds))
+                    {
+                        yield return deferredMessage;
+                        deferredUserMessages.RemoveAt(i);
+                    }
                 }
 
                 continue;
@@ -449,7 +495,20 @@ public static class AGUIChatMessageExtensions
                 aguiMessage.SubagentRunId = subagentRunId;
             }
 
+            if (deferUserMessage)
+            {
+                deferredUserMessages.Add(((AGUIUserMessage)aguiMessage, answeredCallIds));
+                continue;
+            }
+
             yield return aguiMessage;
+        }
+
+        // Any deferred user message with no matching tool result in the
+        // history is emitted at the end so no user input is lost.
+        foreach (var (deferredMessage, _) in deferredUserMessages)
+        {
+            yield return deferredMessage;
         }
     }
 

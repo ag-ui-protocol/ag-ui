@@ -114,6 +114,15 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
 
             var filtered = new List<ChatMessage>();
+            // Residual content from a user message that also carries a
+            // ToolApprovalResponseContent must not stay between the restored
+            // assistant tool call and its tool result: providers reject a
+            // tool result that does not immediately follow its call. Defer
+            // such content and re-emit it as its own user message right
+            // after the tool result for the call the response answers.
+            // Nothing is dropped: a deferred message with no matching
+            // result in the history is appended at the end.
+            var deferred = new List<(ChatMessage Message, HashSet<string> AnsweredCallIds)>();
             foreach (var message in messagesList)
             {
                 if (!message.Contents.Any(c => c is ToolApprovalRequestContent or ToolApprovalResponseContent))
@@ -122,7 +131,11 @@ public sealed class AGUIChatClient : DelegatingChatClient
                     continue;
                 }
 
+                var hasApprovalResponse = message.Role == ChatRole.User
+                    && message.Contents.Any(c => c is ToolApprovalResponseContent);
                 var newContents = new List<AIContent>();
+                var residualContents = new List<AIContent>();
+                var answeredCallIds = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var content in message.Contents)
                 {
                     if (content is ToolApprovalRequestContent request)
@@ -139,14 +152,37 @@ public sealed class AGUIChatClient : DelegatingChatClient
                         // Pending requests are dropped; the fresh response travels
                         // via AdditionalProperties as the resume payload.
                     }
-                    else if (content is not ToolApprovalResponseContent)
+                    else if (content is ToolApprovalResponseContent response)
+                    {
+                        if (response.ToolCall is FunctionCallContent answered
+                            && answered.CallId is not null)
+                        {
+                            answeredCallIds.Add(answered.CallId);
+                        }
+
+                        // ToolApprovalResponseContent is dropped: fresh responses
+                        // travel via AdditionalProperties, and completed ones are
+                        // redundant once their call is unwrapped above.
+                    }
+                    else if (hasApprovalResponse)
+                    {
+                        // Residual user content: defer it past the tool result
+                        // instead of leaving it between the call and its result.
+                        residualContents.Add(content);
+                    }
+                    else
                     {
                         newContents.Add(content);
                     }
+                }
 
-                    // ToolApprovalResponseContent is dropped: fresh responses
-                    // travel via AdditionalProperties, and completed ones are
-                    // redundant once their call is unwrapped above.
+                if (residualContents.Count > 0)
+                {
+                    // Clone before rewriting contents: the caller's history
+                    // objects must not be mutated.
+                    var deferredMessage = message.Clone();
+                    deferredMessage.Contents = residualContents;
+                    deferred.Add((deferredMessage, answeredCallIds));
                 }
 
                 // A message left empty by the rewrite is dropped entirely.
@@ -158,6 +194,39 @@ public sealed class AGUIChatClient : DelegatingChatClient
                     rewrittenMessage.Contents = newContents;
                     filtered.Add(rewrittenMessage);
                 }
+            }
+
+            // Re-emit each deferred user message right after the tool result
+            // for the call its response answered; anything with no matching
+            // result is appended at the end so no user input is lost.
+            if (deferred.Count > 0)
+            {
+                var seenResultCallIds = new HashSet<string>(StringComparer.Ordinal);
+                var reordered = new List<ChatMessage>(filtered.Count + deferred.Count);
+                foreach (var message in filtered)
+                {
+                    reordered.Add(message);
+                    foreach (var result in message.Contents.OfType<FunctionResultContent>())
+                    {
+                        if (result.CallId is not null)
+                        {
+                            seenResultCallIds.Add(result.CallId);
+                        }
+                    }
+
+                    for (var i = deferred.Count - 1; i >= 0; i--)
+                    {
+                        var (deferredMessage, answeredIds) = deferred[i];
+                        if (answeredIds.Count == 0 || answeredIds.IsSubsetOf(seenResultCallIds))
+                        {
+                            reordered.Add(deferredMessage);
+                            deferred.RemoveAt(i);
+                        }
+                    }
+                }
+
+                reordered.AddRange(deferred.Select(d => d.Message));
+                filtered = reordered;
             }
 
             messagesList = filtered;

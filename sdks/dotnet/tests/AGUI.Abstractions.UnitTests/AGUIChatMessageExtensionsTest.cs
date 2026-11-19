@@ -354,6 +354,51 @@ public sealed class AGUIChatMessageExtensionsTest
     }
 
     [Fact]
+    public void AsAGUIMessages_UserMessageWithApprovalResponseAndText_MovesTextAfterToolResult()
+    {
+        // CodeRabbit follow-up on issue #3364: a user message carrying a completed
+        // approval response plus text (e.g. "Looks good") must not emit that text
+        // between the assistant tool-call message and its tool result — providers
+        // require the result to immediately follow its call. The text is moved
+        // after the tool result, not dropped. The response-only case stays the
+        // control (see AsAGUIMessages_AssistantWithApprovalWrappedCall_PreservesToolCall).
+        var call = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approval = new ToolApprovalRequestContent("approval-1", call);
+        var history = new ChatMessage[]
+        {
+            new ChatMessage(ChatRole.User, "Confirm"),
+            new ChatMessage(ChatRole.Assistant, [approval]),
+            new ChatMessage(ChatRole.User,
+            [
+                approval.CreateResponse(true),
+                new TextContent("Looks good, proceed."),
+            ]),
+            new ChatMessage(ChatRole.Tool,
+            [
+                new FunctionResultContent("confirm-1", "Completed.")
+            ]),
+            new ChatMessage(ChatRole.Assistant, "Acknowledged."),
+            new ChatMessage(ChatRole.User, "Next turn"),
+        };
+
+        var aguiMessages = history.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        var assistantIndex = aguiMessages.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndex = aguiMessages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+        Assert.True(assistantIndex >= 0, "Assistant message carrying the approval-wrapped call is missing.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+        Assert.Equal(
+            ["Confirm", "Looks good, proceed.", "Next turn"],
+            aguiMessages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+    }
+
+    [Fact]
     public void RoundTrip_MultiTurnToolCallConversation_PreservesStructure()
     {
         // Simulate: User -> Assistant(toolCall) -> Tool(result) -> Assistant(response)
