@@ -145,6 +145,9 @@ enforcement. A matching modern media part avoids a duplicate; an ID-only legacy
 part has no 1.0 source, so it remains unchanged on requests and is removed by
 incoming schema enforcement. Low-level transport requests are passed as supplied.
 
+The SSE frame cap counts UTF-8 field and comment bytes, excluding line terminators
+and the initial byte-order mark, and also applies when finishing a stream.
+
 Consumers that need insertion-ordered JSON must enable `serde_json/preserve_order`
 in their own dependency graph. Applications forwarding unknown event fields
 should retain raw JSON; the typed event representation discards those extensions.
