@@ -578,12 +578,47 @@ export class MCPAppsMiddleware extends Middleware {
                     mcpResult.isError === true
                       ? ""
                       : undefined;
+                  // Native histories commonly retain only tool-result content. Save
+                  // the public activity with that result so replay does not depend
+                  // on a mutable tool registry or execute the tool a second time.
+                  // Server configuration/headers and resource bytes are excluded.
+                  const activityEvent: ActivitySnapshotEvent | undefined =
+                    toolInfo.resourceUri !== undefined
+                      ? {
+                          type: EventType.ACTIVITY_SNAPSHOT,
+                          messageId: randomUUID(),
+                          activityType: MCPAppsActivityType,
+                          content: {
+                            result: mcpResult,
+                            resourceUri: toolInfo.resourceUri,
+                            serverHash: getServerHash(toolInfo.serverConfig),
+                            serverId: toolInfo.serverConfig.serverId,
+                            toolInput: args,
+                          },
+                          replace: true,
+                        }
+                      : undefined;
                   // Emit tool result event
                   const resultEvent: ToolCallResultEvent = {
                     type: EventType.TOOL_CALL_RESULT,
                     messageId: randomUUID(),
                     toolCallId: toolCall.id,
-                    content: this.extractTextContent(mcpResult),
+                    content: activityEvent
+                      ? JSON.stringify({
+                          type: "ag-ui:mcp-app-result",
+                          version: 1,
+                          activity: {
+                            messageId: activityEvent.messageId,
+                            content: {
+                              ...activityEvent.content,
+                              // MCP _meta is app-only. Native tool content may
+                              // reach the model, so persist public result fields
+                              // only, never arbitrary server extension metadata.
+                              result: this.publicToolResult(mcpResult),
+                            },
+                          },
+                        })
+                      : this.extractTextContent(mcpResult),
                     ...(toolError !== undefined
                       ? {
                           metadata: {
@@ -602,23 +637,7 @@ export class MCPAppsMiddleware extends Middleware {
                   });
 
                   // Supporting tools return results without creating a UI artifact.
-                  if (toolInfo.resourceUri !== undefined) {
-                    // Emit activity snapshot with MCP result and resourceUri (frontend fetches resource)
-                    const activityEvent: ActivitySnapshotEvent = {
-                      type: EventType.ACTIVITY_SNAPSHOT,
-                      messageId: randomUUID(),
-                      activityType: MCPAppsActivityType,
-                      content: {
-                        result: mcpResult,
-                        resourceUri: toolInfo.resourceUri,
-                        serverHash: getServerHash(toolInfo.serverConfig),
-                        serverId: toolInfo.serverConfig.serverId,
-                        toolInput: args,
-                      },
-                      replace: true,
-                    };
-                    subscriber.next(activityEvent);
-                  }
+                  if (activityEvent) subscriber.next(activityEvent);
                 } catch (error) {
                   console.error(
                     `Failed to execute MCP tool call ${toolCall.function.name}:`,
@@ -743,6 +762,16 @@ export class MCPAppsMiddleware extends Middleware {
     } finally {
       await closeMCPConnection(client, transport);
     }
+  }
+
+  /** MCP _meta and extension fields are app-only, not canonical model data. */
+  private publicToolResult(mcpResult: unknown) {
+    const { content, structuredContent, isError } = mcpResult as {
+      content: unknown;
+      structuredContent?: unknown;
+      isError?: boolean;
+    };
+    return { content, structuredContent, isError };
   }
 
   /**
