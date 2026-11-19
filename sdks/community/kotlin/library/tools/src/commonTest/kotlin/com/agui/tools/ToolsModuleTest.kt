@@ -136,7 +136,7 @@ class EchoToolExecutor : AbstractToolExecutor(
         
         val result = buildJsonObject {
             put("echo", message)
-            put("timestamp", kotlinx.datetime.Clock.System.now().toString())
+            put("timestamp", kotlin.time.Clock.System.now().toString())
         }
         
         return ToolExecutionResult.success(result, "Message echoed successfully")

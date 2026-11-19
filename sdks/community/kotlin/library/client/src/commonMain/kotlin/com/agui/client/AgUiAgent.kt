@@ -5,7 +5,7 @@ import com.agui.core.types.*
 import com.agui.tools.*
 import com.agui.client.tools.ClientToolResponseHandler
 import kotlinx.coroutines.flow.*
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import kotlinx.serialization.json.*
 import co.touchlab.kermit.Logger
 

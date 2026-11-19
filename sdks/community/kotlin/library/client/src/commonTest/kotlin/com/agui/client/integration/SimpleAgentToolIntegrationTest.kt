@@ -101,7 +101,7 @@ class SimpleAgentToolIntegrationTest {
             return ToolExecutionResult.success(
                 result = buildJsonObject {
                     put("received", message)
-                    put("timestamp", kotlinx.datetime.Clock.System.now().toEpochMilliseconds())
+                    put("timestamp", kotlin.time.Clock.System.now().toEpochMilliseconds())
                 },
                 message = "Successfully processed: $message"
             )
