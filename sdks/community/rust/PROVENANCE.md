@@ -42,3 +42,8 @@ boundary and conformance fixtures are reviewed against this monorepo's
 The combined lockfile updates vulnerable/yanked `bytes`, `h2`, `rustls`,
 `rustls-webpki`, `slab` and `zerovec` dependencies within the existing manifest
 constraints. Existing package source and public APIs are retained.
+
+Legacy binary content conversion and its compatibility tests are narrowly adapted
+from standalone commit `5837d337a35a8efe5d43144c650866ed63474165`.
+Only the message conversion helpers and their incoming/outgoing boundary hooks
+are included; this checkout retains its Transport API and diagnostic behavior.

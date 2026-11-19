@@ -83,6 +83,7 @@ impl Legacy {
             self.reasoning_id = None;
             self.message_id = None;
         }
+        crate::message::upgrade_legacy_event_content(&mut value, &tag);
         if !is_legacy_reasoning_tag(&tag) {
             return Ok(vec![value]);
         }

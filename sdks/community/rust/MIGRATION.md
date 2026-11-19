@@ -137,8 +137,13 @@ An SDK producer declaring AG-UI 1.0 rejects retired `THINKING_*` output; emit
 the `REASONING_*` family for new streams. Historical input is handled at the
 client compatibility boundary before application delivery.
 For outgoing multimodal user messages, replace legacy `InputContent::Binary`
-with a typed media part and a `Data`, `Url` or `File` source. The client does not
-upgrade legacy binary attachments automatically before a 1.0 request.
+with a typed media part and a `Data`, `Url` or `File` source. `RemoteAgent` and
+`Thread` also upgrade legacy binary attachments on outgoing requests, preserving
+inline data (preferred over a URL), MIME type, and filename metadata. Incoming
+snapshots, input echoes, and tool results use the same translation before schema
+enforcement. A matching modern media part avoids a duplicate; an ID-only legacy
+part has no 1.0 source, so it remains unchanged on requests and is removed by
+incoming schema enforcement. Low-level transport requests are passed as supplied.
 
 Consumers that need insertion-ordered JSON must enable `serde_json/preserve_order`
 in their own dependency graph. Applications forwarding unknown event fields

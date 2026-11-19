@@ -195,8 +195,11 @@ impl<T: Transport> RemoteAgent<T> {
     ///
     /// Connecting is folded into the stream: a transport that cannot reach the
     /// agent yields one error item and ends.
+    /// Legacy binary message parts are translated to their 1.0 media form.
     pub fn run_events(&self, params: impl Into<RunAgentInput>) -> EventStream {
-        let connecting = self.transport.run_raw(params.into());
+        let mut input = params.into();
+        crate::message::upgrade_legacy_content(&mut input.messages);
+        let connecting = self.transport.run_raw(input);
         let raw = futures_util::stream::once(connecting).try_flatten();
         boxed_stream(crate::client::enforce::stream(raw))
     }
