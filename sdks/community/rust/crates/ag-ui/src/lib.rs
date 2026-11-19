@@ -170,6 +170,15 @@ pub mod encode;
 pub mod axum;
 #[cfg(feature = "client")]
 pub mod client;
+// Hidden visibility reconstructs previously published messages with the same
+// reducer as a client. A server-only build needs no transport or executor.
+#[cfg(all(feature = "server", not(feature = "client")))]
+#[allow(dead_code)]
+mod client {
+    pub(crate) mod apply;
+    pub(crate) mod chunks;
+    mod error;
+}
 #[cfg(feature = "server")]
 pub mod server;
 

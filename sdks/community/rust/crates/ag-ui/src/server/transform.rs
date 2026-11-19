@@ -544,6 +544,9 @@ pub struct SubagentFilter {
     /// Whether the consumer saw each tool call start, for the result that
     /// may arrive long after the call closed.
     call_visibility: HashMap<ToolCallId, bool>,
+    /// Already delivered messages; snapshots may only restore this visible copy.
+    visible_messages: crate::client::apply::Applier,
+    visible_chunks: crate::client::chunks::ChunkNormalizer,
 }
 
 /// The families a `*_CHUNK` event may continue.
@@ -558,6 +561,7 @@ enum Family {
 #[derive(Clone, Debug)]
 struct Stream {
     family: Family,
+    opened_by_chunk: bool,
     id: String,
     /// What a chunk reopening a tool call on the consuming side must carry.
     tool_name: Option<String>,
@@ -606,6 +610,13 @@ impl Streams {
         match current {
             Some(current) => Self::replace(current, stream),
             None => *current = Some(stream),
+        }
+    }
+
+    fn current(&self, owner: &Option<SubagentRunId>) -> Option<&Stream> {
+        match owner {
+            Some(owner) => self.subagents.get(owner),
+            None => self.parent.as_ref(),
         }
     }
 
@@ -693,19 +704,26 @@ impl Streams {
         owner: &Option<SubagentRunId>,
         tag: &Option<SubagentRunId>,
     ) {
+        let opened_by_chunk = matches!(
+            event,
+            Event::TextMessageChunk(_) | Event::ReasoningMessageChunk(_) | Event::ToolCallChunk(_)
+        );
         let text = |id: &MessageId| Stream {
+            opened_by_chunk,
             family: Family::Text,
             id: id.as_str().to_owned(),
             tool_name: None,
             parent_message_id: None,
         };
         let reasoning = |id: &MessageId| Stream {
+            opened_by_chunk,
             family: Family::Reasoning,
             id: id.as_str().to_owned(),
             tool_name: None,
             parent_message_id: None,
         };
         let tool = |id: &ToolCallId, name: Option<&String>, parent: Option<&MessageId>| Stream {
+            opened_by_chunk,
             family: Family::Tool,
             id: id.as_str().to_owned(),
             tool_name: name.cloned(),
@@ -773,6 +791,8 @@ impl SubagentFilter {
             activities: HashMap::new(),
             open_visibility: HashMap::new(),
             call_visibility: HashMap::new(),
+            visible_messages: Default::default(),
+            visible_chunks: Default::default(),
         }
     }
 
@@ -925,11 +945,43 @@ impl SubagentFilter {
             Bare::Unresolved => !owned,
             Bare::No => {
                 let owner = self.owner_for(&event, &tag);
+                // An implicitly opened stream ends when its owner moves on.
+                // Its old visibility must not suppress a later authoritative snapshot.
+                let lane = if matches!(event, Event::ToolCallResult(_)) {
+                    &tag
+                } else {
+                    &owner
+                };
+                let implicit = self
+                    .streams
+                    .current(lane)
+                    .filter(|s| s.opened_by_chunk)
+                    .map(|s| (s.family, s.id.clone()));
                 self.streams.observe(&event, &owner, &tag);
-                self.judge(&event, &tag, owner.as_ref())
+                let keep = self.judge(&event, &tag, owner.as_ref());
+                if let Some(key) = implicit {
+                    if self
+                        .streams
+                        .current(lane)
+                        .is_none_or(|s| s.family != key.0 || s.id != key.1)
+                    {
+                        self.open_visibility.remove(&key);
+                    }
+                }
+                keep
             }
         };
-        if !keep {
+        if !keep
+            || (owned
+                && matches!(
+                    event,
+                    Event::TextMessageStart(_)
+                        | Event::TextMessageChunk(_)
+                        | Event::ReasoningStart(_)
+                        | Event::ReasoningMessageStart(_)
+                        | Event::ReasoningMessageChunk(_)
+                ))
+        {
             return Vec::new();
         }
         match &mut event {
@@ -938,10 +990,30 @@ impl SubagentFilter {
             // the run established it, as the verifiers leave it.
             Event::MessagesSnapshot(snapshot) => {
                 self.seed_hidden(&snapshot.messages, true);
-                let hidden_calls = &self.hidden_tool_calls;
-                snapshot
-                    .messages
-                    .retain_mut(|message| Self::show_message(message, hidden_calls));
+                snapshot.messages.retain_mut(|message| {
+                    let family = if matches!(message, crate::Message::Reasoning(_)) {
+                        Family::Reasoning
+                    } else {
+                        Family::Text
+                    };
+                    if self
+                        .open_visibility
+                        .get(&(family, message.id().as_str().to_owned()))
+                        == Some(&false)
+                    {
+                        return false;
+                    }
+                    Self::show_message(message, &self.hidden_tool_calls)
+                });
+                // A filtered or omitted entry would delete a still-open parent
+                // message on the client. Restore only what it has already seen.
+                let present: HashSet<_> =
+                    snapshot.messages.iter().map(|m| m.id().clone()).collect();
+                for message in self.visible_messages.open_text_messages() {
+                    if !present.contains(message.id()) {
+                        snapshot.messages.push(message.clone());
+                    }
+                }
             }
             // History, not a rewrite: what it carries is remembered alongside
             // what the run has already shown.
@@ -952,6 +1024,8 @@ impl SubagentFilter {
                     input
                         .messages
                         .retain_mut(|message| Self::show_message(message, hidden_calls));
+                    self.visible_messages =
+                        crate::client::apply::Applier::new().with_messages(input.messages.clone());
                 }
             }
             Event::StateSnapshot(_)
@@ -962,6 +1036,57 @@ impl SubagentFilter {
                 event.clear_subagent_run_id();
             }
             Event::RunFinished(finished) => Self::strip_interrupt_tags(finished),
+            _ => {}
+        }
+        // Project only events that can change a published message. This keeps
+        // shared state and other unrelated payloads out of the retained copy.
+        match &event {
+            Event::RunFinished(_) | Event::RunError(_) => {
+                self.visible_messages = Default::default();
+                self.visible_chunks = Default::default();
+            }
+            Event::MessagesSnapshot(_) => {
+                let _ = self.visible_messages.apply(&event);
+            }
+            Event::TextMessageStart(_)
+            | Event::TextMessageContent(_)
+            | Event::TextMessageEnd(_)
+            | Event::TextMessageChunk(_)
+            | Event::ToolCallStart(_)
+            | Event::ToolCallArgs(_)
+            | Event::ToolCallEnd(_)
+            | Event::ToolCallResult(_)
+            | Event::ToolCallChunk(_)
+            | Event::ReasoningMessageStart(_)
+            | Event::ReasoningMessageChunk(_)
+            | Event::ReasoningMessageContent(_)
+            | Event::ReasoningMessageEnd(_)
+            | Event::ReasoningEnd(_)
+            | Event::ReasoningEncryptedValue(_) => {
+                // Stream validation belongs to the verifier. The projection
+                // only retains material that the consumer can apply.
+                let mut normalized = Vec::new();
+                if self
+                    .visible_chunks
+                    .normalize(event.clone(), &mut normalized)
+                    .is_ok()
+                {
+                    for update in normalized {
+                        // Reasoning can close a chunked text stream, but its
+                        // own content lives outside the transcript.
+                        if !matches!(
+                            update,
+                            Event::ReasoningStart(_)
+                                | Event::ReasoningEnd(_)
+                                | Event::ReasoningMessageStart(_)
+                                | Event::ReasoningMessageContent(_)
+                                | Event::ReasoningMessageEnd(_)
+                        ) {
+                            let _ = self.visible_messages.apply(&update);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
         vec![event]
@@ -1109,8 +1234,10 @@ impl SubagentFilter {
 
     fn closed(&mut self, family: Family, id: &MessageId, owned: bool) -> bool {
         let keep = self.continued(family, id, owned);
-        self.open_visibility
-            .remove(&(family, id.as_str().to_owned()));
+        let key = (family, id.as_str().to_owned());
+        if !owned || self.open_visibility.get(&key) != Some(&true) {
+            self.open_visibility.remove(&key);
+        }
         keep
     }
 
@@ -1179,9 +1306,19 @@ impl SubagentFilter {
                     self.owners_mut(family).insert(id, owner);
                 }
                 None if authoritative => {
-                    self.owners_mut(family).remove(&id);
-                    for call in &calls {
-                        self.hidden_tool_calls.remove(call);
+                    let previous = self.owners_mut(family).remove(&id);
+                    let hidden_open =
+                        self.open_visibility.get(&(family, id.as_str().to_owned())) == Some(&false);
+                    for call in calls {
+                        if hidden_open {
+                            // The restatement itself is omitted. Its calls and
+                            // their results must stay hidden together.
+                            if let Some(owner) = &previous {
+                                self.hidden_tool_calls.insert(call, owner.clone());
+                            }
+                        } else {
+                            self.hidden_tool_calls.remove(&call);
+                        }
                     }
                 }
                 None => {}

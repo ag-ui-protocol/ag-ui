@@ -10,6 +10,8 @@
 //! events from anywhere.
 //!
 //! ```
+//! # #[cfg(feature = "client")]
+//! # fn main() -> Result<(), ag_ui::client::Error> {
 //! use ag_ui::client::apply::Applier;
 //! use ag_ui::{Event, TextMessageRole};
 //!
@@ -27,7 +29,9 @@
 //!
 //! assert_eq!(applier.messages().len(), 1);
 //! assert_eq!(applier.text_of("msg-1"), Some("Hello, world"));
-//! # Ok::<(), ag_ui::client::Error>(())
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "client"))] fn main() {}
 //! ```
 //!
 //! # What it does not do
@@ -381,6 +385,12 @@ impl Applier {
         &self.messages
     }
 
+    /// Text messages whose explicit or normalized end has not been delivered.
+    #[cfg(feature = "server")]
+    pub(crate) fn open_text_messages(&self) -> impl Iterator<Item = &Message> {
+        self.open_text.iter().filter_map(|(_, id)| self.message(id))
+    }
+
     /// The message with this id, if the applier has seen one.
     pub fn message(&self, id: &MessageId) -> Option<&Message> {
         self.by_id
@@ -426,6 +436,8 @@ impl Applier {
     /// Deserializes the application state into a caller-defined type.
     ///
     /// ```
+    /// # #[cfg(feature = "client")]
+    /// # fn main() -> Result<(), ag_ui::client::Error> {
     /// # use ag_ui::client::apply::Applier;
     /// # use ag_ui::Event;
     /// # use serde::{Deserialize, Serialize};
@@ -437,7 +449,9 @@ impl Applier {
     /// let mut applier = Applier::new();
     /// applier.apply(&Event::state_snapshot(serde_json::json!({ "step": 2 })))?;
     /// assert_eq!(applier.state_as::<Ui>()?.step, 2);
-    /// # Ok::<(), ag_ui::client::Error>(())
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(feature = "client"))] fn main() {}
     /// ```
     pub fn state_as<T: for<'de> Deserialize<'de>>(&self) -> Result<T> {
         T::deserialize(&self.state).map_err(Error::State)

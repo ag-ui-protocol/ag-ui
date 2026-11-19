@@ -17,6 +17,8 @@
 //! this module.
 //!
 //! ```
+//! # #[cfg(feature = "client")]
+//! # fn main() -> Result<(), ag_ui::client::Error> {
 //! use ag_ui::client::chunks::normalize_all;
 //! use ag_ui::{Event, EventType, MessageId};
 //!
@@ -32,7 +34,9 @@
 //!     EventType::TextMessageContent,
 //!     EventType::TextMessageEnd,
 //! ]);
-//! # Ok::<(), ag_ui::client::Error>(())
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "client"))] fn main() {}
 //! ```
 //!
 //! # Subagents
