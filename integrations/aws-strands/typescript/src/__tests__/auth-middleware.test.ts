@@ -316,7 +316,10 @@ describe("auth admits and rejects on createStrandsApp", () => {
       // static matrix of what the adapter supports, not user data.
       const ping = await getPath(port, "/ping");
       expect(ping.status).toBe(200);
-      expect(JSON.parse(ping.body)).toEqual({ status: "healthy" });
+      expect(JSON.parse(ping.body)).toEqual({
+        status: "Healthy",
+        time_of_last_update: expect.any(Number),
+      });
 
       const caps = await getPath(port, "/capabilities");
       expect(caps.status).toBe(200);
