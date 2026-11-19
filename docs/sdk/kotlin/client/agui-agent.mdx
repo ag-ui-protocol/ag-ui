@@ -113,6 +113,32 @@ val agent = AgUiAgent("https://api.example.com/agent") {
 }
 ```
 
+### Custom HTTP Client
+Pass your own Ktor `HttpClient` to send agent requests through your app's HTTP stack (connection pool,
+proxy, interceptors, certificate pinning):
+
+```kotlin
+val httpClient = HttpClient(OkHttp) {
+    install(SSE)
+    install(ContentNegotiation) { json(AgUiJson) }
+    install(HttpTimeout) { requestTimeoutMillis = 60_000 }
+}
+
+val agent = AgUiAgent("https://api.example.com/agent") {
+    bearerToken = "your-token"
+    this.httpClient = httpClient
+}
+```
+
+- Declare the Ktor artifacts your client uses, for example `io.ktor:ktor-client-okhttp`,
+  `ktor-client-content-negotiation` and `ktor-serialization-kotlinx-json`: the SDK keeps Ktor as an internal
+  dependency.
+- The client must install the `SSE` plugin and `ContentNegotiation` with `AgUiJson`.
+- `requestTimeout` and `connectTimeout` only apply to the client the SDK creates; configure `HttpTimeout`
+  on your own client.
+- The agent does not close an injected client.
+- Create the client outside the configuration block: `StatefulAgUiAgent` runs that block more than once.
+
 ## Methods
 
 ### sendMessage

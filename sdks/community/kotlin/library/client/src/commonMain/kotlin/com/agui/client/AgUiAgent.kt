@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.*
 import co.touchlab.kermit.Logger
+import io.ktor.client.HttpClient
 
 private val logger = Logger.withTag("AgUiAgent")
 
@@ -36,7 +37,7 @@ open class AgUiAgent(
             requestTimeout = config.requestTimeout,
             connectTimeout = config.connectTimeout
         ),
-        httpClient = null
+        httpClient = config.httpClient
     )
 
     protected val toolExecutionManager = config.toolRegistry?.let {
@@ -203,6 +204,17 @@ open class AgUiAgentConfig {
     
     /** Connection timeout in milliseconds (defaults to 30 seconds) */
     var connectTimeout: Long = 30_000L
+
+    /**
+     * Ktor client to send requests with, for example one on the app's own engine so the agent shares its
+     * connection pool, proxy and interceptors. When null (the default) the SDK creates a platform client.
+     *
+     * The client must install the `SSE` plugin and `ContentNegotiation` with the SDK's JSON:
+     * `install(ContentNegotiation) { json(AgUiJson) }`. [requestTimeout] and [connectTimeout] only apply to the
+     * client the SDK creates; configure `HttpTimeout` on an injected client yourself. The agent does not close an
+     * injected client. Create it outside the configuration block: [StatefulAgUiAgent] runs that block more than once.
+     */
+    var httpClient: HttpClient? = null
 
     /**
      * Build the complete headers map including authentication headers
