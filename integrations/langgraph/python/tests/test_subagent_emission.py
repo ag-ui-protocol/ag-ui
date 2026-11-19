@@ -298,6 +298,27 @@ class TestSnapshotIncludesSubagentMessages(unittest.TestCase):
         self.assertEqual(subagent_msgs[0].role, "assistant")
         self.assertEqual(subagent_msgs[0].content, "Hello world")
 
+    def test_subagent_message_keeps_its_name_through_the_snapshot(self):
+        # The streamed START names the author; a reconstructed snapshot message
+        # without it would strip the name the client already applied.
+        agent = self._agent_with_active_run(current_subagent_run_id="tools:s1")
+        agent._dispatch_event(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START, message_id="sub-msg-1",
+                role="assistant", name="researcher",
+            )
+        )
+        agent._dispatch_event(
+            TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT, message_id="sub-msg-1", delta="Hi"
+            )
+        )
+
+        snap = self._snapshot(agent)
+        subagent_msgs = [m for m in snap.messages if m.id == "sub-msg-1"]
+        self.assertEqual(len(subagent_msgs), 1)
+        self.assertEqual(subagent_msgs[0].name, "researcher")
+
     def test_subagent_reasoning_survives_the_snapshot(self):
         # A subagent's reasoning lives only in its subgraph checkpoint, so it is absent
         # from the main-graph MESSAGES_SNAPSHOT and the client's snapshot apply would drop
@@ -1452,6 +1473,100 @@ class TestEmitSubagentEventsOff(unittest.TestCase):
         graph.nodes = {}
         opted_in = LangGraphAgent(name="test", graph=graph, emit_subagent_events=True)
         self.assertTrue(opted_in.clone().emit_subagent_events)
+
+
+class TestTextMessageStartName(unittest.IsolatedAsyncioTestCase):
+    """TEXT_MESSAGE_START carries the author's name from lc_agent_name, so a
+    client can tell which agent wrote a message while it streams instead of
+    only once MESSAGES_SNAPSHOT arrives. Driven through real graphs so the
+    streamed name is checked against the name the snapshot reports."""
+
+    @staticmethod
+    def _model(text):
+        from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+        from langchain_core.messages import AIMessage
+        return GenericFakeChatModel(messages=iter([AIMessage(content=text)]))
+
+    async def _run(self, graph):
+        from ag_ui.core import RunAgentInput, UserMessage
+        agent = LangGraphAgent(name="test", graph=graph)
+        events = [e async for e in agent.run(RunAgentInput(
+            thread_id="t1", run_id="r1", state={}, tools=[], context=[],
+            forwarded_props={},
+            messages=[UserMessage(id="u1", role="user", content="hi")],
+        ))]
+        starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+        snapshot = [e for e in events if e.type == EventType.MESSAGES_SNAPSHOT][-1]
+        self.assertEqual(len(starts), 1)
+        snapshot_msg = next(m for m in snapshot.messages if m.id == starts[0].message_id)
+        return starts[0], snapshot_msg
+
+    async def test_named_worker_message_is_named_while_streaming(self):
+        # The langgraph-supervisor shape: a create_agent worker under an
+        # unnamed parent graph, whose messages land in the parent's state.
+        from langchain.agents import create_agent
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.graph import END, START, MessagesState, StateGraph
+        graph = StateGraph(MessagesState)
+        graph.add_node("math_expert", create_agent(self._model("four"), name="math_expert"))
+        graph.add_edge(START, "math_expert")
+        graph.add_edge("math_expert", END)
+
+        start, snapshot_msg = await self._run(graph.compile(checkpointer=MemorySaver()))
+        self.assertEqual(start.name, "math_expert")
+        self.assertEqual(snapshot_msg.name, start.name)
+
+    async def test_named_parent_message_matches_the_snapshot(self):
+        # A create_agent parent's own messages get its name too; the snapshot
+        # already reports that name, so the two must agree.
+        from langchain.agents import create_agent
+        from langgraph.checkpoint.memory import MemorySaver
+        graph = create_agent(self._model("hello"), name="supervisor", checkpointer=MemorySaver())
+
+        start, snapshot_msg = await self._run(graph)
+        self.assertEqual(start.name, "supervisor")
+        self.assertEqual(snapshot_msg.name, start.name)
+
+    async def test_unnamed_graph_leaves_name_unset(self):
+        from langgraph.checkpoint.memory import MemorySaver
+        from langgraph.graph import END, START, MessagesState, StateGraph
+        model = self._model("plain")
+
+        async def call_model(state):
+            return {"messages": [await model.ainvoke(state["messages"])]}
+
+        graph = StateGraph(MessagesState)
+        graph.add_node("model", call_model)
+        graph.add_edge(START, "model")
+        graph.add_edge("model", END)
+
+        start, snapshot_msg = await self._run(graph.compile(checkpointer=MemorySaver()))
+        self.assertIsNone(start.name)
+        self.assertIsNone(snapshot_msg.name)
+
+    async def test_text_before_a_tool_call_is_named(self):
+        # The second emission site: text and a tool call in the same chunk
+        # open and close the text message before the tool call starts.
+        from ag_ui_langgraph.types import LangGraphEventTypes
+        agent = _make_agent()
+        agent.active_run = {
+            "id": "run-1", "node_name": "model", "current_subagent_run_id": None,
+            "active_subagents": {}, "streamed_tool_call_ids": set(),
+        }
+        agent._dispatch_event = lambda event: event
+        events = [e async for e in agent._handle_single_event({
+            "event": LangGraphEventTypes.OnChatModelStream,
+            "metadata": {"lc_agent_name": "math_expert"},
+            "data": {"chunk": {
+                "id": "msg-1", "content": "Let me check",
+                "tool_call_chunks": [{"id": "tc-1", "name": "search", "args": ""}],
+                "response_metadata": {},
+            }},
+        }, {})]
+
+        starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0].name, "math_expert")
 
 
 if __name__ == "__main__":
