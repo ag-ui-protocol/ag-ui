@@ -63,6 +63,23 @@ add_langgraph_fastapi_endpoint(app, graph, "/agent")
 - **Advanced event handling** – Comprehensive support for all AG-UI events including thinking, tool calls, and state updates
 - **Message translation** – Seamless conversion between AG-UI and LangChain message formats
 
+## Checkpoint durability
+
+LangGraph's [durability mode](https://docs.langchain.com/oss/python/langgraph/durable-execution#durability-modes)
+(`"sync"`, `"async"` or `"exit"`) controls when checkpoints are written. Set a
+default for every run on the agent, or per run through `forwardedProps.durability`
+(the same key the TypeScript adapter reads), which takes precedence:
+
+```python
+agent = LangGraphAgent(name="agent", graph=graph, durability="exit")
+```
+
+When neither is set, nothing is passed and LangGraph uses its default (`"async"`).
+An unknown value is rejected (a `ValueError` from the constructor, a `RUN_ERROR`
+for a run). With `"exit"`, no checkpoint exists until the run ends, so the
+mid-run `STATE_SNAPSHOT` / `MESSAGES_SNAPSHOT` normally sent at subgraph
+transitions is skipped; the end-of-run snapshots are sent as usual.
+
 ## Resuming via AG-UI standard `resume[]`
 
 When a client uses `RunAgentInput.resume = [ResumeEntry, ...]` instead of
