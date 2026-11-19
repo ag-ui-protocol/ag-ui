@@ -45,12 +45,7 @@ pub enum Error {
         message: String,
     },
 
-    /// The `Content-Type` was set to something that is not JSON.
-    ///
-    /// An absent header is accepted — `curl -d` and hand-written clients often
-    /// omit it. A *wrong* one is refused rather than sniffed, which also means
-    /// a cross-origin HTML form (whose content type is always one of three
-    /// non-JSON values it cannot override) can never reach an agent.
+    /// The request did not declare a supported JSON media type.
     #[error("expected a JSON request body, got Content-Type {found:?}")]
     ContentType {
         /// The offending header value.

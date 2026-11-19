@@ -56,7 +56,7 @@ client = ["dep:futures-core", "dep:futures-util", "dep:json-patch", "dep:getrand
 http = ["client", "sse", "dep:reqwest", "dep:tokio"]
 
 # ---- axum: mount a hosted agent on a router ----
-axum = ["server", "sse", "dep:axum", "dep:futures-util"]
+axum = ["server", "sse", "dep:axum", "dep:mime", "dep:futures-util"]
 
 [dependencies]
 serde.workspace = true
@@ -74,6 +74,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"], opt
 reqwest = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 axum = { workspace = true, optional = true }
+mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 insta.workspace = true

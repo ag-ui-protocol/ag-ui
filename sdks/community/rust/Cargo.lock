@@ -21,6 +21,7 @@ dependencies = [
  "insta",
  "js-sys",
  "json-patch",
+ "mime",
  "reqwest 0.13.5",
  "schemars",
  "serde",

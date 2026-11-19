@@ -95,15 +95,12 @@ pub fn decode(body: &[u8]) -> Result<RunAgentInput> {
     Ok(serde_json::from_value(value)?)
 }
 
-/// Refuses a body whose `Content-Type` claims to be something other than JSON.
-///
-/// An absent header passes: plenty of clients omit it, and a missing header is
-/// never a browser form post — those always send one of three
-/// non-JSON types, which is what makes this check a CSRF defence as well as a
-/// content check.
+/// Requires a supported JSON Content-Type before reading the body.
 fn check_content_type(headers: &HeaderMap) -> Result<()> {
     let Some(value) = headers.get(header::CONTENT_TYPE) else {
-        return Ok(());
+        return Err(Error::ContentType {
+            found: "<missing>".to_owned(),
+        });
     };
     let found = String::from_utf8_lossy(value.as_bytes());
     if is_json(&found) {
@@ -116,13 +113,12 @@ fn check_content_type(headers: &HeaderMap) -> Result<()> {
 
 /// Whether a `Content-Type` value names JSON, parameters and all.
 fn is_json(value: &str) -> bool {
-    let essence = value.split(';').next().unwrap_or(value).trim();
-    essence.eq_ignore_ascii_case("application/json")
-        || essence.eq_ignore_ascii_case("text/json")
-        // `application/vnd.acme+json` and friends.
-        || essence
-            .rsplit_once('+')
-            .is_some_and(|(_, suffix)| suffix.eq_ignore_ascii_case("json"))
+    let Ok(media) = value.parse::<mime::Mime>() else {
+        return false;
+    };
+    (media.type_() == mime::APPLICATION || media.type_() == mime::TEXT)
+        && media.subtype() == mime::JSON
+        || media.suffix() == Some(mime::JSON)
 }
 
 #[cfg(test)]
@@ -156,8 +152,11 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_content_type_is_accepted() {
-        assert!(check_content_type(&HeaderMap::new()).is_ok());
+    fn a_missing_content_type_is_refused_with_415() {
+        assert_eq!(
+            check_content_type(&HeaderMap::new()).unwrap_err().status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE
+        );
     }
 
     #[test]

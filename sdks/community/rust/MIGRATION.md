@@ -145,6 +145,10 @@ enforcement. A matching modern media part avoids a duplicate; an ID-only legacy
 part has no 1.0 source, so it remains unchanged on requests and is removed by
 incoming schema enforcement. Low-level transport requests are passed as supplied.
 
+Axum run endpoints require a JSON `Content-Type`. Send `application/json`,
+`text/json`, or a media type with a `+json` suffix. A missing or unsupported
+header returns HTTP 415 before the endpoint reads the body.
+
 The HTTP transport reads at most 2 KiB of a non-success response body and
 returns the received prefix after at most one second of body reading.
 Successful SSE responses retain their configured streaming timeout.

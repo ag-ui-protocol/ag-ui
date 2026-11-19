@@ -486,6 +486,19 @@ async fn a_body_that_is_not_json_is_a_415() {
 
 /// The endpoint inherits axum's body limit rather than inventing one, and a
 /// caller's `DefaultBodyLimit` layer still governs it.
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn a_json_run_without_content_type_is_a_415() {
+    let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/agent"))
+        .body(input())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 415);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_oversized_body_is_a_413() {
     let app = Router::new()
