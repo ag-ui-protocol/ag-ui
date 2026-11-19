@@ -166,6 +166,13 @@ export interface MCPAppsMiddlewareConfig {
   mcpServers?: MCPClientConfig[];
   /** Continue without unavailable servers by default, or stop before invoking the agent. */
   discoveryFailureMode?: "continue" | "throw";
+  /**
+   * Use tool-results only for append-only native agents that already retain
+   * their input and generated calls. Applies to internal continuations only;
+   * the caller remains responsible for the initial request's history policy.
+   * This controls delivery, not durable acknowledgment or crash recovery.
+   */
+  continuationInput?: "full-history" | "tool-results";
 }
 
 /**
@@ -663,7 +670,10 @@ export class MCPAppsMiddleware extends Middleware {
                   ...continuation.input,
                   runId: randomUUID(),
                   resume: undefined,
-                  messages,
+                  messages:
+                    this.config.continuationInput === "tool-results"
+                      ? resultMessages
+                      : messages,
                   state: heldRunFinished.state,
                 };
                 subscriptions.add(
