@@ -91,6 +91,7 @@ export type {
   MastraSubagentToolResults,
   MastraSubagentVisibility,
 } from "./subagents";
+import { version as ADAPTER_VERSION } from "../package.json";
 
 const { compare } = jsonpatch;
 
@@ -1748,6 +1749,9 @@ export class MastraAgent extends AbstractAgent {
         type: "mastra",
         ...(this.agentId ? { name: this.agentId } : {}),
         ...(this.description ? { description: this.description } : {}),
+        // The adapter's own package version, so a host (CopilotKit's runtime
+        // telemetry, for one) can tell which bridge release an app runs.
+        metadata: { adapterVersion: ADAPTER_VERSION },
       },
       tools: { supported: true, clientProvided: true },
       ...(state ? { state } : {}),
