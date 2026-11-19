@@ -301,6 +301,43 @@ public sealed class AGUIChatMessageExtensionsTest
     }
 
     [Fact]
+    public void AsAGUIMessages_AssistantWithApprovalWrappedCall_PreservesToolCall()
+    {
+        // Issue #3364: a tool call wrapped in a ToolApprovalRequestContent was dropped
+        // while its FunctionResultContent survived, leaving an orphaned tool result.
+        foreach (var approved in new[] { true, false })
+        {
+            var call = new FunctionCallContent("confirm-1", "confirm_operation",
+                new Dictionary<string, object?>());
+            var approval = new ToolApprovalRequestContent("approval-1", call);
+            var history = new ChatMessage[]
+            {
+                new ChatMessage(ChatRole.User, "Confirm"),
+                new ChatMessage(ChatRole.Assistant, [approval]),
+                new ChatMessage(ChatRole.User, [approval.CreateResponse(approved)]),
+                new ChatMessage(ChatRole.Tool,
+                [
+                    new FunctionResultContent("confirm-1", approved ? "Completed." : "Rejected.")
+                ]),
+                new ChatMessage(ChatRole.Assistant, "Acknowledged."),
+                new ChatMessage(ChatRole.User, "Next turn"),
+            };
+
+            var aguiMessages = history.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+            var calls = aguiMessages.OfType<AGUIAssistantMessage>()
+                .SelectMany(m => m.ToolCalls ?? [])
+                .Select(c => c.Id)
+                .ToHashSet();
+            Assert.Contains("confirm-1", calls);
+            var orphaned = aguiMessages.OfType<AGUIToolMessage>()
+                .Where(m => !calls.Contains(m.ToolCallId!))
+                .ToList();
+            Assert.Empty(orphaned);
+        }
+    }
+
+    [Fact]
     public void RoundTrip_MultiTurnToolCallConversation_PreservesStructure()
     {
         // Simulate: User -> Assistant(toolCall) -> Tool(result) -> Assistant(response)

@@ -332,7 +332,24 @@ public static class AGUIChatMessageExtensions
             }
             else if (message.Role == ChatRole.Assistant)
             {
-                var functionCalls = message.Contents.OfType<FunctionCallContent>().ToList();
+                // Collect tool calls in content order. A call wrapped in a
+                // ToolApprovalRequestContent (issue #3364) must be preserved
+                // the same way as a plain FunctionCallContent: dropping it
+                // while its FunctionResultContent survives leaves an orphaned
+                // tool result that providers reject.
+                var functionCalls = new List<FunctionCallContent>();
+                foreach (var content in message.Contents)
+                {
+                    if (content is FunctionCallContent functionCall)
+                    {
+                        functionCalls.Add(functionCall);
+                    }
+                    else if (content is ToolApprovalRequestContent { ToolCall: FunctionCallContent wrappedCall })
+                    {
+                        functionCalls.Add(wrappedCall);
+                    }
+                }
+
                 var assistantMsg = new AGUIAssistantMessage
                 {
                     Content = string.IsNullOrEmpty(message.Text) ? null : message.Text
