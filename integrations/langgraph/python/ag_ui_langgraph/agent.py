@@ -3697,7 +3697,7 @@ class LangGraphAgent:
                 yield resolved
 
         elif event_type == LangGraphEventTypes.OnCustomEvent:
-            if event["name"] == CustomEventNames.ManuallyEmitMessage:
+            if event["name"] in (CustomEventNames.ManuallyEmitMessage, CustomEventNames.CopilotKitEmitMessage):
                 # Public, not raw: manual ids are caller-chosen, and a subagent's
                 # graph code can emit the same id as another lane. Same-lane
                 # single use keeps the caller's id verbatim (first claim).
@@ -3717,7 +3717,7 @@ class LangGraphAgent:
                     TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=manual_message_id, raw_event=event)
                 )
 
-            elif event["name"] == CustomEventNames.ManuallyEmitToolCall:
+            elif event["name"] in (CustomEventNames.ManuallyEmitToolCall, CustomEventNames.CopilotKitEmitToolCall):
                 # Same resolution as streamed tool calls: the call id in its own
                 # kind namespace, the parent message id in the message one.
                 manual_call_id = self._resolve_public_tool_call_id(event["data"]["id"])
@@ -3744,7 +3744,7 @@ class LangGraphAgent:
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=manual_call_id, raw_event=event)
                 )
 
-            elif event["name"] == CustomEventNames.ManuallyEmitState:
+            elif event["name"] in (CustomEventNames.ManuallyEmitState, CustomEventNames.CopilotKitEmitState):
                 # No subagent guard here, deliberately. An audit revision dropped
                 # this payload when a subagent was active, on the grounds that only
                 # the parent owns state. That was an invented rule -- the protocol

@@ -22,6 +22,18 @@ class CustomEventNames(str, Enum):
     ManuallyEmitToolCall = "manually_emit_tool_call"
     ManuallyEmitState = "manually_emit_state"
 
+    # CopilotKit aliases (#1364) — the CopilotKit Python SDK dispatches its
+    # emit helpers under "copilotkit_manually_emit_*" names, with the same
+    # payload shapes as the un-prefixed names above:
+    #   copilotkit_emit_message   -> "copilotkit_manually_emit_message"
+    #   copilotkit_emit_tool_call -> "copilotkit_manually_emit_tool_call"
+    #   copilotkit_emit_state     -> "copilotkit_manually_emit_intermediate_state"
+    # The bridge translates them identically; without the alias the events
+    # only reach the frontend as a generic CUSTOM event and are never rendered.
+    CopilotKitEmitMessage = "copilotkit_manually_emit_message"
+    CopilotKitEmitToolCall = "copilotkit_manually_emit_tool_call"
+    CopilotKitEmitState = "copilotkit_manually_emit_intermediate_state"
+
     # Advisory only — this does NOT terminate the stream.
     #
     # Unlike the ``ManuallyEmit*`` members above, which the bridge additionally
