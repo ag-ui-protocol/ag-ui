@@ -51,6 +51,9 @@ public sealed class ChatRequestContext
 
     /// <summary>
     /// Gets the chat messages adapted from <see cref="RunAgentInput.Messages"/>.
+    /// Nonempty <see cref="RunAgentInput.Context"/> adds a user message containing the
+    /// context entries as JSON after any leading system or developer messages.
+    /// The originating input's messages are not modified.
     /// </summary>
     public List<ChatMessage> Messages { get; }
 
