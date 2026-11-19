@@ -14,4 +14,14 @@
 
     <name>ag-ui-core</name>
     <description>Core types and protocol primitives for AG-UI</description>
+
+    <dependencies>
+        <!-- Record interoperability tests only; core has no JSON runtime dependency. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.21.4</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 </project>
