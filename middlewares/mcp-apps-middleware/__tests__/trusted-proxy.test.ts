@@ -16,6 +16,16 @@ import {
   createToolCallEndEvent,
 } from "./test-utils";
 
+type ToolListPage = {
+  tools: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
+  }>;
+  nextCursor?: string;
+};
+
 /** Serve the MCP HTTP protocol and record transport effects on real sockets. */
 async function setup(
   sharedEndpoint = false,
@@ -24,26 +34,49 @@ async function setup(
   rejectAuth = false,
   metadata: "legacy" | "nested" | "both" = "legacy",
   options: {
-    visibility?: string[];
+    visibility?: unknown;
+    toolName?: string;
+    toolListPages?: Array<ToolListPage>;
+    toolListSequences?: Array<Array<ToolListPage>>;
+    failToolsList?: boolean;
+    failToolsListCursors?: Array<string>;
+    failToolsListPageIndexes?: Array<number>;
     initializationFailure?: "initialized-error" | "unsupported-version";
     rejectDelete?: boolean;
+    toolListPagesByAuthorization?: Record<string, Array<ToolListPage>>;
+    toolCallTextByAuthorization?: Record<string, string>;
+    additionalServer?: {
+      serverId: string;
+      token: string;
+      toolListPages: Array<ToolListPage>;
+      toolCallText: string;
+    };
   } = {},
 ) {
   const requests: Array<{
+    serverId: string;
     method: string;
     authorization?: string;
     rpc?: string;
     sessionId?: string;
     mimeTypes?: unknown;
+    cursor?: unknown;
+    toolListSequence?: number;
   }> = [];
   let stalledDeleteClosed = false;
+  let toolListSequenceIndex = 0;
+  let activeToolListPages: Array<ToolListPage> | undefined;
+  let activeToolListSequence: number | undefined;
   const server = createServer(async (request, response) => {
     const entry = {
+      serverId: "cards",
       method: request.method!,
       authorization: request.headers.authorization,
       sessionId: request.headers["mcp-session-id"]?.toString(),
       rpc: undefined as string | undefined,
       mimeTypes: undefined as unknown,
+      cursor: undefined as unknown,
+      toolListSequence: undefined as number | undefined,
     };
     requests.push(entry);
     if (rejectAuth) {
@@ -76,6 +109,7 @@ async function setup(
     for await (const chunk of request) raw += chunk;
     const message = JSON.parse(raw);
     entry.rpc = message.method;
+    entry.cursor = message.params?.cursor;
     if (message.method === "initialize")
       entry.mimeTypes =
         message.params.capabilities?.extensions?.[
@@ -92,6 +126,76 @@ async function setup(
       response.writeHead(202).end();
       return;
     }
+    if (message.method === "tools/list" && options.failToolsList) {
+      response.writeHead(500).end("private-tools-list-diagnostic");
+      return;
+    }
+    const defaultToolListPages = [
+      {
+        tools: [
+          {
+            name: "card",
+            description: "Card",
+            inputSchema: { type: "object", properties: {} },
+            _meta:
+              metadata === "legacy"
+                ? { "ui/resourceUri": "ui://card" }
+                : {
+                    ui: {
+                      resourceUri: "ui://card",
+                      ...("visibility" in options
+                        ? { visibility: options.visibility }
+                        : {}),
+                    },
+                    ...(metadata === "both"
+                      ? { "ui/resourceUri": "ui://legacy" }
+                      : {}),
+                  },
+          },
+        ],
+      },
+    ];
+    const toolListSequences =
+      options.toolListPagesByAuthorization?.[entry.authorization ?? ""] !==
+      undefined
+        ? [options.toolListPagesByAuthorization[entry.authorization ?? ""]]
+        : (options.toolListSequences ??
+          (options.toolListPages ? [options.toolListPages] : undefined));
+    if (
+      message.method === "tools/list" &&
+      message.params?.cursor === undefined
+    ) {
+      activeToolListSequence =
+        toolListSequences === undefined
+          ? undefined
+          : Math.min(toolListSequenceIndex, toolListSequences.length - 1);
+      activeToolListPages =
+        activeToolListSequence === undefined
+          ? defaultToolListPages
+          : toolListSequences[activeToolListSequence];
+      toolListSequenceIndex += 1;
+    }
+    if (message.method === "tools/list") {
+      entry.toolListSequence = activeToolListSequence;
+    }
+    const toolListPages = activeToolListPages ?? defaultToolListPages;
+    const toolListPageIndex =
+      message.params?.cursor === undefined
+        ? 0
+        : toolListPages.findIndex(
+            (_page, index) =>
+              index > 0 &&
+              toolListPages[index - 1].nextCursor === message.params.cursor,
+          );
+    if (
+      message.method === "tools/list" &&
+      ((typeof message.params?.cursor === "string" &&
+        options.failToolsListCursors?.includes(message.params.cursor)) ||
+        options.failToolsListPageIndexes?.includes(toolListPageIndex))
+    ) {
+      response.writeHead(500).end("private-tools-list-diagnostic");
+      return;
+    }
     const result =
       message.method === "initialize"
         ? {
@@ -103,31 +207,19 @@ async function setup(
             serverInfo: { name: "fixture", version: "1" },
           }
         : message.method === "tools/list"
-          ? {
-              tools: [
-                {
-                  name: "card",
-                  description: "Card",
-                  inputSchema: { type: "object", properties: {} },
-                  _meta:
-                    metadata === "legacy"
-                      ? { "ui/resourceUri": "ui://card" }
-                      : {
-                          ui: {
-                            resourceUri: "ui://card",
-                            ...(options.visibility
-                              ? { visibility: options.visibility }
-                              : {}),
-                          },
-                          ...(metadata === "both"
-                            ? { "ui/resourceUri": "ui://legacy" }
-                            : {}),
-                        },
-                },
-              ],
-            }
+          ? (toolListPages[toolListPageIndex] ?? { tools: [] })
           : message.method === "tools/call"
-            ? { content: [{ type: "text", text: "Card result" }] }
+            ? {
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      options.toolCallTextByAuthorization?.[
+                        entry.authorization ?? ""
+                      ] ?? "Card result",
+                  },
+                ],
+              }
             : {
                 contents: [
                   {
@@ -144,11 +236,100 @@ async function setup(
     response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
   });
   server.listen(0, "127.0.0.1");
-  await once(server, "listening");
+  const additionalServer =
+    options.additionalServer === undefined
+      ? undefined
+      : createServer(async (request, response) => {
+          const entry = {
+            serverId: options.additionalServer!.serverId,
+            method: request.method!,
+            authorization: request.headers.authorization,
+            sessionId: request.headers["mcp-session-id"]?.toString(),
+            rpc: undefined as string | undefined,
+            mimeTypes: undefined as unknown,
+            cursor: undefined as unknown,
+            toolListSequence: undefined as number | undefined,
+          };
+          requests.push(entry);
+          if (request.method === "DELETE") {
+            response.writeHead(204).end();
+            return;
+          }
+          if (request.method === "GET") {
+            response.writeHead(405).end();
+            return;
+          }
+          let raw = "";
+          for await (const chunk of request) raw += chunk;
+          const message = JSON.parse(raw);
+          entry.rpc = message.method;
+          entry.cursor = message.params?.cursor;
+          if (message.id === undefined) {
+            response.writeHead(202).end();
+            return;
+          }
+          const toolListPageIndex =
+            message.params?.cursor === undefined
+              ? 0
+              : options.additionalServer!.toolListPages.findIndex(
+                  (_page, index) =>
+                    index > 0 &&
+                    options.additionalServer!.toolListPages[index - 1]
+                      .nextCursor === message.params.cursor,
+                );
+          const result =
+            message.method === "initialize"
+              ? {
+                  protocolVersion: message.params.protocolVersion,
+                  capabilities: { resources: {}, tools: {} },
+                  serverInfo: { name: "additional-fixture", version: "1" },
+                }
+              : message.method === "tools/list"
+                ? (options.additionalServer!.toolListPages[
+                    toolListPageIndex
+                  ] ?? { tools: [] })
+                : message.method === "tools/call"
+                  ? {
+                      content: [
+                        {
+                          type: "text",
+                          text: options.additionalServer!.toolCallText,
+                        },
+                      ],
+                    }
+                  : {
+                      contents: [
+                        {
+                          uri: "ui://card",
+                          text: "Additional Card",
+                          mimeType: "text/html;profile=mcp-app",
+                        },
+                      ],
+                    };
+          response.writeHead(200, {
+            "content-type": "application/json",
+            "mcp-session-id": `${options.additionalServer!.serverId}-session`,
+          });
+          response.end(
+            JSON.stringify({ jsonrpc: "2.0", id: message.id, result }),
+          );
+        });
+  additionalServer?.listen(0, "127.0.0.1");
+  await Promise.all([
+    once(server, "listening"),
+    ...(additionalServer ? [once(additionalServer, "listening")] : []),
+  ]);
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("Fixture did not listen");
   const url = `http://127.0.0.1:${address.port}`;
+  const additionalAddress = additionalServer?.address();
+  if (additionalAddress !== undefined && typeof additionalAddress === "string")
+    throw new Error("Additional fixture did not listen");
+  const additionalUrl =
+    additionalAddress === undefined
+      ? undefined
+      : `http://127.0.0.1:${additionalAddress.port}`;
   const config = {
     discoveryFailureMode: "throw" as "throw" | "continue",
     mcpServers: [
@@ -165,6 +346,18 @@ async function setup(
               url,
               serverId: "other",
               headers: { Authorization: "Bearer other-token" },
+            },
+          ]
+        : []),
+      ...(options.additionalServer && additionalUrl
+        ? [
+            {
+              type: "http" as const,
+              url: additionalUrl,
+              serverId: options.additionalServer.serverId,
+              headers: {
+                Authorization: `Bearer ${options.additionalServer.token}`,
+              },
             },
           ]
         : []),
@@ -197,7 +390,7 @@ async function setup(
                   method,
                   params:
                     method === "tools/call"
-                      ? { name: "card", arguments: {} }
+                      ? { name: options.toolName ?? "card", arguments: {} }
                       : { uri: "ui://card" },
                 },
               },
@@ -208,7 +401,17 @@ async function setup(
       ),
     teardown: async () => {
       server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      additionalServer?.closeAllConnections();
+      await Promise.all([
+        new Promise<void>((resolve) => server.close(() => resolve())),
+        ...(additionalServer
+          ? [
+              new Promise<void>((resolve) =>
+                additionalServer.close(() => resolve()),
+              ),
+            ]
+          : []),
+      ]);
     },
   };
 }
@@ -311,6 +514,130 @@ test("hash-only requests cannot select an ambiguous credential scope", async () 
   }
 });
 
+test("tools/call metadata comes from the selected same-name server", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolListPages: [
+      {
+        tools: [
+          {
+            name: "card",
+            inputSchema: { type: "object", properties: {} },
+            _meta: { ui: { visibility: ["model"] } },
+          },
+        ],
+      },
+    ],
+    additionalServer: {
+      serverId: "other",
+      token: "other-token",
+      toolCallText: "Other card result",
+      toolListPages: [
+        {
+          tools: [
+            {
+              name: "card",
+              inputSchema: { type: "object", properties: {} },
+              _meta: { ui: { visibility: ["app"] } },
+            },
+          ],
+        },
+      ],
+    },
+  });
+  try {
+    const events = await fixture.run("tools/call", "other");
+    expect(events.at(-1)).toMatchObject({
+      result: { content: [{ text: "Other card result" }] },
+    });
+    expect(
+      fixture.requests
+        .filter((request) => request.rpc === "tools/list")
+        .map((request) => request.serverId),
+    ).toEqual(["other"]);
+    expect(
+      fixture.requests
+        .filter((request) => request.rpc === "tools/call")
+        .map((request) => ({
+          serverId: request.serverId,
+          authorization: request.authorization,
+        })),
+    ).toEqual([{ serverId: "other", authorization: "Bearer other-token" }]);
+    expect(
+      fixture.requests.some((request) => request.serverId === "cards"),
+    ).toBe(false);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("tools/call metadata comes from the selected credential on a shared endpoint", async () => {
+  const fixture = await setup(true, false, false, false, "nested", {
+    toolListPagesByAuthorization: {
+      "Bearer fixture-token": [
+        {
+          tools: [
+            {
+              name: "card",
+              inputSchema: { type: "object", properties: {} },
+              _meta: { ui: { visibility: ["model"] } },
+            },
+          ],
+        },
+      ],
+      "Bearer other-token": [
+        {
+          tools: [
+            {
+              name: "card",
+              inputSchema: { type: "object", properties: {} },
+              _meta: { ui: { visibility: ["app"] } },
+            },
+          ],
+        },
+      ],
+    },
+    toolCallTextByAuthorization: {
+      "Bearer fixture-token": "Cards credential result",
+      "Bearer other-token": "Other credential result",
+    },
+  });
+  try {
+    const events = await fixture.run("tools/call", "other");
+    expect(events.at(-1)).toMatchObject({
+      result: { content: [{ text: "Other credential result" }] },
+    });
+    expect(
+      fixture.requests
+        .filter(
+          (request) =>
+            request.rpc === "tools/list" || request.rpc === "tools/call",
+        )
+        .map((request) => ({
+          rpc: request.rpc,
+          authorization: request.authorization,
+        })),
+    ).toEqual([
+      { rpc: "tools/list", authorization: "Bearer other-token" },
+      { rpc: "tools/call", authorization: "Bearer other-token" },
+    ]);
+
+    const hashOnlyEvents = await fixture.run("tools/call", undefined, true);
+    expect(hashOnlyEvents.at(-1)).toMatchObject({
+      result: { error: expect.stringContaining("Unknown server") },
+    });
+    expect(
+      fixture.requests
+        .filter(
+          (request) =>
+            request.rpc === "tools/list" || request.rpc === "tools/call",
+        )
+        .map((request) => request.authorization),
+    ).toEqual(["Bearer other-token", "Bearer other-token"]);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
 test("duplicate explicit server IDs are rejected", () => {
   expect(
     () =>
@@ -400,6 +727,342 @@ test("proxy errors do not expose upstream diagnostics", async () => {
   } finally {
     log.mockRestore();
     await teardown();
+  }
+});
+
+test.each([
+  ["model-only visibility", ["model"]],
+  ["empty visibility", []],
+  ["malformed visibility", "app"],
+  ["unknown visibility value", ["app", "admin"]],
+  ["malformed ui metadata", { visibility: ["app"] }],
+] as const)(
+  "proxy denies %s without upstream tool execution",
+  async (_label, visibility) => {
+    const fixture = await setup(false, false, false, false, "nested", {
+      visibility,
+    });
+    try {
+      const events = await fixture.run("tools/call");
+      expect(events.at(-1)).toMatchObject({
+        result: { error: "Error: MCP tool unavailable to this app" },
+      });
+      expect(
+        fixture.requests.some((request) => request.rpc === "tools/call"),
+      ).toBe(false);
+    } finally {
+      await fixture.teardown();
+    }
+  },
+);
+
+test.each([
+  ["null ui metadata", null],
+  ["non-object ui metadata", "ui://card"],
+] as const)(
+  "proxy denies %s without upstream tool execution",
+  async (_label, ui) => {
+    const fixture = await setup(false, false, false, false, "nested", {
+      toolListPages: [
+        {
+          tools: [
+            {
+              name: "card",
+              description: "Card",
+              inputSchema: { type: "object", properties: {} },
+              _meta: { ui },
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      const events = await fixture.run("tools/call");
+      expect(events.at(-1)).toMatchObject({
+        result: { error: "Error: MCP tool unavailable to this app" },
+      });
+      expect(
+        fixture.requests.some((request) => request.rpc === "tools/call"),
+      ).toBe(false);
+    } finally {
+      await fixture.teardown();
+    }
+  },
+);
+
+test("proxy allows omitted visibility and still executes the tool", async () => {
+  const fixture = await setup(false, false, false, false, "nested");
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { content: [{ text: "Card result" }] },
+    });
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(true);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("proxy refreshes tool metadata between proxied calls", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolListSequences: [
+      [
+        {
+          tools: [
+            {
+              name: "card",
+              description: "Card",
+              inputSchema: { type: "object", properties: {} },
+              _meta: {
+                ui: { resourceUri: "ui://card", visibility: ["app"] },
+              },
+            },
+          ],
+        },
+      ],
+      [
+        {
+          tools: [
+            {
+              name: "card",
+              description: "Card",
+              inputSchema: { type: "object", properties: {} },
+              _meta: {
+                ui: { resourceUri: "ui://card", visibility: ["model"] },
+              },
+            },
+          ],
+        },
+      ],
+    ],
+  });
+  try {
+    const allowedEvents = await fixture.run("tools/call");
+    const deniedEvents = await fixture.run("tools/call");
+
+    expect(allowedEvents.at(-1)).toMatchObject({
+      result: { content: [{ text: "Card result" }] },
+    });
+    expect(deniedEvents.at(-1)).toMatchObject({
+      result: { error: "Error: MCP tool unavailable to this app" },
+    });
+    expect(
+      fixture.requests
+        .filter((request) => request.rpc === "tools/list")
+        .map((request) => ({
+          cursor: request.cursor,
+          sequence: request.toolListSequence,
+        })),
+    ).toEqual([
+      { cursor: undefined, sequence: 0 },
+      { cursor: undefined, sequence: 1 },
+    ]);
+    expect(
+      fixture.requests.filter((request) => request.rpc === "tools/call"),
+    ).toHaveLength(1);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("proxy finds app-visible tools on later metadata pages", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolListPages: [
+      { tools: [], nextCursor: "page-2" },
+      {
+        tools: [
+          {
+            name: "card",
+            description: "Card",
+            inputSchema: { type: "object", properties: {} },
+            _meta: { ui: { visibility: ["app"] } },
+          },
+        ],
+      },
+    ],
+  });
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { content: [{ text: "Card result" }] },
+    });
+    expect(
+      fixture.requests.filter((request) => request.rpc === "tools/list"),
+    ).toHaveLength(2);
+    expect(
+      fixture.requests
+        .filter((request) => request.rpc === "tools/list")
+        .map((request) => request.cursor),
+    ).toEqual([undefined, "page-2"]);
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(true);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("proxy hides diagnostics and skips tool execution when a later metadata page fails", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolListPages: [
+      { tools: [], nextCursor: "page-2" },
+      {
+        tools: [
+          {
+            name: "card",
+            description: "Card",
+            inputSchema: { type: "object", properties: {} },
+            _meta: { ui: { visibility: ["app"] } },
+          },
+        ],
+      },
+    ],
+    failToolsListCursors: ["page-2"],
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { error: "Error: MCP request failed" },
+    });
+    expect(JSON.stringify(events)).not.toContain(
+      "private-tools-list-diagnostic",
+    );
+    expect(log).toHaveBeenCalledWith(
+      "MCP proxy request failed",
+      expect.objectContaining({
+        serverId: "cards",
+        serverHash: expect.any(String),
+      }),
+      expect.any(Error),
+    );
+    expect(String(log.mock.calls[0][2])).toContain(
+      "private-tools-list-diagnostic",
+    );
+    expect(
+      fixture.requests
+        .filter((request) => request.rpc === "tools/list")
+        .map((request) => request.cursor),
+    ).toEqual([undefined, "page-2"]);
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(false);
+  } finally {
+    log.mockRestore();
+    await fixture.teardown();
+  }
+});
+
+test("proxy denies unknown tools without upstream tool execution", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolName: "missing",
+  });
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { error: "Error: MCP tool unavailable to this app" },
+    });
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(false);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("proxy fails closed when target name is duplicated in catalog", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolListPages: [
+      {
+        tools: [
+          {
+            name: "card",
+            inputSchema: { type: "object", properties: {} },
+            _meta: { ui: { visibility: ["app"] } },
+          },
+          {
+            name: "card",
+            inputSchema: { type: "object", properties: {} },
+            _meta: { ui: { visibility: ["app"] } },
+          },
+        ],
+      },
+    ],
+  });
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { error: "Error: MCP tool unavailable to this app" },
+    });
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(false);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("proxy fails closed when metadata pagination repeats a cursor", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    toolListPages: [
+      { tools: [], nextCursor: "same-cursor" },
+      {
+        tools: [
+          {
+            name: "card",
+            inputSchema: { type: "object", properties: {} },
+            _meta: { ui: { visibility: ["app"] } },
+          },
+        ],
+        nextCursor: "same-cursor",
+      },
+    ],
+  });
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { error: "Error: MCP request failed" },
+    });
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(false);
+  } finally {
+    await fixture.teardown();
+  }
+});
+
+test("proxy metadata failures hide diagnostics and skip upstream tool execution", async () => {
+  const fixture = await setup(false, false, false, false, "nested", {
+    failToolsList: true,
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const events = await fixture.run("tools/call");
+    expect(events.at(-1)).toMatchObject({
+      result: { error: "Error: MCP request failed" },
+    });
+    expect(JSON.stringify(events)).not.toContain(
+      "private-tools-list-diagnostic",
+    );
+    expect(log).toHaveBeenCalledWith(
+      "MCP proxy request failed",
+      expect.objectContaining({
+        serverId: "cards",
+        serverHash: expect.any(String),
+      }),
+      expect.any(Error),
+    );
+    expect(String(log.mock.calls[0][2])).toContain(
+      "private-tools-list-diagnostic",
+    );
+    expect(
+      fixture.requests.some((request) => request.rpc === "tools/call"),
+    ).toBe(false);
+  } finally {
+    log.mockRestore();
+    await fixture.teardown();
   }
 });
 
