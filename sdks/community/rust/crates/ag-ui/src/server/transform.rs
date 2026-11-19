@@ -197,13 +197,50 @@ impl FilterToolCalls {
         drop
     }
 
+    /// Judge all calls before filtering results, regardless of message order.
+    fn filter_messages(&mut self, messages: &mut Vec<crate::Message>) {
+        for message in messages.iter() {
+            if let crate::Message::Assistant(assistant) = message {
+                for call in assistant.tool_calls.iter().flatten() {
+                    self.judge(&call.id, &call.function.name);
+                }
+            }
+        }
+        messages.retain_mut(|message| match message {
+            crate::Message::Assistant(assistant) => {
+                if let Some(calls) = &mut assistant.tool_calls {
+                    if calls.is_empty() {
+                        return true;
+                    }
+                    calls.retain(|call| !self.dropped.contains(&call.id));
+                    if calls.is_empty() {
+                        assistant.tool_calls = None;
+                    }
+                }
+                true
+            }
+            // Unrelated history may refer to a call outside this snapshot.
+            crate::Message::Tool(tool) => !self.dropped.contains(&tool.tool_call_id),
+            _ => true,
+        });
+    }
+
     fn dropped_or_unknown(&self, id: &ToolCallId) -> bool {
         !self.call_names.contains_key(id) || self.dropped.contains(id)
     }
 }
 
 impl StreamTransformer for FilterToolCalls {
-    fn transform(&mut self, event: Event) -> Vec<Event> {
+    fn transform(&mut self, mut event: Event) -> Vec<Event> {
+        match &mut event {
+            Event::MessagesSnapshot(snapshot) => self.filter_messages(&mut snapshot.messages),
+            Event::RunStarted(started) => {
+                if let Some(input) = &mut started.input {
+                    self.filter_messages(&mut input.messages);
+                }
+            }
+            _ => {}
+        }
         let tag = event.subagent_run_id().cloned();
         let bare_tool = match &event {
             Event::ToolCallChunk(chunk) if chunk.tool_call_id.is_none() => self

@@ -1409,3 +1409,59 @@ fn a_promoted_state_carries_the_results_attribution() {
     assert_eq!(out[1].event_type(), EventType::StateSnapshot);
     assert_eq!(out[1].subagent_run_id().map(|id| id.as_str()), Some("s1"));
 }
+
+#[test]
+fn tool_filter_checks_history_before_results_and_preserves_unrelated_messages() {
+    use ag_ui::server::StreamTransformer;
+    use ag_ui::{Message, RunAgentInput};
+    let history: Vec<Message> = serde_json::from_value(serde_json::json!([
+        {"role":"tool","id":"denied-result","toolCallId":"c1","content":"internal result"},
+        {"role":"assistant","id":"a","content":"visible text","toolCalls":[
+            {"id":"c1","type":"function","function":{"name":"internal","arguments":"{}"}},
+            {"id":"c2","type":"function","function":{"name":"search","arguments":"{}"}}
+        ]},
+        {"role":"tool","id":"allowed-result","toolCallId":"c2","content":"visible result"},
+        {"role":"tool","id":"older-result","toolCallId":"older","content":"older visible result"},
+        {"role":"user","id":"u","content":"hello"}
+    ]))
+    .unwrap();
+    for echo in [false, true] {
+        let mut filter = FilterToolCalls::deny(["internal"]);
+        let event = if echo {
+            let mut input = RunAgentInput::new("t", "r");
+            input.messages = history.clone();
+            let mut event = Event::run_started("t", "r");
+            if let Event::RunStarted(started) = &mut event {
+                started.input = Some(Box::new(input));
+            }
+            event
+        } else {
+            Event::messages_snapshot(history.clone())
+        };
+        let event = filter.transform(event).pop().unwrap();
+        let messages = match event {
+            Event::RunStarted(started) => started.input.unwrap().messages,
+            Event::MessagesSnapshot(snapshot) => snapshot.messages,
+            _ => unreachable!(),
+        };
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1..], history[2..]);
+        let Message::Assistant(assistant) = &messages[0] else {
+            unreachable!()
+        };
+        assert_eq!(assistant.content.as_deref(), Some("visible text"));
+        assert_eq!(assistant.tool_calls.as_ref().unwrap().len(), 1);
+        assert_eq!(assistant.tool_calls.as_ref().unwrap()[0].id.as_str(), "c2");
+        assert!(
+            filter
+                .transform(Event::tool_call_result("r1", "c1", "done"))
+                .is_empty()
+        );
+        assert_eq!(
+            filter
+                .transform(Event::tool_call_result("r2", "c2", "done"))
+                .len(),
+            1
+        );
+    }
+}
