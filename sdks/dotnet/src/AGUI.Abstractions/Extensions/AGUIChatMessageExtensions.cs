@@ -277,10 +277,20 @@ public static class AGUIChatMessageExtensions
             {
                 var userMsg = new AGUIUserMessage { Name = message.AuthorName };
                 var parts = new List<AGUIInputContent>();
+                var sawApprovalResponse = false;
                 foreach (var content in message.Contents)
                 {
                     switch (content)
                     {
+                        case ToolApprovalResponseContent:
+                            // An approval response is not user input: it is consumed
+                            // by the approval flow (resume payload) and must not
+                            // surface as a text part. Leaving it in place emits a
+                            // user message between the assistant tool-call message
+                            // and its tool result, which providers reject — a tool
+                            // result must immediately follow its call.
+                            sawApprovalResponse = true;
+                            break;
                         case TextContent textContent:
                             parts.Add(new AGUITextInputContent { Text = textContent.Text ?? string.Empty });
                             break;
@@ -325,6 +335,14 @@ public static class AGUIChatMessageExtensions
                             parts.Add(new AGUITextInputContent { Text = content.ToString() ?? string.Empty });
                             break;
                     }
+                }
+
+                if (parts.Count == 0 && sawApprovalResponse)
+                {
+                    // The message carried only approval responses: skip it
+                    // entirely rather than emitting an empty user message into
+                    // the history.
+                    continue;
                 }
 
                 userMsg.Content = parts;

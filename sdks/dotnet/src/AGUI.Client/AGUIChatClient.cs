@@ -84,15 +84,80 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
         if (approvalResponses is { Count: > 0 })
         {
+            // A fresh approval response arrived in the last message. The pending
+            // request it answers is dropped from the outgoing history — its resume
+            // payload is carried in AdditionalProperties instead. But a request
+            // whose call already completed must be preserved: dropping it while
+            // its FunctionResultContent survives leaves an orphaned tool result
+            // that providers reject.
+            //
+            // The completed call is preserved as a plain FunctionCallContent,
+            // not as the original ToolApprovalRequestContent: MEAI 10.9.0's
+            // FunctionInvokingChatClient strips approval request/response contents
+            // from the history it forwards, so keeping the wrapper would still
+            // drop the call downstream. Unwrapping keeps the call visible to the
+            // server, and FunctionInvokingChatClient never invokes function calls
+            // found in request history — it only invokes calls from the response
+            // stream and approval responses without a matching
+            // FunctionResultContent (which it skips via its functionResultCallIds
+            // set) — so a completed call is not re-executed locally.
+            var completedCallIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var message in messagesList)
+            {
+                foreach (var result in message.Contents.OfType<FunctionResultContent>())
+                {
+                    if (result.CallId is not null)
+                    {
+                        completedCallIds.Add(result.CallId);
+                    }
+                }
+            }
+
             var filtered = new List<ChatMessage>();
             foreach (var message in messagesList)
             {
-                if (message.Contents.Any(c => c is ToolApprovalRequestContent || c is ToolApprovalResponseContent))
+                if (!message.Contents.Any(c => c is ToolApprovalRequestContent or ToolApprovalResponseContent))
                 {
+                    filtered.Add(message);
                     continue;
                 }
 
-                filtered.Add(message);
+                var newContents = new List<AIContent>();
+                foreach (var content in message.Contents)
+                {
+                    if (content is ToolApprovalRequestContent request)
+                    {
+                        if (request.ToolCall is FunctionCallContent call
+                            && call.CallId is not null
+                            && completedCallIds.Contains(call.CallId))
+                        {
+                            // Completed: unwrap to the plain call so it survives
+                            // downstream and stays adjacent to its result.
+                            newContents.Add(call);
+                        }
+
+                        // Pending requests are dropped; the fresh response travels
+                        // via AdditionalProperties as the resume payload.
+                    }
+                    else if (content is not ToolApprovalResponseContent)
+                    {
+                        newContents.Add(content);
+                    }
+
+                    // ToolApprovalResponseContent is dropped: fresh responses
+                    // travel via AdditionalProperties, and completed ones are
+                    // redundant once their call is unwrapped above.
+                }
+
+                // A message left empty by the rewrite is dropped entirely.
+                if (newContents.Count > 0)
+                {
+                    // Clone before rewriting contents: the caller's history
+                    // objects must not be mutated.
+                    var rewrittenMessage = message.Clone();
+                    rewrittenMessage.Contents = newContents;
+                    filtered.Add(rewrittenMessage);
+                }
             }
 
             messagesList = filtered;

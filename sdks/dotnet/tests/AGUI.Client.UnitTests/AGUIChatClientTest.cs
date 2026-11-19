@@ -327,6 +327,66 @@ public sealed class AGUIChatClientTest
         Assert.Equal("caller-interrupt", entry.InterruptId);
     }
 
+    // A fresh approval response in the last message must not orphan an already
+    // completed approval-wrapped call: the completed call stays in the outgoing
+    // history immediately ahead of its tool result, the pending call travels
+    // only via the resume payload, and the completed tool is not executed
+    // locally by FunctionInvokingChatClient.
+    [Fact]
+    public async Task GetStreamingResponse_FreshApprovalResponse_PreservesCompletedApprovalWrappedCall()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var completedCall = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var completedApproval = new ToolApprovalRequestContent("approval-1", completedCall);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-2", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Confirm"),
+            new(ChatRole.Assistant, [completedApproval]),
+            new(ChatRole.User, [completedApproval.CreateResponse(true)]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User, [pendingApproval.CreateResponse(true)]),
+        };
+
+        // The completed tool is registered as a client tool: if
+        // FunctionInvokingChatClient re-executed the completed call, this counts it.
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var assistantIndex = messages!.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+        Assert.True(assistantIndex >= 0, "Completed approval-wrapped call was dropped from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+        Assert.DoesNotContain(messages, m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "pending-1") == true);
+
+        // The pending approval travels only via the resume payload.
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-2", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
     // A caller-supplied Resume takes precedence over the interrupt-response translation
     // too, matching the approval path. Previously the interrupt block appended
     // unconditionally, so a caller Resume dropped approvals but kept interrupts (#2177).

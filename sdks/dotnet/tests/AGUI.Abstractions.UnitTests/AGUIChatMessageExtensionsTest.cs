@@ -334,6 +334,22 @@ public sealed class AGUIChatMessageExtensionsTest
                 .Where(m => !calls.Contains(m.ToolCallId!))
                 .ToList();
             Assert.Empty(orphaned);
+
+            // The approval response must not surface as a user message between the
+            // assistant tool-call message and its tool result: providers require a
+            // tool result to immediately follow its assistant call message.
+            var assistantIndex = aguiMessages.FindIndex(m =>
+                m is AGUIAssistantMessage assistant
+                && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+            var toolIndex = aguiMessages.FindIndex(m =>
+                m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+            Assert.True(assistantIndex >= 0, "Assistant message carrying the approval-wrapped call is missing.");
+            Assert.Equal(assistantIndex + 1, toolIndex);
+            Assert.Equal(
+                ["Confirm", "Next turn"],
+                aguiMessages.OfType<AGUIUserMessage>()
+                    .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                    .ToList());
         }
     }
 
