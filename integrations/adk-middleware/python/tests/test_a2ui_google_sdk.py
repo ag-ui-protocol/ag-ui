@@ -626,6 +626,34 @@ def test_public_express_compiler_uses_official_validation_and_catalog_id():
         compile_a2ui_express('root = Unknown("Bad")', catalog=EXPRESS_CATALOG)
 
 
+def test_public_express_compiler_defaults_to_the_basic_catalogs_own_id():
+    """#2869: with no catalog and no explicit id, the surface carries the id the
+    official basic catalog declares for itself. A renderer registers the basic
+    catalog under that id, so the older pre-v0.9 URL fails to resolve."""
+    from a2ui.core.basic_catalog import BasicCatalog
+
+    from ag_ui_adk import compile_a2ui_express
+
+    declared = BasicCatalog("v0.9").to_json()["catalogId"]
+    # Pin the literal too, so drift in either our default or the SDK shows up.
+    assert declared == "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+
+    ops = compile_a2ui_express('root = Text("Hi")', surface_id="fixed")
+    assert ops[0]["createSurface"] == {"surfaceId": "fixed", "catalogId": declared}
+
+    # A caller-chosen id must match the host renderer, so it is still stamped.
+    ops = compile_a2ui_express(
+        'root = Text("Hi")', surface_id="fixed", default_catalog_id="cat://host"
+    )
+    assert ops[0]["createSurface"] == {"surfaceId": "fixed", "catalogId": "cat://host"}
+
+    # With no id at all, the basic catalog keeps its own rather than failing.
+    from ag_ui_adk.a2ui_google_sdk import create_express_processor
+
+    processor = create_express_processor(None, default_catalog_id=None, surface_id="s")
+    assert processor.active_catalogs[0].catalog_id == declared
+
+
 def test_express_component_local_refs_preserve_constraints_and_source_order():
     from ag_ui_adk import compile_a2ui_express
 
