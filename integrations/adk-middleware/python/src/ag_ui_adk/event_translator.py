@@ -1549,6 +1549,45 @@ def _is_thought_part(part: Any) -> bool:
     return thought_value is True
 
 
+def _rewind_target(event: Any) -> str | None:
+    """Return the rewind target of an ADK rewind-marker event, if any.
+
+    A marker is an event whose ``actions.rewind_before_invocation_id`` names the
+    invocation to rewind to before. On real ADK events that field is
+    ``Optional[str]``; the ``isinstance`` check keeps duck-typed callers (e.g.
+    tests passing MagicMock events, whose auto-created attributes are truthy
+    but not strings) from being mistaken for markers.
+    """
+    actions = getattr(event, "actions", None)
+    target = getattr(actions, "rewind_before_invocation_id", None)
+    return target if isinstance(target, str) and target else None
+
+
+def _apply_rewinds(events: List[ADKEvent]) -> List[ADKEvent]:
+    """Return ``events`` with invocations invalidated by rewinds removed.
+
+    Mirrors the semantics of ``google.adk.events._rewind_events._apply_rewinds``
+    (the Runner's single source of truth for which events are live), reimplemented
+    here instead of importing that private helper so this package keeps working
+    across the google-adk versions it supports: when a rewind marker naming
+    invocation ``X`` is reached, the marker itself and every event from the
+    earliest event of invocation ``X`` up to the marker are dropped, and events
+    recorded after the marker (the new branch) are kept. A marker whose target
+    matches no earlier event drops only itself.
+    """
+    kept: List[ADKEvent] = []
+    for event in events:
+        target = _rewind_target(event)
+        if target is None:
+            kept.append(event)
+            continue
+        for index, kept_event in enumerate(kept):
+            if getattr(kept_event, "invocation_id", None) == target:
+                del kept[index:]
+                break
+    return kept
+
+
 def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
     """Convert ADK session events to AG-UI Message list.
 
@@ -1559,6 +1598,11 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
     as ReasoningMessage objects so the client can render them distinctly instead of
     leaking internal model reasoning into the visible chat history.
 
+    Events invalidated by ``Runner.rewind_async`` are filtered out first: a
+    rewind appends a marker event instead of deleting the rewound events, so
+    without this step the stale (rewound) messages would reappear in the
+    reconstructed history.
+
     Args:
         events: List of ADK events from a session (session.events)
 
@@ -1566,6 +1610,7 @@ def adk_events_to_messages(events: List[ADKEvent]) -> List[Message]:
         List of AG-UI Message objects representing the conversation history
     """
     messages: List[Message] = []
+    events = _apply_rewinds(events)
 
     for event in events:
         # Skip events without content
