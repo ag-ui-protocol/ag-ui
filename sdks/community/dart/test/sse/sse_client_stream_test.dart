@@ -6,6 +6,46 @@ import 'package:test/test.dart';
 
 void main() {
   group('SseClient Stream Parsing', () {
+    test('resolves and forwards the line limit', () async {
+      final derived = SseClient(maxDataCodeUnits: 8);
+      expect(derived.maxLineCodeUnits, 15);
+      await expectLater(
+        derived.parseStream(
+          Stream.value(utf8.encode(':123456789012345\ndata: 12345678')),
+        ),
+        emitsError(isA<FormatException>()),
+      );
+
+      final overridden = SseClient(
+        maxDataCodeUnits: 8,
+        maxLineCodeUnits: 16,
+      );
+      expect(overridden.maxLineCodeUnits, 16);
+      expect(
+        (await overridden
+                .parseStream(
+                  Stream.value(
+                    utf8.encode(':123456789012345\ndata: 12345678'),
+                  ),
+                )
+                .toList())
+            .single
+            .data,
+        '12345678',
+      );
+    });
+
+    test('validates limits before allocating a fallback HTTP client', () {
+      expect(
+        () => SseClient(maxDataCodeUnits: 0),
+        throwsArgumentError,
+      );
+      expect(
+        () => SseClient(maxLineCodeUnits: 0),
+        throwsArgumentError,
+      );
+    });
+
     test('parseStream parses properly formatted SSE messages', () async {
       final client = SseClient();
       final controller = StreamController<List<int>>();

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:ag_ui/src/client/client.dart';
 import 'package:ag_ui/src/client/config.dart';
 import 'package:ag_ui/src/client/errors.dart';
+import 'package:ag_ui/src/encoder/stream_adapter.dart';
 import 'package:ag_ui/src/events/events.dart';
 import 'package:ag_ui/src/types/types.dart';
 import 'package:ag_ui/src/sse/backoff_strategy.dart';
@@ -53,6 +54,66 @@ void main() {
     });
 
     group('runAgent', () {
+      test('byte line limit cancels response and releases run ID', () async {
+        var requests = 0;
+        var cancellations = 0;
+        const canary = 'SYNTHETIC_CANARY';
+        final firstResponse = StreamController<List<int>>(
+          onCancel: () {
+            cancellations++;
+          },
+        );
+        mockHttpClient = MockStreamingClient((request) async {
+          requests++;
+          if (requests == 1) {
+            return http.StreamedResponse(firstResponse.stream, 200);
+          }
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(
+              'data: {"type":"RUN_ERROR","message":"recovered"}\n\n',
+            )),
+            200,
+          );
+        });
+        await client.close();
+        client = AgUiClient(
+          config: AgUiClientConfig(
+            baseUrl: 'http://synthetic.invalid',
+            maxRetries: 0,
+          ),
+          httpClient: mockHttpClient,
+          streamAdapter: EventStreamAdapter(maxDataCodeUnits: 64),
+        );
+        const input = SimpleRunAgentInput(
+          threadId: 'thread',
+          runId: 'reusable-run',
+          messages: [],
+        );
+
+        try {
+          final failed = client.runAgent('stream', input).drain<void>();
+          firstResponse.add(utf8.encode('data: ${canary * 5}'));
+          Object? failure;
+          try {
+            await failed;
+          } catch (error) {
+            failure = error;
+          }
+          expect(failure, isA<FormatException>());
+          final formatError = failure! as FormatException;
+          expect(formatError.source, isNull);
+          expect(formatError.offset, isNull);
+          expect(failure.toString(), isNot(contains(canary)));
+          expect(cancellations, 1);
+
+          final recovered = await client.runAgent('stream', input).toList();
+          expect(recovered.single, isA<RunErrorEvent>());
+          expect(requests, 2);
+        } finally {
+          await firstResponse.close();
+        }
+      });
+
       test('sends correct POST request with SimpleRunAgentInput', () async {
         // Arrange
         final input = SimpleRunAgentInput(

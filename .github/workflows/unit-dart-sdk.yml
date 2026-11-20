@@ -40,3 +40,15 @@ jobs:
 
       - name: Run tests
         run: dart test --exclude-tags requires-server
+
+      - name: Verify bounded SSE byte parsing
+        run: dart run tool/verify_sse_byte_bounds.dart
+
+      - name: Verify SSE diagnostic privacy
+        run: dart --enable-vm-service=0 run tool/verify_sse_logging.dart
+
+      - name: Run bounded SSE browser tests
+        run: >-
+          dart test --platform chrome
+          test/sse/sse_parser_test.dart
+          test/sse/sse_client_stream_test.dart

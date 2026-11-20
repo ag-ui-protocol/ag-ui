@@ -15,9 +15,14 @@ class SseClient {
   /// Maximum number of UTF-16 code units allowed in a single SSE data block.
   ///
   /// Passed to [SseParser] so the parse-layer cap matches the adapter-layer
-  /// cap set on [EventStreamAdapter]. Defaults to 8 MiB (8 × 1024 × 1024
+  /// cap set on `EventStreamAdapter`. Defaults to 8 MiB (8 × 1024 × 1024
   /// code units), matching [SseParser]'s own default.
   final int maxDataCodeUnits;
+
+  /// Maximum decoded SSE line length in UTF-16 code units.
+  ///
+  /// Defaults to [maxDataCodeUnits] plus seven code units for the field prefix.
+  final int maxLineCodeUnits;
 
   StreamController<SseMessage>? _controller;
   StreamSubscription<SseMessage>? _subscription;
@@ -40,8 +45,14 @@ class SseClient {
     http.Client? httpClient,
     Duration idleTimeout = const Duration(seconds: 45),
     BackoffStrategy? backoffStrategy,
-    this.maxDataCodeUnits = 8 * 1024 * 1024,
-  })  : _httpClient = httpClient ?? http.Client(),
+    int maxDataCodeUnits = 8 * 1024 * 1024,
+    int? maxLineCodeUnits,
+  })  : maxDataCodeUnits = maxDataCodeUnits,
+        maxLineCodeUnits = SseParser(
+          maxDataCodeUnits: maxDataCodeUnits,
+          maxLineCodeUnits: maxLineCodeUnits,
+        ).maxLineCodeUnits,
+        _httpClient = httpClient ?? http.Client(),
         _idleTimeout = idleTimeout,
         _backoffStrategy = backoffStrategy ?? LegacyBackoffStrategy() {
     if (idleTimeout <= Duration.zero) {
@@ -92,7 +103,10 @@ class SseClient {
     Stream<List<int>> stream, {
     Map<String, String>? headers,
   }) {
-    final parser = SseParser(maxDataCodeUnits: maxDataCodeUnits);
+    final parser = SseParser(
+      maxDataCodeUnits: maxDataCodeUnits,
+      maxLineCodeUnits: maxLineCodeUnits,
+    );
     return parser.parseBytes(stream);
   }
 
@@ -107,6 +121,14 @@ class SseClient {
     _isConnecting = true;
 
     try {
+      final previousSubscription = _subscription;
+      _subscription = null;
+      await previousSubscription?.cancel();
+      if (_isClosed) {
+        _isConnecting = false;
+        return;
+      }
+
       // Prepare headers
       final requestHeaders = <String, String>{
         'Accept': 'text/event-stream',
@@ -143,7 +165,10 @@ class SseClient {
       _hasEverConnected = true;
 
       // Create parser for this connection
-      final parser = SseParser(maxDataCodeUnits: maxDataCodeUnits);
+      final parser = SseParser(
+        maxDataCodeUnits: maxDataCodeUnits,
+        maxLineCodeUnits: maxLineCodeUnits,
+      );
 
       // Set up idle timeout
       _resetIdleTimer();
@@ -152,7 +177,6 @@ class SseClient {
       final messageStream = parser.parseBytes(response.stream);
 
       // Listen to messages
-      _subscription?.cancel();
       _subscription = messageStream.listen(
         (message) {
           // Update last event ID if present
@@ -249,7 +273,9 @@ class SseClient {
     Map<String, String>? headers,
     Duration? requestTimeout,
   ) {
-    if (_isClosed) return;
+    if (_isClosed || _reconnectTimer != null) {
+      return;
+    }
 
     // Calculate delay (use server retry if available, otherwise backoff)
     _reconnectAttempt++;
@@ -258,7 +284,6 @@ class SseClient {
 
     // Schedule reconnection. Store the timer so close() can cancel it and
     // avoid a connect() call racing against a concurrent close().
-    _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
       if (!_isClosed) {

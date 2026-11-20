@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:ag_ui/src/sse/sse_message.dart';
 import 'package:ag_ui/src/sse/sse_parser.dart';
 import 'package:test/test.dart';
 
@@ -280,6 +281,96 @@ void main() {
     });
 
     group('parseBytes', () {
+      test('rejects an oversized open line before a terminator or EOF',
+          () async {
+        var cancellations = 0;
+        final source = StreamController<List<int>>(
+          onCancel: () {
+            cancellations++;
+          },
+        );
+        final failure = Completer<Object>();
+        final subscription =
+            SseParser(maxDataCodeUnits: 8).parseBytes(source.stream).listen(
+          (_) => fail('an oversized open line must not emit a message'),
+          onError: (Object error) {
+            if (!failure.isCompleted) {
+              failure.complete(error);
+            }
+          },
+        );
+
+        try {
+          source.add(utf8.encode('data: 1234567890'));
+          await Future<void>.delayed(Duration.zero);
+          expect(failure.isCompleted, isTrue);
+          expect(await failure.future, isA<FormatException>());
+          expect(cancellations, 1);
+        } finally {
+          if (!failure.isCompleted) {
+            source.addError(StateError('test cleanup'));
+          }
+          await source.close();
+          await subscription.cancel();
+        }
+      });
+
+      const fieldPrefixes = <String, String>{
+        'data': 'data: ',
+        'event': 'event: ',
+        'id': 'id: ',
+        'retry': 'retry: ',
+        'comment': ':',
+        'unknown': 'unknown: ',
+        'colonless': '',
+      };
+      for (final field in fieldPrefixes.entries) {
+        for (final fragmented in [false, true]) {
+          test(
+              'bounds open ${field.key} lines when '
+              '${fragmented ? 'fragmented' : 'single-chunk'}', () async {
+            const limit = 24;
+            final exact = field.value.padRight(limit, 'x');
+            await SseParser(maxLineCodeUnits: limit)
+                .parseBytes(Stream.value(utf8.encode(exact)))
+                .drain<void>();
+
+            var cancellations = 0;
+            final source = StreamController<List<int>>(
+              onCancel: () {
+                cancellations++;
+              },
+            );
+            final failure = Completer<Object>();
+            final subscription = SseParser(maxLineCodeUnits: limit)
+                .parseBytes(source.stream)
+                .listen(
+                  (_) {},
+                  onError: failure.complete,
+                );
+            try {
+              final oversized = utf8.encode('${exact}x');
+              if (fragmented) {
+                for (final byte in oversized) {
+                  source.add([byte]);
+                }
+              } else {
+                source.add(oversized);
+              }
+              final error =
+                  await failure.future.timeout(const Duration(seconds: 1));
+              expect(error, isA<FormatException>());
+              expect((error as FormatException).source, isNull);
+              expect(cancellations, 1);
+              expect(source.isClosed, isFalse);
+            } finally {
+              await subscription.cancel();
+              await source.close();
+            }
+          });
+        }
+      }
+
       test('handles UTF-8 encoded bytes', () async {
         final text = 'data: hello 世界\n\n';
         final bytes = Stream.value(utf8.encode(text));
@@ -318,6 +409,36 @@ void main() {
         expect(messages[0].data, 'hello');
       });
 
+      test('preserves chunks emitted from a synchronous onListen callback',
+          () async {
+        late StreamController<List<int>> source;
+        source = StreamController<List<int>>(
+          sync: true,
+          onListen: () {
+            source
+              ..add(utf8.encode('data: one\n\n'))
+              ..add(utf8.encode('data: two\n\n'))
+              ..close();
+          },
+        );
+        final messages = await SseParser().parseBytes(source.stream).toList();
+        expect(messages.map((message) => message.data), ['one', 'two']);
+      });
+
+      test('resume completes a stream paused at the EOF finishing boundary',
+          () async {
+        final done = Completer<void>();
+        final subscription = SseParser()
+            .parseBytes(const Stream<List<int>>.empty())
+            .listen((_) {}, onDone: done.complete);
+        scheduleMicrotask(subscription.pause);
+        await Future<void>.delayed(Duration.zero);
+        expect(done.isCompleted, isFalse);
+        subscription.resume();
+        await done.future.timeout(const Duration(seconds: 1));
+        await subscription.cancel();
+      });
+
       test('handles different line endings', () async {
         // Test with \r\n (CRLF)
         final crlfBytes = utf8.encode('data: line1\r\ndata: line2\r\n\r\n');
@@ -337,6 +458,266 @@ void main() {
         final lfMessages = await parser.parseBytes(lfStream).toList();
         expect(lfMessages.length, 1);
         expect(lfMessages[0].data, 'line1\nline2');
+      });
+
+      test('accepts the exact line limit and rejects the next code unit',
+          () async {
+        final exact = SseParser(maxDataCodeUnits: 8);
+        expect(exact.maxLineCodeUnits, 15);
+        expect(
+          (await exact
+                  .parseBytes(Stream.value(utf8.encode('data: 12345678')))
+                  .toList())
+              .single
+              .data,
+          '12345678',
+        );
+
+        await expectLater(
+          SseParser(maxDataCodeUnits: 8).parseBytes(
+            Stream.value(utf8.encode('data: 123456789')),
+          ),
+          emitsError(isA<FormatException>()),
+        );
+      });
+
+      test('counts supplementary characters as two UTF-16 code units',
+          () async {
+        expect(
+          (await SseParser(maxLineCodeUnits: 8)
+                  .parseBytes(Stream.value(utf8.encode('data: 😀')))
+                  .toList())
+              .single
+              .data,
+          '😀',
+        );
+        await expectLater(
+          SseParser(maxLineCodeUnits: 7)
+              .parseBytes(Stream.value(utf8.encode('data: 😀'))),
+          emitsError(isA<FormatException>()),
+        );
+      });
+
+      test('preserves split UTF-8, CRLF, and initial BOM behavior', () async {
+        final bytes = utf8.encode('\uFEFF\uFEFFdata: 😀\r\n\r\n');
+        for (var split = 0; split <= bytes.length; split++) {
+          final messages = await SseParser()
+              .parseBytes(
+                Stream.fromIterable([
+                  bytes.sublist(0, split),
+                  bytes.sublist(split),
+                ]),
+              )
+              .toList();
+          expect(messages.single.data, '😀', reason: 'split $split');
+        }
+      });
+
+      test('does not dispatch partial data after malformed UTF-8 at EOF',
+          () async {
+        final messages = <Object>[];
+        final errors = <Object>[];
+        final done = Completer<void>();
+        SseParser()
+            .parseBytes(
+              Stream.value([
+                ...utf8.encode('data: partial\n:'),
+                0xE2,
+                0x82,
+              ]),
+            )
+            .listen(messages.add, onError: errors.add, onDone: done.complete);
+        await done.future;
+        expect(messages, isEmpty);
+        expect(errors, hasLength(1));
+        expect(errors.single, isA<FormatException>());
+        expect((errors.single as FormatException).source, isNull);
+      });
+
+      test('pause after a frame defers a bad suffix in the same chunk',
+          () async {
+        final source = StreamController<List<int>>();
+        final messages = <String?>[];
+        final errors = <Object>[];
+        final first = Completer<void>();
+        late StreamSubscription<SseMessage> subscription;
+        subscription =
+            SseParser(maxLineCodeUnits: 32).parseBytes(source.stream).listen(
+          (message) {
+            messages.add(message.data);
+            subscription.pause();
+            first.complete();
+          },
+          onError: errors.add,
+        );
+
+        source.add([
+          ...utf8.encode('data: first\n\ndata: second\n\n'),
+          0xFF,
+        ]);
+        await first.future.timeout(const Duration(seconds: 1));
+        await Future<void>.delayed(Duration.zero);
+        expect(messages, ['first']);
+        expect(errors, isEmpty);
+
+        await subscription.cancel();
+        await source.close();
+      });
+
+      test('reports overflow without waiting for source cancellation',
+          () async {
+        final cancellation = Completer<void>();
+        var cancellations = 0;
+        final source = StreamController<List<int>>(
+          onCancel: () {
+            cancellations++;
+            return cancellation.future;
+          },
+        );
+        final error = Completer<Object>();
+        final subscription = SseParser(maxLineCodeUnits: 8)
+            .parseBytes(source.stream)
+            .listen((_) {}, onError: error.complete);
+
+        source.add(utf8.encode('123456789'));
+        expect(
+          await error.future.timeout(const Duration(seconds: 1)),
+          isA<FormatException>(),
+        );
+        expect(cancellations, 1);
+
+        cancellation.complete();
+        await subscription.cancel();
+        await source.close();
+      });
+
+      test('keeps overflow primary when source cancellation fails', () async {
+        var cancellations = 0;
+        final cleanupError = StateError('cleanup failed');
+        final source = StreamController<List<int>>(
+          onCancel: () {
+            cancellations++;
+            return Future<void>.error(cleanupError);
+          },
+        );
+        final errors = <Object>[];
+        final done = Completer<void>();
+        final subscription =
+            SseParser(maxLineCodeUnits: 8).parseBytes(source.stream).listen(
+                  (_) {},
+                  onError: errors.add,
+                  onDone: done.complete,
+                );
+
+        source.add(utf8.encode('123456789'));
+        await done.future.timeout(const Duration(seconds: 1));
+        expect(errors, hasLength(1));
+        expect(errors.single, isA<FormatException>());
+        expect(errors.single, isNot(same(cleanupError)));
+        expect(cancellations, 1);
+
+        await subscription.cancel();
+        await source.close();
+      });
+
+      test('explicit cancellation returns the source cleanup failure',
+          () async {
+        final cleanupError = StateError('cleanup failed');
+        var cancellations = 0;
+        final source = StreamController<List<int>>(
+          onCancel: () {
+            cancellations++;
+            return Future<void>.error(cleanupError);
+          },
+        );
+        final subscription =
+            SseParser().parseBytes(source.stream).listen((_) {});
+        await expectLater(subscription.cancel(), throwsA(same(cleanupError)));
+        expect(cancellations, 1);
+        await source.close();
+      });
+
+      test('failure clears partial fields but preserves the sticky ID',
+          () async {
+        final parser = SseParser(maxLineCodeUnits: 16);
+        final initial = await parser
+            .parseBytes(Stream.value(utf8.encode('id: keep\ndata: before\n\n')))
+            .toList();
+        expect(initial.single.id, 'keep');
+
+        await expectLater(
+          parser.parseBytes(
+            Stream.value(utf8.encode('data: stale\n:${'x' * 17}')),
+          ),
+          emitsError(isA<FormatException>()),
+        );
+        final recovered = await parser
+            .parseBytes(Stream.value(utf8.encode('data: fresh\n\n')))
+            .toList();
+        expect(recovered.single.data, 'fresh');
+        expect(recovered.single.id, 'keep');
+      });
+
+      test('streams many frames from one transport chunk', () async {
+        final text = List.filled(1000, 'data: x\n\n').join();
+        final messages = await SseParser(maxDataCodeUnits: 1)
+            .parseBytes(Stream.value(utf8.encode(text)))
+            .toList();
+        expect(messages, hasLength(1000));
+        expect(messages.every((message) => message.data == 'x'), isTrue);
+      });
+    });
+
+    group('line limit', () {
+      test('validates configured and derived limits synchronously', () {
+        expect(() => SseParser(maxDataCodeUnits: 0), throwsArgumentError);
+        expect(() => SseParser(maxDataCodeUnits: -1), throwsArgumentError);
+        expect(() => SseParser(maxLineCodeUnits: 0), throwsArgumentError);
+        expect(() => SseParser(maxLineCodeUnits: -1), throwsArgumentError);
+        expect(
+          () => SseParser(maxLineCodeUnits: 9007199254740992),
+          throwsArgumentError,
+        );
+        expect(
+          () => SseParser(maxDataCodeUnits: 9007199254740985),
+          throwsArgumentError,
+        );
+        expect(
+          () => SseParser(
+            maxDataCodeUnits: 9007199254740991,
+            maxLineCodeUnits: 1,
+          ),
+          returnsNormally,
+        );
+        expect(
+          () => SseParser(maxDataCodeUnits: 1, maxLineCodeUnits: 2),
+          returnsNormally,
+        );
+      });
+
+      test('applies the line limit to preframed input', () async {
+        final parser = SseParser(maxLineCodeUnits: 8);
+        await expectLater(
+          parser.parseLines(Stream.value('123456789')),
+          emitsError(isA<FormatException>()),
+        );
+      });
+
+      test('clears partial preframed state after a source error', () async {
+        final parser = SseParser();
+        final source = StreamController<String>();
+        final first = parser.parseLines(source.stream).drain<void>();
+        source.add('id: sticky');
+        source.add('data: stale');
+        source.addError(StateError('source failed'));
+        await source.close();
+        await expectLater(first, throwsStateError);
+
+        final messages = await parser
+            .parseLines(Stream.fromIterable(['data: fresh', '']))
+            .toList();
+        expect(messages.single.data, 'fresh');
+        expect(messages.single.id, 'sticky');
       });
     });
 

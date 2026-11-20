@@ -65,6 +65,42 @@ await for (final event in client.runAgent('agentic_chat', input)) {
 - **`ag_ui.types`** – Message types, tools, and data models
 - **`ag_ui.encoder`** – Event encoding/decoding utilities
 
+## Bounded SSE byte parsing
+
+`SseParser` and `SseClient` place finite limits on decoded SSE content. The
+limits count UTF-16 code units, which is the unit reported by Dart
+`String.length`.
+
+- `maxDataCodeUnits` limits accumulated `data:` content and each `event:`
+  value. Its default is 8 Mi code units.
+- `maxLineCodeUnits` limits every decoded physical line, including comments,
+  unknown fields, and unterminated lines. It defaults to
+  `maxDataCodeUnits + 7`, which accommodates the `event: ` prefix.
+- Both values must be positive and no greater than `9007199254740991`, the
+  largest integer represented exactly on Dart JavaScript targets.
+
+```dart
+final client = SseClient(
+  maxDataCodeUnits: 1024,
+  maxLineCodeUnits: 2048,
+);
+
+await for (final message in client.parseStream(response.stream)) {
+  handleMessage(message);
+}
+```
+
+Raw byte parsing uses strict incremental UTF-8 decoding. It preserves LF, CR,
+CRLF, initial BOM, and valid final unterminated-message behavior. An oversized
+line or malformed UTF-8 sequence ends that parse call with a content-free
+`FormatException`, discards partial message state, and cancels the input
+subscription. `SseClient.connect` retains its existing reconnect behavior.
+
+The parser bounds its own unfinished line, decoded slice, event fields, and
+sticky ID. A paused stream may also retain one byte chunk supplied by the
+producer. Transport queues and messages retained by the consumer remain under
+their respective owners.
+
 ## Documentation
 
 - Concepts & architecture: [`docs/concepts`](https://docs.ag-ui.com/concepts/architecture)
