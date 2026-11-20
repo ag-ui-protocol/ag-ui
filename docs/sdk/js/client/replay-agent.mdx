@@ -1,0 +1,85 @@
+---
+title: "ReplayAgent"
+description: "Replay a recorded AG-UI event stream as an agent, with no network"
+---
+
+# ReplayAgent
+
+`ReplayAgent` plays a recorded AG-UI event stream through the same
+`AbstractAgent` pipeline used by a live `HttpAgent` (enforce, verify, apply,
+subscribers, middleware). Use it to test a frontend, reproduce a captured run,
+or drive a UI while the original server is offline.
+
+Record with `recordEvents` or `createEventRecorder`. The JSON they produce is a
+flat list of events.
+
+```typescript
+import { writeFileSync, readFileSync } from "node:fs"
+import { HttpAgent, recordEvents, ReplayAgent } from "@ag-ui/client"
+
+const live = new HttpAgent({ url: "https://api.example.com/agent" })
+const recorder = recordEvents(live)
+await live.runAgent()
+recorder.stop()
+writeFileSync("run.json", JSON.stringify(recorder, null, 2))
+
+const replay = new ReplayAgent(JSON.parse(readFileSync("run.json", "utf8")), {
+  delayMs: 0,
+})
+await replay.runAgent()
+```
+
+## Configuration
+
+```typescript
+new ReplayAgent(events: BaseEvent[], options?: ReplayAgentOptions)
+
+interface ReplayAgentOptions extends AgentConfig {
+  delayMs?: number | ((event: BaseEvent, index: number) => number)
+}
+```
+
+`delayMs` defaults to `0` (as fast as the pipeline will take events). A positive
+number waits that many milliseconds before each event, including the first. A
+function receives the event about to be emitted and its index within the current
+run.
+
+## Recording
+
+`recordEvents(agent)` subscribes for every later run. Call `recorder.stop()`
+when you are done — it unsubscribes, is safe to call more than once, and is a
+no-op for a recorder from `createEventRecorder()`. For a single run, pass
+`createEventRecorder().subscriber` as the `runAgent` subscriber instead.
+
+`JSON.stringify(recorder)` writes the event array. `JSON.parse` of that string
+is a valid `ReplayAgent` constructor argument.
+
+## Behavior
+
+- `recordEvents(agent)` stays subscribed until `stop()`. `stop()` is idempotent;
+  it is a no-op for `createEventRecorder()`.
+- A recording may hold several runs. A recorded run ends at `RUN_STARTED` of the
+  next run or after a `RUN_FINISHED`/`RUN_ERROR`, and each `run()` invocation
+  advances the playback cursor even when that playback is aborted or fails, so
+  the next `runAgent()` plays the following recorded run. Each `runAgent()` call
+  plays one run, in order (first call → first run, next call → next run).
+- After the last recorded run, the next `runAgent()` emits a `RUN_ERROR` whose
+  message says there are no more recorded runs. It does not hang or complete
+  silently.
+- `RUN_STARTED`, `RUN_FINISHED`, and `RUN_ERROR` events that already carry
+  `threadId` / `runId` are rewritten to the current `RunAgentInput`. Every other
+  field is left as recorded.
+- `abortRun()` stops playback promptly, including while waiting on `delayMs`. An
+  in-flight abort emits `RUN_ERROR` with `code: "abort"`, the same marker a
+  cancelled HTTP run uses.
+- An exception thrown by a `delayMs` function errors the run.
+- Events still go through verify and apply, so a malformed recording fails the
+  same way a malformed server stream does.
+- `clone()` copies the recording, the delay, and the playback cursor. The clone
+  has its own `AbortController`.
+
+## Methods
+
+`runAgent()`, `subscribe()`, `abortRun()`, and `clone()` follow the
+[AbstractAgent](/sdk/js/client/abstract-agent) contract. `run()` emits the next
+recorded run as an `Observable<BaseEvent>`.

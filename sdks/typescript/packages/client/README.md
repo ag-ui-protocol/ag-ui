@@ -19,6 +19,7 @@ your application installs rather than a bundled copy.
 ## Features
 
 - 🔗 **HTTP connectivity** – `HttpAgent` for direct server connections with SSE/protobuf support
+- 📼 **Replay** – `recordEvents` / `ReplayAgent` to capture a run and play it back offline
 - 🏗️ **Custom agents** – `AbstractAgent` base class for building your own transport layer
 - 📡 **Event streaming** – Full AG-UI event processing with validation and transformation
 - 🔄 **State management** – Automatic message/state tracking with reactive updates
