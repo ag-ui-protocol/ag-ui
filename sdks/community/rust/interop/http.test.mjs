@@ -37,8 +37,12 @@ test("the published TypeScript client consumes two Rust-hosted runs", async (t) 
     const deadline = setTimeout(() => abortController.abort(), 10_000);
     try {
       const result = await agent.runAgent({ runId, abortController }, {
-        onRunStartedEvent: ({ event }) => observed.push([event.type, event.threadId, event.runId, event.protocolVersion]),
-        onRunFinishedEvent: ({ event }) => observed.push([event.type, event.threadId, event.runId]),
+        onRunStartedEvent: ({ event }) => {
+          observed.push([event.type, event.threadId, event.runId, event.protocolVersion]);
+        },
+        onRunFinishedEvent: ({ event }) => {
+          observed.push([event.type, event.threadId, event.runId]);
+        },
       });
       assert.deepEqual(observed, [
         ["RUN_STARTED", threadId, runId, "1.0"],
