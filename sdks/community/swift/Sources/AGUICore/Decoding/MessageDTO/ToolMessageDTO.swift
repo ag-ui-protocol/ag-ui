@@ -7,6 +7,7 @@ struct ToolMessageDTO {
     let id: String
     let toolCallId: String
     let content: String?
+    let contentParts: Data?
     let name: String?
     let error: String?
     let encryptedValue: String?
@@ -28,11 +29,19 @@ struct ToolMessageDTO {
 
         // Extract optional fields
         let content = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "content")
+        let contentParts: Data?
+        if let value = try EventJSONField.value("content", from: data), value.array != nil {
+            contentParts = try value.encoded()
+        } else {
+            contentParts = nil
+        }
         let name = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "name")
         let error = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "error")
         let encryptedValue = MessageDecodingHelpers.extractOptionalString(from: jsonObject, key: "encryptedValue")
 
-        return ToolMessageDTO(id: id, toolCallId: toolCallId, content: content, name: name, error: error, encryptedValue: encryptedValue)
+        return ToolMessageDTO(id: id, toolCallId: toolCallId, content: content,
+                              contentParts: contentParts, name: name, error: error,
+                              encryptedValue: encryptedValue)
     }
 
     /// Converts this DTO to a domain `ToolMessage`.
@@ -40,6 +49,7 @@ struct ToolMessageDTO {
     /// `content` defaults to an empty string when the JSON field is absent,
     /// matching the AG-UI protocol where tool result content is optional.
     func toDomain() -> ToolMessage {
-        ToolMessage(id: id, content: content ?? "", toolCallId: toolCallId, name: name, error: error, encryptedValue: encryptedValue)
+        ToolMessage(id: id, content: content ?? "", toolCallId: toolCallId, name: name,
+                    error: error, encryptedValue: encryptedValue, contentParts: contentParts)
     }
 }

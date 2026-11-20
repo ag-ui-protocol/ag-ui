@@ -67,6 +67,10 @@ public struct ToolMessage: Message, Sendable, Hashable, Decodable {
     /// For failed executions, this typically contains a user-friendly error description.
     /// Matches the TypeScript schema `content: z.string()` — required, non-nullable.
     public let content: String
+    /// Structured content parts from a tool result, when provided instead of text.
+    /// MessageDecoder preserves arbitrary-size JSON numbers in these parts;
+    /// direct JSONDecoder may round them because Decoder omits source lexemes.
+    public let contentParts: Data?
 
     /// The ID of the tool call this message responds to.
     ///
@@ -109,11 +113,13 @@ public struct ToolMessage: Message, Sendable, Hashable, Decodable {
         toolCallId: String,
         name: String? = nil,
         error: String? = nil,
-        encryptedValue: String? = nil
+        encryptedValue: String? = nil,
+        contentParts: Data? = nil
     ) {
         self.id = id
         self.role = .tool
         self.content = content
+        self.contentParts = contentParts
         self.toolCallId = toolCallId
         self.name = name
         self.error = error
@@ -134,7 +140,17 @@ extension ToolMessage {
         role = .tool
         // Default to "" when absent — matches TypeScript z.string() (required but may be
         // missing in legacy payloads).
-        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        if let text = try? container.decode(String.self, forKey: .content) {
+            content = text
+            contentParts = nil
+        } else if container.contains(.content), !(try container.decodeNil(forKey: .content)) {
+            var parts = try container.nestedUnkeyedContainer(forKey: .content)
+            contentParts = try JSONSerialization.data(withJSONObject: parts.decodeJSONArray())
+            content = ""
+        } else {
+            content = ""
+            contentParts = nil
+        }
         toolCallId = try container.decode(String.self, forKey: .toolCallId)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         error = try container.decodeIfPresent(String.self, forKey: .error)

@@ -84,8 +84,7 @@ public actor HttpTransport {
             headers["User-Agent"] = "AGUISwift/1.0"
             sessionConfig.httpAdditionalHeaders = headers
 
-            let session = URLSession(configuration: sessionConfig)
-            self.httpClient = URLSessionHTTPClient(session: session)
+            self.httpClient = URLSessionHTTPClient.create(configuration: sessionConfig)
         }
     }
 

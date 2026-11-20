@@ -332,72 +332,22 @@ final class MockURLProtocol: URLProtocol {
 }
 
 extension HTTPResponse {
-    /// Creates a mock HTTP response for testing with URLProtocol.
-    ///
-    /// - Parameters:
-    ///   - data: Response body data
-    ///   - statusCode: HTTP status code (default: 200)
-    ///   - headers: HTTP headers (default: empty)
-    /// - Returns: A mock HTTPResponse with real URLSession.AsyncBytes
-    ///
-    /// This method creates a real HTTPResponse using MockURLProtocol with an
-    /// isolated registry. The returned response contains actual URLSession.AsyncBytes
-    /// that can be consumed in tests.
-    ///
-    /// ## Example
-    ///
-    /// ```swift
-    /// let response = try await HTTPResponse.mock(
-    ///     data: Data("test data".utf8),
-    ///     statusCode: 200,
-    ///     headers: ["Content-Type": "text/plain"]
-    /// )
-    ///
-    /// for try await byte in response.bytes {
-    ///     print(byte)
-    /// }
-    /// ```
+    /// Creates an in-memory response for client pipeline tests. Real URLSession
+    /// behavior is exercised separately in URLSessionHTTPClientTests.
     static func mock(
         data: Data = Data(),
         statusCode: Int = 200,
         headers: [String: String] = ["Content-Type": "text/event-stream"]
     ) async throws -> HTTPResponse {
-        let url = URL(string: "https://test-mock.local/response")!
-
-        // Create isolated registry for this mock
-        let registry = MockURLProtocolRegistry()
-        await registry.register(
-            url: url,
-            data: data,
-            statusCode: statusCode,
-            headers: headers
-        )
-
-        // Create session with mock protocol
-        let session = await URLSession.makeMockSession(registry: registry)
-
-        // Execute request to get bytes
-        let (asyncBytes, response) = try await session.bytes(for: URLRequest(url: url))
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ClientError.invalidResponse
-        }
-
-        // Bridge URLSession.AsyncBytes → AsyncThrowingStream<UInt8, Error>
+        let response = HTTPURLResponse(
+            url: URL(string: "https://test-mock.local/response")!,
+            statusCode: statusCode, httpVersion: nil, headerFields: headers
+        )!
         let stream = AsyncThrowingStream<UInt8, Error> { continuation in
-            Task {
-                do {
-                    for try await byte in asyncBytes {
-                        continuation.yield(byte)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
+            for byte in data { continuation.yield(byte) }
+            continuation.finish()
         }
-
-        return HTTPResponse(bytes: stream, httpResponse: httpResponse)
+        return HTTPResponse(bytes: stream, httpResponse: response)
     }
 }
 

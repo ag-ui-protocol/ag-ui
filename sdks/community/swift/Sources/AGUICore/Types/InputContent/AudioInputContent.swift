@@ -2,57 +2,43 @@
 
 import Foundation
 
-/// Represents audio content in multimodal user input.
-///
-/// `AudioInputContent` carries audio data either as a URL reference or as
-/// base64-encoded bytes. The optional `format` field identifies the audio codec
-/// (e.g., `"mp3"`, `"wav"`, `"ogg"`).
-///
-/// - SeeAlso: ``InputContent``, ``UserMessage``
-public struct AudioInputContent: InputContent, Hashable, Sendable {
+/// A audio part using the AG-UI 1.0 source representation.
+public struct AudioInputContent: InputContent, Hashable, Sendable, MediaInputContent {
+    public let type = "audio"
+    public let source: InputContentSource
+    public let id: String?
+    /// Optional metadata as raw JSON bytes (including scalar and array values).
+    public let metadata: Data?
 
-    /// The content type discriminator (always `"audio"`).
-    public let type: String
+    /// Compatibility accessor for URL-backed content.
+    public var url: String? { source.type == "url" ? source.value : nil }
+    /// Compatibility accessor for inline content.
+    public var data: String? { source.type == "data" ? source.value : nil }
+    public var mimeType: String? { source.mimeType }
 
-    /// Optional URL pointing to the audio file.
-    public let url: String?
-
-    /// Optional base64-encoded audio data.
-    public let data: String?
-
-    /// Optional audio format identifier.
-    ///
-    /// Common values: `"mp3"`, `"wav"`, `"ogg"`, `"flac"`.
-    public let format: String?
-
-    /// Optional MIME type of the audio (e.g., `"audio/mpeg"`, `"audio/wav"`).
-    public let mimeType: String?
-
-    /// Creates audio content from a URL.
-    ///
-    /// - Parameters:
-    ///   - url: URL pointing to the audio file
-    ///   - format: Optional format identifier (e.g., `"mp3"`)
-    ///   - mimeType: Optional MIME type (e.g., `"audio/mpeg"`)
-    public init(url: String, format: String? = nil, mimeType: String? = nil) {
-        self.type = "audio"
-        self.url = url
-        self.data = nil
-        self.format = format
-        self.mimeType = mimeType
+    /// Legacy hint, carried in metadata on the 1.0 wire.
+    public var format: String? {
+        guard let metadata,
+              let object = try? JSONSerialization.jsonObject(with: metadata) as? [String: Any] else { return nil }
+        return object["format"] as? String
     }
 
-    /// Creates audio content from base64-encoded data.
-    ///
-    /// - Parameters:
-    ///   - data: Base64-encoded audio bytes
-    ///   - format: Optional format identifier (e.g., `"wav"`)
-    ///   - mimeType: Optional MIME type (e.g., `"audio/wav"`)
+    public init(source: InputContentSource, id: String? = nil, metadata: Data? = nil) {
+        self.source = source
+        self.id = id
+        self.metadata = metadata
+    }
+
+    /// Creates URL-backed content. Legacy hints are carried in metadata.
+    public init(url: String, format: String? = nil, mimeType: String? = nil) {
+        let metadata = format.flatMap { try? JSONSerialization.data(withJSONObject: ["format": $0], options: .sortedKeys) }
+        self.init(source: .url(value: url, mimeType: mimeType), metadata: metadata)
+    }
+
+    /// Creates inline content. If omitted, the MIME type defaults to application/octet-stream.
+    /// Supply the actual MIME type whenever known.
     public init(data: String, format: String? = nil, mimeType: String? = nil) {
-        self.type = "audio"
-        self.url = nil
-        self.data = data
-        self.format = format
-        self.mimeType = mimeType
+        let metadata = format.flatMap { try? JSONSerialization.data(withJSONObject: ["format": $0], options: .sortedKeys) }
+        self.init(source: .data(value: data, mimeType: mimeType ?? "application/octet-stream"), metadata: metadata)
     }
 }

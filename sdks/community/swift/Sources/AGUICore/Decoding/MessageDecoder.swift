@@ -197,7 +197,19 @@ public struct MessageDecoder: Sendable {
                 try UserMessageDTO.decode(from: data, decoder: decoder).toDomain()
             },
             .assistant: { data, decoder in
-                try decoder.decode(AssistantMessage.self, from: data)
+                let decoded = try decoder.decode(AssistantMessage.self, from: data)
+                guard let fields = try AGUIJSON.parse(data).object else { return decoded }
+                let metadata = try fields["metadata"]?.encoded()
+                let rawCalls = fields["toolCalls"]?.array ?? []
+                let calls = decoded.toolCalls?.enumerated().map { index, call in
+                    ToolCall(id: call.id, function: call.function,
+                             encryptedValue: call.encryptedValue,
+                             metadata: index < rawCalls.count
+                                 ? (try? rawCalls[index].object?["metadata"]?.encoded()) : nil)
+                }
+                return AssistantMessage(id: decoded.id, content: decoded.content, name: decoded.name,
+                                        toolCalls: calls, encryptedValue: decoded.encryptedValue,
+                                        metadata: metadata, subagentRunId: decoded.subagentRunId)
             },
             .tool: { data, decoder in
                 try ToolMessageDTO.decode(from: data, decoder: decoder).toDomain()

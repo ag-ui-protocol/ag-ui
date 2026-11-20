@@ -117,3 +117,37 @@ See detailed guides:
 - [ ] Documentation updated
 - [ ] Commit messages follow conventions
 
+
+## Protocol 1.0 additions
+
+The package also includes typed definitions checked against `spec/1.0/schema.json`,
+lossless `AGUIJSON`, and the `agui-dojo-chat` command. All four upstream libraries
+remain available. See [DERIVATION.md](DERIVATION.md) for provenance.
+
+Media parts encode as `source: { type, value, mimeType }`. The
+`InputContentSource` enum supports `.url`, `.data`, and opaque `.file` sources.
+Existing URL/data initializers remain supported; new encodings use the 1.0
+shape. Optional legacy `detail`, `format`, and `title` hints become metadata.
+Empty run state encodes as `{}`, rather than the invalid 1.0 `null` sentinel.
+
+The XCTest suite includes schema fixtures, runtime event-decoder fixtures,
+client regressions, and offline HTTP/SSE conformance. The stream lane explicitly
+skips six optional peer-era fixtures and the documented TypeScript enum gap;
+SHOULD-level warning text is not asserted. Modern media decoding is tested
+independently, including the canonical multimodal user-message fixture. All
+previously parked client test files now compile and run under SwiftPM.
+
+From this package directory:
+
+```bash
+swift build
+swift test
+# With a running local dojo (optional):
+AGUI_DOJO_BASE_URL=http://127.0.0.1:18000 swift test --filter DojoIntegrationTests
+swift run agui-dojo-chat "Hello"
+```
+
+The dojo command defaults to `http://127.0.0.1:18000`; set `AGUI_DOJO_BASE_URL`
+to use a different local server. Live dojo tests skip unless that variable is set.
+The production networking and UI targets require an Apple platform; Linux
+core-only or mock-transport checks do not replace the macOS CI suite.

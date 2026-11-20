@@ -115,8 +115,8 @@ final class ImageInputContentTests: XCTestCase {
 
         XCTAssertEqual(contentArray?.count, 1)
         XCTAssertEqual(contentArray?[0]["type"] as? String, "image")
-        XCTAssertEqual(contentArray?[0]["url"] as? String, "https://example.com/photo.jpg")
-        XCTAssertEqual(contentArray?[0]["detail"] as? String, "low")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["value"] as? String, "https://example.com/photo.jpg")
+        XCTAssertEqual((contentArray?[0]["metadata"] as? [String: Any])?["detail"] as? String, "low")
     }
 
     // MARK: - Equatable / Hashable
@@ -147,9 +147,9 @@ final class ImageInputContentTests: XCTestCase {
         XCTAssertNil(content.mimeType)
     }
 
-    func test_mimeType_isNilByDefault_data() {
+    func test_mimeType_defaultsToOctetStream_data() {
         let content = ImageInputContent(data: "base64abc")
-        XCTAssertNil(content.mimeType)
+        XCTAssertEqual(content.mimeType, "application/octet-stream")
     }
 
     func test_mimeType_roundTripsViaURLInit() {
@@ -187,7 +187,7 @@ final class ImageInputContentTests: XCTestCase {
         let data = try encoder.encode(userMsg)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let contentArray = json?["content"] as? [[String: Any]]
-        XCTAssertEqual(contentArray?[0]["mimeType"] as? String, "image/png")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["mimeType"] as? String, "image/png")
     }
 
     func test_encodeUserMessage_withNilImageMimeType_omitsMimeTypeFromJSON() throws {
@@ -197,7 +197,7 @@ final class ImageInputContentTests: XCTestCase {
         let data = try encoder.encode(userMsg)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let contentArray = json?["content"] as? [[String: Any]]
-        XCTAssertNil(contentArray?[0]["mimeType"])
+        XCTAssertNil((contentArray?[0]["source"] as? [String: Any])?["mimeType"])
     }
 
     // MARK: - Sendable
