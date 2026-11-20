@@ -1,5 +1,6 @@
 #include "core/subscriber.h"
 #include "logger.h"
+#include "stream/sse_parser.h"
 #include <algorithm>
 
 namespace agui {
@@ -741,9 +742,11 @@ void EventHandler::handleActivityDelta(const ActivityDeltaEvent& event) {
 
     try {
         // Default to empty object if content is absent, consistent with TypeScript (content ?? {})
+        // The stored content originated with the agent (or the caller's initial
+        // messages), so it is held to the same depth limit as event payloads.
         nlohmann::json currentContent = existing->content().empty()
             ? nlohmann::json::object()
-            : nlohmann::json::parse(existing->content());
+            : parseJsonWithDepthLimit(existing->content());
 
         nlohmann::json patchJson = nlohmann::json::array();
         for (const auto& op : event.patch) {

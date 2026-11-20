@@ -3,6 +3,26 @@
 
 namespace agui {
 
+nlohmann::json parseJsonWithDepthLimit(const std::string& data) {
+    // nlohmann has no depth option, so the limit is enforced from its parser
+    // callback. `depth` there is the number of containers already open around
+    // the value, so the outermost object or array arrives at depth 0.
+    const nlohmann::json::parser_callback_t limitDepth =
+        [](int depth, nlohmann::json::parse_event_t event, nlohmann::json&) {
+            if ((event == nlohmann::json::parse_event_t::object_start ||
+                 event == nlohmann::json::parse_event_t::array_start) &&
+                depth >= SseParser::kMaxJsonDepth) {
+                throw JsonDepthExceededError(
+                    "JSON nesting exceeds maximum depth of " +
+                    std::to_string(SseParser::kMaxJsonDepth));
+            }
+            // Keep every value, so accepted input parses exactly as it would
+            // without the callback.
+            return true;
+        };
+    return nlohmann::json::parse(data, limitDepth);
+}
+
 void SseParser::feed(const std::string& chunk) {
     // Check buffer size limit to prevent memory exhaustion.
     // m_currentData is included because processBuffer() erases consumed bytes
