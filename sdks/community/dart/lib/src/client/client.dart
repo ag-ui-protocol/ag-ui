@@ -11,6 +11,7 @@ import '../events/events.dart';
 import '../sse/sse_client.dart';
 import '../sse/sse_message.dart';
 import '../types/types.dart';
+import 'base_url.dart';
 import 'config.dart';
 import 'errors.dart';
 import 'validators.dart';
@@ -80,7 +81,7 @@ class AgUiClient {
     CancelToken? cancelToken,
   }) {
     // Validate inputs
-    Validators.validateUrl(config.baseUrl, 'baseUrl');
+    final baseUrl = resolveBaseUrl(config.baseUrl);
     Validators.requireNonEmpty(endpoint, 'endpoint');
 
     // Tighten the scheme test: `startsWith('http')` would accept httpfoo://
@@ -91,7 +92,7 @@ class AgUiClient {
     if (isAbsolute) {
       Validators.validateUrl(endpoint, 'endpoint');
     }
-    final fullEndpoint = isAbsolute ? endpoint : '${config.baseUrl}/$endpoint';
+    final fullEndpoint = isAbsolute ? endpoint : '$baseUrl/$endpoint';
 
     return _runAgentInternal(fullEndpoint, input, cancelToken: cancelToken);
   }
