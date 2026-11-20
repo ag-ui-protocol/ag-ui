@@ -3321,8 +3321,46 @@ class LangGraphAgent:
             if _is_internal_model_call(event):
                 return
 
+            chunk = (event.get("data") or {}).get("chunk")
+            chunk_content = _chunk_get(chunk, "content", None) if chunk else None
+            chunk_id = _chunk_get(chunk, "id", None) if chunk else None
+            reasoning_data = resolve_reasoning_content(chunk) if chunk else None
+            encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
+            # Use an explicit ``is not None`` check so empty-string deltas
+            # (``chunk.content == ""``) still reach resolve_message_content.
+            # The prior truthy check ``if chunk and chunk.content`` treated
+            # "" the same as None and silently dropped zero-length deltas
+            # that some providers emit during tool-call / structured-output
+            # transitions.
+            message_content = (
+                resolve_message_content(chunk_content)
+                if chunk is not None and chunk_content is not None
+                else None
+            )
+
+            # Most providers send an empty final chunk carrying only
+            # ``finish_reason`` (and optionally ``usage_metadata``, already
+            # recorded above); skip that bookkeeping-only chunk so stream
+            # closure stays with OnChatModelEnd. Some providers (e.g.
+            # OpenAI-compatible endpoints like zai.glm-5) attach trailing
+            # text, tool-call fragments, or reasoning on the ``finish_reason``
+            # chunk itself — let those chunks flow through instead of dropping
+            # their payload.
             if response_metadata.get('finish_reason', None):
-                return
+                has_tool_call_payload = any(
+                    isinstance(tcc, dict) and (tcc.get("name") or tcc.get("args"))
+                    for tcc in tool_call_chunks_list
+                )
+                has_encrypted_reasoning_payload = bool(
+                    encrypted_reasoning_data and self._get_reasoning_process() is not None
+                )
+                if not (
+                    has_tool_call_payload
+                    or message_content
+                    or reasoning_data
+                    or has_encrypted_reasoning_payload
+                ):
+                    return
 
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
@@ -3376,10 +3414,6 @@ class LangGraphAgent:
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
 
-            chunk = event["data"]["chunk"]
-            chunk_content = _chunk_get(chunk, "content", None) if chunk else None
-            chunk_id = _chunk_get(chunk, "id", None) if chunk else None
-
             # Capture EVERY `task` delegation call in this chunk (with its
             # tool_call_id and the assistant chunk id as parent_message_id) so
             # each spawned subagent can carry parentToolCallId / parentMessageId
@@ -3418,19 +3452,6 @@ class LangGraphAgent:
                             ),
                         })
 
-            reasoning_data = resolve_reasoning_content(chunk) if chunk else None
-            encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
-            # Use an explicit ``is not None`` check so empty-string deltas
-            # (``chunk.content == ""``) still reach resolve_message_content.
-            # The prior truthy check ``if chunk and chunk.content`` treated
-            # "" the same as None and silently dropped zero-length deltas
-            # that some providers emit during tool-call / structured-output
-            # transitions.
-            message_content = (
-                resolve_message_content(chunk_content)
-                if chunk is not None and chunk_content is not None
-                else None
-            )
             # Use ``is not None`` rather than truthy: an empty-string delta
             # (``""``) is a legitimate streaming chunk some providers emit
             # during tool-call / structured-output transitions, and the
