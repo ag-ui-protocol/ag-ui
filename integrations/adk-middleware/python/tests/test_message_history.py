@@ -547,6 +547,95 @@ class TestAdkEventsToMessages:
         assert messages[0].name is None
         assert len(messages[0].tool_calls) == 1
 
+    def test_tool_call_only_message_uses_first_tool_call_id(self):
+        """#3254: a text-less tool-call step must be keyed by its tool call id,
+        matching the message a client builds from the live stream."""
+        fc = create_mock_function_call(
+            name="get_weather", args={"city": "Seattle"}, fc_id="c-1"
+        )
+        event = create_mock_adk_event(
+            event_id="evt-2",
+            author="model",
+            text="",
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert isinstance(messages[0], AssistantMessage)
+        assert messages[0].id == "c-1"
+        assert messages[0].tool_calls[0].id == "c-1"
+        assert messages[0].content is None
+
+    def test_multiple_tool_calls_message_uses_first_tool_call_id(self):
+        """#3254: with several tool calls in one step, the first call's id keys the message."""
+        fcs = [
+            create_mock_function_call(name="get_weather", args={}, fc_id="c-1"),
+            create_mock_function_call(name="get_time", args={}, fc_id="c-2"),
+        ]
+        event = create_mock_adk_event(
+            event_id="evt-2",
+            author="model",
+            text="",
+            function_calls=fcs,
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert messages[0].id == "c-1"
+        assert [tc.id for tc in messages[0].tool_calls] == ["c-1", "c-2"]
+
+    def test_text_with_tool_calls_keeps_event_id(self):
+        """#3254: an event with text keeps the event id even when it also carries tool calls."""
+        fc = create_mock_function_call(
+            name="get_weather", args={"city": "Seattle"}, fc_id="c-1"
+        )
+        event = create_mock_adk_event(
+            event_id="evt-2",
+            author="model",
+            text="Let me check the weather.",
+            function_calls=[fc],
+        )
+
+        messages = adk_events_to_messages([event])
+
+        assert len(messages) == 1
+        assert messages[0].id == "evt-2"
+        assert messages[0].tool_calls[0].id == "c-1"
+
+    def test_tool_call_turn_reloads_as_one_assistant_message(self):
+        """#3254 turn shape: user, tool-call step, tool result, answer.
+        The tool-call step must carry the live-stream id (the tool call id),
+        so the client joins it with the answer that follows."""
+        fc = create_mock_function_call(
+            name="get_weather", args={}, fc_id="c-1"
+        )
+        fr = create_mock_function_response(response="sunny", fr_id="c-1")
+        events = [
+            create_mock_adk_event(event_id="evt-1", author="user", text="weather?"),
+            create_mock_adk_event(
+                event_id="evt-2", author="model", text="", function_calls=[fc]
+            ),
+            create_mock_adk_event(
+                event_id="evt-3", author="model", text="", function_responses=[fr]
+            ),
+            create_mock_adk_event(
+                event_id="evt-4", author="model", text="it is sunny"
+            ),
+        ]
+
+        messages = adk_events_to_messages(events)
+
+        assert len(messages) == 4
+        assert messages[0].id == "evt-1"
+        assert messages[1].id == "c-1"
+        assert isinstance(messages[1], AssistantMessage)
+        assert isinstance(messages[2], ToolMessage)
+        assert messages[2].tool_call_id == "c-1"
+        assert messages[3].id == "evt-4"
+
 
 def _adk_event(author: str, parts: List[types.Part], event_id: str = None) -> ADKEvent:
     """Build a real ADK event, as a session service would return it."""
