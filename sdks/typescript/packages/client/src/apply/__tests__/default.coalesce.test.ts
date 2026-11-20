@@ -84,27 +84,63 @@ describe("defaultApplyEvents coalesce", () => {
 
   it("emits what it applied before the source failed in the middle of a burst", async () => {
     const source = new Subject<BaseEvent>();
+    const failure = new Error("stream failed");
     // The stream fails while the fourth event of the burst is being applied
     // and the rest are still waiting.
     const failOnFourth: AgentSubscriber = {
       onEvent: ({ event }) => {
-        if (event === events[3]) source.error(new Error("stream failed"));
+        if (event === events[3]) source.error(failure);
       },
     };
-    const updates: { messages?: Message[]; state?: unknown }[] = [];
-    const error = new Promise<unknown>((resolve) =>
-      defaultApplyEvents(input, source, agent(), [failOnFourth], undefined, {
-        coalesce: true,
-      }).subscribe({
-        next: (update) => updates.push(update),
-        error: resolve,
-      }),
-    );
+    const applied$ = defaultApplyEvents(input, source, agent(), [failOnFourth], undefined, {
+      coalesce: true,
+    });
+    const subscribe = () => {
+      const updates: { messages?: Message[]; state?: unknown }[] = [];
+      const error = new Promise<unknown>((resolve) =>
+        applied$.subscribe({ next: (update) => updates.push(update), error: resolve }),
+      );
+      return { updates, error };
+    };
+    const first = subscribe();
     for (const event of events) source.next(event);
 
-    expect(await error).toEqual(new Error("stream failed"));
+    expect(await first.error).toBe(failure);
+    expect(first.updates).toHaveLength(1);
+    expect(first.updates[0].messages?.map((m) => [m.id, m.content])).toEqual([["m1", "Hel"]]);
+
+    // The fourth event finishes applying after the error. A second
+    // subscription gets no events from the failed source, so it must not get
+    // what the first one left behind either.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = subscribe();
+    expect(await second.error).toBe(failure);
+    expect(second.updates).toEqual([]);
+  });
+
+  it("includes what the failing event of a burst had already changed", async () => {
+    // The activity is added before `onNewMessage` runs, and the hook fails.
+    const failure = new Error("hook failed");
+    const failingHook: AgentSubscriber = {
+      onNewMessage: () => {
+        throw failure;
+      },
+    };
+    const burst = [
+      { type: EventType.STATE_SNAPSHOT, snapshot: { step: 1 } },
+      { type: EventType.ACTIVITY_SNAPSHOT, messageId: "a1", activityType: "card", content: {} },
+    ] as BaseEvent[];
+    const updates: { messages?: Message[]; state?: unknown }[] = [];
+    const error = await new Promise<unknown>((resolve) =>
+      defaultApplyEvents(input, from(burst), agent(), [failingHook], undefined, {
+        coalesce: true,
+      }).subscribe({ next: (update) => updates.push(update), error: resolve }),
+    );
+
+    expect(error).toBe(failure);
     expect(updates).toHaveLength(1);
-    expect(updates[0].messages?.map((m) => [m.id, m.content])).toEqual([["m1", "Hel"]]);
+    expect(updates[0].state).toEqual({ step: 1 });
+    expect(updates[0].messages?.map((m) => m.id)).toEqual(["a1"]);
   });
 
   it("emits a burst's update when the source fails before it was passed on", async () => {
@@ -115,10 +151,9 @@ describe("defaultApplyEvents coalesce", () => {
     const second = { type: EventType.STATE_SNAPSHOT, snapshot: { step: 2 } } as BaseEvent;
     for (let ticks = 0; ticks < 20; ticks += 1) {
       const source = new Subject<BaseEvent>();
+      const failure = new Error("stream failed");
       const failAfter = (left: number): void =>
-        queueMicrotask(() =>
-          left === 0 ? source.error(new Error("stream failed")) : failAfter(left - 1),
-        );
+        queueMicrotask(() => (left === 0 ? source.error(failure) : failAfter(left - 1)));
       const failDuringSecond: AgentSubscriber = {
         onStateSnapshotEvent: ({ event }) => {
           if (event === second) failAfter(ticks);
@@ -138,8 +173,10 @@ describe("defaultApplyEvents coalesce", () => {
       source.next(first);
       source.next(second);
 
-      expect(await error).toEqual(new Error("stream failed"));
-      expect(states, `source failed after ${ticks} microtasks`).not.toHaveLength(0);
+      expect(await error).toBe(failure);
+      // One update, with the first snapshot or with both.
+      expect(states, `source failed after ${ticks} microtasks`).toHaveLength(1);
+      expect([{ step: 1 }, { step: 2 }]).toContainEqual(states[0]);
     }
   });
 

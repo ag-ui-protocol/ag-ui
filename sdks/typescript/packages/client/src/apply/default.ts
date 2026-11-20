@@ -482,8 +482,9 @@ export interface ApplyEventsOptions {
    * with them `agent.messages`, `agent.state`, `onMessagesChanged` and
    * `onStateChanged`. Events that arrive one at a time still emit one update
    * each. If the stream fails before the update of a burst is emitted, the
-   * update for the events applied so far is emitted before the error. Off by
-   * default.
+   * update for the events applied so far is emitted before the error. It
+   * includes what the event being applied at that moment had already changed.
+   * Off by default.
    */
   coalesce?: boolean;
 }
@@ -516,6 +517,18 @@ export interface ApplyEventsOptions {
  * waiting to be applied; see {@link ApplyEventsOptions}.
  */
 export const defaultApplyEvents = (
+  input: RunAgentInput,
+  events$: Observable<BaseEvent>,
+  agent: AbstractAgent,
+  subscribers: AgentSubscriber[],
+  debugLogger?: DebugLoggerInput,
+  options?: ApplyEventsOptions,
+): Observable<AgentStateMutation> =>
+  // The working messages and state belong to one subscription. An event that
+  // finishes applying after its subscription ended must not reach the next one.
+  defer(() => applyEvents(input, events$, agent, subscribers, debugLogger, options));
+
+const applyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
   agent: AbstractAgent,
@@ -1188,6 +1201,7 @@ export const defaultApplyEvents = (
                 lookup.insertedBefore(messages, insertAt);
                 messages.splice(insertAt, 0, toolMessage);
               }
+              applyMutation({ messages });
 
               await Promise.all(
                 subscribers.map((subscriber) => {
