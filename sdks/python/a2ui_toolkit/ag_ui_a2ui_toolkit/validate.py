@@ -42,6 +42,24 @@ def _absolute_path_resolves(path: str, data: Any) -> bool:
     return True
 
 
+def _required_properties(schema: dict) -> list[str]:
+    """Required props of a catalog component schema, in first-seen order.
+
+    ``allOf`` constraints are cumulative, so their ``required`` lists count too
+    (recursively); alternatives (``anyOf``/``oneOf``) are not. Mirrors
+    ``requiredProperties`` in the TypeScript sibling.
+    """
+    required = [k for k in (schema.get("required") or []) if isinstance(k, str)]
+    all_of = schema.get("allOf")
+    nested = [
+        k
+        for sub in (all_of if isinstance(all_of, list) else [])
+        if _is_object(sub)
+        for k in _required_properties(sub)
+    ]
+    return list(dict.fromkeys(required + nested))
+
+
 def _collect_child_refs(children: Any) -> list[str]:
     refs: list[str] = []
 
@@ -265,7 +283,7 @@ def validate_a2ui_components(
             if schema is None:
                 errors.append({"code": "unknown_component", "path": f"components[{i}].component", "message": f"Component type '{ctype}' is not in the catalog"})
             else:
-                for req in schema.get("required", []) or []:
+                for req in _required_properties(schema):
                     if not _is_object(comp) or req not in comp:
                         errors.append({"code": "missing_required_prop", "path": f"components[{i}].{req}", "message": f"Component '{ctype}' (index {i}) is missing required prop '{req}'"})
 
