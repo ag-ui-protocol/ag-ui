@@ -1754,6 +1754,109 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
         Assert.Equal("RunFinishedEvent", eventTypes[7]);
     }
 
+    // https://github.com/ag-ui-protocol/ag-ui/issues/3368
+    // Providers stamp one MessageId on a whole response. Text that resumes after a tool call
+    // closed the message must start a new message with a derived id, not reopen the closed one.
+    [Fact]
+    public async Task TextAfterToolCall_SameProviderMessageId_StartsNewTextMessage()
+    {
+        var updates = ToAsyncEnumerable(
+            new ChatResponseUpdate(ChatRole.Assistant, "A") { MessageId = "m1" },
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                MessageId = "m1",
+                Contents = [new FunctionCallContent("call_1", "search")]
+            },
+            new ChatResponseUpdate(ChatRole.Assistant, "B") { MessageId = "m1" },
+            new ChatResponseUpdate(ChatRole.Assistant, "C") { MessageId = "m1" });
+
+        var events = await CollectEvents(updates);
+
+        var starts = events.OfType<TextMessageStartEvent>().Select(e => e.MessageId).ToList();
+        Assert.Equal(["m1", "m1-2"], starts);
+
+        // Each text message is closed exactly once and never written to after it closed.
+        var ends = events.OfType<TextMessageEndEvent>().Select(e => e.MessageId).ToList();
+        Assert.Equal(["m1", "m1-2"], ends);
+        Assert.Equal(
+            [("m1", "A"), ("m1-2", "B"), ("m1-2", "C")],
+            events.OfType<TextMessageContentEvent>().Select(e => (e.MessageId, e.Delta)).ToList());
+
+        // The tool call still hangs off the provider message it was produced in.
+        var toolStart = Assert.Single(events.OfType<ToolCallStartEvent>());
+        Assert.Equal("m1", toolStart.ParentMessageId);
+
+        var types = events.Select(e => e.GetType().Name).ToList();
+        Assert.Equal(
+            [
+                "RunStartedEvent",
+                "TextMessageStartEvent", "TextMessageContentEvent", "TextMessageEndEvent",
+                "ToolCallStartEvent", "ToolCallArgsEvent", "ToolCallEndEvent",
+                "TextMessageStartEvent", "TextMessageContentEvent", "TextMessageContentEvent", "TextMessageEndEvent",
+                "RunFinishedEvent",
+            ],
+            types);
+    }
+
+    // Every later resumption under the same provider id gets the next derived id.
+    [Fact]
+    public async Task TextAfterSeveralToolCalls_SameProviderMessageId_DerivesIncrementingIds()
+    {
+        var updates = ToAsyncEnumerable(
+            new ChatResponseUpdate(ChatRole.Assistant, "A") { MessageId = "m1" },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "m1", Contents = [new FunctionCallContent("call_1", "search")] },
+            new ChatResponseUpdate(ChatRole.Assistant, "B") { MessageId = "m1" },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "m1", Contents = [new FunctionCallContent("call_2", "fetch")] },
+            new ChatResponseUpdate(ChatRole.Assistant, "C") { MessageId = "m1" });
+
+        var events = await CollectEvents(updates);
+
+        Assert.Equal(["m1", "m1-2", "m1-3"], events.OfType<TextMessageStartEvent>().Select(e => e.MessageId).ToList());
+
+        // Each tool call hangs off the text segment it followed, so the client keeps the order
+        // A, call_1, B, call_2, C instead of grouping both calls under the first message.
+        Assert.Equal(["m1", "m1-2"], events.OfType<ToolCallStartEvent>().Select(e => e.ParentMessageId).ToList());
+    }
+
+    // An approval request also emits TOOL_CALL_START, so it must hang off the text segment it
+    // followed too, not the first message under the provider id.
+    [Fact]
+    public async Task ApprovalRequestAfterResumedText_SameProviderMessageId_ParentsToLatestTextSegment()
+    {
+        var updates = ToAsyncEnumerable(
+            new ChatResponseUpdate(ChatRole.Assistant, "A") { MessageId = "m1" },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "m1", Contents = [new FunctionCallContent("call_1", "search")] },
+            new ChatResponseUpdate(ChatRole.Assistant, "B") { MessageId = "m1" },
+            new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                MessageId = "m1",
+                Contents = [new ToolApprovalRequestContent("req-2", new FunctionCallContent("call_2", "delete_file"))]
+            });
+
+        var events = await CollectEvents(updates);
+
+        Assert.Equal(["m1", "m1-2"], events.OfType<TextMessageStartEvent>().Select(e => e.MessageId).ToList());
+        Assert.Equal(
+            [("call_1", "m1"), ("call_2", "m1-2")],
+            events.OfType<ToolCallStartEvent>().Select(e => (e.ToolCallId, e.ParentMessageId)).ToList());
+    }
+
+    // Reasoning closes the text message too, so text after it must not reopen the closed id.
+    [Fact]
+    public async Task TextAfterReasoning_SameProviderMessageId_StartsNewTextMessage()
+    {
+        var updates = ToAsyncEnumerable(
+            new ChatResponseUpdate(ChatRole.Assistant, "A") { MessageId = "m1" },
+            new ChatResponseUpdate { Role = ChatRole.Assistant, MessageId = "m1", Contents = [new TextReasoningContent("thinking")] },
+            new ChatResponseUpdate(ChatRole.Assistant, "B") { MessageId = "m1" });
+
+        var events = await CollectEvents(updates);
+
+        Assert.Equal(["m1", "m1-2"], events.OfType<TextMessageStartEvent>().Select(e => e.MessageId).ToList());
+    }
+
     [Fact]
     public async Task ToolCallArgsEvent_SerializesArgumentsAsJson()
     {
