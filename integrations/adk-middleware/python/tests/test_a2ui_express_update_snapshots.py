@@ -271,3 +271,56 @@ async def test_express_recreated_surface_does_not_inherit_old_creation_attribute
             "catalogId": catalog["catalogId"],
         }
         validate_payload([Catalog.from_json(catalog)], operations)
+
+
+def _created_surface_ids(result):
+    return [
+        op["createSurface"]["surfaceId"]
+        for op in result["a2ui_operations"]
+        if "createSurface" in op
+    ]
+
+
+@pytest.mark.parametrize("version", ["v0.9", "1.0"])
+async def test_each_create_gets_a_surface_of_its_own_without_a_host_default(version):
+    catalog = BasicCatalog(version).to_json()
+    model = _ExpressLlm(
+        model="scripted",
+        scripts=[
+            ['<a2ui>root=Text("First")</a2ui>'],
+            ['<a2ui>root=Text("Second")</a2ui>'],
+        ],
+    )
+    shared = get_a2ui_tool(
+        {"model": model, "catalog": catalog, "inference_format": "express"}
+    )
+    first = await shared.for_run(asyncio.Queue()).run_async(
+        args={}, tool_context=_run_context("first-call")
+    )
+    second = await shared.for_run(asyncio.Queue()).run_async(
+        args={}, tool_context=_run_context("second-call", first)
+    )
+    [first_id] = _created_surface_ids(first)
+    [second_id] = _created_surface_ids(second)
+    # A client that keys surfaces by id shows two dashboards, not one. The id
+    # comes from the tool call, so a replayed run gets the same id.
+    assert first_id == "dynamic-surface-first-call"
+    assert second_id == "dynamic-surface-second-call"
+
+
+@pytest.mark.parametrize("version", ["v0.9", "1.0"])
+async def test_a_create_keeps_the_host_default_surface_id(version):
+    catalog = BasicCatalog(version).to_json()
+    model = _ExpressLlm(model="scripted", scripts=[['<a2ui>root=Text("Only")</a2ui>']])
+    tool = get_a2ui_tool(
+        {
+            "model": model,
+            "catalog": catalog,
+            "default_surface_id": "report",
+            "inference_format": "express",
+        }
+    )
+    created = await tool.for_run(asyncio.Queue()).run_async(
+        args={}, tool_context=_run_context("create-call")
+    )
+    assert _created_surface_ids(created) == ["report"]
