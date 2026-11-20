@@ -8,7 +8,7 @@ import {
   RunErrorEvent,
 } from "@ag-ui/client";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { BaseMessage } from "@langchain/core/messages";
+import { BaseMessage, SystemMessage } from "@langchain/core/messages";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { PROTOCOL_VERSION, TokenUsage, aggregateTokenUsage } from "@ag-ui/core";
 import { LangChainResponse, streamLangChainResponse } from "./streaming";
@@ -180,10 +180,7 @@ export class LangChainAgent extends AbstractAgent {
               input.context,
               input.state,
             );
-            langchainMessages.unshift({
-              content: systemPrompt,
-              getType: () => "system",
-            } as BaseMessage);
+            langchainMessages.unshift(new SystemMessage(systemPrompt));
           }
 
           // Convert AG-UI tools to LangChain tools
