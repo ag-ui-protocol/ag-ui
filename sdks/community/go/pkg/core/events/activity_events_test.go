@@ -87,7 +87,7 @@ func TestActivityDeltaEventValidationAndJSON(t *testing.T) {
 	assert.Error(t, event.Validate())
 
 	event.MessageID = "activity-1"
-	event.Patch = []JSONPatchOperation{}
+	event.Patch = nil
 	assert.Error(t, event.Validate())
 
 	event.Patch = []JSONPatchOperation{{Op: "invalid", Path: "/status"}}
