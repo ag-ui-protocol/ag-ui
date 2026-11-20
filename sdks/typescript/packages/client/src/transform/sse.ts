@@ -16,6 +16,10 @@ import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
  */
 export const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 
+export interface ParseStreamOptions {
+  maxBufferSize?: number;
+}
+
 /**
  * Parses a stream of HTTP events into a stream of JSON objects using Server-Sent Events (SSE) format.
  * Strictly follows the SSE standard where:
@@ -27,11 +31,13 @@ export const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 export const parseSSEStream = (
   source$: Observable<HttpEvent>,
   debugLogger?: DebugLoggerInput,
+  options?: ParseStreamOptions,
   // DEFERRED (PNI-272): this is the exported stream element type; changing it
   // to `unknown` ripples into every consumer of parseSSEStream.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Observable<any> => {
   const log = resolveDebugLogger(debugLogger);
+  const maxBufferSize = options?.maxBufferSize ?? MAX_BUFFER_SIZE;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches the exported Observable<any> above
   const jsonSubject = new Subject<any>();
   // Create TextDecoder with stream option set to true to handle split UTF-8 characters
@@ -65,10 +71,10 @@ export const parseSSEStream = (
         // read that merely carried two valid events across one boundary, and
         // whether that happens is decided by how the transport grouped its
         // reads rather than by anything the stream did wrong.
-        if (buffer.length > MAX_BUFFER_SIZE) {
+        if (buffer.length > maxBufferSize) {
           jsonSubject.error(
             new Error(
-              `SSE buffer size exceeded maximum limit of ${MAX_BUFFER_SIZE / (1024 * 1024)} MB`,
+              `SSE buffer size exceeded maximum limit of ${maxBufferSize / (1024 * 1024)} MB`,
             ),
           );
           return;
