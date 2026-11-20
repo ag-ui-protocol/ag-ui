@@ -31,3 +31,4 @@ static AGUI.Server.RunAgentInputExtensions.ToChatRequestContext(this AGUI.Abstra
 static AGUI.Server.RunAgentInputExtensions.TryGetRunAgentInput(this Microsoft.Extensions.AI.ChatOptions! options, out AGUI.Abstractions.RunAgentInput? input) -> bool
 static AGUI.Server.RunAgentInputExtensions.TryGetRunAgentState<T>(this Microsoft.Extensions.AI.ChatOptions! options, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>! jsonTypeInfo, out T? state) -> bool
 AGUI.Server.AGUIStreamOptions.WithUsageProvider(string? provider) -> AGUI.Server.AGUIStreamOptions!
+AGUI.Server.AGUIStreamOptions.OnStreamError(System.Action<System.Exception!>! callback) -> AGUI.Server.AGUIStreamOptions!
