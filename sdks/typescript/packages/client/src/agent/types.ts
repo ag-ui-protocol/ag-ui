@@ -1,4 +1,4 @@
-import { Message, ResumeEntry, RunAgentInput, State } from "@ag-ui/core";
+import { AGUIError, Message, ResumeEntry, RunAgentInput, State } from "@ag-ui/core";
 
 /** Normalized debug configuration for the AG-UI agent. */
 export interface ResolvedAgentDebugConfig {
@@ -52,6 +52,37 @@ export interface HttpAgentConfig extends AgentConfig {
   url: string;
   headers?: Record<string, string>;
   fetch?: HttpAgentFetchFn;
+  /**
+   * Abort the run if response headers do not arrive within this many
+   * milliseconds, or if no bytes arrive on the response body for this long.
+   * Any body chunk, including SSE comment keepalives (`: ping`), resets the
+   * timer. Unset (the default) waits indefinitely. When provided, must be a
+   * positive finite number of at most `MAX_IDLE_TIMEOUT_MS` (2147483647 ms,
+   * about 24.8 days).
+   */
+  idleTimeoutMs?: number;
+}
+
+/**
+ * Largest timeout accepted by Node's `setTimeout` (2^31 - 1 ms, about 24.8 days);
+ * larger delays overflow the 32-bit signed integer timer and fire after 1 ms.
+ */
+export const MAX_IDLE_TIMEOUT_MS = 2_147_483_647;
+
+/** Accept a positive finite timeout up to MAX_IDLE_TIMEOUT_MS, or undefined for no timeout. */
+export function resolveIdleTimeoutMs(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new AGUIError(
+      `Invalid idleTimeoutMs ${String(value)}: expected a positive finite number.`,
+    );
+  }
+  if (value > MAX_IDLE_TIMEOUT_MS) {
+    throw new AGUIError(
+      `Invalid idleTimeoutMs ${String(value)}: must be at most ${MAX_IDLE_TIMEOUT_MS}ms.`,
+    );
+  }
+  return value;
 }
 
 export interface RunAgentParameters

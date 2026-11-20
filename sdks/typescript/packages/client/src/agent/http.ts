@@ -1,7 +1,12 @@
 import { AbstractAgent, RunAgentResult } from "./agent";
 import { runHttpRequest } from "@/run/http-request";
 import { enforceOutgoingInput } from "@/enforce";
-import { HttpAgentConfig, HttpAgentFetchFn, RunAgentParameters } from "./types";
+import {
+  HttpAgentConfig,
+  HttpAgentFetchFn,
+  RunAgentParameters,
+  resolveIdleTimeoutMs,
+} from "./types";
 import { RunAgentInput, BaseEvent } from "@ag-ui/core";
 import { structuredClone_ } from "@/utils";
 import { transformHttpEventStream } from "@/transform/http";
@@ -43,6 +48,7 @@ export class HttpAgent extends AbstractAgent {
   public headers: Record<string, string>;
   public fetch: HttpAgentFetchFn;
   public abortController: AbortController = new AbortController();
+  public idleTimeoutMs?: number;
 
   /**
    * Returns the fetch config for the http request.
@@ -77,9 +83,11 @@ export class HttpAgent extends AbstractAgent {
   }
 
   constructor(config: HttpAgentConfig) {
+    const idleTimeoutMs = resolveIdleTimeoutMs(config.idleTimeoutMs);
     super(config);
     this.url = config.url;
     this.headers = structuredClone_(config.headers ?? {});
+    this.idleTimeoutMs = idleTimeoutMs;
     // Bind the default fetch to the global object. Storing the bare `fetch`
     // and later invoking it as `this.fetch(...)` sets the receiver to the agent
     // instance; a browser's native fetch is a checked-receiver method and throws
@@ -96,12 +104,29 @@ export class HttpAgent extends AbstractAgent {
     // before requestInit, so a subclass overriding the request shape still
     // transmits enforced input. Unknown material is stripped with a warning;
     // a malformed known field fails the run before a byte leaves the process.
-    const httpEvents = runHttpRequest(() =>
+    const idleTimeoutMs = this.idleTimeoutMs;
+    // Capture this run's controller so a later reassignment of the public
+    // field cannot redirect the idle-timeout abort to a different run.
+    const abortController = this.abortController;
+    const fetchResponse = () =>
       this.fetch(
         this.url,
         this.requestInit(enforceOutgoingInput(input, { maxEntries: this.maxEnforcedEntries })),
-      ),
-    );
+      );
+    // Omit the options argument when unset so existing callers (and tests)
+    // still see a single-argument call.
+    const httpEvents =
+      idleTimeoutMs === undefined
+        ? runHttpRequest(fetchResponse)
+        : runHttpRequest(fetchResponse, {
+            idleTimeoutMs,
+            abortSignal: abortController.signal,
+            onIdleTimeout: (error) => {
+              if (!abortController.signal.aborted) {
+                abortController.abort(error);
+              }
+            },
+          });
     return transformHttpEventStream(httpEvents, this.debugLogger);
   }
 
@@ -110,6 +135,7 @@ export class HttpAgent extends AbstractAgent {
     cloned.url = this.url;
     cloned.headers = structuredClone_(this.headers ?? {});
     cloned.fetch = this.fetch;
+    cloned.idleTimeoutMs = this.idleTimeoutMs;
 
     const newController = new AbortController();
     const originalSignal = this.abortController.signal as AbortSignal & { reason?: unknown };
