@@ -104,7 +104,7 @@ func (e *Emitter) TextStart(id string) {
 
 func (e *Emitter) TextContent(id, delta string) {
 	if delta == "" {
-		return // SDK rejects empty deltas
+		return // This example omits no-op chunks; the SDK accepts empty deltas.
 	}
 	e.write(events.NewTextMessageContentEvent(id, delta))
 }
