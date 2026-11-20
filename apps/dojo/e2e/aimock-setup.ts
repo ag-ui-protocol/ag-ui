@@ -135,6 +135,48 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
   registerA2UIRecoveryFixtures(mockServer);
   registerOpenAIAgentsFixtures(mockServer);
 
+  // The JS adapter uses its own ag_ui_update_state tool, unlike the Python
+  // integration's updateWorkingMemory tool in shared-state.json.
+  mockServer.addFixture({
+    match: {
+      predicate: (req) =>
+        !!req.tools?.some(
+          (tool) => tool.function.name === "ag_ui_update_state",
+        ) &&
+        req.messages.some(
+          (message) =>
+            message.role === "user" &&
+            textOf(message.content).toLowerCase().includes("pasta recipe"),
+        ),
+    },
+    response: {
+      toolCalls: [
+        {
+          name: "ag_ui_update_state",
+          arguments: JSON.stringify({
+            state: {
+              recipe: {
+                title: "Pasta Recipe",
+                skill_level: "Intermediate",
+                cooking_time: "30 min",
+                special_preferences: [],
+                ingredients: [
+                  { icon: "🍝", name: "Pasta", amount: "400g" },
+                  { icon: "🧂", name: "Salt", amount: "1 tsp" },
+                ],
+                instructions: [
+                  "Boil the pasta until al dente.",
+                  "Season and serve.",
+                ],
+              },
+            },
+          }),
+          id: "call_ag_ui_update_state_js",
+        },
+      ],
+    },
+  });
+
   // CrewAI A2UI fixtures (openai/gpt-5.4, scoped to CrewAI-unique prompts so
   // they never intercept the LangGraph/ADK demos). Predicate fixtures, before
   // the generic loader.
