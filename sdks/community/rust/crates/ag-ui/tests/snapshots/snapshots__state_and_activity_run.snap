@@ -1,0 +1,70 @@
+---
+source: crates/ag-ui-core/tests/snapshots.rs
+expression: "vec![Event::state_snapshot(json!({ \"counter\": 1, \"items\": [] })),\nEvent::state_delta(vec![PatchOperation::replace(\"/counter\", json!(2)),\nPatchOperation::add(\"/items/-\", json!(\"first\")),\nPatchOperation::test(\"/counter\", json!(2)),]),\nEvent::activity_snapshot(\"msg-4\", \"web_search\", content),\nEvent::activity_delta(\"msg-4\", \"web_search\",\nvec![PatchOperation::replace(\"/results\", json!(3))],),\nEvent::messages_snapshot(vec![Message::user(\"msg-0\", \"What's the weather?\"),\nMessage::assistant(\"msg-1\", \"18C and raining.\"),]),]"
+---
+[
+  {
+    "type": "STATE_SNAPSHOT",
+    "snapshot": {
+      "counter": 1,
+      "items": []
+    }
+  },
+  {
+    "type": "STATE_DELTA",
+    "delta": [
+      {
+        "op": "replace",
+        "path": "/counter",
+        "value": 2
+      },
+      {
+        "op": "add",
+        "path": "/items/-",
+        "value": "first"
+      },
+      {
+        "op": "test",
+        "path": "/counter",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "type": "ACTIVITY_SNAPSHOT",
+    "messageId": "msg-4",
+    "activityType": "web_search",
+    "content": {
+      "query": "seoul weather",
+      "results": 0
+    },
+    "replace": true
+  },
+  {
+    "type": "ACTIVITY_DELTA",
+    "messageId": "msg-4",
+    "activityType": "web_search",
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/results",
+        "value": 3
+      }
+    ]
+  },
+  {
+    "type": "MESSAGES_SNAPSHOT",
+    "messages": [
+      {
+        "role": "user",
+        "id": "msg-0",
+        "content": "What's the weather?"
+      },
+      {
+        "role": "assistant",
+        "id": "msg-1",
+        "content": "18C and raining."
+      }
+    ]
+  }
+]

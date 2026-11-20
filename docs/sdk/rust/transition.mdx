@@ -1,0 +1,18 @@
+---
+title: "Rust SDK maintenance and versioning"
+description: "Coordination of community Rust SDK work and the feature-based crate’s release policy"
+---
+
+The feature-based `ag-ui` crate is proposed alongside `ag-ui-core` and
+`ag-ui-client`. The existing packages have their own 1.0 parity proposal.
+Upstream maintainers decide how the implementations will be maintained and who
+reviews future changes. [Feature-based proposal](https://github.com/ag-ui-protocol/ag-ui/pull/2778) · [Existing packages' 1.0 parity](https://github.com/ag-ui-protocol/ag-ui/pull/3214) · [Code ownership](https://github.com/ag-ui-protocol/ag-ui/pull/2367).
+
+The feature-based SDK uses crate version `1.0.0` for its release supporting the
+frozen AG-UI 1.0 protocol. Cargo SemVer governs future crate versions. Compatible
+fixes increment the patch, compatible additions increment the minor, and breaking
+public API changes increment the major version. Wire peers continue to declare
+the protocol version they speak. [Cargo SemVer](https://doc.rust-lang.org/cargo/reference/semver.html).
+
+The workflow and Trusted Publisher setup for future `ag-ui` releases from the
+monorepo are documented in `sdks/community/rust/docs/publishing.md`.

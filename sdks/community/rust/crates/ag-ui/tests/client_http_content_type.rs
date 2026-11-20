@@ -1,0 +1,232 @@
+#![cfg(all(feature = "http", feature = "axum"))]
+
+use ag_ui::RunAgentInput;
+use ag_ui::client::Error;
+use ag_ui::client::transport::{HttpTransport, Transport};
+use axum::{Router, body::Body, http::StatusCode, response::Response, routing::post};
+use futures_util::{StreamExt, stream};
+use std::{convert::Infallible, time::Duration};
+
+#[tokio::test]
+async fn http_transport_accepts_sse_media_type_with_case_and_parameters() {
+    for content_type in [
+        "text/event-stream",
+        "Text/Event-Stream; charset=UTF-8",
+        "TEXT/EVENT-STREAM ; charset=\"utf-8\"",
+    ] {
+        let body = format!(
+            "data: {}\n\ndata: {}\n\n",
+            serde_json::to_string(&ag_ui::Event::run_started("t", "r")).unwrap(),
+            serde_json::to_string(&ag_ui::Event::run_finished_success("t", "r")).unwrap(),
+        );
+        let app = Router::new().route(
+            "/agent",
+            post(move || {
+                let body = body.clone();
+                async move {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", content_type)
+                        .body(Body::from(body))
+                        .unwrap()
+                }
+            }),
+        );
+        let (transport, server) = start(app).await;
+        let stream = transport.run(RunAgentInput::new("t", "r")).await.unwrap();
+        let mut events = Box::pin(stream.into_events(|_| {}));
+        assert!(matches!(
+            events.next().await,
+            Some(Ok(ag_ui::Event::RunStarted(_)))
+        ));
+        assert!(matches!(
+            events.next().await,
+            Some(Ok(ag_ui::Event::RunFinished(_)))
+        ));
+        assert!(events.next().await.is_none());
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn http_transport_rejects_wrong_or_missing_content_type_before_reading_body() {
+    for content_type in [
+        Some("application/json"),
+        Some("application/vnd.ag-ui.event+proto"),
+        None,
+    ] {
+        let app = Router::new().route(
+            "/agent",
+            post(move || async move {
+                let mut response = Response::builder().status(StatusCode::OK);
+                if let Some(content_type) = content_type {
+                    response = response.header("content-type", content_type);
+                }
+                response
+                    .body(Body::from_stream(stream::pending::<
+                        Result<Vec<u8>, Infallible>,
+                    >()))
+                    .unwrap()
+            }),
+        );
+        let (transport, server) = start(app).await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            transport.run(RunAgentInput::new("t", "r")),
+        )
+        .await
+        .expect("the client must decide from headers without waiting for body bytes");
+        server.abort();
+        match result {
+            Err(Error::UnexpectedContentType(actual)) => {
+                assert_eq!(actual, content_type.unwrap_or("<missing>"));
+            }
+            _ => panic!("expected an unexpected Content-Type error for {content_type:?}"),
+        }
+    }
+}
+
+async fn start(app: Router) -> (HttpTransport, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let transport = HttpTransport::new(format!("http://{address}/agent")).unwrap();
+    (transport, server)
+}
+
+#[test]
+fn debug_omits_headers_and_endpoint_credentials_in_both_formats() {
+    let builder = HttpTransport::builder(
+        "https://example:private-password@localhost/agent?access=private-query",
+    )
+    .header("x-example", "synthetic-header-value");
+    for debug in [format!("{builder:?}"), format!("{builder:#?}")] {
+        assert!(debug.contains("<redacted>"));
+        for secret in [
+            "synthetic-header-value",
+            "private-password",
+            "private-query",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+    }
+    let transport = builder.build().unwrap();
+    assert_eq!(transport.headers()["x-example"], "synthetic-header-value");
+    assert!(transport.headers()["x-example"].is_sensitive());
+    for debug in [format!("{transport:?}"), format!("{transport:#?}")] {
+        assert!(debug.contains("<redacted>"));
+        for secret in [
+            "synthetic-header-value",
+            "private-password",
+            "private-query",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+    }
+}
+
+#[tokio::test]
+async fn default_client_returns_a_redirect_response() {
+    // A benign same-origin redirect exercises the default policy.
+    let app = Router::new()
+        .route(
+            "/agent",
+            post(|| async {
+                Response::builder()
+                    .status(StatusCode::TEMPORARY_REDIRECT)
+                    .header("location", "/destination")
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        )
+        .route("/destination", post(|| async { StatusCode::NO_CONTENT }));
+    let (transport, server) = start(app).await;
+    let result = transport.run(RunAgentInput::new("t", "r")).await;
+    server.abort();
+    assert!(matches!(result, Err(Error::Http { status: 307, .. })));
+}
+
+#[tokio::test]
+async fn a_successful_sse_body_can_pause_longer_than_the_error_body_budget() {
+    let app = Router::new().route(
+        "/agent",
+        post(|| async {
+            let body = stream::once(async {
+                tokio::time::sleep(Duration::from_millis(1200)).await;
+                let event = ag_ui::Event::run_started("t", "r");
+                Ok::<_, Infallible>(format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&event).unwrap()
+                ))
+            });
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from_stream(body))
+                .unwrap()
+        }),
+    );
+    let (transport, server) = start(app).await;
+    let stream = transport.run(RunAgentInput::new("t", "r")).await.unwrap();
+    let mut events = Box::pin(stream.into_events(|_| {}));
+    assert!(matches!(
+        events.next().await,
+        Some(Ok(ag_ui::Event::RunStarted(_)))
+    ));
+    server.abort();
+}
+
+#[test]
+fn authenticated_remote_http_requires_an_explicit_opt_in() {
+    use ag_ui::client::HttpAgent;
+
+    let remote = "http://example.com/run";
+    assert!(
+        HttpAgent::builder(remote)
+            .client(reqwest::Client::new())
+            .build()
+            .is_err()
+    );
+    assert!(HttpAgent::new(remote).is_ok());
+    assert!(
+        HttpAgent::builder(remote)
+            .header("x-api-key", "test-key")
+            .build()
+            .is_err()
+    );
+    assert!(
+        HttpAgent::builder(remote)
+            .header("x-api-key", "test-key")
+            .allow_insecure_http(true)
+            .build()
+            .is_ok()
+    );
+    for url in [
+        "https://example.com/run",
+        "http://localhost:8241",
+        "http://127.12.0.1",
+        "http://[::1]:8241",
+    ] {
+        assert!(
+            HttpAgent::builder(url)
+                .header("authorization", "Bearer example")
+                .build()
+                .is_ok(),
+            "{url}"
+        );
+    }
+    for url in [
+        "http://localhost.example.com/run",
+        "http://user@example.com/run",
+        "http://example.com/?key=example",
+    ] {
+        assert!(
+            HttpAgent::builder(url)
+                .header("cookie", "example")
+                .build()
+                .is_err(),
+            "{url}"
+        );
+    }
+    let error = HttpTransport::new("https://private-value@:bad").unwrap_err();
+    assert!(!error.to_string().contains("private-value"));
+}
