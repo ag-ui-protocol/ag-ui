@@ -31,6 +31,10 @@ agents: local agents don't use it.
 npm install @mastra/client-js
 ```
 
+The type declarations of `@ag-ui/mastra` still import `MastraClient` from
+`@mastra/client-js`. TypeScript projects that don't install it need
+`"skipLibCheck": true` in their `tsconfig.json`.
+
 The optional CopilotKit integration exports `registerCopilotKit`. Import it
 from the entry point for your CopilotKit version, and install its peer
 dependency only when you use it. The route options are the same in both; the
