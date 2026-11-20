@@ -26,12 +26,14 @@ constant drifts (importing the constant would hide the drift).
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import Context, EventType, RunAgentInput, Tool, UserMessage
 from strands.tools.registry import ToolRegistry
+from strands.hooks.registry import HookRegistry
 
 from ag_ui_strands.a2ui_tool import (
     A2UI_STREAM_KEY,
@@ -45,12 +47,16 @@ from ag_ui_strands.a2ui_tool import (
 from ag_ui_strands.agent import StrandsAgent
 from ag_ui_strands.config import StrandsAgentConfig
 from tests.interrupt_state_stub import InterruptStateStub
+from tests.hook_helpers import invoke_after_model_call, invoke_before_model_call
 
 GENERATE_A2UI_TOOL_NAME = "generate_a2ui"
 RENDER_A2UI_TOOL_NAME = "render_a2ui"
 A2UI_SCHEMA_CONTEXT_DESCRIPTION = (
     "A2UI Component Schema — available components for generating UI surfaces. "
     "Use these component names and properties when creating A2UI operations."
+)
+A2UI_RENDER_GUIDE_DESCRIPTION = (
+    "A2UI render tool usage guide — how to call render_a2ui with valid arguments."
 )
 A2UI_OPS_KEY = "a2ui_operations"
 
@@ -476,8 +482,13 @@ def _build_agent(thread_id: str, stream_events: list, config=None) -> StrandsAge
     # mock, spuriously tripping the "no session_manager" interrupt guard.
     mock_inner._interrupt_state = InterruptStateStub()
     mock_inner.messages = []
+    mock_inner.hooks = HookRegistry()
+    mock_inner.model_messages = []
 
     async def _stream(_msg):
+        invoke_before_model_call(mock_inner.hooks, mock_inner)
+        mock_inner.model_messages.append(copy.deepcopy(mock_inner.messages))
+        invoke_after_model_call(mock_inner.hooks, mock_inner)
         for event in stream_events:
             yield event
 
@@ -539,6 +550,46 @@ async def test_auto_inject_registers_generate_and_drops_render_across_turns():
     # "Refresh" means a REBUILT tool carrying turn-2 glue — reusing the turn-1
     # object would resolve `intent:"update"` priors against stale history.
     assert registry.registry[GENERATE_A2UI_TOOL_NAME] is not tool_turn1
+
+
+@pytest.mark.asyncio
+async def test_auto_inject_hides_stale_render_tool_context_from_both_models():
+    """The outer and recovery models must not be told to call the dropped tool."""
+    agent = _build_agent("thread-1", [])
+    instance = agent._agents_by_thread["thread-1"]
+    inp = _msg_input(
+        forwarded_props={"injectA2UITool": True},
+        tools=[RENDER_TOOL_INPUT],
+        context=[
+            Context(description=A2UI_SCHEMA_CONTEXT_DESCRIPTION, value="raw catalog"),
+            Context(description=A2UI_RENDER_GUIDE_DESCRIPTION, value="call render_a2ui"),
+            Context(description="account", value="premium"),
+        ],
+    )
+
+    await _collect(agent, inp)
+
+    assert set(instance.tool_registry.registry) == {GENERATE_A2UI_TOOL_NAME}
+    assert instance.model_messages == [[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "text": (
+                        "Context provided by the application:\n"
+                        "- account: premium"
+                        "\n\nhi"
+                    )
+                },
+            ],
+        },
+    ]]
+    assert instance.messages == [
+        {"role": "user", "content": [{"text": "hi"}]}
+    ]
+    generate_tool = instance.tool_registry.registry[GENERATE_A2UI_TOOL_NAME]
+    recovery_context = generate_tool._glue["state"]["ag-ui"]["context"]
+    assert [entry.description for entry in recovery_context] == ["account"]
 
 
 @pytest.mark.asyncio
@@ -674,6 +725,131 @@ async def test_generate_tool_single_forced_render_call_and_returns_envelope():
     assert calls == [{"tool": {"name": RENDER_A2UI_TOOL_NAME}}]
     # The committed envelope reaches the outer loop (the run can finish).
     assert A2UI_OPS_KEY in str(events[-1])
+
+
+def _configured_a2ui_tool(model, entry_path, config):
+    if entry_path == "factory":
+        return get_a2ui_tools({"model": model, **config})
+    plan = plan_a2ui_injection(
+        model=model,
+        input=_input(forwarded_props={"injectA2UITool": True}),
+        existing_tool_names=[],
+        config=config,
+    )
+    assert plan is not None
+    return plan["tool"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry_path", ["factory", "injection"])
+@pytest.mark.parametrize(
+    "force_config",
+    [{}, {"force_tool_choice": True}, {"force_tool_choice": False}, {"force_tool_choice": None}],
+    ids=["default", "forced", "unforced", "null"],
+)
+async def test_tool_choice_request_option(entry_path, force_config):
+    calls = []
+
+    class FakeModel:
+        async def stream(self, messages, **kwargs):
+            calls.append(kwargs)
+            yield _block_start()
+            yield _block_delta(
+                '{"surfaceId":"s1","components":[{"id":"root","component":"Row"}]}'
+            )
+            yield _BLOCK_STOP
+
+    config = {"default_catalog_id": "host-catalog", **force_config}
+    events = await _drive_stream(_configured_a2ui_tool(FakeModel(), entry_path, config))
+
+    assert len(calls) == 1
+    if force_config.get("force_tool_choice") is False:
+        assert "tool_choice" not in calls[0]
+    else:
+        assert calls[0]["tool_choice"] == {"tool": {"name": RENDER_A2UI_TOOL_NAME}}
+    assert [spec["name"] for spec in calls[0]["tool_specs"]] == [RENDER_A2UI_TOOL_NAME]
+    assert RENDER_A2UI_TOOL_NAME in calls[0]["system_prompt"]
+    payloads = [
+        ev["tool_stream_event"]["data"][A2UI_STREAM_KEY]
+        for ev in events
+        if "tool_stream_event" in ev
+    ]
+    assert [p["kind"] for p in payloads] == ["start", "args", "end"]
+    streamed_args = json.loads("".join(p["delta"] for p in payloads if p["kind"] == "args"))
+    assert streamed_args["catalogId"] == "host-catalog"
+    assert A2UI_OPS_KEY in str(events[-1])
+    assert "host-catalog" in str(events[-1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry_path", ["factory", "injection"])
+@pytest.mark.parametrize("first_output", ["text", "invalid"])
+@pytest.mark.parametrize("succeeds", [True, False], ids=["recovers", "exhausts"])
+async def test_unforced_tool_choice_preserves_bounded_recovery(entry_path, first_output, succeeds):
+    calls = []
+    attempts = []
+
+    class FakeModel:
+        async def stream(self, messages, **kwargs):
+            calls.append(kwargs)
+            if succeeds and len(calls) == 2:
+                yield _block_start()
+                yield _block_delta('{"components":[{"id":"root","component":"Row"}]}')
+                yield _BLOCK_STOP
+            elif first_output == "invalid":
+                yield _block_start()
+                yield _block_delta('{"components":[]}')
+                yield _BLOCK_STOP
+            else:
+                yield {"contentBlockDelta": {"delta": {"text": "I can render a UI."}}}
+                yield _BLOCK_STOP
+
+    tool = _configured_a2ui_tool(FakeModel(), entry_path, {
+        "force_tool_choice": False,
+        "recovery": {"maxAttempts": 2},
+        "on_a2ui_attempt": attempts.append,
+    })
+    events = await _drive_stream(tool)
+    assert len(calls) == 2
+    assert all("tool_choice" not in call for call in calls)
+    assert len(attempts) == 2
+    assert attempts[0]["ok"] is False
+    assert attempts[1]["ok"] is succeeds
+    assert "Previous attempt was invalid" in calls[1]["system_prompt"]
+    if succeeds:
+        assert A2UI_OPS_KEY in str(events[-1])
+        assert "a2ui_recovery_exhausted" not in str(events[-1])
+    else:
+        assert "a2ui_recovery_exhausted" in str(events[-1])
+        assert A2UI_OPS_KEY not in str(events[-1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force", [True, False])
+@pytest.mark.parametrize("error_type", [RuntimeError, TypeError, asyncio.CancelledError])
+async def test_tool_choice_preserves_error_classification(force, error_type):
+    calls = []
+
+    class RejectingModel:
+        async def stream(self, messages, **kwargs):
+            calls.append(kwargs)
+            raise error_type("tool_choice is not supported")
+            yield  # pragma: no cover — async generator protocol
+
+    tool = get_a2ui_tools({
+        "model": RejectingModel(),
+        "force_tool_choice": force,
+        "recovery": {"maxAttempts": 2},
+    })
+    if error_type is RuntimeError:
+        events = await _drive_stream(tool)
+        assert "a2ui_recovery_exhausted" in str(events[-1])
+        assert len(calls) == 2
+    else:
+        with pytest.raises(error_type):
+            await _drive_stream(tool)
+        assert len(calls) == 1
+    assert all(("tool_choice" in call) is force for call in calls)
 
 
 @pytest.mark.asyncio
@@ -1281,9 +1457,9 @@ def _text_chunks(text):
 
 class _DynamicA2UIFakeModel(StrandsModel):
     """Scripts the full dynamic-A2UI conversation across the OUTER Strands agent
-    loop AND the inner forced render turn, so an end-to-end run exercises the
-    real event loop (not a stubbed stream_async). The forced render turn (the
-    sub-agent) is identified by its tool_choice; the outer turn calls
+    loop AND the inner render turn, so an end-to-end run exercises the
+    real event loop (not a stubbed stream_async). The render turn (the
+    sub-agent) is identified by its tool specs; the outer turn calls
     generate_a2ui first, then narrates once its result is in history."""
 
     def __init__(self):
@@ -1303,8 +1479,8 @@ class _DynamicA2UIFakeModel(StrandsModel):
     async def stream(
         self, messages, tool_specs=None, system_prompt=None, *, tool_choice=None, **kwargs
     ):
-        # Inner forced render turn (the generate_a2ui sub-agent).
-        if tool_choice == {"tool": {"name": RENDER_A2UI_TOOL_NAME}}:
+        # Recognize the render request even when the host opts out of forcing.
+        if [spec["name"] for spec in (tool_specs or [])] == [RENDER_A2UI_TOOL_NAME]:
             self.render_calls += 1
             for ch in _tool_use_chunks(
                 RENDER_A2UI_TOOL_NAME,
@@ -1337,7 +1513,8 @@ class _DynamicA2UIFakeModel(StrandsModel):
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_dynamic_a2ui_run_emits_run_finished():
+@pytest.mark.parametrize("config", [{}, {"force_tool_choice": False}], ids=["default", "unforced"])
+async def test_end_to_end_dynamic_a2ui_run_emits_run_finished(config):
     """End-to-end through the REAL Strands agent loop: an auto-injected
     generate_a2ui call paints an A2UI surface (render_a2ui streams), its
     envelope returns to the outer loop as a TOOL_CALL_RESULT, the agent
@@ -1345,7 +1522,7 @@ async def test_end_to_end_dynamic_a2ui_run_emits_run_finished():
     still-Running generate_a2ui. Run-level regression for the dynamic-A2UI hang."""
     model = _DynamicA2UIFakeModel()
     core = StrandsAgentCore(model=model, system_prompt="You render UIs.", tools=[])
-    agent = StrandsAgent(core, name="strands-e2e", config=StrandsAgentConfig())
+    agent = StrandsAgent(core, name="strands-e2e", config=StrandsAgentConfig(a2ui=config))
 
     inp = _msg_input(
         forwarded_props={"injectA2UITool": True},
@@ -1372,7 +1549,7 @@ async def test_end_to_end_dynamic_a2ui_run_emits_run_finished():
     assert EventType.TEXT_MESSAGE_CONTENT in types
     assert EventType.RUN_FINISHED in types
     assert EventType.RUN_ERROR not in types
-    # Exactly one forced render turn — no agentic continuation in the sub-agent.
+    # Exactly one render turn — no agentic continuation in the sub-agent.
     assert model.render_calls == 1
     # Outer loop: one generate call + one narration.
     assert model.outer_calls == 2

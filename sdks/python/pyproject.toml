@@ -1,6 +1,6 @@
 [project]
 name = "ag-ui-protocol"
-version = "0.1.20"
+version = "1.0.0"
 description = ""
 license-files = ["LICENSE"]
 authors = [
@@ -9,9 +9,18 @@ authors = [
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
+keywords = ["ag-ui", "agent", "protocol", "agui-protocol-1.0"]
 dependencies = [
     "pydantic>=2.11.2",
 ]
+
+[project.urls]
+Changelog = "https://github.com/ag-ui-protocol/ag-ui/releases"
+
+[tool.ag-ui]
+# The protocol version this distribution implements, kept in step with the
+# schema $id by the spec harness.
+protocol-version = "1.0"
 
 [tool.ag-ui.scripts]
 test = "python -m unittest discover tests"

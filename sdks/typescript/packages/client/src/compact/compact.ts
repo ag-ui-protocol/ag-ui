@@ -6,6 +6,9 @@ import {
   TextMessageStartEvent,
   TextMessageContentEvent,
   TextMessageEndEvent,
+  ReasoningMessageStartEvent,
+  ReasoningMessageContentEvent,
+  ReasoningMessageEndEvent,
   ToolCallStartEvent,
   ToolCallArgsEvent,
   ToolCallEndEvent,
@@ -21,14 +24,12 @@ import { structuredClone_ } from "../utils";
  * with. Same last-write-wins, replace-wholesale rule the reducer applies, which
  * is what makes a compacted replay agree with the original stream.
  *
- * Ordering note. Compaction deliberately reorders events to keep each stream's
- * events together: a buffer flushes when its END arrives, and any non-streaming
- * event that arrived mid-stream is emitted after it.
- *
- * That reordering is not semantics-preserving in general, and this predates
- * metadata. A MESSAGES_SNAPSHOT interrupting a text stream is emitted after the
- * stream's own events, so on replay it overwrites what they produced — the
- * appended content as much as the merged metadata.
+ * Ordering note. Compaction moves events to keep each stream's events together,
+ * at the position of the stream's first event: an event that arrived mid-stream
+ * comes out after the stream. Streams keep the order they opened in, so a replay
+ * creates the messages in the same order. A MESSAGES_SNAPSHOT is a barrier: it
+ * restates every message, so what each open stream delivered before it is
+ * emitted ahead of it and the rest after it, and no delta is combined across it.
  *
  * What metadata does not add is any *new* order sensitivity. Every merge
  * destination is unique — each message has its own, and each tool call carries
@@ -76,36 +77,128 @@ function collapseMetadata(events: BaseEvent[]): Metadata | undefined {
 /**
  * Compacts streaming events by consolidating multiple deltas into single events.
  * For text messages: multiple content deltas become one concatenated delta.
+ * For reasoning messages: multiple content deltas become one concatenated delta.
  * For tool calls: multiple args deltas become one concatenated delta.
  * For state: all STATE_SNAPSHOT and STATE_DELTA events within a run are compacted
  *   into a single STATE_SNAPSHOT representing the final state.
- * Events between related streaming events are reordered to keep streaming events together.
+ * Each stream's events are kept together where the stream started, so streams
+ * stay in the order they opened in and other events keep their arrival order.
+ * Deltas are not combined across a MESSAGES_SNAPSHOT (see the ordering note on
+ * `carryStartMetadata`).
  *
  * @param events - Array of events to compact
  * @returns Compacted array of events
  */
 export function compactEvents(events: BaseEvent[]): BaseEvent[] {
-  const compacted: BaseEvent[] = [];
+  // The output in arrival order. A stream reserves a slot where its first event
+  // arrived and fills it when it ends, so it keeps its place among the other
+  // streams and events: everything that arrived after its first event, even
+  // mid-stream, comes out after it.
+  const output: Array<BaseEvent | BaseEvent[]> = [];
+  const reserveSlot = (): BaseEvent[] => {
+    const slot: BaseEvent[] = [];
+    output.push(slot);
+    return slot;
+  };
+
   const pendingTextMessages = new Map<
     string,
     {
+      slot?: BaseEvent[];
       start?: TextMessageStartEvent;
       contents: TextMessageContentEvent[];
       end?: TextMessageEndEvent;
-      otherEvents: BaseEvent[];
+      postStartMetadata?: Metadata;
+    }
+  >();
+  const pendingReasoningMessages = new Map<
+    string,
+    {
+      slot?: BaseEvent[];
+      start?: ReasoningMessageStartEvent;
+      contents: ReasoningMessageContentEvent[];
+      end?: ReasoningMessageEndEvent;
       postStartMetadata?: Metadata;
     }
   >();
   const pendingToolCalls = new Map<
     string,
     {
+      slot?: BaseEvent[];
       start?: ToolCallStartEvent;
       args: ToolCallArgsEvent[];
       end?: ToolCallEndEvent;
-      otherEvents: BaseEvent[];
       postStartMetadata?: Metadata;
     }
   >();
+
+  // The buffer for a stream's events. A stream split by a messages snapshot has
+  // no slot until its next event, which reserves one after the snapshot.
+  const pendingFor = <P extends { slot?: BaseEvent[] }>(
+    pendingById: Map<string, P>,
+    id: string,
+    create: () => P,
+  ): P => {
+    let pending = pendingById.get(id);
+    if (!pending) {
+      pending = create();
+      pendingById.set(id, pending);
+    }
+    if (!pending.slot) {
+      pending.slot = reserveSlot();
+    }
+    return pending;
+  };
+
+  // A stream that never ended is still emitted, in its slot.
+  const flushPendingStreams = () => {
+    for (const [id, pending] of pendingTextMessages) {
+      if (pending.slot) flushTextMessage(id, pending, pending.slot);
+    }
+    for (const [id, pending] of pendingReasoningMessages) {
+      if (pending.slot) flushReasoningMessage(id, pending, pending.slot);
+    }
+    for (const [id, pending] of pendingToolCalls) {
+      if (pending.slot) flushToolCall(id, pending, pending.slot);
+    }
+    pendingTextMessages.clear();
+    pendingReasoningMessages.clear();
+    pendingToolCalls.clear();
+  };
+
+  // A MESSAGES_SNAPSHOT restates every message, including what the open streams
+  // have delivered so far, and the deltas after it still apply. Emit what each
+  // open stream has buffered ahead of the snapshot and collect the rest after
+  // it, so no delta is combined across it.
+  const splitPendingStreams = () => {
+    const split = (pending: {
+      slot?: BaseEvent[];
+      start?: BaseEvent;
+      postStartMetadata?: Metadata;
+    }) => {
+      pending.slot = undefined;
+      pending.start = undefined;
+      pending.postStartMetadata = undefined;
+    };
+    for (const [id, pending] of pendingTextMessages) {
+      if (!pending.slot) continue;
+      flushTextMessage(id, pending, pending.slot);
+      split(pending);
+      pending.contents = [];
+    }
+    for (const [id, pending] of pendingReasoningMessages) {
+      if (!pending.slot) continue;
+      flushReasoningMessage(id, pending, pending.slot);
+      split(pending);
+      pending.contents = [];
+    }
+    for (const [id, pending] of pendingToolCalls) {
+      if (!pending.slot) continue;
+      flushToolCall(id, pending, pending.slot);
+      split(pending);
+      pending.args = [];
+    }
+  };
 
   // State compaction: collects state events, flushed at RUN_STARTED (pre-run/inter-run), RUN_FINISHED/RUN_ERROR (in-run), and at end (trailing)
   let stateEvents: (StateSnapshotEvent | StateDeltaEvent)[] = [];
@@ -114,16 +207,9 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
     // Handle text message streaming events
     if (event.type === EventType.TEXT_MESSAGE_START) {
       const startEvent = event as TextMessageStartEvent;
-      const messageId = startEvent.messageId;
-
-      if (!pendingTextMessages.has(messageId)) {
-        pendingTextMessages.set(messageId, {
-          contents: [],
-          otherEvents: [],
-        });
-      }
-
-      const pending = pendingTextMessages.get(messageId)!;
+      const pending = pendingFor(pendingTextMessages, startEvent.messageId, () => ({
+        contents: [],
+      }));
       if (pending.contents.length === 0) {
         pending.start = carryStartMetadata(pending.start, startEvent);
       } else {
@@ -134,47 +220,53 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       }
     } else if (event.type === EventType.TEXT_MESSAGE_CONTENT) {
       const contentEvent = event as TextMessageContentEvent;
-      const messageId = contentEvent.messageId;
-
-      if (!pendingTextMessages.has(messageId)) {
-        pendingTextMessages.set(messageId, {
-          contents: [],
-          otherEvents: [],
-        });
-      }
-
-      const pending = pendingTextMessages.get(messageId)!;
+      const pending = pendingFor(pendingTextMessages, contentEvent.messageId, () => ({
+        contents: [],
+      }));
       pending.contents.push(contentEvent);
       pending.postStartMetadata = mergeMetadata(pending.postStartMetadata, contentEvent.metadata);
     } else if (event.type === EventType.TEXT_MESSAGE_END) {
       const endEvent = event as TextMessageEndEvent;
       const messageId = endEvent.messageId;
-
-      if (!pendingTextMessages.has(messageId)) {
-        pendingTextMessages.set(messageId, {
-          contents: [],
-          otherEvents: [],
-        });
-      }
-
-      const pending = pendingTextMessages.get(messageId)!;
+      const pending = pendingFor(pendingTextMessages, messageId, () => ({ contents: [] }));
       pending.end = endEvent;
 
-      // Flush this message's events
-      flushTextMessage(messageId, pending, compacted);
+      // Flush this message's events into its slot
+      flushTextMessage(messageId, pending, pending.slot!);
       pendingTextMessages.delete(messageId);
+    } else if (event.type === EventType.REASONING_MESSAGE_START) {
+      // Reasoning messages compact exactly like text messages: the reducer
+      // appends each content delta to the message, so one concatenated delta
+      // yields the same message.
+      const startEvent = event as ReasoningMessageStartEvent;
+      const pending = pendingFor(pendingReasoningMessages, startEvent.messageId, () => ({
+        contents: [],
+      }));
+      if (pending.contents.length === 0) {
+        pending.start = carryStartMetadata(pending.start, startEvent);
+      } else {
+        // Same ordering rule as the text case above.
+        pending.start = replaceStartFields(pending.start, startEvent);
+        pending.postStartMetadata = mergeMetadata(pending.postStartMetadata, startEvent.metadata);
+      }
+    } else if (event.type === EventType.REASONING_MESSAGE_CONTENT) {
+      const contentEvent = event as ReasoningMessageContentEvent;
+      const pending = pendingFor(pendingReasoningMessages, contentEvent.messageId, () => ({
+        contents: [],
+      }));
+      pending.contents.push(contentEvent);
+      pending.postStartMetadata = mergeMetadata(pending.postStartMetadata, contentEvent.metadata);
+    } else if (event.type === EventType.REASONING_MESSAGE_END) {
+      const endEvent = event as ReasoningMessageEndEvent;
+      const messageId = endEvent.messageId;
+      const pending = pendingFor(pendingReasoningMessages, messageId, () => ({ contents: [] }));
+      pending.end = endEvent;
+
+      flushReasoningMessage(messageId, pending, pending.slot!);
+      pendingReasoningMessages.delete(messageId);
     } else if (event.type === EventType.TOOL_CALL_START) {
       const startEvent = event as ToolCallStartEvent;
-      const toolCallId = startEvent.toolCallId;
-
-      if (!pendingToolCalls.has(toolCallId)) {
-        pendingToolCalls.set(toolCallId, {
-          args: [],
-          otherEvents: [],
-        });
-      }
-
-      const pending = pendingToolCalls.get(toolCallId)!;
+      const pending = pendingFor(pendingToolCalls, startEvent.toolCallId, () => ({ args: [] }));
       if (pending.args.length === 0) {
         pending.start = carryStartMetadata(pending.start, startEvent);
       } else {
@@ -184,94 +276,60 @@ export function compactEvents(events: BaseEvent[]): BaseEvent[] {
       }
     } else if (event.type === EventType.TOOL_CALL_ARGS) {
       const argsEvent = event as ToolCallArgsEvent;
-      const toolCallId = argsEvent.toolCallId;
-
-      if (!pendingToolCalls.has(toolCallId)) {
-        pendingToolCalls.set(toolCallId, {
-          args: [],
-          otherEvents: [],
-        });
-      }
-
-      const pending = pendingToolCalls.get(toolCallId)!;
+      const pending = pendingFor(pendingToolCalls, argsEvent.toolCallId, () => ({ args: [] }));
       pending.args.push(argsEvent);
       pending.postStartMetadata = mergeMetadata(pending.postStartMetadata, argsEvent.metadata);
     } else if (event.type === EventType.TOOL_CALL_END) {
       const endEvent = event as ToolCallEndEvent;
       const toolCallId = endEvent.toolCallId;
-
-      if (!pendingToolCalls.has(toolCallId)) {
-        pendingToolCalls.set(toolCallId, {
-          args: [],
-          otherEvents: [],
-        });
-      }
-
-      const pending = pendingToolCalls.get(toolCallId)!;
+      const pending = pendingFor(pendingToolCalls, toolCallId, () => ({ args: [] }));
       pending.end = endEvent;
 
-      // Flush this tool call's events
-      flushToolCall(toolCallId, pending, compacted);
+      // Flush this tool call's events into its slot
+      flushToolCall(toolCallId, pending, pending.slot!);
       pendingToolCalls.delete(toolCallId);
     } else if (event.type === EventType.RUN_STARTED) {
       // Flush any pre-run state events before starting a new run
-      flushState(stateEvents, compacted);
+      flushState(stateEvents, reserveSlot());
       stateEvents = [];
-      compacted.push(event);
+      output.push(event);
     } else if (event.type === EventType.RUN_FINISHED || event.type === EventType.RUN_ERROR) {
+      // An incomplete text/tool stream is still part of the run that is ending.
+      // Flush it before the terminal event; emitting it afterwards creates an
+      // ordering that verifyEvents() rejects on replay.
+      flushPendingStreams();
+
       // Flush compacted state into output before the run boundary event
-      flushState(stateEvents, compacted);
+      flushState(stateEvents, reserveSlot());
       stateEvents = [];
-      compacted.push(event);
+      output.push(event);
     } else if (event.type === EventType.STATE_SNAPSHOT || event.type === EventType.STATE_DELTA) {
       // Collect state events for compaction
       stateEvents.push(event as StateSnapshotEvent | StateDeltaEvent);
+    } else if (event.type === EventType.MESSAGES_SNAPSHOT) {
+      splitPendingStreams();
+      output.push(event);
     } else {
-      // For non-streaming events, check if we're in the middle of any streaming sequences
-      let addedToBuffer = false;
-
-      // Check text messages
-      for (const [, pending] of pendingTextMessages) {
-        // If we have a start but no end yet, this event is "in between"
-        if (pending.start && !pending.end) {
-          pending.otherEvents.push(event);
-          addedToBuffer = true;
-          break;
-        }
-      }
-
-      // Check tool calls if not already buffered
-      if (!addedToBuffer) {
-        for (const [, pending] of pendingToolCalls) {
-          // If we have a start but no end yet, this event is "in between"
-          if (pending.start && !pending.end) {
-            pending.otherEvents.push(event);
-            addedToBuffer = true;
-            break;
-          }
-        }
-      }
-
-      // If not in the middle of any streaming sequence, add directly to compacted
-      if (!addedToBuffer) {
-        compacted.push(event);
-      }
+      // Any other event stays where it arrived: after the streams that opened
+      // before it, which their slots keep together.
+      output.push(event);
     }
   }
 
-  // Flush any remaining incomplete messages
-  for (const [messageId, pending] of pendingTextMessages) {
-    flushTextMessage(messageId, pending, compacted);
-  }
-
-  // Flush any remaining incomplete tool calls
-  for (const [toolCallId, pending] of pendingToolCalls) {
-    flushToolCall(toolCallId, pending, compacted);
-  }
+  // Streams that never ended, when stored history stops without a run terminal.
+  flushPendingStreams();
 
   // Flush any remaining state events (incomplete run or events outside runs)
-  flushState(stateEvents, compacted);
+  flushState(stateEvents, reserveSlot());
 
+  const compacted: BaseEvent[] = [];
+  for (const entry of output) {
+    if (Array.isArray(entry)) {
+      compacted.push(...entry);
+    } else {
+      compacted.push(entry);
+    }
+  }
   return compacted;
 }
 
@@ -281,7 +339,6 @@ function flushTextMessage(
     start?: TextMessageStartEvent;
     contents: TextMessageContentEvent[];
     end?: TextMessageEndEvent;
-    otherEvents: BaseEvent[];
     postStartMetadata?: Metadata;
   },
   compacted: BaseEvent[],
@@ -311,10 +368,39 @@ function flushTextMessage(
   if (pending.end) {
     compacted.push(pending.end);
   }
+}
 
-  // Add any events that were in between
-  for (const otherEvent of pending.otherEvents) {
-    compacted.push(otherEvent);
+function flushReasoningMessage(
+  messageId: string,
+  pending: {
+    start?: ReasoningMessageStartEvent;
+    contents: ReasoningMessageContentEvent[];
+    end?: ReasoningMessageEndEvent;
+    postStartMetadata?: Metadata;
+  },
+  compacted: BaseEvent[],
+): void {
+  if (pending.start) {
+    compacted.push(pending.start);
+  }
+
+  if (pending.contents.length > 0) {
+    const concatenatedDelta = pending.contents.map((c) => c.delta).join("");
+
+    const collapsedMetadata = pending.postStartMetadata;
+
+    const compactedContent: ReasoningMessageContentEvent = {
+      type: EventType.REASONING_MESSAGE_CONTENT,
+      messageId: messageId,
+      delta: concatenatedDelta,
+      ...(collapsedMetadata !== undefined && { metadata: collapsedMetadata }),
+    };
+
+    compacted.push(compactedContent);
+  }
+
+  if (pending.end) {
+    compacted.push(pending.end);
   }
 }
 
@@ -324,7 +410,6 @@ function flushToolCall(
     start?: ToolCallStartEvent;
     args: ToolCallArgsEvent[];
     end?: ToolCallEndEvent;
-    otherEvents: BaseEvent[];
     postStartMetadata?: Metadata;
   },
   compacted: BaseEvent[],
@@ -354,12 +439,24 @@ function flushToolCall(
   if (pending.end) {
     compacted.push(pending.end);
   }
-
-  // Add any events that were in between
-  for (const otherEvent of pending.otherEvents) {
-    compacted.push(otherEvent);
-  }
 }
+
+/**
+ * Compaction's warnings, behind the same switch as the rest of the package.
+ * `SUPPRESS_TRANSFORMATION_WARNINGS` is the one control an operator has over
+ * transformation chatter (enforce.ts, transform/proto.ts and the compatibility
+ * middlewares all honour it); a warning that ignored it was unsilenceable.
+ */
+const warnCompact = (message: string): void => {
+  if (
+    typeof process !== "undefined" &&
+    typeof process.env !== "undefined" &&
+    Boolean(process.env.SUPPRESS_TRANSFORMATION_WARNINGS)
+  ) {
+    return;
+  }
+  console.warn(message);
+};
 
 function flushState(
   stateEvents: (StateSnapshotEvent | StateDeltaEvent)[],
@@ -369,14 +466,59 @@ function flushState(
     return;
   }
 
+  // A window with no SNAPSHOT in it cannot be collapsed into one. Collapsing
+  // `SNAPSHOT + deltas` is sound because the snapshot states the whole
+  // document and the deltas refine it. Deltas ALONE are relative to a state
+  // this window never saw, so seeding `{}` and calling the result a snapshot
+  // manufactures an authoritative claim that everything else was absent —
+  // replaying it wipes state the consumer legitimately holds from before the
+  // window. Passed through unchanged instead: two deltas are barely worth
+  // collapsing anyway, and correctness is not negotiable for the saving.
+  // The LAST snapshot, not merely "is there one": everything before it is
+  // unobservable by definition, because a snapshot restates the whole document
+  // and replaces whatever the deltas ahead of it had built. Folding those
+  // deltas anyway applied them to the seeded `{}`, where their paths do not
+  // resolve — `applyPatch` validates, so it threw, and the catch below warned
+  // about a patch whose failure changed nothing. Right answer, wrong
+  // diagnosis. Starting at the last snapshot means the catch only ever fires
+  // for a patch that genuinely could not be applied to the state it names.
+  //
+  // A reverse loop rather than `findLastIndex`: this package targets es2017,
+  // and the method is ES2023.
+  let lastSnapshot = -1;
+  for (let index = stateEvents.length - 1; index >= 0; index--) {
+    if (stateEvents[index].type === EventType.STATE_SNAPSHOT) {
+      lastSnapshot = index;
+      break;
+    }
+  }
+  if (lastSnapshot === -1) {
+    compacted.push(...stateEvents);
+    return;
+  }
+
+  // From here the window DOES contain a snapshot, so it collapses exactly as
+  // it always has: seeding `{}` is harmless because the snapshot replaces the
+  // document wholesale before anything relative is applied to it.
   let state: Record<string, unknown> = {};
 
-  for (const event of stateEvents) {
+  for (const event of stateEvents.slice(lastSnapshot)) {
     if (event.type === EventType.STATE_SNAPSHOT) {
       state = structuredClone_(event.snapshot);
     } else {
-      const result = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false);
-      state = result.newDocument;
+      // Uncaught, a single unappliable patch took down every consumer that
+      // compacts a stream — `applyPatch` validates, so it THROWS rather than
+      // answering falsy. Warned and skipped, matching the reducer in
+      // apply/default.ts, which faces exactly the same failure.
+      try {
+        state = jsonpatch.applyPatch(state, structuredClone_(event.delta), true, false)
+          .newDocument;
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        warnCompact(
+          `[ag-ui][compact] Failed to apply state patch while compacting:\nCurrent state: ${JSON.stringify(state, null, 2)}\nPatch operations: ${JSON.stringify(event.delta, null, 2)}\nError: ${errorMessage}`,
+        );
+      }
     }
   }
 

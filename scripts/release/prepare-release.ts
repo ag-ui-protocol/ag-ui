@@ -13,6 +13,8 @@
  * [project].version and [tool.poetry].version).
  * For .NET packages, edits the VersionPrefix in the Directory.Build.props the
  * scope names as its `versionSource`.
+ * For Gradle packages, edits only the literal root-project version in the
+ * scope's build.gradle.kts, leaving inherited module versions untouched.
  * For Maven packages, edits the project <version> in the reactor pom.xml the
  * scope names as its `versionSource`, AND the <parent><version> of every module
  * that pom lists — Maven requires the parent version to be a literal, so the
@@ -35,6 +37,7 @@
 import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { parseGradleVersion, replaceGradleVersion } from "./lib/gradle-version";
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -259,7 +262,7 @@ interface PackageConfig {
   name: string;
   path: string;
   ecosystem: "typescript" | "python" | "dotnet" | "maven";
-  buildSystem?: "uv" | "poetry";
+  buildSystem?: "uv" | "poetry" | "maven" | "gradle";
   /** Maven only: the groupId the artifact publishes under. */
   groupId?: string;
 }
@@ -383,11 +386,24 @@ function writePyVersion(pyprojectPath: string, newVersion: string): void {
  * crew-ai 0.3.0 (#2366) and aws-strands 0.2.5 (#2374) both needed a hand-pushed
  * "sync uv.lock" commit before their release PRs could go green.
  */
-function relockPythonPackage(pyprojectPath: string): string | null {
+function relockPythonPackage(repoRoot: string, pyprojectPath: string): string[] {
   const pkgDir = path.dirname(pyprojectPath);
   const lockPath = path.join(pkgDir, "uv.lock");
-  if (!fs.existsSync(lockPath)) return null;
 
+  const rewritten: string[] = [];
+  if (fs.existsSync(lockPath)) {
+    runUvLock(pkgDir);
+    rewritten.push(lockPath);
+  }
+  for (const dependentLock of findPathDependentLocks(repoRoot, pkgDir)) {
+    runUvLock(path.dirname(dependentLock));
+    rewritten.push(dependentLock);
+  }
+  return rewritten;
+}
+
+/** `uv lock` in one directory, with the missing-uv case spelled out. */
+function runUvLock(pkgDir: string): void {
   try {
     // stdout belongs to this script's JSON summary -- discard uv's so the
     // summary stays parseable, and pass its stderr through for diagnostics.
@@ -405,8 +421,68 @@ function relockPythonPackage(pyprojectPath: string): string | null {
     }
     throw error;
   }
+}
 
-  return lockPath;
+/**
+ * Every OTHER first-party uv.lock that pulls ``pkgDir`` in from the filesystem.
+ *
+ * A ``[tool.uv.sources]`` path override makes a consumer's lock carry the
+ * released package's VERSION, not just its name:
+ *
+ *     [[package]]
+ *     name = "ag-ui-protocol"
+ *     version = "0.1.20"
+ *     source = { directory = "../../../sdks/python" }
+ *
+ * So bumping the released package strands every such consumer, and the
+ * ``uv lock --check`` gate then fails in a package the release never touched.
+ * That is #2553: release/next bumped ag-ui-protocol 0.1.20 -> 0.1.21 and both
+ * the ``lockfiles`` and ``langgraph-python`` jobs went red on
+ * integrations/langgraph/python/uv.lock.
+ *
+ * Scope matches the gate this exists to satisfy (see the ``lockfiles`` job in
+ * unit-python-sdk.yml): first-party locks only, ``examples/`` excluded. Example
+ * locks are deliberately left alone -- they are not gated, several are stale
+ * today, and dojo-e2e relocks them non-frozen anyway, so touching them here
+ * would drag unrelated dependency churn into every release PR.
+ *
+ * Matching is on the resolved directory rather than the literal string, because
+ * the same package is reached by a different relative path from each consumer.
+ */
+function findPathDependentLocks(repoRoot: string, pkgDir: string): string[] {
+  const SKIP = new Set(["node_modules", ".venv", ".git", "examples"]);
+  const found: string[] = [];
+
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (SKIP.has(entry.name)) continue;
+        walk(path.join(dir, entry.name));
+      } else if (entry.name === "uv.lock" && dir !== pkgDir) {
+        found.push(path.join(dir, entry.name));
+      }
+    }
+  };
+  walk(repoRoot);
+
+  return found.filter((lockPath) => {
+    const lockDir = path.dirname(lockPath);
+    // uv has three directory-based source forms, and all three embed the
+    // dependency's version, so all three go stale on a bump:
+    //   directory -- a non-editable path source
+    //   editable  -- an editable path source
+    //   virtual   -- a path source whose target sets `[tool.uv] package = false`
+    // `virtual` is easy to miss because it is the one that does not correspond to
+    // something installable, but uv still records `version = "..."` for it and
+    // still fails `uv lock --check` when that version moves.
+    const sources = fs
+      .readFileSync(lockPath, "utf-8")
+      .matchAll(/^source = \{ (?:directory|editable|virtual) = "([^"]+)" \}$/gm);
+    for (const [, rel] of sources) {
+      if (path.resolve(lockDir, rel) === pkgDir) return true;
+    }
+    return false;
+  });
 }
 
 function readDotnetVersion(propsPath: string): string {
@@ -584,12 +660,11 @@ function getVersionFilePath(repoRoot: string, pkg: PackageConfig, versionSource?
     return path.join(repoRoot, versionSource);
   }
   if (pkg.ecosystem === "maven") {
-    // A Maven module inherits its version from the reactor pom; its own pom
-    // carries no <version> at all. Same reasoning as .NET: the scope names the
-    // reactor pom so a second Maven scope cannot bump the wrong one.
+    // Maven and Gradle modules inherit the version from their shared source.
+    // The scope names that source so each release updates its own root.
     if (!versionSource) {
       throw new Error(
-        `Scope for ${pkg.name} must declare a "versionSource" pointing at its reactor pom.xml`
+        `Scope for ${pkg.name} must declare a "versionSource" pointing at its reactor pom.xml or root build.gradle.kts`
       );
     }
     return path.join(repoRoot, versionSource);
@@ -597,7 +672,14 @@ function getVersionFilePath(repoRoot: string, pkg: PackageConfig, versionSource?
   return path.join(repoRoot, pkg.path, "pyproject.toml");
 }
 
-function readVersionFile(filePath: string, ecosystem: PackageConfig["ecosystem"]): string {
+function readVersionFile(
+  filePath: string,
+  ecosystem: PackageConfig["ecosystem"],
+  buildSystem?: PackageConfig["buildSystem"]
+): string {
+  if (ecosystem === "maven" && buildSystem === "gradle") {
+    return parseGradleVersion(fs.readFileSync(filePath, "utf8")).version;
+  }
   if (ecosystem === "typescript") {
     return readTsVersion(filePath);
   }
@@ -612,15 +694,22 @@ function readVersionFile(filePath: string, ecosystem: PackageConfig["ecosystem"]
 
 function readVersion(repoRoot: string, pkg: PackageConfig, versionSource?: string): string {
   const filePath = getVersionFilePath(repoRoot, pkg, versionSource);
-  return readVersionFile(filePath, pkg.ecosystem);
+  return readVersionFile(filePath, pkg.ecosystem, pkg.buildSystem);
 }
 
 /** Returns the absolute path of every file written (Maven fans out to modules). */
 function writeVersionFile(
+  repoRoot: string,
   filePath: string,
   ecosystem: PackageConfig["ecosystem"],
-  newVersion: string
+  newVersion: string,
+  buildSystem?: PackageConfig["buildSystem"]
 ): string[] {
+  if (ecosystem === "maven" && buildSystem === "gradle") {
+    const original = fs.readFileSync(filePath, "utf8");
+    fs.writeFileSync(filePath, replaceGradleVersion(original, newVersion), "utf8");
+    return [filePath];
+  }
   if (ecosystem === "typescript") {
     writeTsVersion(filePath, newVersion);
   } else if (ecosystem === "dotnet") {
@@ -629,10 +718,10 @@ function writeVersionFile(
     return writeMavenVersion(filePath, newVersion);
   } else {
     writePyVersion(filePath, newVersion);
-    // The re-locked uv.lock is a second modified file and must be reported, or
-    // the release workflow never stages it -- see relockPythonPackage.
-    const lockPath = relockPythonPackage(filePath);
-    if (lockPath) return [filePath, lockPath];
+    // Each re-locked uv.lock -- this package's own, plus any consumer that
+    // path-depends on it -- is a further modified file and must be reported, or
+    // the release workflow never stages it. See relockPythonPackage.
+    return [filePath, ...relockPythonPackage(repoRoot, filePath)];
   }
   return [filePath];
 }
@@ -644,7 +733,7 @@ function writeVersion(
   versionSource?: string
 ): string[] {
   const filePath = getVersionFilePath(repoRoot, pkg, versionSource);
-  return writeVersionFile(filePath, pkg.ecosystem, newVersion);
+  return writeVersionFile(repoRoot, filePath, pkg.ecosystem, newVersion, pkg.buildSystem);
 }
 
 function computeNewVersion(
@@ -710,30 +799,29 @@ function main(): void {
     // All packages share one version — read from versionSource
     const versionSourcePath = path.join(repoRoot, scopeConfig.versionSource);
     const versionSourceEcosystem = scopeConfig.packages[0]?.ecosystem;
+    const versionSourceBuildSystem = scopeConfig.packages[0]?.buildSystem;
     if (!versionSourceEcosystem) {
       throw new Error(`Scope ${args.scope} has no packages`);
     }
-    const currentVersion = readVersionFile(versionSourcePath, versionSourceEcosystem);
+    const currentVersion = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
     const newVersion = computeNewVersion(currentVersion, args.bump, args.preid, versionSourceEcosystem);
 
     console.error(`[${args.scope}] Shared version: ${currentVersion} -> ${newVersion}`);
 
     if (versionSourceEcosystem === "dotnet" && args.bump !== "prerelease" && !args.dryRun) {
-      recordWritten(writeVersionFile(versionSourcePath, versionSourceEcosystem, newVersion));
-      const written = readVersionFile(versionSourcePath, versionSourceEcosystem);
+      recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion, versionSourceBuildSystem));
+      const written = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
       if (written !== newVersion) {
         console.error(`ERROR: Verification failed for ${scopeConfig.versionSource}: expected ${newVersion}, got ${written}`);
         process.exit(1);
       }
     }
 
-    // Maven writes the reactor pom for EVERY bump type, including prerelease:
-    // unlike .NET (where a prerelease suffix is applied at pack time via
-    // -p:VersionSuffix and the props file stays put), the pom is the only place
-    // a Maven version exists.
+    // Maven/Gradle writes its shared source for every bump type, including
+    // prerelease. Unlike .NET, these versions are stored in the source file.
     if (versionSourceEcosystem === "maven" && !args.dryRun) {
-      recordWritten(writeVersionFile(versionSourcePath, versionSourceEcosystem, newVersion));
-      const written = readVersionFile(versionSourcePath, versionSourceEcosystem);
+      recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion, versionSourceBuildSystem));
+      const written = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
       if (written !== newVersion) {
         console.error(`ERROR: Verification failed for ${scopeConfig.versionSource}: expected ${newVersion}, got ${written}`);
         process.exit(1);
@@ -741,7 +829,9 @@ function main(): void {
       // A module left on the old parent version makes the reactor unbuildable,
       // and Maven would only surface it much later, mid-release.
       for (const [moduleName, moduleVersion] of Object.entries(
-        readMavenModuleParentVersions(versionSourcePath),
+        versionSourceBuildSystem === "gradle"
+          ? {}
+          : readMavenModuleParentVersions(versionSourcePath),
       )) {
         if (moduleVersion !== newVersion) {
           console.error(

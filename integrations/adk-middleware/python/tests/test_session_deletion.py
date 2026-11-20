@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """Test session deletion functionality with minimal session manager."""
 import pytest
+from types import SimpleNamespace
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 
@@ -47,7 +49,8 @@ class TestSessionDeletion:
         created_session.state = {"_ag_ui_thread_id": test_thread_id, "test": "data"}
 
         mock_session_service = AsyncMock()
-        mock_session_service.list_sessions = AsyncMock(return_value=[])  # No existing sessions
+        mock_session_service.list_sessions = AsyncMock(return_value=SimpleNamespace(sessions=[]))  # No existing sessions
+        mock_session_service.get_session = AsyncMock(return_value=None)
         mock_session_service.create_session = AsyncMock(return_value=created_session)
         mock_session_service.delete_session = AsyncMock()
 
@@ -70,7 +73,7 @@ class TestSessionDeletion:
         print(f"✅ Created session with thread_id: {test_thread_id}, backend_id: {backend_session_id}")
 
         # Verify session exists in tracking (uses backend session_id)
-        session_key = f"{test_app_name}:{test_backend_session_id}"
+        session_key = (test_app_name, test_user_id, test_backend_session_id)
         assert session_key in session_manager._session_keys
         print(f"✅ Session tracked: {session_key}")
 
@@ -79,6 +82,7 @@ class TestSessionDeletion:
         mock_session.id = test_backend_session_id
         mock_session.app_name = test_app_name
         mock_session.user_id = test_user_id
+        mock_session.state = created_session.state
 
         # Manually delete the session (internal method)
         await session_manager._delete_session(mock_session)
@@ -107,14 +111,12 @@ class TestSessionDeletion:
         return True
 
 
-    async def test_session_deletion_error_handling(self, mock_memory_service, save_session_to_memory_on_cleanup):
-        """Test session deletion error handling."""
-        print("\n🧪 Testing session deletion error handling...")
-
-        # Reset singleton for clean test
+    async def test_session_deletion_error_handling(
+        self, mock_memory_service, save_session_to_memory_on_cleanup, caplog
+    ):
+        """A failing backend delete is logged, not raised, and still untracks."""
         SessionManager.reset_instance()
 
-        # Create mock session and service
         test_thread_id = "test_thread_456"
         test_backend_session_id = "backend_session_456"
         test_app_name = "test_app"
@@ -122,53 +124,154 @@ class TestSessionDeletion:
 
         created_session = MagicMock()
         created_session.id = test_backend_session_id
+        created_session.app_name = test_app_name
+        created_session.user_id = test_user_id
         created_session.state = {"_ag_ui_thread_id": test_thread_id}
 
         mock_session_service = AsyncMock()
-        mock_session_service.list_sessions = AsyncMock(return_value=[])
+        mock_session_service.list_sessions = AsyncMock(return_value=SimpleNamespace(sessions=[]))
+        mock_session_service.get_session = AsyncMock(return_value=None)
         mock_session_service.create_session = AsyncMock(return_value=created_session)
         mock_session_service.delete_session = AsyncMock(side_effect=Exception("Delete failed"))
 
-        # Create session manager with mock service
         session_manager = SessionManager.get_instance(
             session_service=mock_session_service,
             memory_service=mock_memory_service,
-            delete_session_on_cleanup=False,
+            delete_session_on_cleanup=True,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup
         )
 
-        # Create a session
-        await session_manager.get_or_create_session(
+        session, _ = await session_manager.get_or_create_session(
             thread_id=test_thread_id,
             app_name=test_app_name,
             user_id=test_user_id
         )
+        mock_session_service.create_session.assert_awaited_once()
 
-        session_key = f"{test_app_name}:{test_backend_session_id}"
+        session_key = (test_app_name, test_user_id, test_backend_session_id)
         assert session_key in session_manager._session_keys
+        assert session_manager.get_user_session_count(test_user_id) == 1
 
-        # Create mock session object for deletion
-        mock_session = MagicMock()
-        mock_session.id = test_backend_session_id
-        mock_session.app_name = test_app_name
-        mock_session.user_id = test_user_id
+        # Must not raise: the backend error is handled inside _delete_session.
+        with caplog.at_level(logging.ERROR, logger="ag_ui_adk.session_manager"):
+            await session_manager._delete_session(session)
 
-        # Try to delete - should handle the error gracefully
-        await session_manager._delete_session(mock_session)
+        mock_session_service.delete_session.assert_awaited_once_with(
+            session_id=test_backend_session_id,
+            app_name=test_app_name,
+            user_id=test_user_id
+        )
+        assert any(
+            record.levelno == logging.ERROR
+            and "Failed to delete session" in record.getMessage()
+            and "Delete failed" in record.getMessage()
+            for record in caplog.records
+        )
 
-        # Even if deletion failed, session should be untracked
+        # Even though the backend delete failed, the session is untracked.
         assert session_key not in session_manager._session_keys
-        print("✅ Session untracked even after deletion error")
+        assert test_user_id not in session_manager._user_sessions
+        assert session_manager.get_session_count() == 0
 
         if mock_memory_service is not None:
-            # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag
             if save_session_to_memory_on_cleanup:
-                mock_memory_service.add_session_to_memory.assert_called_once()
+                mock_memory_service.add_session_to_memory.assert_awaited_once_with(session)
             else:
                 mock_memory_service.add_session_to_memory.assert_not_called()
 
+    async def test_session_not_created_by_middleware_is_not_deleted(self):
+        """A session continued by native ID is tracked but never deleted."""
+        SessionManager.reset_instance()
 
+        native_session_id = "native_session_789"
+        test_app_name = "test_app"
+        test_user_id = "test_user"
 
+        # The caller's own session: no _ag_ui_thread_id stamp.
+        native_session = SimpleNamespace(
+            id=native_session_id,
+            app_name=test_app_name,
+            user_id=test_user_id,
+            state={"caller": "data"},
+            last_update_time=0.0,
+        )
+        store = {native_session_id: native_session}
+        clock = iter(range(1, 100))
+
+        async def get_session(session_id, app_name, user_id):
+            return store.get(session_id)
+
+        async def list_sessions(app_name, user_id):
+            return SimpleNamespace(sessions=list(store.values()))
+
+        async def create_session(user_id, app_name, state, session_id=None):
+            tick = next(clock)
+            session = SimpleNamespace(
+                id=session_id or f"created_{tick}",
+                app_name=app_name,
+                user_id=user_id,
+                state=dict(state),
+                last_update_time=float(tick),
+            )
+            store[session.id] = session
+            return session
+
+        async def delete_session(session_id, app_name, user_id):
+            store.pop(session_id, None)
+
+        mock_session_service = AsyncMock()
+        mock_session_service.get_session = AsyncMock(side_effect=get_session)
+        mock_session_service.list_sessions = AsyncMock(side_effect=list_sessions)
+        mock_session_service.create_session = AsyncMock(side_effect=create_session)
+        mock_session_service.delete_session = AsyncMock(side_effect=delete_session)
+
+        session_manager = SessionManager.get_instance(
+            session_service=mock_session_service,
+            delete_session_on_cleanup=True,
+            max_sessions_per_user=1,
+        )
+
+        try:
+            session, backend_session_id = await session_manager.get_or_create_session(
+                thread_id=native_session_id,
+                app_name=test_app_name,
+                user_id=test_user_id
+            )
+            assert session is native_session
+            assert backend_session_id == native_session_id
+            mock_session_service.create_session.assert_not_called()
+
+            native_key = (test_app_name, test_user_id, native_session_id)
+            assert session_manager._session_keys == {native_key}
+            assert session_manager.get_user_session_count(test_user_id) == 1
+
+            # At max_sessions_per_user=1 the first new thread evicts the adopted
+            # session from tracking only; it stays in the caller's store.
+            first, first_id = await session_manager.get_or_create_session(
+                thread_id="new_thread_1", app_name=test_app_name, user_id=test_user_id
+            )
+            mock_session_service.delete_session.assert_not_called()
+            assert store[native_session_id] is native_session
+            assert session_manager._session_keys == {
+                (test_app_name, test_user_id, first_id)
+            }
+
+            # The second evicts the first created session, which is deleted.
+            second, second_id = await session_manager.get_or_create_session(
+                thread_id="new_thread_2", app_name=test_app_name, user_id=test_user_id
+            )
+            assert native_session_id not in (first_id, second_id)
+            mock_session_service.delete_session.assert_awaited_once_with(
+                session_id=first_id, app_name=test_app_name, user_id=test_user_id
+            )
+            assert store[native_session_id] is native_session
+            assert first_id not in store
+            assert session_manager._session_keys == {
+                (test_app_name, test_user_id, second_id)
+            }
+        finally:
+            await session_manager.stop_cleanup_task()
+            SessionManager.reset_instance()
 
     async def test_user_session_limits(self, mock_memory_service, save_session_to_memory_on_cleanup):
         """Test per-user session limits."""
@@ -196,8 +299,8 @@ class TestSessionDeletion:
 
         async def mock_list_sessions(app_name, user_id):
             # Return sessions that match app_name/user_id
-            return [s for s in created_sessions.values()
-                    if s.app_name == app_name and s.user_id == user_id]
+            return SimpleNamespace(sessions=[s for s in created_sessions.values()
+                    if s.app_name == app_name and s.user_id == user_id])
 
         async def mock_get_session(session_id, app_name, user_id):
             key = f"{app_name}:{session_id}"
@@ -221,7 +324,6 @@ class TestSessionDeletion:
             session_service=mock_session_service,
             memory_service=mock_memory_service,
             max_sessions_per_user=2,
-            delete_session_on_cleanup=False,
             save_session_to_memory_on_cleanup=save_session_to_memory_on_cleanup
         )
 
@@ -244,9 +346,18 @@ class TestSessionDeletion:
         print(f"✅ User session limit enforced: {user_count} sessions")
 
         # Verify we have exactly 2 session keys (session IDs are now UUIDs)
-        app_session_keys = [k for k in session_manager._session_keys if k.startswith(f"{test_app}:")]
+        app_session_keys = [k for k in session_manager._session_keys if k[0] == test_app]
         assert len(app_session_keys) == 2, f"Expected 2 session keys, got {len(app_session_keys)}"
         print("✅ Oldest session was removed")
+
+        # Sessions the middleware created are still deleted from the backend.
+        oldest = next(
+            s for s in created_sessions.values()
+            if s.state["_ag_ui_thread_id"] == "thread_0"
+        )
+        mock_session_service.delete_session.assert_called_once_with(
+            session_id=oldest.id, app_name=test_app, user_id=test_user
+        )
 
         if mock_memory_service is not None:
             # Memory service add_session_to_memory should be called based on save_session_to_memory_on_cleanup flag

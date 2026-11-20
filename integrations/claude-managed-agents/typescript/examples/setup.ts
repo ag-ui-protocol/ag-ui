@@ -15,7 +15,11 @@ import path from "node:path";
 import { ENVIRONMENT_NAME, FEATURE_AGENTS, MODEL } from "./agents";
 import { isEntry } from "./entry";
 
-export const IDS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), ".managed-agents.json");
+// Overridable with MANAGED_AGENTS_IDS_PATH, as in the .NET example: the keyless
+// Dojo e2e lane points the server at a checked-in file of fake ids instead.
+export const IDS_PATH =
+  process.env.MANAGED_AGENTS_IDS_PATH ||
+  path.join(path.dirname(fileURLToPath(import.meta.url)), ".managed-agents.json");
 
 export interface ProvisionedIds {
   environmentId: string;

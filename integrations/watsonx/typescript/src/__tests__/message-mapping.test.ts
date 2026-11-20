@@ -182,33 +182,108 @@ describe("Message mapping", () => {
     expect(msgs[0].content).toBe("42");
   });
 
-  it("JSON.stringifys non-string content", async () => {
-    const capture = captureFetch();
-    const input: RunAgentInput = {
-      threadId: "t-1",
-      runId: "r-1",
-      messages: [
-        {
-          id: "m-1",
-          role: "user",
-          content: [{ type: "text", text: "hello" }],
-        } as Message,
-      ],
-      state: null,
-      tools: [],
-      context: [],
-      forwardedProps: {},
-    };
+  describe("content parts", () => {
+    const IMAGE_B64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
-    await collectEvents(makeAgent(), input);
+    function partsInput(messages: Message[]): RunAgentInput {
+      return {
+        threadId: "t-1",
+        runId: "r-1",
+        messages,
+        state: null,
+        tools: [],
+        context: [],
+        forwardedProps: {},
+      };
+    }
 
-    const body = capture.getBody();
-    const msgs = body.messages as any[];
-    // Non-string content should be JSON.stringify'd
-    expect(typeof msgs[0].content).toBe("string");
-    expect(JSON.parse(msgs[0].content)).toEqual([
-      { type: "text", text: "hello" },
-    ]);
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("builds the prompt from text parts only", async () => {
+      const capture = captureFetch();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await collectEvents(
+        makeAgent(),
+        partsInput([
+          {
+            id: "m-1",
+            role: "user",
+            content: [
+              { type: "text", text: "hello " },
+              { type: "text", text: "world" },
+            ],
+          },
+        ]),
+      );
+
+      const msgs = capture.getBody().messages as any[];
+      expect(msgs[0].content).toBe("hello world");
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it("drops media parts with a warning instead of dumping them into the prompt", async () => {
+      const capture = captureFetch();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await collectEvents(
+        makeAgent(),
+        partsInput([
+          {
+            id: "m-1",
+            role: "user",
+            content: [
+              { type: "text", text: "Describe this" },
+              {
+                type: "image",
+                source: { type: "data", value: IMAGE_B64, mimeType: "image/png" },
+              },
+              {
+                type: "document",
+                source: { type: "url", value: "https://example.com/file.pdf" },
+              },
+            ],
+          },
+        ]),
+      );
+
+      const body = capture.getBody();
+      const msgs = body.messages as any[];
+      expect(msgs[0].content).toBe("Describe this");
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toContain(IMAGE_B64);
+      expect(serialized).not.toContain("https://example.com/file.pdf");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toMatch(/image, document/);
+    });
+
+    it("flattens array tool content for the prompt but re-emits it unchanged in TOOL_CALL_RESULT", async () => {
+      const capture = captureFetch();
+      const parts = [
+        { type: "text" as const, text: "Sunny, " },
+        { type: "text" as const, text: "72F" },
+      ];
+
+      const events = await collectEvents(
+        makeAgent(),
+        partsInput([
+          { id: "u-1", role: "user", content: "Weather?" },
+          { id: "tm-1", role: "tool", toolCallId: "tc-1", content: parts },
+        ]),
+      );
+
+      const msgs = capture.getBody().messages as any[];
+      expect(msgs[1]).toEqual({
+        role: "tool",
+        content: "Sunny, 72F",
+        tool_call_id: "tc-1",
+      });
+      const result = events.find((e) => e.type === EventType.TOOL_CALL_RESULT);
+      expect((result as any).content).toEqual(parts);
+    });
   });
 
   it("filters reserved keys from forwardedProps", async () => {

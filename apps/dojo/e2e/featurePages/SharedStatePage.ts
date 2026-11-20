@@ -38,6 +38,13 @@ export class SharedStatePage {
     await expect(this.agentGreeting).toBeVisible();
   }
 
+  async awaitAgentReady() {
+    await expect(this.page.getByTestId("recipe-card")).toHaveAttribute(
+      "data-agent-ready",
+      "true",
+    );
+  }
+
   async sendMessage(message: string) {
     await sendChatMessage(this.page, message);
     await awaitLLMResponseDone(this.page);
@@ -53,10 +60,10 @@ export class SharedStatePage {
     // since CSS attribute selectors are case-sensitive
     await this.page.waitForFunction(
       (ingredientName) => {
-        const inputs = document.querySelectorAll(
+        const inputs = document.querySelectorAll<HTMLInputElement>(
           ".ingredient-card input.ingredient-name-input",
         );
-        return Array.from(inputs).some((input: HTMLInputElement) =>
+        return Array.from(inputs).some((input) =>
           input.value.toLowerCase().includes(ingredientName.toLowerCase()),
         );
       },

@@ -2,13 +2,14 @@
   {
     "type": "RUN_STARTED",
     "threadId": "thread_Id_2",
-    "runId": "run_Id_2"
+    "runId": "run_Id_2",
+    "protocolVersion": "1.0"
   },
   {
     "type": "TOOL_CALL_START",
-    "parentMessageId": "guid_Id_1",
     "toolCallId": "call_Id_1",
     "toolCallName": "ApproveExpenseReport",
+    "parentMessageId": "guid_Id_1",
     "rawEvent": {
       "authorName": null,
       "role": "assistant",

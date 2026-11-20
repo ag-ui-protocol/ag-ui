@@ -10,6 +10,9 @@ type RawEvent struct {
 	*BaseEvent
 	Event  any     `json:"event"`
 	Source *string `json:"source,omitempty"`
+	// SubagentRunID attributes this event to a subagent invocation.
+	// Empty when the event comes from the root agent.
+	SubagentRunID string `json:"subagentRunId,omitempty"`
 }
 
 // NewRawEvent creates a new raw event
@@ -57,8 +60,13 @@ func (e *RawEvent) ToJSON() ([]byte, error) {
 // CustomEvent contains custom application-specific event data
 type CustomEvent struct {
 	*BaseEvent
-	Name  string `json:"name"`
-	Value any    `json:"value,omitempty"`
+	Name string `json:"name"`
+	// Value is required on the wire, so it is written even when nil (as
+	// null): peers reject a CUSTOM event with no value key.
+	Value any `json:"value"`
+	// SubagentRunID attributes this event to a subagent invocation.
+	// Empty when the event comes from the root agent.
+	SubagentRunID string `json:"subagentRunId,omitempty"`
 }
 
 // NewCustomEvent creates a new custom event

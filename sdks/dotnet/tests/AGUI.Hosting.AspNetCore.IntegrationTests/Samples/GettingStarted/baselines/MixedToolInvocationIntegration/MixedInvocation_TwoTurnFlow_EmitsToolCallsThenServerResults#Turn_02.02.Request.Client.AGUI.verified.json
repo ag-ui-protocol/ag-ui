@@ -1,8 +1,10 @@
 ﻿{
   "threadId": "thread_Id_1",
   "runId": "run_Id_2",
+  "protocolVersion": "1.0",
   "messages": [
     {
+      "id": "",
       "role": "user",
       "content": "Two things, please: (1) what city am I in right now, and (2) what\u0027s the weather in Paris? Call get_user_location for #1 and get_weather for #2."
     },
@@ -16,7 +18,13 @@
             "name": "get_user_location",
             "arguments": "{}"
           }
-        },
+        }
+      ],
+      "id": "call_Id_1"
+    },
+    {
+      "role": "assistant",
+      "toolCalls": [
         {
           "id": "call_Id_2",
           "type": "function",
@@ -25,7 +33,8 @@
             "arguments": "{\u0022city\u0022:\u0022Paris\u0022}"
           }
         }
-      ]
+      ],
+      "id": "call_Id_2"
     },
     {
       "role": "tool",

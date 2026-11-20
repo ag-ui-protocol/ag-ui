@@ -13,6 +13,8 @@ import { a2uiDynamicSchemaAgent, a2uiRecoveryAgent } from "./agents/a2ui";
 import { a2uiFixedSchemaAgent } from "./agents/a2ui-fixed";
 import { sharedStateAgent } from "./agents/shared-state";
 import { observationalMemoryAgent } from "./agents/observational-memory";
+import { toolApprovalAgent } from "./agents/tool-approval";
+import { generativeUIAgent } from "./agents/generative-ui";
 
 export const mastra = new Mastra({
   server: {
@@ -32,12 +34,15 @@ export const mastra = new Mastra({
     a2ui_fixed_schema: a2uiFixedSchemaAgent,
     shared_state: sharedStateAgent,
     observational_memory: observationalMemoryAgent,
+    tool_approval: toolApprovalAgent,
+    generative_ui: generativeUIAgent,
   },
   // File-backed (not ":memory:"): suspend/resume persists the agentic-loop
   // workflow snapshot to instance storage and loads it on resumeStream. An
   // in-memory store gives each pooled connection its own empty DB, so the
   // snapshot can't be found on resume ("No snapshot found for this workflow
-  // run"). Powers the `interrupt` demo's remote resume (OSS-380).
+  // run"). Powers the remote resume of the `interrupt` and `tool_approval`
+  // demos.
   storage: new LibSQLStore({
     id: "mastra-storage",
     url: "file:../mastra.db",

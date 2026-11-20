@@ -18,6 +18,12 @@ function createFeatureConfig({
 
 export const featureConfig: FeatureConfig[] = [
   createFeatureConfig({
+    id: "ag_ui_docs_copilot",
+    name: "AG-UI Docs Copilot",
+    description: "Ask questions about the OpenAI Agents integration and delegate code snippets to a specialist agent",
+    tags: ["AG-UI", "OpenAI Agents", "Documentation", "Copilot"],
+  }),
+  createFeatureConfig({
     id: "agentic_chat",
     name: "Agentic Chat",
     description: "Chat with your Copilot and call frontend tools",
@@ -35,6 +41,13 @@ export const featureConfig: FeatureConfig[] = [
     description:
       "Plan a task together and direct the Copilot to take the right steps",
     tags: ["HITL", "Interactivity"],
+  }),
+  createFeatureConfig({
+    id: "human_in_the_loop_approval",
+    name: "Human in the Loop (Backend Approval)",
+    description:
+      "A real backend tool (issue a refund) pauses for human approval before it runs, then resumes",
+    tags: ["HITL", "Interactivity", "Approval"],
   }),
   createFeatureConfig({
     id: "interrupt",
@@ -76,6 +89,13 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["Chat", "Tools", "Streaming", "Reasoning"],
   }),
   createFeatureConfig({
+    id: "agentic_chat_citations",
+    name: "Agentic Chat Citations",
+    description:
+      "Chat with a Copilot whose answers carry the sources they came from",
+    tags: ["Chat", "Streaming", "Citations"],
+  }),
+  createFeatureConfig({
     id: "agentic_chat_multimodal",
     name: "Agentic Chat Multimodal",
     description: "Chat with a Copilot using images and other media",
@@ -87,6 +107,40 @@ export const featureConfig: FeatureConfig[] = [
     description:
       "Have your tasks performed by multiple agents, working together",
     tags: ["Chat", "Multi-agent architecture", "Streaming", "Subgraphs"],
+  }),
+  createFeatureConfig({
+    id: "subagents",
+    name: "Sub-agents",
+    description:
+      "Supervisor agent calls specialist agents as tools and synthesizes the result",
+    tags: ["Multi-agent architecture", "Sub-agents", "Orchestrator", "Agent as tool"],
+  }),
+  createFeatureConfig({
+    id: "custom_lifecycle_events",
+    name: "Custom Lifecycle Events",
+    description:
+      "Manual CUSTOM events bracket the run — a session marker right after start, a usage summary right before finish",
+    tags: ["Custom Events", "Lifecycle", "Translator"],
+  }),
+  createFeatureConfig({
+    id: "dynamic_system_prompt",
+    name: "Dynamic System Prompt",
+    description:
+      "Reply language picked from the AG-UI context channel, baked fresh into the system prompt every turn",
+    tags: ["Context", "Dynamic System Prompt"],
+  }),
+  createFeatureConfig({
+    id: "deepagents_subagents",
+    name: "Deepagents Subagents",
+    description:
+      "A deepagents supervisor delegates to a research subagent that pauses for your approval mid-task; its messages group under one card keyed by subagentRunId",
+    tags: ["Chat", "Multi-agent architecture", "Streaming", "Subagents"],
+  }),
+  createFeatureConfig({
+    id: "multi_agent",
+    name: "Multi-Agent",
+    description: "Watch a graph of specialist agents hand work down a pipeline",
+    tags: ["Chat", "Multi-agent architecture", "Streaming"],
   }),
   createFeatureConfig({
     id: "a2a_chat",
@@ -115,6 +169,20 @@ export const featureConfig: FeatureConfig[] = [
     tags: ["A2UI", "Generative UI", "Dynamic Schema", "Streaming"],
   }),
   createFeatureConfig({
+    id: "generative_ui_markdown",
+    name: "Generative UI (Markdown)",
+    description:
+      "The agent writes A2UI 1.0 inside ```a2ui fences in its reply; the chat renders them as live components",
+    tags: ["Generative UI", "A2UI 1.0", "Markdown", "Context"],
+  }),
+  createFeatureConfig({
+    id: "generative_ui_tool",
+    name: "Generative UI (Tool)",
+    description:
+      "The runtime gives the agent a render_ui tool; the agent streams A2UI 1.0 operations into live components",
+    tags: ["Generative UI", "A2UI 1.0", "Frontend Tools", "Context"],
+  }),
+  createFeatureConfig({
     id: "a2ui_advanced",
     name: "A2UI Advanced",
     description:
@@ -134,6 +202,13 @@ export const featureConfig: FeatureConfig[] = [
     description:
       "Watch Mastra Observational Memory observe and compress the conversation in the background, surfaced as a distinct activity.",
     tags: ["Observational Memory", "Activity", "Memory"],
+  }),
+  createFeatureConfig({
+    id: "tool_approval",
+    name: "Tool Approval",
+    description:
+      "A backend tool that requires approval pauses until you approve or reject it in the chat",
+    tags: ["HITL", "Interactivity", "Interrupt", "Tools"],
   }),
   createFeatureConfig({
     id: "a2ui_recovery",

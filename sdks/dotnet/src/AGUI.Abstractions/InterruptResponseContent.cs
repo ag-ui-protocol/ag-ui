@@ -9,6 +9,9 @@ namespace AGUI.Abstractions;
 /// by the interrupt reason and matches the contract expected by the original request.
 /// </summary>
 // Keep in sync with sdks/typescript/packages/core/src/types.ts
+// See InterruptRequestContent: this type is registered onto caller-owned
+// JsonSerializerOptions, so its [JsonIgnore(WhenWritingNull)] attributes are load-bearing:
+// AGUIJsonSerializerContext's DefaultIgnoreCondition does not reach it there.
 public sealed class InterruptResponseContent : Microsoft.Extensions.AI.InputResponseContent
 {
     /// <summary>

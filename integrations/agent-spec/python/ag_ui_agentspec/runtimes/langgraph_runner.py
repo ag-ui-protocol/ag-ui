@@ -7,6 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from ag_ui.core import RunAgentInput
 from ag_ui_agentspec.agentspec_tracing_exporter import EVENT_QUEUE
+from ag_ui_agentspec.message_content import content_to_text, should_skip_role
 
 logger = logging.getLogger("ag_ui_agentspec.tracing")
 
@@ -36,12 +37,22 @@ def prepare_langgraph_agent_inputs(input_data: RunAgentInput) -> List[Dict[str, 
         return []
     messages_to_return = []
     for m in messages:
+        if should_skip_role(m.role, message_id=m.id):
+            continue
         m_dict = m.model_dump()
+        # LangChain would keep "developer" as an OpenAI-only role on the wire;
+        # send it as the system instructions it is, which every provider takes.
+        if m_dict["role"] == "developer":
+            m_dict["role"] = "system"
+        if m_dict["role"] in {"user", "tool"}:
+            m_dict["content"] = content_to_text(m_dict["content"], message_id=m.id)
         if m_dict["role"] in {"user", "assistant"} and "name" in m_dict:
             del m_dict["name"]
         if m_dict["role"] == "tool" and "error" in m_dict:
             del m_dict["error"]
-        if m_dict["role"] == "assistant" and m_dict["content"] is None:
+        # .get: an assistant turn carrying only tool calls has no content, and an
+        # optional field with no value is absent from the dump, not present as None.
+        if m_dict["role"] == "assistant" and m_dict.get("content") is None:
             m_dict["content"] = ""
         messages_to_return.append(m_dict)
     return messages_to_return

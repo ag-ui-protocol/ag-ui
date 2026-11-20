@@ -9,7 +9,8 @@
     "rawRepresentation": {
       "type": "RUN_STARTED",
       "threadId": "thread_Id_1",
-      "runId": "run_Id_1"
+      "runId": "run_Id_1",
+      "protocolVersion": "1.0"
     }
   },
   {
@@ -40,6 +41,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -55,6 +57,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -70,6 +73,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -85,6 +89,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -100,6 +105,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -115,6 +121,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -130,6 +137,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -145,6 +153,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -160,6 +169,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -175,6 +185,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -190,6 +201,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -205,6 +217,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -220,6 +233,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -235,6 +249,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -250,6 +265,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -265,6 +281,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -280,6 +297,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -295,6 +313,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -310,6 +329,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -325,6 +345,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -340,6 +361,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -355,6 +377,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -370,6 +393,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -385,6 +409,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -400,6 +425,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -415,6 +441,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -430,6 +457,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -445,6 +473,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -460,6 +489,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -475,6 +505,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -490,6 +521,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -505,6 +537,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -520,6 +553,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -535,6 +569,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -550,6 +585,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -565,6 +601,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -580,6 +617,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -595,6 +633,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -610,6 +649,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -625,6 +665,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -640,6 +681,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -655,6 +697,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -670,6 +713,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -685,6 +729,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -700,6 +745,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -715,6 +761,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -730,6 +777,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -745,6 +793,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -760,6 +809,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -775,6 +825,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -790,6 +841,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -805,6 +857,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -820,6 +873,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -835,6 +889,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -850,6 +905,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -865,6 +921,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -880,6 +937,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -895,6 +953,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -910,6 +969,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -925,6 +985,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -940,6 +1001,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -955,6 +1017,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -970,6 +1033,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -985,6 +1049,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1000,6 +1065,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1015,6 +1081,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1030,6 +1097,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1045,6 +1113,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1060,6 +1129,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1075,6 +1145,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1090,6 +1161,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1105,6 +1177,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1120,6 +1193,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1135,6 +1209,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1150,6 +1225,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1165,6 +1241,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1180,6 +1257,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1195,6 +1273,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1210,6 +1289,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1225,6 +1305,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1240,6 +1321,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1255,6 +1337,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1270,6 +1353,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1285,6 +1369,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1300,6 +1385,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1315,6 +1401,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1330,6 +1417,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1345,6 +1433,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1360,6 +1449,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1375,6 +1465,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1390,6 +1481,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1405,6 +1497,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1420,6 +1513,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1435,6 +1529,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1450,6 +1545,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1465,6 +1561,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1480,6 +1577,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1495,6 +1593,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1510,6 +1609,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1525,6 +1625,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1540,6 +1641,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1555,6 +1657,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1570,6 +1673,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1585,6 +1689,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1600,6 +1705,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1615,6 +1721,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",
@@ -1630,6 +1737,7 @@
       }
     ],
     "responseId": "run_Id_1",
+    "messageId": "msg_Id_3",
     "rawRepresentation": {
       "type": "REASONING_MESSAGE_CONTENT",
       "messageId": "msg_Id_3",

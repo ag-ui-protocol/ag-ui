@@ -18,6 +18,8 @@ export const CREWAI_FLOW_FEATURES = [
   "a2ui_dynamic_schema",
   "a2ui_recovery",
   "a2ui_fixed_schema",
+  "generative_ui_markdown",
+  "generative_ui_tool",
   "crew_chat",
   "error_flow",
 ] as const;
@@ -47,6 +49,8 @@ export const CREWAI_CONVERSATIONAL_FEATURES = [
   "a2ui_dynamic_schema",
   "a2ui_recovery",
   "a2ui_fixed_schema",
+  "generative_ui_markdown",
+  "generative_ui_tool",
 ] as const satisfies readonly CrewAIFlowFeature[];
 
 export type CrewAIConversationalFeature =
@@ -73,6 +77,8 @@ export const CREWAI_FLOW_AGENT_PATHS = {
   a2ui_dynamic_schema: "a2ui_dynamic_schema",
   a2ui_recovery: "a2ui_recovery",
   a2ui_fixed_schema: "a2ui_fixed_schema",
+  generative_ui_markdown: "generative_ui_markdown",
+  generative_ui_tool: "generative_ui_tool",
 } as const satisfies Partial<Record<CrewAIFlowFeature, string>>;
 
 const CONVERSATIONAL_FEATURE_SET: ReadonlySet<string> = new Set(

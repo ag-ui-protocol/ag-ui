@@ -3,6 +3,7 @@ import {
   AgentConfig,
   BaseEvent,
   EventType,
+  PROTOCOL_VERSION,
   RunAgentInput,
   RunErrorEvent,
   RunFinishedEvent,
@@ -48,8 +49,21 @@ export class A2AAgent extends AbstractAgent {
     this.initializeExtension(this.a2aClient);
   }
 
-  clone() {
-    return new A2AAgent({ a2aClient: this.a2aClient, debug: this.debug });
+  /**
+   * Keeps the base agent's state (thread, messages, subscribers) and the
+   * client, which the constructor already wrapped for the A2UI extension.
+   * Constructing a new agent here would wrap the shared client again on every
+   * clone, and runtimes clone once per request.
+   */
+  clone(): A2AAgent {
+    const cloned = super.clone() as A2AAgent;
+    const fields = cloned as unknown as {
+      a2aClient: A2AClient;
+      messageIdMap: Map<string, string>;
+    };
+    fields.a2aClient = this.a2aClient;
+    fields.messageIdMap = new Map();
+    return cloned;
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -59,6 +73,7 @@ export class A2AAgent extends AbstractAgent {
           type: EventType.RUN_STARTED,
           threadId: input.threadId,
           runId: input.runId,
+          protocolVersion: PROTOCOL_VERSION,
         };
         subscriber.next(runStarted);
 

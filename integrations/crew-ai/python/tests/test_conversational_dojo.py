@@ -21,6 +21,8 @@ EXPECTED_CONVERSATIONAL_FEATURES = {
     "a2ui_dynamic_schema",
     "a2ui_recovery",
     "a2ui_fixed_schema",
+    "generative_ui_markdown",
+    "generative_ui_tool",
 }
 
 
@@ -105,6 +107,8 @@ EXPECTED_REGULAR_ROUTES = {
     "a2ui_dynamic_schema",
     "a2ui_recovery",
     "a2ui_fixed_schema",
+    "generative_ui_markdown",
+    "generative_ui_tool",
     "crew_chat",
     "error_flow",
 }

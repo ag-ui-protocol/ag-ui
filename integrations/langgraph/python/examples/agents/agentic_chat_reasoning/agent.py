@@ -39,11 +39,15 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
     selected_model = state.get("model", "OpenAI")
     if selected_model == "Anthropic":
         model = ChatAnthropic(
-            model="claude-sonnet-4-20250514",
-            thinking={"type": "enabled", "budget_tokens": 2000}
+            model="claude-opus-4-8",
+            thinking={"type": "adaptive"}
         )
     elif selected_model == "Gemini":
-        model = ChatGoogleGenerativeAI(model="gemini-2.5-pro", thinking_budget=1024)
+        model = ChatGoogleGenerativeAI(
+            model="gemini-3.1-pro-preview",
+            thinking_level="low",
+            include_thoughts=True,
+        )
     else:
         model = ChatOpenAI(
             model="o4-mini",

@@ -1,13 +1,4 @@
-import { spawnSync } from "node:child_process";
-import {
-  access,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   basename,
@@ -18,11 +9,14 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { isTraceEvent, type TraceEvent } from "../lib/event-trace-events";
-import { getEventTraceDestination } from "../lib/event-trace-golden";
+import { isTraceEvent } from "../lib/event-trace-events";
+import { exists, resolveEventTraceLanes } from "../lib/event-trace-lanes";
+import { runEventTraceLane } from "../lib/event-trace-runner";
+import { withEventTraceUpdateWorkspace } from "../lib/event-trace-update-workspace";
+import { prepareCompleteEventTraceUpdates } from "../lib/event-trace-update-completeness";
+import { publishEventTraceUpdates } from "../lib/event-trace-update-publication";
 import {
   type EventTraceUpdateCandidate,
-  planEventTraceUpdates,
   renderEventTraceModule,
   summarizeEventTraceDiff,
 } from "../lib/event-trace-update";
@@ -31,11 +25,12 @@ type CliOptions = {
   all: boolean;
   spec?: string;
   reason: string;
+  integration: "langgraph" | "strands";
 };
 
 const e2eRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testsRoot = join(e2eRoot, "tests");
-const stagingDirectory = join(e2eRoot, ".event-trace-update");
+const stagingRoot = join(e2eRoot, ".event-trace-update");
 
 function readOptionValue(args: readonly string[], index: number, name: string) {
   const value = args[index + 1];
@@ -49,6 +44,7 @@ function parseOptions(args: readonly string[]): CliOptions {
   let all = false;
   let spec: string | undefined;
   let reason: string | undefined;
+  let integration: CliOptions["integration"] = "langgraph";
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -61,6 +57,13 @@ function parseOptions(args: readonly string[]): CliOptions {
       index += 1;
     } else if (arg === "--reason") {
       reason = readOptionValue(args, index, "--reason");
+      index += 1;
+    } else if (arg === "--integration") {
+      const value = readOptionValue(args, index, "--integration");
+      if (value !== "langgraph" && value !== "strands") {
+        throw new Error(`Unknown integration: ${value}`);
+      }
+      integration = value;
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -77,49 +80,7 @@ function parseOptions(args: readonly string[]): CliOptions {
     throw new Error(`Invalid spec name: ${spec}`);
   }
 
-  return { all, spec, reason };
-}
-
-async function exists(path: string) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    // Missing optional specs and not-yet-created golden files are expected.
-    return false;
-  }
-}
-
-function laneTarget(lane: "typescript" | "python", options: CliOptions) {
-  const directory =
-    lane === "typescript" ? "langgraphTypescriptTests" : "langgraphPythonTests";
-  return options.all
-    ? join("tests", directory)
-    : join("tests", directory, `${options.spec}.spec.ts`);
-}
-
-function runLane(lane: "typescript" | "python", target: string) {
-  const executable = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const result = spawnSync(
-    executable,
-    ["exec", "playwright", "test", target, "--retries=0"],
-    {
-      cwd: e2eRoot,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        EVENT_TRACE_UPDATE_LANE: lane,
-        EVENT_TRACE_UPDATE_STAGING_DIR: stagingDirectory,
-        PLAYWRIGHT_SUITE: `langgraph-${lane}`,
-      },
-    },
-  );
-
-  if (result.status !== 0) {
-    throw new Error(
-      `${lane} Event trace update lane failed; no golden files were written`,
-    );
-  }
+  return { all, spec, reason, integration };
 }
 
 async function findJsonFiles(directory: string): Promise<string[]> {
@@ -164,7 +125,7 @@ function parseCandidate(
   };
 }
 
-async function readCandidates() {
+async function readCandidates(stagingDirectory: string) {
   const files = await findJsonFiles(stagingDirectory);
   return Promise.all(
     files.map(async (path) => {
@@ -191,28 +152,6 @@ function goldenImportPath(path: string) {
   return importPath.startsWith(".") ? importPath : `./${importPath}`;
 }
 
-async function readExistingJourneys(
-  sourceUrl: string,
-): Promise<{ readonly [journeyKey: string]: readonly TraceEvent[] }> {
-  if (!(await exists(fileURLToPath(sourceUrl)))) return {};
-
-  const goldenModule: unknown = await import(sourceUrl);
-  if (typeof goldenModule !== "object" || goldenModule === null) return {};
-
-  const journeys: { [journeyKey: string]: readonly TraceEvent[] } = {};
-  for (const exported of Object.values(goldenModule)) {
-    if (typeof exported !== "object" || exported === null) continue;
-    for (const value of Object.values(exported)) {
-      if (!Array.isArray(value) || !value.every(isTraceEvent)) continue;
-      const destination = getEventTraceDestination(value);
-      if (destination?.sourceUrl === sourceUrl) {
-        journeys[destination.journeyKey] = value;
-      }
-    }
-  }
-  return journeys;
-}
-
 function validateGoldenPath(sourceUrl: string) {
   const path = resolve(fileURLToPath(sourceUrl));
   if (!isAbsolute(path) || !path.startsWith(`${testsRoot}${sep}`)) {
@@ -228,82 +167,88 @@ async function main() {
   const options = parseOptions(process.argv.slice(2));
   if (!process.env.BASE_URL) {
     throw new Error(
-      "BASE_URL is required; start Dojo and both selected LangGraph backends first",
+      "BASE_URL is required; start Dojo and the selected integration backends first",
     );
   }
 
-  await rm(stagingDirectory, { recursive: true, force: true });
-  await mkdir(stagingDirectory, { recursive: true });
-
-  const ranLanes: Array<"typescript" | "python"> = [];
-  for (const lane of ["typescript", "python"] as const) {
-    const target = laneTarget(lane, options);
-    if (!(await exists(join(e2eRoot, target)))) continue;
-    ranLanes.push(lane);
-    runLane(lane, target);
-  }
-  if (ranLanes.length === 0) {
+  const selectedLanes = await resolveEventTraceLanes(e2eRoot, options);
+  if (selectedLanes.length === 0) {
     throw new Error(
       options.spec
-        ? `No matching LangGraph spec found for ${options.spec}`
-        : "No LangGraph Event trace test directories were found",
+        ? `No matching ${options.integration} spec found for ${options.spec}`
+        : `No ${options.integration} Event trace test directories were found`,
     );
   }
 
-  const candidates = await readCandidates();
-  if (candidates.length === 0) {
-    throw new Error("The selected tests produced no Event trace candidates");
-  }
-  for (const lane of ranLanes) {
-    if (!candidates.some((candidate) => candidate.lane === lane)) {
-      throw new Error(
-        `${lane} completed without leaving event trace candidates; no golden files were written`,
-      );
-    }
-  }
+  await withEventTraceUpdateWorkspace(
+    stagingRoot,
+    async ({ stagingDirectory, publish }) => {
+      for (const { lane, targets } of selectedLanes) {
+        runEventTraceLane({ lane, targets, e2eRoot, stagingDirectory });
+      }
 
-  const updates = planEventTraceUpdates(candidates);
-  const pendingWrites: Array<{
-    path: string;
-    temporaryPath: string;
-    content: string;
-  }> = [];
+      const candidates = await readCandidates(stagingDirectory);
+      if (candidates.length === 0) {
+        throw new Error(
+          "The selected tests produced no Event trace candidates",
+        );
+      }
+      for (const { lane } of selectedLanes) {
+        if (!candidates.some((candidate) => candidate.lane === lane.id)) {
+          throw new Error(
+            `${lane.id} completed without leaving event trace candidates; no golden files were written`,
+          );
+        }
+      }
 
-  for (const update of updates) {
-    const path = validateGoldenPath(update.sourceUrl);
-    const previous = await readExistingJourneys(update.sourceUrl);
-    const summary = summarizeEventTraceDiff(previous, update.journeys);
-    const label = relative(e2eRoot, path);
-    if (summary.length === 0) {
-      console.log(`${label}: no semantic changes`);
-      continue;
-    }
+      await publish(async () => {
+        const updates = await prepareCompleteEventTraceUpdates({
+          e2eRoot,
+          selectedLanes,
+          candidates,
+        });
+        const pendingWrites: Array<{
+          path: string;
+          temporaryPath: string;
+          content: string;
+        }> = [];
 
-    console.log(`\n${label}`);
-    for (const line of summary) console.log(`  ${line}`);
+        for (const update of updates) {
+          const path = validateGoldenPath(update.sourceUrl);
+          const previous = update.previous;
+          const summary = summarizeEventTraceDiff(previous, update.journeys);
+          const label = relative(e2eRoot, path);
+          if (summary.length === 0) {
+            console.log(`${label}: no semantic changes`);
+            continue;
+          }
 
-    pendingWrites.push({
-      path,
-      temporaryPath: `${path}.event-trace-update-tmp`,
-      content: await renderEventTraceModule({
-        exportName: goldenExportName(path),
-        importPath: goldenImportPath(path),
-        reason: options.reason,
-        journeys: update.journeys,
-      }),
-    });
-  }
+          console.log(`\n${label}`);
+          for (const line of summary) console.log(`  ${line}`);
 
-  for (const pending of pendingWrites) {
-    await writeFile(pending.temporaryPath, pending.content, "utf8");
-  }
-  for (const pending of pendingWrites) {
-    await rename(pending.temporaryPath, pending.path);
-  }
+          pendingWrites.push({
+            path,
+            temporaryPath: join(
+              stagingDirectory,
+              `golden-${pendingWrites.length}.tmp`,
+            ),
+            content: await renderEventTraceModule({
+              exportName: goldenExportName(path),
+              importPath: goldenImportPath(path),
+              reason: options.reason,
+              journeys: update.journeys,
+            }),
+          });
+        }
 
-  console.log(`\nUpdated ${pendingWrites.length} Event trace file(s).`);
-  console.log(
-    "Review every semantic change and first ask whether the implementation regressed.",
+        await publishEventTraceUpdates(pendingWrites, stagingDirectory);
+
+        console.log(`\nUpdated ${pendingWrites.length} Event trace file(s).`);
+        console.log(
+          "Review every semantic change and first ask whether the implementation regressed.",
+        );
+      });
+    },
   );
 }
 

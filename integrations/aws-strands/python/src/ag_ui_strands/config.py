@@ -12,12 +12,16 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     Optional,
 )
 
 from ag_ui.core import RunAgentInput
 
 from strands.session import SessionManager
+
+from .subagents import SUBAGENT_VISIBILITIES, SubagentVisibility
+from .utils import UrlFetchPolicy
 
 
 StatePayload = Dict[str, Any]
@@ -129,12 +133,127 @@ class ToolBehavior:
     tool_stream_event_handler: Optional[ToolStreamEventHandler] = None
 
 
+ThreadAgentKwargsProvider = Callable[["RunAgentInput"], Mapping[str, Any]]
+"""Builds extra constructor kwargs for one thread's agent.
+
+See :attr:`StrandsAgentConfig.thread_agent_kwargs`.
+"""
+
+
+TemplateToolsProvider = Callable[
+    ["RunAgentInput"],
+    Awaitable[Optional[Iterable[Any]]] | Optional[Iterable[Any]],
+]
+"""Chooses which of the template's tools one request may see.
+
+See :attr:`StrandsAgentConfig.template_tools_provider`.
+"""
+
+
 @dataclass
 class StrandsAgentConfig:
     """Top-level configuration for the Strands agent adapter."""
 
     tool_behaviors: Dict[str, ToolBehavior] = field(default_factory=dict)
     state_context_builder: Optional[StateContextBuilder] = None
+    thread_agent_kwargs: Optional["ThreadAgentKwargsProvider"] = None
+    """Extra keyword arguments for each per-thread Strands ``Agent``.
+
+    The adapter builds one ``Agent`` per thread from the template it was given,
+    by reading the template's settings back off the built instance. Some
+    settings cannot be read back at all: Strands consumes them into internal
+    state during construction and keeps nothing under a name the adapter can
+    find. Others are readable but belong to the agent that owns them, so
+    handing the same instance to every thread would let one conversation
+    disturb another.
+
+    Either way the template is the wrong place to put them. This hook is the
+    supported route: it runs once per ``thread_id`` and whatever mapping it
+    returns is applied over the recovered kwargs, so a caller can set anything
+    the adapter cannot carry and override anything it can.
+
+    An unused template's ``conversation_manager`` is deep-copied per thread.
+    Templates with nonempty manager runtime state are rejected, rather than
+    transferring trimming counters, applied pinning, or summaries to a new
+    conversation. Return a fresh manager from this hook when using an
+    already-used template or an uncopyable manager. This includes the SDK's
+    ``SummarizingConversationManager(summarization_agent=Agent(...))``: create
+    both a fresh manager and a fresh summarization agent per thread.
+
+    ``model``, ``system_prompt``, ``tools`` and ``session_manager`` stay the
+    adapter's to set, because they are what keeps threads apart and a run
+    coherent.
+
+    Called with the ``RunAgentInput`` that created the thread. If it raises,
+    the run yields ``RUN_ERROR`` and the thread is not cached, so the next
+    request retries it.
+    """
+    template_tools_provider: Optional["TemplateToolsProvider"] = None
+    """Which of the template agent's tools this request may see.
+
+    Called once per request with that request's ``RunAgentInput``, so the answer
+    can vary turn by turn on one thread: the caller's identity is in
+    ``forwarded_props`` or ``context``, and a tool the request must not reach is
+    simply left out of the returned iterable. May be async.
+
+    Return the tools themselves or their names, whichever is to hand. Return
+    ``None`` to decline filtering, which leaves every template tool available;
+    an empty iterable is a real answer and leaves none of them. A name the
+    template does not contribute is dropped with a warning, because this hook
+    narrows the wrapped agent's tools and cannot add one.
+
+    The container is checked rather than merely iterated. A ``str`` and a
+    ``Mapping`` are both refused: a bare name would come apart into characters,
+    and a permission map would have its keys read as an allow-list while its
+    values went unread, so a name mapped to ``False`` would still be allowed.
+    Lists, tuples, sets and generators are all accepted.
+
+    Applied to the live per-thread agent's tool registry, never by rebuilding
+    that agent: the instance holds the thread's ``SessionManager``, its native
+    interrupt checkpoint and its history, so replacing it to change a tool list
+    would discard a conversation and any approval waiting inside it.
+
+    Three consequences worth knowing:
+
+    - A tool in the batch a live interrupt checkpoint would resume stays
+      registered whatever this returns. The human's answer is about to be
+      routed back into that batch, and an absent tool turns it into a "tool not
+      found" the model re-fires. This is the rule ``sync_proxy_tools`` already
+      applies to a proxy parked in a frontend-tool interrupt. The exemption
+      does not outlast what it is for: the narrowing is re-applied inside the
+      run once the batch has been dispatched, before the model is asked again.
+    - History is never rewritten. A filtered-out tool's earlier calls and
+      results stay in the thread's messages, so the model can still read what
+      it did with a tool it can no longer call, and a provider that returns
+      different sets across turns does not invalidate the transcript.
+    - If it raises, the run yields ``RUN_ERROR`` with code
+      ``TEMPLATE_TOOLS_PROVIDER_ERROR`` and stops, matching
+      ``thread_agent_kwargs``. A filter that fails open would hand the model
+      tools the caller meant to withhold.
+
+    Client-declared tools on ``RunAgentInput.tools`` are outside this hook:
+    they are re-synchronised from the request every turn already, so a caller
+    that wants fewer of those sends fewer. Not applied on the multi-agent
+    orchestrator path, which has no template registry to filter.
+
+    One deployment note. With an external ``agents_by_thread`` map a
+    request-scoped wrapper is rebuilt per request while the cached thread agent
+    keeps the registry it already had, so a template whose tools are built per
+    request hands the adapter equivalent but not identical objects. Ownership
+    of a registry entry therefore falls back from object identity to the tool's
+    name plus "not one of the adapter's other producers". Stable tool objects
+    are still the simpler thing to hand it.
+
+    Example::
+
+        StrandsAgentConfig(
+            template_tools_provider=lambda input_data: (
+                ["read_docs"]
+                if (input_data.forwarded_props or {}).get("role") != "admin"
+                else None
+            )
+        )
+    """
     session_manager_provider: Optional[SessionManagerProvider] = None
     """Optional factory for creating per-thread SessionManager instances.
 
@@ -161,6 +280,37 @@ class StrandsAgentConfig:
     off canonical message reconstruction rather than the streaming
     ``TOOL_CALL_*`` events alone. Set to False for raw AG-UI consumers
     that do their own message reconstruction.
+    """
+    subagent_visibility: SubagentVisibility = "inline"
+    """What the client sees of a sub-agent run through a tool.
+
+    Applies to agents-as-tools: ``Agent.as_tool()``, or a generator tool that
+    re-yields another agent's ``stream_async``. A plain ``@tool`` that calls
+    ``sub_agent(...)`` and returns its result exposes nothing to stream, so
+    it stays an ordinary tool call under every setting.
+
+    - ``"inline"`` (default): unchanged from earlier releases. The
+      sub-agent's tool calls stream untagged beside the parent's; its text
+      does not stream.
+    - ``"attributed"``: each invocation is an AG-UI subagent run.
+      ``SUBAGENT_STARTED`` names the spawning tool call as
+      ``parentToolCallId``; the sub-agent's text, reasoning and tool calls
+      stream tagged with its ``subagentRunId`` (the spawning call's id);
+      ``SUBAGENT_FINISHED``, or ``SUBAGENT_ERROR`` for an error result,
+      lands right before that call's ``TOOL_CALL_RESULT``. A sub-agent that
+      itself delegates is announced with ``parentSubagentRunId``. Its
+      messages enter ``MESSAGES_SNAPSHOT`` attributed, between the spawning
+      call and its result, so a client that keeps the snapshot keeps them.
+    - ``"hidden"``: the client sees only the spawning call and its result.
+
+    ``"attributed"`` is opt-in because clients older than AG-UI 1.0 fail on
+    the subagent event types while decoding. Turn it on once every consumer
+    understands them.
+
+    Whatever the setting, sub-agent messages a client sends back are not
+    handed to the parent model: Strands persists only the parent
+    conversation, and a parent shown a sub-agent's calls would take them for
+    its own. They are still echoed in the snapshot.
     """
     replay_history_into_strands: bool = True
     """When True (and the cached Strands agent has no ``session_manager``),
@@ -189,7 +339,45 @@ class StrandsAgentConfig:
     - ``recovery`` — recovery loop config. NOTE: keys are camelCase per the
       shared toolkit contract — e.g. ``{"maxAttempts": 5}`` (a snake_case
       ``max_attempts`` is silently ignored).
+    - ``force_tool_choice`` — defaults to True. Set False for models that
+      reject forced choice to omit ``tool_choice`` from the inner render
+      request. The render tool and bounded recovery remain active.
     """
+    url_fetch_policy: Optional[UrlFetchPolicy] = None
+    """Policy applied to every server-side fetch of a URL content source.
+
+    ``None`` uses :data:`~ag_ui_strands.utils.DEFAULT_URL_FETCH_POLICY`, which
+    fetches only ``http``/``https``, refuses addresses outside the public
+    internet, and bounds both a single attachment and everything one run
+    fetches. A deployment whose attachments live on a private CDN or behind
+    split DNS passes ``UrlFetchPolicy(allow_private_networks=True)``; cloud
+    metadata endpoints stay blocked either way.
+    """
+    audio_input_supported: bool = False
+    """Whether audio attachments are sent to the model. Off unless enabled.
+
+    Enable it only when the thread agent's model accepts audio input, for
+    example a Bedrock model whose model card lists audio input. The provider
+    class does not decide this: Bedrock formats an audio block for every model
+    id, and a model id without audio input rejects the request at the service.
+    A provider whose Strands formatter cannot carry audio raises ``TypeError``
+    on it whatever this says.
+
+    Left off, an audio attachment is reported in ``MediaDropped`` with the
+    reason ``configured model does not support audio input`` instead. The rule
+    runs before a URL source is fetched and applies to the live turn and to
+    history rebuilt from the client's messages alike, so a thread's native
+    history never holds audio its model would reject on every later turn.
+    Audio also needs strands-agents 1.53.0+, whatever this says.
+    """
+
+    def __post_init__(self) -> None:
+        if self.subagent_visibility not in SUBAGENT_VISIBILITIES:
+            raise ValueError(
+                "subagent_visibility must be one of "
+                f"{', '.join(SUBAGENT_VISIBILITIES)}; "
+                f"got {self.subagent_visibility!r}"
+            )
 
 
 async def maybe_await(value: Any) -> Any:

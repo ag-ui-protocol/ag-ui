@@ -49,6 +49,14 @@ const CONTROLLED_ENV_KEYS = [
   "RUN_URL",
   "NPM_ORG_URL",
   "PY_BASE_URL",
+  "MAVEN_RESULT",
+  "MAVEN_BUILD_RESULT",
+  "MAVEN_INTENDED",
+  "MAVEN_PACKAGES",
+  "KOTLIN_RESULT",
+  "KOTLIN_BUILD_RESULT",
+  "KOTLIN_INTENDED",
+  "KOTLIN_PACKAGES",
 ] as const;
 
 /**
@@ -429,3 +437,19 @@ test(
     }
   },
 );
+
+test("wrapper normalizes optional Kotlin lane and preserves Java success on Kotlin failure", async () => {
+  const result = await runWrapper({
+    MODE: "stable",
+    MAVEN_RESULT: "success",
+    MAVEN_PACKAGES: '[{"name":"java-core"}]',
+    KOTLIN_RESULT: "skipped",
+    KOTLIN_BUILD_RESULT: "unexpected",
+    KOTLIN_INTENDED: "true",
+    KOTLIN_PACKAGES: "[]",
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /java-core/);
+  assert.match(result.stdout, /Maven Central release failed/);
+  assert.match(result.stderr, /unrecognized job result/);
+});

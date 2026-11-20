@@ -1,9 +1,11 @@
-import { test, expect } from "../../test-isolation-helper";
+import { test, expect } from "../../event-trace-test";
 import { SharedStatePage } from "../../featurePages/SharedStatePage";
+import { sharedStatePageEventTrace } from "./sharedStatePage.event-trace";
 
 test.describe("Shared State Feature", () => {
   test("[LangGraph] should interact with the chat to get a recipe on prompt", async ({
     page,
+    eventTrace,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
@@ -19,16 +21,23 @@ test.describe("Shared State Feature", () => {
     await sharedStateAgent.getInstructionItems(
       sharedStateAgent.instructionsContainer,
     );
+    await eventTrace.expectJourney(
+      sharedStatePageEventTrace.interactWithTheChatToGetARecipeOnPrompt,
+    );
   });
 
   test("[LangGraph] should share state between UI and chat", async ({
     page,
+    eventTrace,
   }) => {
     const sharedStateAgent = new SharedStatePage(page);
 
     await page.goto("/langgraph-typescript/feature/shared_state");
 
     await sharedStateAgent.openChat();
+    // Wait for the runtime-backed agent to replace the provisional agent before
+    // editing shared state, so the graph observes the same recipe as the UI.
+    await sharedStateAgent.awaitAgentReady();
 
     // Add new ingredient via UI
     await sharedStateAgent.addIngredient.click();
@@ -56,5 +65,8 @@ test.describe("Shared State Feature", () => {
     await expect(
       sharedStateAgent.agentMessage.getByText(/All-Purpose Flour/),
     ).toBeVisible();
+    await eventTrace.expectJourney(
+      sharedStatePageEventTrace.shareStateBetweenUIAndChat,
+    );
   });
 });

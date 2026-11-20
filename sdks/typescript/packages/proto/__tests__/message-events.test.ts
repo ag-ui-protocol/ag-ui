@@ -231,6 +231,55 @@ describe("Message Events", () => {
         expectRoundTripEquality(event);
       });
 
+      it.each([true, false])("file source (metadata: %s)", (withMetadata) => {
+        const event: MessagesSnapshotEvent = {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            {
+              id: `msg-${modality}-file-${withMetadata ? "meta" : "no-meta"}`,
+              role: "user",
+              content: [
+                {
+                  type: modality,
+                  source: {
+                    type: "file",
+                    value: `file-${modality}-abc123`,
+                    provider: "openai",
+                    mimeType: MIME_BY_MODALITY[modality],
+                  },
+                  ...(withMetadata ? { metadata: { providerHint: "high" } } : {}),
+                },
+              ],
+            },
+          ],
+        };
+
+        expectRoundTripEquality(event);
+      });
+
+      it("file source without provider or mimeType", () => {
+        const event: MessagesSnapshotEvent = {
+          type: EventType.MESSAGES_SNAPSHOT,
+          messages: [
+            {
+              id: `msg-${modality}-file-bare`,
+              role: "user",
+              content: [
+                {
+                  type: modality,
+                  source: {
+                    type: "file",
+                    value: `file-${modality}-bare`,
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        expectRoundTripEquality(event);
+      });
+
       it("url source without mimeType", () => {
         const event: MessagesSnapshotEvent = {
           type: EventType.MESSAGES_SNAPSHOT,
@@ -253,6 +302,106 @@ describe("Message Events", () => {
 
         expectRoundTripEquality(event);
       });
+    });
+
+    it("should carry all three fields of a file source through the wire", () => {
+      const event: MessagesSnapshotEvent = {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "msg-user-file-source",
+            role: "user",
+            content: [
+              { type: "text", text: "Here is the invoice." },
+              {
+                type: "document",
+                id: "part_1",
+                source: {
+                  type: "file",
+                  value: "file-abc123",
+                  provider: "openai",
+                  mimeType: "application/pdf",
+                },
+                metadata: { title: "INV-2291" },
+              },
+            ],
+          },
+        ],
+      };
+
+      const decoded = decode(encode(event)) as MessagesSnapshotEvent;
+      const content = decoded.messages[0].content as any[];
+
+      expect(content[1]).toEqual({
+        type: "document",
+        id: "part_1",
+        source: {
+          type: "file",
+          value: "file-abc123",
+          provider: "openai",
+          mimeType: "application/pdf",
+        },
+        metadata: { title: "INV-2291" },
+      });
+    });
+
+    it("should leave an absent provider and mimeType absent, not empty strings", () => {
+      // The same discipline the url source keeps for an absent mimeType: the
+      // optionals come back undefined, so a consumer can tell "unknown" from
+      // "declared empty".
+      const event: MessagesSnapshotEvent = {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "msg-user-file-source-bare",
+            role: "user",
+            content: [
+              {
+                type: "document",
+                source: { type: "file", value: "files/abc123" },
+              },
+            ],
+          },
+        ],
+      };
+
+      const decoded = decode(encode(event)) as MessagesSnapshotEvent;
+      const part = (decoded.messages[0].content as any[])[0];
+
+      expect(part.source.type).toBe("file");
+      expect(part.source.value).toBe("files/abc123");
+      expect(part.source.provider).toBeUndefined();
+      expect(part.source.mimeType).toBeUndefined();
+      expect(part.source).toEqual({ type: "file", value: "files/abc123" });
+    });
+
+    it("should round-trip a tool message whose part names a provider-held file", () => {
+      const event: MessagesSnapshotEvent = {
+        type: EventType.MESSAGES_SNAPSHOT,
+        messages: [
+          {
+            id: "msg-tool-file-source",
+            role: "tool",
+            toolCallId: "tc-1",
+            content: [
+              { type: "text", text: "Uploaded the invoice." },
+              {
+                type: "document",
+                id: "p2",
+                source: {
+                  type: "file",
+                  value: "file-abc123",
+                  provider: "openai",
+                  mimeType: "application/pdf",
+                },
+                metadata: { title: "INV-2291" },
+              },
+            ],
+          },
+        ],
+      };
+
+      expectRoundTripEquality(event);
     });
 
     it("should round-trip a user message containing all modalities", () => {

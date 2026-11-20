@@ -80,7 +80,7 @@ public sealed class InMemoryAGUITransport : IAGUITransport
         string threadId = string.IsNullOrEmpty(input.ThreadId) ? "thread_1" : input.ThreadId;
         string runId = string.IsNullOrEmpty(input.RunId) ? "run_1" : input.RunId;
 
-        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId };
+        yield return new RunStartedEvent { ThreadId = threadId, RunId = runId, ProtocolVersion = AGUIProtocol.Version };
         yield return new TextMessageStartEvent { MessageId = "msg_1", Role = AGUIRoles.Assistant };
         yield return new TextMessageContentEvent { MessageId = "msg_1", Delta = "Hello from AG-UI" };
         yield return new TextMessageEndEvent { MessageId = "msg_1" };
@@ -104,7 +104,9 @@ to `ChatResponseUpdate` values:
   `InterruptRequestContent`.
 - `RUN_ERROR` becomes an `ErrorContent` update. Its `message` maps to
   `ErrorContent.Message`, and its optional `code` maps to
-  `ErrorContent.ErrorCode`.
+  `ErrorContent.ErrorCode`. When the event carries partial `usage`, the client
+  also emits `UsageContent` updates so `ChatResponse.Usage` includes the tokens
+  consumed before the failure.
 
 `ResponseId` on each update corresponds to the AG-UI run id. The client clears
 `ConversationId` before yielding updates so callers continue sending full
@@ -123,7 +125,12 @@ public async IAsyncEnumerable<BaseEvent> SendAsync(
     cancellationToken.ThrowIfCancellationRequested();
 
     await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
-    yield return new RunStartedEvent { ThreadId = input.ThreadId, RunId = input.RunId };
+    yield return new RunStartedEvent
+    {
+        ThreadId = input.ThreadId,
+        RunId = input.RunId,
+        ProtocolVersion = AGUIProtocol.Version,
+    };
 
     cancellationToken.ThrowIfCancellationRequested();
     yield return new RunFinishedEvent { ThreadId = input.ThreadId, RunId = input.RunId };

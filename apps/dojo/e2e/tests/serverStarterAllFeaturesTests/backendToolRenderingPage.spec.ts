@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 
 test("[ServerStarterAllFeatures] Backend Tool Rendering displays weather cards", async ({
   page,
