@@ -413,6 +413,71 @@ class TestFinishReasonReasoningContent(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(reasoning_deltas, ["Step 1. ", "Step 2."])
 
+    async def test_redacted_thinking_on_finish_reason_with_active_reasoning_emits_encrypted_value(self):
+        events = [
+            _stream_event(
+                _text_chunk("", additional_kwargs={"reasoning_content": "Step 1. "})
+            ),
+            _stream_event(
+                _text_chunk(
+                    [{"type": "redacted_thinking", "data": "encrypted-blob"}],
+                    finish_reason="length",
+                )
+            ),
+            _model_end_event(),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        reasoning_start = next(
+            ev for ev in dispatched if ev.type == EventType.REASONING_MESSAGE_START
+        )
+        encrypted_events = [
+            ev for ev in dispatched
+            if ev.type == EventType.REASONING_ENCRYPTED_VALUE
+        ]
+        self.assertEqual(len(encrypted_events), 1)
+        self.assertEqual(encrypted_events[0].subtype, "message")
+        self.assertEqual(encrypted_events[0].entity_id, reasoning_start.message_id)
+        self.assertEqual(encrypted_events[0].encrypted_value, "encrypted-blob")
+
+    async def test_redacted_thinking_on_finish_reason_without_active_reasoning_leaves_text_stream_open(self):
+        events = [
+            _stream_event(_text_chunk("Hello")),
+            _stream_event(
+                _text_chunk(
+                    [{"type": "redacted_thinking", "data": "orphan-blob"}],
+                    finish_reason="stop",
+                )
+            ),
+            _model_end_event(content="Hello"),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        encrypted_events = [
+            ev for ev in dispatched
+            if ev.type == EventType.REASONING_ENCRYPTED_VALUE
+        ]
+        self.assertEqual(encrypted_events, [])
+
+        text_events = [
+            ev for ev in dispatched
+            if ev.type in (
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+            )
+        ]
+        self.assertEqual(
+            [ev.type for ev in text_events],
+            [
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+            ],
+        )
+        self.assertEqual(text_events[1].delta, "Hello")
+        self.assertEqual(text_events[2].raw_event["event"], "on_chat_model_end")
+
 
 class TestEmptyFinishReasonChunkPreservesBehavior(unittest.IsolatedAsyncioTestCase):
     """Standard empty ``finish_reason`` chunks must remain no-ops (no premature close)."""
