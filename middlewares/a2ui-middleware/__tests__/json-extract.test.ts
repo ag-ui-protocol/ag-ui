@@ -83,6 +83,23 @@ describe("extractCompleteItemsWithStatus", () => {
     });
   });
 
+  // Primitive items are completed by the parser only when the character AFTER
+  // them arrives (a `,` or the closing `]`), so the parser's position lands one
+  // past the item. Slicing there and appending `]` produced `[1,]` or
+  // `["a","b"]]`, which failed to parse, and the whole array read as having no
+  // complete items, even once it had closed.
+  it.each([
+    ['{"items": [1, 2, 3', { items: [1, 2], arrayClosed: false }],
+    ['{"items": [1, 2, 3]}', { items: [1, 2, 3], arrayClosed: true }],
+    ['{"items": ["a", "b"', { items: ["a"], arrayClosed: false }],
+    ['{"items": ["a", "b"]}', { items: ["a", "b"], arrayClosed: true }],
+    ['{"items": ["a]", "b,"] }', { items: ["a]", "b,"], arrayClosed: true }],
+    ['{"items": [null, 1.5, -2 ]', { items: [null, 1.5, -2], arrayClosed: true }],
+    ['{"items": [{"id":"1"}, 5]}', { items: [{ id: "1" }, 5], arrayClosed: true }],
+  ])("returns complete primitive items from %s", (partial, expected) => {
+    expect(extractCompleteItemsWithStatus(partial, "items")).toEqual(expected);
+  });
+
   it("returns arrayClosed=true for empty array", () => {
     const partial = '{"flights": []}';
     const result = extractCompleteItemsWithStatus(partial, "flights");
