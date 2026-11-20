@@ -1,12 +1,12 @@
 ---
 title: "AgentSubscriber"
-description:
-  "Subscriber trait for agent lifecycle and event handling"
+description: "Subscriber trait for agent lifecycle and event handling"
 ---
 
 # AgentSubscriber
 
-The AgentSubscriber trait provides an event-driven system for handling agent lifecycle events, message updates, and state mutations during agent execution.
+The AgentSubscriber trait provides an event-driven system for handling agent
+lifecycle events, message updates, and state mutations during agent execution.
 
 ```rust
 use ag_ui_client::subscriber::AgentSubscriber;
@@ -14,18 +14,21 @@ use ag_ui_client::subscriber::AgentSubscriber;
 
 ## Overview
 
-Implement any subset of the callback methods to react to events. Handlers can optionally return an AgentStateMutation to update the in-flight messages and/or state and to stop propagation to later subscribers.
+Implement any subset of the callback methods to react to events. Handlers can
+optionally return an AgentStateMutation to update the in-flight messages and/or
+state and to stop propagation to later subscribers.
 
 Subscriber callbacks are async-friendly via async_trait.
 
 ## Adding subscribers to agents
 
-Pass subscribers to Agent::run_agent using any of these forms via IntoSubscribers:
+Pass subscribers to `Agent::run_input` or `Agent::run_agent` using any of these
+forms via IntoSubscribers:
 
-- `T where T: AgentSubscriber`
 - `(T,)` single-element tuple
 - `Vec<T>`
-- `&[T]`
+- `[T; N]` fixed-size array
+- `Subscribers<StateT, FwdPropsT>` for heterogeneous subscribers
 - `()` or `Option<()>` when no subscribers are needed
 
 ```rust
@@ -44,7 +47,7 @@ impl AgentSubscriber for Logger {
         _buffer: &str,
         _params: ag_ui_client::subscriber::AgentSubscriberParams<'async_trait, serde_json::Value, serde_json::Value>,
     ) -> Result<ag_ui_client::agent::AgentStateMutation, ag_ui_client::agent::AgentError> {
-        println!("chunk: {}", event.content);
+        println!("chunk: {}", event.delta);
         Ok(Default::default())
     }
 }
@@ -69,7 +72,29 @@ AgentStateMutation {
 
 - messages: Option<Vec<Message>> – replace current message history
 - state: Option<StateT> – replace current agent state
-- stop_propagation: bool – if true, subsequent subscribers won’t receive this event
+- stop_propagation: bool – stop later event subscribers according to the
+  dispatch order below
+
+## Dispatch order
+
+Protocol verification runs first. Generic `on_event` callbacks then run in
+order, applying each mutation before the next subscriber. A generic stop
+suppresses later generic callbacks, default reduction, and typed callbacks for
+that event.
+
+If generic callbacks continue, the default reducer updates history/state before
+typed callbacks. Each typed mutation is immediately visible to the next typed
+subscriber. A typed stop suppresses later typed callbacks but retains the
+already-applied default reduction. Accumulated mutations are preserved and
+change notifications follow. Text/tool buffer arguments describe the fixed
+post-reduction event buffer; `params` reflects earlier subscriber mutations.
+
+On ordinary `Result` paths, failure and finalization callbacks visit every
+subscriber, even when another cleanup callback returns an error or requests a
+stop. Dropping the future or a callback panic cannot await asynchronous
+finalizers. Dropping releases the connection without cancelling remote work. Change-notification and
+diagnostic callbacks return `Result<(), AgentError>` and cannot return
+mutations.
 
 ## AgentSubscriberParams
 
@@ -88,7 +113,8 @@ pub struct AgentSubscriberParams<'a, StateT, FwdPropsT> {
 
 ## Event callbacks
 
-You can implement specific typed callbacks or the catch‑all on_event. Key callbacks include:
+You can implement specific typed callbacks or the catch‑all on_event. Key
+callbacks include:
 
 - on_run_initialized
 - on_run_failed
@@ -97,13 +123,36 @@ You can implement specific typed callbacks or the catch‑all on_event. Key call
 - on_run_finished_event
 - on_run_error_event
 - on_step_started_event / on_step_finished_event
-- on_text_message_start_event / on_text_message_content_event / on_text_message_end_event
-- on_tool_call_start_event / on_tool_call_args_event / on_tool_call_end_event / on_tool_call_result_event
+- on_text_message_start_event / on_text_message_content_event /
+  on_text_message_end_event
+- on_tool_call_start_event / on_tool_call_args_event / on_tool_call_end_event /
+  on_tool_call_result_event
 - on_state_snapshot_event / on_state_delta_event
 - on_messages_snapshot_event
+- on_text_message_chunk_event / on_tool_call_chunk_event
+- on_activity_snapshot_event / on_activity_delta_event
+- on_reasoning_start_event / on_reasoning_message_start_event /
+  on_reasoning_message_content_event / on_reasoning_message_end_event /
+  on_reasoning_message_chunk_event / on_reasoning_end_event /
+  on_reasoning_encrypted_value_event
+- on_subagent_started_event / on_subagent_finished_event /
+  on_subagent_error_event
 - on_raw_event / on_custom_event
 
-All callbacks have sensible defaults that return Ok(Default::default()). Only implement what you need.
+The compatibility boundary translates deprecated `THINKING_*` events before
+subscriber dispatch. The HTTP boundary drops unknown variants and reports
+structured processing diagnostics through
+`with_diagnostic_handler`. `on_event` observes each verified, expanded event;
+lifecycle execution expands chunk shorthands, so the deprecated raw chunk hooks are not invoked
+by `run_input` or `run_agent`. `Agent::run` exposes raw events without
+subscriber dispatch.
+
+`on_diagnostic` receives reducer warnings, including a bounded `MissingTarget`
+diagnostic if an encrypted reasoning artifact cannot be retained. Diagnostics
+omit ciphertext and opaque application payloads.
+
+All callbacks have sensible defaults that return Ok(Default::default()). Only
+implement what you need.
 
 ## Example: tracking state snapshots and deltas
 
@@ -115,6 +164,7 @@ use async_trait::async_trait;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 struct Plan { steps: Vec<String> }
+impl ag_ui_client::core::AgentState for Plan {}
 
 struct Logger;
 
@@ -142,6 +192,7 @@ impl AgentSubscriber<Plan, ()> for Logger {
 
 ## Notes
 
-- Return an error from a callback to abort the run with that error after on_run_failed is invoked.
+- Return an error from a callback to abort the run with that error after
+  on_run_failed is invoked.
 - Use stop_propagation for short‑circuiting multi‑subscriber pipelines.
 - For simple logging, implement on_event to observe every event.

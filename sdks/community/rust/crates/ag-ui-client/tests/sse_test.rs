@@ -29,7 +29,7 @@ async fn test_sse_with_httpbun() {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => {
-                println!("Received event: {:?}", event);
+                println!("Received event: {event:?}");
                 events.push(event);
                 count += 1;
                 if count >= 5 {
@@ -37,7 +37,7 @@ async fn test_sse_with_httpbun() {
                 }
             }
             Err(err) => {
-                panic!("Error receiving SSE event: {}", err);
+                panic!("Error receiving SSE event: {err}");
             }
         }
     }
@@ -98,7 +98,7 @@ async fn test_sse_with_json_data() {
     while let Some(result) = stream.next().await {
         match result {
             Ok(event) => {
-                println!("Received event: {:?}", event);
+                println!("Received event: {event:?}");
                 let user_data: UserData = serde_json::from_str(&event.data).unwrap();
                 println!("{user_data:?}");
                 events.push(event);
@@ -108,7 +108,7 @@ async fn test_sse_with_json_data() {
                 }
             }
             Err(err) => {
-                panic!("Error receiving SSE event: {}", err);
+                panic!("Error receiving SSE event: {err}");
             }
         }
     }
