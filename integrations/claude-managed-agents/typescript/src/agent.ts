@@ -135,7 +135,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
    * state, subscribers, middleware, debug settings — the way `HttpAgent.clone()`
    * does; constructing a fresh instance instead would silently reset all of it.
    * The client and session store are shared on purpose, so per-run copies see
-   * the same thread↔session mappings.
+   * the same thread-to-session mappings.
    */
   public clone(): ManagedAgentsAgent {
     const cloned = super.clone() as ManagedAgentsAgent;
@@ -337,6 +337,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
       }
       // A local the closures below can close over without re-narrowing.
       const session = record;
+      // Consume the checkpoint before any native sends. An interrupted or partial
+      // turn must recover until a subsequent clean completion establishes a new one.
+      const cleanEndEventId = recovering ? session.cleanEndEventId : undefined;
+      delete session.cleanEndEventId;
       const output = emit;
       const delivered = new Set([
         ...(session.deliveredChildResultIds ?? []),
@@ -397,6 +401,11 @@ export class ManagedAgentsAgent extends AbstractAgent {
         const clientTools = new Map(
           input.tools.map((tool) => [normalizeToolName(tool.name), tool.name]),
         );
+        const lastMessage = input.messages.at(-1);
+        const ordinaryFollowUp =
+          lastMessage?.role === "user" &&
+          lastMessage.id !== session.lastUserMessageId &&
+          !input.resume?.length;
         const recovery = await recoverSession(
           this.client,
           session,
@@ -410,6 +419,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
               "content" in message ? message.content : undefined,
             ]),
           ),
+          ordinaryFollowUp ? cleanEndEventId : undefined,
         );
         recoveredStream = recovery.stream;
         recoveredAnswerIds = recovery.answeredIds;
@@ -612,6 +622,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
         return;
       }
 
+      const sentSystemMessage = outbound.events.find(
+        (event) => event.type === "system.message",
+      );
+      let canCheckpoint = !session.sessionThreadId;
       const outcome = await runTurn({
         client: this.client,
         sessionId: session.sessionId,
@@ -620,7 +634,18 @@ export class ManagedAgentsAgent extends AbstractAgent {
         acknowledgedToolUseIds: recoveredAnswerIds,
         sessionThreadId: session.sessionThreadId,
         preservePending: recovering,
-        onNativeEvent: async (id) => {
+        onNativeEvent: async (id, event) => {
+          // Recovery validates native state-tool results and external context
+          // snapshots against history. Do not skip that work on the next turn.
+          if (
+            event?.type === "user.custom_tool_result" ||
+            (event?.type === "system.message" &&
+              (!sentSystemMessage ||
+                JSON.stringify(event.content) !==
+                  JSON.stringify(sentSystemMessage.content)))
+          ) {
+            canCheckpoint = false;
+          }
           session.lastEventId = id;
           await this.store.set(key, session);
         },
@@ -706,6 +731,8 @@ export class ManagedAgentsAgent extends AbstractAgent {
 
       await this.recordOutcome(key, session, outcome);
       if (outcome.status !== "errored") {
+        if (canCheckpoint && outcome.status === "finished")
+          session.cleanEndEventId = session.lastEventId;
         await reconcileChildren();
         emit(recoveryFinished(session, threadId, runId));
       }
