@@ -522,6 +522,65 @@ class TestFinishReasonReasoningContent(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(relevant[4].delta, "Done.")
 
+    async def test_reasoning_and_tool_call_args_on_finish_chunk_emits_both(self):
+        final_chunk = _tool_chunk(args="}", finish_reason="tool_calls")
+        final_chunk.additional_kwargs = {"reasoning_content": "Ready."}
+        events = [
+            _stream_event(_tool_chunk(name="search", args="", tool_call_id="tc-1")),
+            _stream_event(_tool_chunk(args='{"q":"ag-ui"')),
+            _stream_event(final_chunk),
+            _model_end_event(),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        types = [ev.type for ev in dispatched]
+        self.assertIn(EventType.REASONING_MESSAGE_CONTENT, types)
+        self.assertIn(EventType.REASONING_END, types)
+        arg_deltas = [
+            ev.delta for ev in dispatched if ev.type == EventType.TOOL_CALL_ARGS
+        ]
+        self.assertEqual("".join(arg_deltas), '{"q":"ag-ui"}')
+        self.assertLess(
+            types.index(EventType.REASONING_END),
+            types.index(EventType.TOOL_CALL_END),
+        )
+
+    async def test_redacted_thinking_and_text_on_finish_chunk_emits_both(self):
+        events = [
+            _stream_event(
+                _text_chunk("", additional_kwargs={"reasoning_content": "Step 1."})
+            ),
+            _stream_event(
+                _text_chunk(
+                    [
+                        {"type": "redacted_thinking", "data": "encrypted-blob"},
+                        {"type": "text", "text": "Visible answer."},
+                    ],
+                    finish_reason="stop",
+                )
+            ),
+            _model_end_event(content="Visible answer."),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        types = [ev.type for ev in dispatched]
+        self.assertIn(EventType.REASONING_ENCRYPTED_VALUE, types)
+        self.assertIn(EventType.REASONING_END, types)
+        self.assertIn(EventType.TEXT_MESSAGE_START, types)
+        self.assertLess(
+            types.index(EventType.REASONING_ENCRYPTED_VALUE),
+            types.index(EventType.REASONING_END),
+        )
+        self.assertLess(
+            types.index(EventType.REASONING_END),
+            types.index(EventType.TEXT_MESSAGE_START),
+        )
+        text_deltas = [
+            ev.delta for ev in dispatched
+            if ev.type == EventType.TEXT_MESSAGE_CONTENT
+        ]
+        self.assertEqual(text_deltas, ["Visible answer."])
+
     async def test_redacted_thinking_on_finish_reason_with_active_reasoning_emits_encrypted_value(self):
         events = [
             _stream_event(

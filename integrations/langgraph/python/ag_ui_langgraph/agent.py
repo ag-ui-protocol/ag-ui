@@ -3488,10 +3488,12 @@ class LangGraphAgent:
             is_message_content_event = tool_call_data is None and message_content is not None
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
+            has_tool_call_event = bool(is_tool_call_start_event or is_tool_call_args_event)
+
             if reasoning_data:
                 for event_str in self.handle_reasoning_event(reasoning_data):
                     yield event_str
-                if not message_content:
+                if not message_content and not has_tool_call_event:
                     return
                 for event_str in self._close_reasoning_process():
                     yield event_str
@@ -3508,9 +3510,11 @@ class LangGraphAgent:
                         encrypted_value=encrypted_reasoning_data,
                     )
                 )
-                return
-
-            if reasoning_data is None and reasoning_process is not None:
+                if not message_content and not has_tool_call_event:
+                    return
+                for event_str in self._close_reasoning_process():
+                    yield event_str
+            elif reasoning_data is None and reasoning_process is not None:
                 for event_str in self._close_reasoning_process():
                     yield event_str
 
