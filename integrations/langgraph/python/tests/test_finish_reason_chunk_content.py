@@ -413,6 +413,115 @@ class TestFinishReasonReasoningContent(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(reasoning_deltas, ["Step 1. ", "Step 2."])
 
+    async def test_single_chunk_reasoning_with_finish_reason_closes_on_model_end(self):
+        events = [
+            _stream_event(
+                _text_chunk(
+                    "",
+                    additional_kwargs={"reasoning_content": "Only thought."},
+                    finish_reason="length",
+                )
+            ),
+            _model_end_event(),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        types = [ev.type for ev in dispatched]
+        self.assertIn(EventType.REASONING_MESSAGE_END, types)
+        self.assertIn(EventType.REASONING_END, types)
+        self.assertLess(
+            types.index(EventType.REASONING_MESSAGE_END),
+            types.index(EventType.REASONING_END),
+        )
+        self.assertLess(
+            types.index(EventType.REASONING_END),
+            types.index(EventType.RUN_FINISHED),
+        )
+
+    async def test_reasoning_and_text_on_same_finish_chunk_emits_both(self):
+        events = [
+            _stream_event(
+                _text_chunk(
+                    "Final answer.",
+                    additional_kwargs={"reasoning_content": "Quick thought."},
+                    finish_reason="stop",
+                )
+            ),
+            _model_end_event(content="Final answer."),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        types = [ev.type for ev in dispatched]
+        self.assertIn(EventType.REASONING_MESSAGE_CONTENT, types)
+        self.assertIn(EventType.REASONING_END, types)
+        self.assertIn(EventType.TEXT_MESSAGE_START, types)
+        self.assertLess(
+            types.index(EventType.REASONING_END),
+            types.index(EventType.TEXT_MESSAGE_START),
+        )
+        text_deltas = [
+            ev.delta for ev in dispatched
+            if ev.type == EventType.TEXT_MESSAGE_CONTENT
+        ]
+        self.assertEqual(text_deltas, ["Final answer."])
+
+    async def test_reasoning_and_text_on_same_non_finish_chunk_emits_both(self):
+        events = [
+            _stream_event(
+                _text_chunk(
+                    "Hello ",
+                    additional_kwargs={"reasoning_content": "Thinking."},
+                )
+            ),
+            _stream_event(_text_chunk("world", finish_reason="stop")),
+            _model_end_event(content="Hello world"),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        types = [ev.type for ev in dispatched]
+        self.assertLess(
+            types.index(EventType.REASONING_END),
+            types.index(EventType.TEXT_MESSAGE_START),
+        )
+        text_deltas = [
+            ev.delta for ev in dispatched
+            if ev.type == EventType.TEXT_MESSAGE_CONTENT
+        ]
+        self.assertEqual(text_deltas, ["Hello ", "world"])
+
+    async def test_trailing_text_after_open_tool_call_on_finish_chunk_emits_both(self):
+        events = [
+            _stream_event(_tool_chunk(name="search", args="", tool_call_id="tc-1")),
+            _stream_event(_tool_chunk(args='{"q":"ag-ui"}')),
+            _stream_event(_text_chunk("Done.", finish_reason="stop")),
+            _model_end_event(content="Done."),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        relevant = [
+            ev for ev in dispatched
+            if ev.type in (
+                EventType.TOOL_CALL_START,
+                EventType.TOOL_CALL_ARGS,
+                EventType.TOOL_CALL_END,
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+            )
+        ]
+        self.assertEqual(
+            [ev.type for ev in relevant],
+            [
+                EventType.TOOL_CALL_START,
+                EventType.TOOL_CALL_ARGS,
+                EventType.TOOL_CALL_END,
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+            ],
+        )
+        self.assertEqual(relevant[4].delta, "Done.")
+
     async def test_redacted_thinking_on_finish_reason_with_active_reasoning_emits_encrypted_value(self):
         events = [
             _stream_event(

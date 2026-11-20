@@ -2622,6 +2622,34 @@ class LangGraphAgent:
         else:
             procs[lane] = value
 
+    def _close_reasoning_process(self, lane: Optional[str] = None) -> Generator[ProcessedEvents, None, None]:
+        reasoning_process = self._get_reasoning_process(lane)
+        if reasoning_process is None:
+            return
+        reasoning_message_id = reasoning_process["message_id"]
+        if reasoning_process.get("signature"):
+            yield self._dispatch_event(
+                ReasoningEncryptedValueEvent(
+                    type=EventType.REASONING_ENCRYPTED_VALUE,
+                    subtype="message",
+                    entity_id=reasoning_message_id,
+                    encrypted_value=reasoning_process["signature"],
+                )
+            )
+        yield self._dispatch_event(
+            ReasoningMessageEndEvent(
+                type=EventType.REASONING_MESSAGE_END,
+                message_id=reasoning_message_id,
+            )
+        )
+        yield self._dispatch_event(
+            ReasoningEndEvent(
+                type=EventType.REASONING_END,
+                message_id=reasoning_message_id,
+            )
+        )
+        self._set_reasoning_process(None, lane)
+
     def get_message_in_progress(self, run_id: str, lane: Optional[str] = None) -> Optional[MessageInProgress]:
         lane = lane if lane is not None else self._current_lane()
         return (self.messages_in_process.get(run_id) or {}).get(lane)
@@ -3347,9 +3375,10 @@ class LangGraphAgent:
             # chunk itself — let those chunks flow through instead of dropping
             # their payload.
             if response_metadata.get('finish_reason', None):
-                has_tool_call_payload = any(
-                    isinstance(tcc, dict) and (tcc.get("name") or tcc.get("args"))
-                    for tcc in tool_call_chunks_list
+                first_tool_call = tool_call_chunks_list[0] if tool_call_chunks_list else None
+                has_tool_call_payload = bool(
+                    isinstance(first_tool_call, dict)
+                    and (first_tool_call.get("name") or first_tool_call.get("args"))
                 )
                 has_encrypted_reasoning_payload = bool(
                     encrypted_reasoning_data and self._get_reasoning_process() is not None
@@ -3462,7 +3491,10 @@ class LangGraphAgent:
             if reasoning_data:
                 for event_str in self.handle_reasoning_event(reasoning_data):
                     yield event_str
-                return
+                if not message_content:
+                    return
+                for event_str in self._close_reasoning_process():
+                    yield event_str
 
             # Handle redacted_thinking blocks (encrypted reasoning content)
             reasoning_process = self._get_reasoning_process()
@@ -3479,30 +3511,8 @@ class LangGraphAgent:
                 return
 
             if reasoning_data is None and reasoning_process is not None:
-                reasoning_message_id = reasoning_process["message_id"]
-                # Emit signature as encrypted value if accumulated during reasoning
-                if reasoning_process.get("signature"):
-                    yield self._dispatch_event(
-                        ReasoningEncryptedValueEvent(
-                            type=EventType.REASONING_ENCRYPTED_VALUE,
-                            subtype="message",
-                            entity_id=reasoning_message_id,
-                            encrypted_value=reasoning_process["signature"],
-                        )
-                    )
-                yield self._dispatch_event(
-                    ReasoningMessageEndEvent(
-                        type=EventType.REASONING_MESSAGE_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                yield self._dispatch_event(
-                    ReasoningEndEvent(
-                        type=EventType.REASONING_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                self._set_reasoning_process(None)
+                for event_str in self._close_reasoning_process():
+                    yield event_str
 
             if tool_call_used_to_predict_state:
                 yield self._dispatch_event(
@@ -3574,7 +3584,10 @@ class LangGraphAgent:
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
                 )
                 self.clear_message_in_progress(self.active_run["id"])
-                return
+                if not message_content:
+                    return
+                current_stream = None
+                has_current_stream = False
 
 
             if is_message_end_event:
@@ -3697,6 +3710,9 @@ class LangGraphAgent:
             if _is_internal_model_call(event):
                 return
             self._record_tool_call_owners(output_message)
+
+            for event_str in self._close_reasoning_process():
+                yield event_str
 
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
