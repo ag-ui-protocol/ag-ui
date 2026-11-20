@@ -1375,6 +1375,10 @@ export class LangGraphAgent extends AbstractAgent {
           : (state.next[0] ?? Object.keys(writes)[0]);
       }
 
+      // Close any reasoning span left open by a stream that stopped mid-reasoning,
+      // before the step and the run finish.
+      this.drainReasoning();
+
       this.handleNodeChange(newNodeName);
       // Immediately turn off new step
       this.handleNodeChange(undefined);
@@ -1601,24 +1605,7 @@ export class LangGraphAgent extends AbstractAgent {
         }
 
         if (!reasoningData && this.reasoningProcess) {
-          // Emit signature as encrypted value if accumulated during reasoning
-          if (this.reasoningProcess.signature) {
-            this.dispatchEvent({
-              type: EventType.REASONING_ENCRYPTED_VALUE,
-              subtype: "message",
-              entityId: this.reasoningProcess.messageId,
-              encryptedValue: this.reasoningProcess.signature,
-            });
-          }
-          this.dispatchEvent({
-            type: EventType.REASONING_MESSAGE_END,
-            messageId: this.reasoningProcess.messageId,
-          });
-          this.dispatchEvent({
-            type: EventType.REASONING_END,
-            messageId: this.reasoningProcess.messageId,
-          });
-          this.reasoningProcess = null;
+          this.closeReasoningProcess();
         }
 
         if (toolCallUsedToPredictState) {
@@ -2192,6 +2179,45 @@ export class LangGraphAgent extends AbstractAgent {
       state: { snapshots: true, deltas: false, persistentState: true },
       transport: { streaming: true },
     };
+  }
+
+  /**
+   * Close the open reasoning span: the accumulated signature (if any) first,
+   * then REASONING_MESSAGE_END and REASONING_END. No-op when none is open.
+   */
+  private closeReasoningProcess() {
+    const process = this.reasoningProcess;
+    if (!process) {
+      return;
+    }
+    if (process.signature) {
+      this.dispatchEvent({
+        type: EventType.REASONING_ENCRYPTED_VALUE,
+        subtype: "message",
+        entityId: process.messageId,
+        encryptedValue: process.signature,
+      });
+    }
+    this.dispatchEvent({
+      type: EventType.REASONING_MESSAGE_END,
+      messageId: process.messageId,
+    });
+    this.dispatchEvent({
+      type: EventType.REASONING_END,
+      messageId: process.messageId,
+    });
+    this.reasoningProcess = null;
+  }
+
+  /**
+   * Close a reasoning span still open at the end of the run. A span is
+   * otherwise closed only by the NEXT model chunk without reasoning, so a model
+   * stream that stops right after a reasoning chunk (e.g. a dropped connection
+   * the node tolerates) would reach RUN_FINISHED with it open, which the AG-UI
+   * client rejects.
+   */
+  private drainReasoning() {
+    this.closeReasoningProcess();
   }
 
   handleReasoningEvent(reasoningData: LangGraphReasoning) {
