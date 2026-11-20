@@ -845,16 +845,20 @@ export class LangGraphAgent extends AbstractAgent {
       schemaKeys: this.activeRun!.schemaKeys,
     });
 
-    // A late A2UI result must precede already-persisted user turns. Appending
-    // it through the messages reducer leaves the checkpoint invalid forever.
-    // Overwrite is atomic and retains every saved message, ID and result.
+    // Put late A2UI results before saved user turns. Clear and rebuild in one
+    // reducer update so LangGraph still converts the wire records to messages.
     if (payloadInput && !hasResume && !(agentState.tasks ?? []).some((task) => task.interrupts?.length)) {
       const repaired = recoverA2UIHistory(
         agentStateMessages,
         inputMessagesToLangchain,
         a2uiToolName,
       );
-      if (repaired) payloadInput.messages = { __overwrite__: repaired };
+      if (repaired) {
+        payloadInput.messages = [
+          { type: "remove", id: "__remove_all__", content: "" },
+          ...repaired,
+        ];
+      }
     }
 
     let payloadConfig: LangGraphConfig | undefined;

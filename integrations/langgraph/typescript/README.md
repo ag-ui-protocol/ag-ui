@@ -68,6 +68,18 @@ const result = await agent.runAgent({
 - **Interrupt handling** – Human-in-the-loop workflow support
 - **Step tracking** – Real-time node execution progress
 
+## Recovering late A2UI tool results
+
+When an A2UI tool result arrives after a later user turn has been saved, the
+connector sends one `messages` update that clears the existing history and
+then applies the repaired history in order. The standard Python
+[`add_messages`](https://github.com/langchain-ai/langgraph/blob/49cce0ca852be4cfb567a1cbe0e511ff325a1682/libs/langgraph/langgraph/graph/message.py#L209-L213)
+and JavaScript
+[`messagesStateReducer`](https://github.com/langchain-ai/langgraphjs/blob/a770874c66602625d6258ea4d5275ca912a0796c/libs/langgraph-core/src/graph/messages_reducer.ts#L135-L142)
+return the messages after the remove-all marker.
+If your graph uses a custom messages reducer, support a remove message with
+ID `__remove_all__` followed by the replacement messages in the same update.
+
 ## Resuming via AG-UI standard `resume[]`
 
 When a client uses `RunAgentInput.resume = [ResumeEntry, ...]` instead of
