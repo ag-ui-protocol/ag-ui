@@ -15,7 +15,7 @@
     <TargetFrameworks>$(TargetFrameworksCore);netstandard2.0;net472</TargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>
     <IsPackable>false</IsPackable>
-    <IsPackable Condition="'$(MSBuildProjectName)' == 'AGUI.Abstractions' Or '$(MSBuildProjectName)' == 'AGUI.Formatting' Or '$(MSBuildProjectName)' == 'AGUI.Protobuf' Or '$(MSBuildProjectName)' == 'AGUI.Client' Or '$(MSBuildProjectName)' == 'AGUI.Server'">true</IsPackable>
+    <IsPackable Condition="'$(MSBuildProjectName)' == 'AGUI.Abstractions' Or '$(MSBuildProjectName)' == 'AGUI.Formatting' Or '$(MSBuildProjectName)' == 'AGUI.Protobuf' Or '$(MSBuildProjectName)' == 'AGUI.Client' Or '$(MSBuildProjectName)' == 'AGUI.Server' Or '$(MSBuildProjectName)' == 'AGUI.MicrosoftAgentFramework'">true</IsPackable>
     <!-- Public members should not use oblivious types. Not done with all nullable annotations. -->
     <NoWarn>$(NoWarn);RS0041</NoWarn>
   </PropertyGroup>
