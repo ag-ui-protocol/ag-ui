@@ -373,6 +373,87 @@ class TestConcurrentLimits:
         assert len(high_limit_middleware._active_executions) < high_limit_middleware._max_concurrent
 
     @pytest.mark.asyncio
+    async def test_completed_runs_awaiting_client_tools_do_not_occupy_slots(self):
+        """Completed runs waiting on a client tool result must not count
+        toward max_concurrent_executions (issue #3077).
+
+        Regression for the issue's repro: t1 and t2 each end on an
+        unanswered client tool call, then t3 on a separate thread must
+        still run normally instead of failing with
+        "Maximum concurrent executions (2) reached". The completed
+        entries stay tracked (so a later resume can find them) but no
+        longer occupy a slot.
+        """
+        from google.adk.agents import Agent
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.genai import types
+
+        from ag_ui_adk import AGUIToolset
+
+        class AlwaysCallsClientTool(BaseLlm):
+            async def generate_content_async(self, llm_request, stream=False):
+                call = types.FunctionCall(name="confirm", args={})
+                yield LlmResponse(
+                    content=types.Content(
+                        role="model", parts=[types.Part(function_call=call)]
+                    ),
+                    turn_complete=True,
+                )
+
+        def turn(thread_id: str) -> RunAgentInput:
+            return RunAgentInput(
+                thread_id=thread_id,
+                run_id=f"run-{thread_id}",
+                state={},
+                messages=[UserMessage(id=f"m-{thread_id}", content="hi")],
+                tools=[
+                    AGUITool(
+                        name="confirm",
+                        description="Ask the user to confirm.",
+                        parameters={"type": "object"},
+                    )
+                ],
+                context=[],
+                forwarded_props={},
+            )
+
+        middleware = ADKAgent(
+            adk_agent=Agent(
+                name="agent",
+                model=AlwaysCallsClientTool(model="fake"),
+                tools=[AGUIToolset()],
+            ),
+            app_name="repro",
+            user_id="user",
+            max_concurrent_executions=2,
+        )
+
+        async def run_thread(thread_id: str):
+            return [
+                event
+                async for event in middleware.run(turn(thread_id))
+            ]
+
+        for thread_id in ("t1", "t2"):
+            events = await run_thread(thread_id)
+            assert not [
+                e for e in events if isinstance(e, RunErrorEvent)
+            ], f"{thread_id} should complete without errors"
+
+        # Both completed runs are still tracked for a later resume...
+        assert len(middleware._active_executions) == 2
+        # ...but neither occupies a concurrency slot anymore.
+        assert middleware._running_execution_count() == 0
+
+        # A run on an unrelated thread must not be rejected.
+        events = await run_thread("t3")
+        error_events = [e for e in events if isinstance(e, RunErrorEvent)]
+        assert not error_events, f"t3 was rejected: {[e.message for e in error_events]}"
+        assert events[0].type == EventType.RUN_STARTED
+        assert events[-1].type == EventType.RUN_FINISHED
+
+    @pytest.mark.asyncio
     async def test_cleanup_during_limit_check(self, adk_middleware):
         """Test that cleanup is triggered when limit is reached."""
         # Create real ExecutionState objects that will actually be stale
