@@ -4,11 +4,13 @@ on:
   push:
     branches: [main]
     paths:
+      - "Package.swift"
       - "sdks/community/swift/**"
       - ".github/workflows/unit-swift-sdk.yml"
   pull_request:
     branches: [main]
     paths:
+      - "Package.swift"
       - "sdks/community/swift/**"
       - ".github/workflows/unit-swift-sdk.yml"
 
@@ -30,19 +32,16 @@ jobs:
       - name: Cache SPM dependencies
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: sdks/community/swift/.build
-          key: ${{ runner.os }}-spm-${{ hashFiles('sdks/community/swift/Package.resolved') }}
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift', 'sdks/community/swift/Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-spm-
 
       - name: Resolve dependencies
-        working-directory: sdks/community/swift
         run: swift package resolve
 
       - name: Build
-        working-directory: sdks/community/swift
         run: swift build
 
       - name: Run tests
-        working-directory: sdks/community/swift
         run: swift test

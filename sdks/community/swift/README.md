@@ -58,7 +58,34 @@ Tool execution framework for extending agent capabilities.
 ## Requirements
 
 - Swift 5.9+
-- iOS 15.0+ / macOS 13.0+
+- iOS 16.0+ / macOS 13.0+
+
+## Installation with Swift Package Manager
+
+The monorepo root exposes all four libraries through `Package.swift`. Add the
+repository URL in Xcode, or declare it in your app's package manifest:
+
+```swift
+.package(url: "https://github.com/ag-ui-protocol/ag-ui.git", from: "0.1.0")
+```
+
+Then add the products you need to your target dependencies, for example:
+
+```swift
+.product(name: "AGUIAgentSDK", package: "ag-ui")
+```
+
+Version-based installation requires a published Swift release tag. Swift releases
+use plain semantic version tags such as `0.1.0` on commits containing the root
+manifest; reserve these tags for the Swift SDK. Until the first tag is published,
+use a revision containing the manifest instead of a version requirement.
+
+SwiftPM fetches the monorepo and caches the checkout. The initial download includes
+the rest of the repository; targets compile only the Swift SDK sources.
+
+Run `swift build` and `swift test` from the repository root to validate the public
+package entry point. The manifest in this SDK directory remains available for
+local development. Keep both manifests' products, dependencies, and targets aligned.
 
 ## Documentation
 
