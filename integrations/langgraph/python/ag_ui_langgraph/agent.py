@@ -3488,7 +3488,11 @@ class LangGraphAgent:
             is_message_content_event = tool_call_data is None and message_content is not None
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
-            has_tool_call_event = bool(is_tool_call_start_event or is_tool_call_args_event)
+            has_tool_call_event = bool(
+                is_tool_call_start_event
+                or is_tool_call_args_event
+                or (tool_call_data and tool_call_data.get("name"))
+            )
 
             if reasoning_data:
                 for event_str in self.handle_reasoning_event(reasoning_data):

@@ -581,6 +581,47 @@ class TestFinishReasonReasoningContent(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(text_deltas, ["Visible answer."])
 
+    async def test_named_tool_opener_with_reasoning_closes_open_text_stream(self):
+        opener = _tool_chunk(name="search", args="", tool_call_id="tc-open")
+        opener.additional_kwargs = {"reasoning_content": "Need a lookup."}
+        events = [
+            _stream_event(_text_chunk("Let me check.")),
+            _stream_event(opener),
+            _stream_event(_tool_chunk(args='{"q":"ag-ui"}', finish_reason="tool_calls")),
+            _model_end_event(),
+        ]
+
+        dispatched = await _run_pipeline(events)
+        relevant = [
+            ev for ev in dispatched
+            if ev.type in (
+                EventType.TEXT_MESSAGE_START,
+                EventType.TEXT_MESSAGE_CONTENT,
+                EventType.TEXT_MESSAGE_END,
+                EventType.REASONING_END,
+                EventType.TOOL_CALL_START,
+                EventType.TOOL_CALL_ARGS,
+                EventType.TOOL_CALL_END,
+            )
+        ]
+        types = [ev.type for ev in relevant]
+        self.assertIn(EventType.TEXT_MESSAGE_END, types)
+        self.assertIn(EventType.REASONING_END, types)
+        self.assertIn(EventType.TOOL_CALL_START, types)
+        self.assertIn(EventType.TOOL_CALL_ARGS, types)
+        self.assertLess(
+            types.index(EventType.TEXT_MESSAGE_END),
+            types.index(EventType.TOOL_CALL_START),
+        )
+        self.assertLess(
+            types.index(EventType.TOOL_CALL_START),
+            types.index(EventType.TOOL_CALL_ARGS),
+        )
+        self.assertEqual(
+            [ev.delta for ev in relevant if ev.type == EventType.TOOL_CALL_ARGS],
+            ['{"q":"ag-ui"}'],
+        )
+
     async def test_redacted_thinking_on_finish_reason_with_active_reasoning_emits_encrypted_value(self):
         events = [
             _stream_event(
