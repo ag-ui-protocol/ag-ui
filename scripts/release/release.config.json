@@ -204,6 +204,13 @@
         { "name": "@ag-ui/cloudflare-agents", "path": "integrations/community/cloudflare-agents/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-codex-sdk-ts": {
+      "description": "Codex SDK integration (community, TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/codex-sdk", "path": "integrations/community/codex-sdk/typescript", "ecosystem": "typescript" }
+      ]
+    },
     "integration-crewai-ts": {
       "description": "CrewAI integration (TypeScript)",
       "sharedVersion": false,

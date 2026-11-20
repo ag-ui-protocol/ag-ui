@@ -1,0 +1,92 @@
+{
+  "name": "@ag-ui/codex-sdk",
+  "version": "0.0.1",
+  "description": "AG-UI adapter and standalone text-chat server for the official Codex SDK",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist/**",
+    "README.md",
+    "LICENSE",
+    "examples/README.md"
+  ],
+  "keywords": [
+    "ag-ui",
+    "codex",
+    "agents"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:exports": "publint --strict && attw --pack",
+    "test:packed": "node scripts/test-packed.mjs",
+    "start": "node dist/examples/server.js",
+    "smoke": "tsx examples/smoke.ts",
+    "lint": "eslint \"src/**/*.ts\" \"examples/**/*.ts\""
+  },
+  "peerDependencies": {
+    "@ag-ui/core": ">=1.0.4",
+    "@ag-ui/client": ">=1.0.4"
+  },
+  "devDependencies": {
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/client": "workspace:*",
+    "@types/node": "^20.11.19",
+    "@vitest/coverage-istanbul": "^4.0.18",
+    "publint": "^0.3.12",
+    "@arethetypeswrong/cli": "^0.17.4",
+    "vitest": "^4.0.18",
+    "tsdown": "^0.20.1",
+    "typescript": "^5.8.2",
+    "tsx": "^4.20.6",
+    "eslint": "^9.37.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ag-ui-protocol/ag-ui.git",
+    "directory": "integrations/community/codex-sdk/typescript"
+  },
+  "author": "AG-UI community",
+  "license": "MIT",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.167.1",
+    "@ag-ui/encoder": "workspace:*",
+    "rxjs": "7.8.1",
+    "@openai/codex": "0.167.1"
+  },
+  "nx": {
+    "targets": {
+      "test:exports": {
+        "dependsOn": [
+          "build"
+        ]
+      },
+      "test:packed": {
+        "dependsOn": [
+          "build"
+        ],
+        "cache": false
+      },
+      "smoke": {
+        "cache": false
+      }
+    }
+  }
+}

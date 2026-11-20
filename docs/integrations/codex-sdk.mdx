@@ -1,0 +1,100 @@
+---
+title: Codex SDK
+sidebarTitle: Codex SDK
+description:
+  Run Codex text chat through AG-UI with a standalone server and Flutter client.
+---
+
+The community Codex integration wraps the official `@openai/codex-sdk` in a Node
+adapter. The SDK runs the Codex CLI on your host. The adapter translates its
+text and native progress into AG-UI events.
+
+## Run the local package
+
+The package is developed in this repository. These commands use workspace source
+before publication. They do not require an npm release.
+
+Use Node 22 or later on a POSIX host and pnpm from the repository root.
+Windows process supervision is not yet supported. Authenticate through native
+Codex login or set `CODEX_API_KEY` in the server environment.
+
+```bash
+pnpm install
+pnpm exec nx run @ag-ui/codex-sdk:build
+mkdir -p /tmp/ag-ui-codex-workspace
+git -C /tmp/ag-ui-codex-workspace init
+CODEX_WORKING_DIRECTORY=/tmp/ag-ui-codex-workspace PORT=8032 pnpm exec nx run @ag-ui/codex-sdk:start
+```
+
+The standalone server exposes `GET /health` and `POST /agentic_chat`. It runs
+without the web Dojo. Use a dedicated scratch Git repository. The default
+sandbox is read-only, with network access and web search disabled. Configure the
+model, workspace, credentials, and executable on the host. Clients cannot select
+them through requests.
+
+After an npm release becomes available, install `@ag-ui/codex-sdk` with its
+AG-UI peers and run its packaged server with
+`npm explore @ag-ui/codex-sdk -- npm start`. Until release, use the workspace
+commands above.
+
+## Connect Flutter
+
+In another terminal, run:
+
+```bash
+cd sdks/community/dart/example
+flutter pub get
+flutter run -d chrome --dart-define=AG_UI_BACKEND=codex --dart-define=AG_UI_BASE_URL=http://127.0.0.1:8032
+```
+
+Open Agentic Chat. Send two messages on the same page to retain conversation
+context. Without `AG_UI_BACKEND=codex`, Flutter keeps its existing Go demos and
+default server address.
+
+## Connect the web Dojo
+
+From the repository root, prepare and start the integration:
+
+```bash
+node apps/dojo/scripts/prep-dojo-everything.js --only dojo,codex-sdk-typescript
+node apps/dojo/scripts/run-dojo-everything.js --only dojo,codex-sdk-typescript
+```
+
+Open `/codex-sdk-typescript/feature/agentic_chat` in the local Dojo.
+`CODEX_SDK_TYPESCRIPT_URL` overrides its backend URL. This chat registers no
+frontend tools.
+
+## Capability limits
+
+| Capability                        | Behavior                                                                          |
+| --------------------------------- | --------------------------------------------------------------------------------- |
+| Text chat                         | Supported. Native aggregate snapshots become ordered text messages.               |
+| Conversation continuation         | Supported within the lifetime of the trusted session store.                       |
+| Native tools and progress         | Host policy controls execution. Namespaced custom events expose bounded progress. |
+| Cancellation                      | Cancels the run owned by the adapter or disconnected client.                      |
+| Reasoning summaries               | Host opt-in only. Disabled by default.                                            |
+| Client context and input state    | Read-only prompt context. No state writeback.                                     |
+| Frontend tool calls and approvals | Unsupported.                                                                      |
+| Images and arbitrary local paths  | Unsupported.                                                                      |
+| Hosted multi-tenant service       | Outside the local example's scope.                                                |
+
+After a failed, interrupted, or expired session, start a new public AG-UI
+thread. Edited or truncated continuation history is rejected. The adapter does
+not retry native work whose side effects may already have occurred.
+
+Native session files remain under Codex's control. Native session IDs are not a
+client resume API. Progress can expose workspace text. Authentication, tenant
+isolation, and production deployment belong to the hosting application.
+
+## Verify the integration
+
+Run package tests through Nx. The deterministic suite uses the real SDK with a
+controlled CLI process. It verifies transport and lifecycle behavior without
+provider access. Real provider smoke and actual Flutter browser interaction are
+separate checks. Published-mode Dojo CI excludes this package until release.
+
+```bash
+pnpm exec nx run @ag-ui/codex-sdk:test
+pnpm exec nx run @ag-ui/codex-sdk:test:exports
+pnpm exec nx run @ag-ui/codex-sdk:test:packed
+```
