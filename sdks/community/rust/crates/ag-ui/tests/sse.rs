@@ -132,7 +132,6 @@ fn accept_negotiation_rejects_a_header_it_cannot_satisfy() {
 #[cfg(feature = "protobuf")]
 mod binary {
     use super::*;
-    use ag_ui::encode::protobuf::{COVERED_EVENT_TYPES, is_covered};
 
     #[test]
     fn an_unimplemented_protobuf_transport_is_not_negotiated() {
@@ -156,19 +155,6 @@ mod binary {
             formatter.encode(&Event::text_message_end("msg-1")),
             Err(Error::UnsupportedTransport(_))
         ));
-    }
-
-    #[test]
-    fn the_upstream_proto_covers_only_twenty_one_of_the_thirty_six_events() {
-        assert_eq!(COVERED_EVENT_TYPES.len(), 21);
-        assert_eq!(EventType::ALL.len(), 36);
-        assert!(is_covered(EventType::TextMessageStart));
-        assert!(is_covered(EventType::SubagentStarted));
-        // The reason the binary path is a stub.
-        assert!(!is_covered(EventType::ToolCallResult));
-        assert!(!is_covered(EventType::ReasoningMessageContent));
-        assert!(!is_covered(EventType::ActivitySnapshot));
-        assert!(!is_covered(EventType::ThinkingStart));
     }
 }
 

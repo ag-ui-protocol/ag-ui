@@ -1,0 +1,71 @@
+{
+  "name": "untagged-continuation-keeps-the-parents-chunk-stream",
+  "area": "subagents",
+  "description": "an untagged explicit event continues whatever its opener owns, so the untagged TEXT_MESSAGE_CONTENT of a message a subagent opened is in that subagent's lane: it ends no chunk stream of the parent agent's, and a chunk that names no id after it still continues the parent's message. Local to this repository: the specification states both rules and the upstream corpus has no stream that crosses them",
+  "specPage": "/spec/1.0/events/subagents",
+  "kill": "read an untagged explicit event as the parent agent's, so it ends the parent's chunk stream and the next chunk has nothing to continue",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-untagged-continuation",
+      "runId": "untagged-continuation-r1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "SUBAGENT_STARTED",
+      "subagentRunId": "untagged-continuation-s1",
+      "name": "researcher"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "untagged-continuation-ms",
+      "role": "assistant",
+      "subagentRunId": "untagged-continuation-s1"
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "untagged-continuation-mp",
+      "delta": "a"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "untagged-continuation-ms",
+      "delta": "x"
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "delta": "b"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "untagged-continuation-ms"
+    },
+    {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "untagged-continuation-s1"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-untagged-continuation",
+      "runId": "untagged-continuation-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 2,
+    "messages": [
+      {
+        "id": "untagged-continuation-ms",
+        "role": "assistant",
+        "content": "x",
+        "subagentRunId": "untagged-continuation-s1"
+      },
+      {
+        "id": "untagged-continuation-mp",
+        "role": "assistant",
+        "content": "ab"
+      }
+    ]
+  }
+}

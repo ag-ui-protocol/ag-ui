@@ -74,6 +74,37 @@ impl Interrupt {
         }
     }
 
+    /// Sets the prompt to show the user.
+    ///
+    /// ```
+    /// use ag_ui::Interrupt;
+    ///
+    /// let interrupt = Interrupt::new("i-1", "tool_approval")
+    ///     .with_message("Delete the staging database?")
+    ///     .with_tool_call_id("call-7");
+    /// assert_eq!(interrupt.message.as_deref(), Some("Delete the staging database?"));
+    /// assert_eq!(interrupt.tool_call_id.as_ref().map(|id| id.as_str()), Some("call-7"));
+    /// ```
+    #[must_use]
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+
+    /// Names the tool call this interrupt asks to approve.
+    #[must_use]
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<ToolCallId>) -> Self {
+        self.tool_call_id = Some(tool_call_id.into());
+        self
+    }
+
+    /// Sets the JSON Schema the resume payload must satisfy.
+    #[must_use]
+    pub fn with_response_schema(mut self, schema: JsonObject) -> Self {
+        self.response_schema = Some(schema);
+        self
+    }
+
     /// Attributes the interrupt to the subagent that raised it.
     #[must_use]
     pub fn with_subagent_run_id(mut self, subagent_run_id: impl Into<SubagentRunId>) -> Self {
@@ -196,19 +227,31 @@ impl RunOutcome {
         }
     }
 
-    /// Checks the one rule the type system cannot: an `interrupt` outcome must
-    /// carry at least one interrupt.
+    /// Checks that an interrupt outcome carries at least one interrupt and each ID is unique.
     ///
     /// Deserializing does not enforce this, so that a stray empty array from a
     /// buggy producer surfaces as a protocol error you can log rather than as
     /// an unparseable event that kills the stream.
     pub fn validate(&self) -> Result<()> {
-        match self {
-            Self::Interrupt { interrupts } if interrupts.is_empty() => Err(Error::Protocol(
-                "RUN_FINISHED outcome `interrupt` requires at least one interrupt".to_owned(),
-            )),
-            _ => Ok(()),
+        match self.interrupt_error() {
+            Some(reason) => Err(Error::Protocol(reason)),
+            None => Ok(()),
         }
+    }
+
+    pub(crate) fn interrupt_error(&self) -> Option<String> {
+        let Self::Interrupt { interrupts } = self else {
+            return None;
+        };
+        if interrupts.is_empty() {
+            return Some("RUN_FINISHED outcome `interrupt` requires at least one interrupt".into());
+        }
+        let mut seen = std::collections::HashSet::new();
+        let repeated = interrupts.iter().find(|entry| !seen.insert(&entry.id))?;
+        Some(format!(
+            "RUN_FINISHED carries interrupt id \"{}\" more than once: an interrupt's id is unique within its run",
+            crate::serde_util::excerpt(&repeated.id, false)
+        ))
     }
 }
 
@@ -247,8 +290,9 @@ pub struct ResumeEntry {
     /// The answer. Shape is up to the agent; when the interrupt supplied a
     /// `responseSchema`, this should satisfy it. For a tool approval that was
     /// edited before approval, agents that advertise `approveWithEdits` expect
-    /// `{"editedArgs": …}` here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `{"editedArgs": …}` here. `Some(Value::Null)` is written as an
+    /// omitted field, which is how AG-UI 1.0 spells no answer.
+    #[serde(default, skip_serializing_if = "crate::serde_util::is_none_or_null")]
     pub payload: Option<Value>,
     /// Envelope data about the answer — signatures, routing keys — as opposed
     /// to `payload`, which is the answer the agent asked for and will act on.

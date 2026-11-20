@@ -2,8 +2,9 @@
 //!
 //! [`RemoteAgent`] adds almost nothing to [`Transport`] — a request builder, and
 //! a stream that flattens connecting into streaming. It delivers checked typed
-//! events; a proxy or recorder needing the original JSON uses
-//! [`Transport::run_raw`].
+//! events; a proxy or recorder needing the original JSON calls
+//! [`Transport::run`] and takes
+//! [`TransportStream::into_json`](crate::client::transport::TransportStream::into_json).
 //!
 //! For a UI, [`Thread`](crate::client::Thread) sits on top of this and does the
 //! assembling.
@@ -35,10 +36,9 @@ use crate::{
 use futures_util::TryStreamExt;
 use serde_json::Value;
 
-use crate::client::transport::{EventStream, Transport, boxed_stream};
+use crate::client::transport::{EventStream, Transport, TransportStream};
 
-#[cfg(feature = "http")]
-use crate::client::error::Result;
+use crate::client::error::{Error, Result};
 #[cfg(feature = "http")]
 use crate::client::transport::{HttpTransport, HttpTransportBuilder};
 
@@ -179,11 +179,6 @@ impl<T> RemoteAgent<T> {
     pub fn transport(&self) -> &T {
         &self.transport
     }
-
-    /// Unwraps the transport.
-    pub fn into_transport(self) -> T {
-        self.transport
-    }
 }
 
 impl<T: Transport> RemoteAgent<T> {
@@ -191,18 +186,53 @@ impl<T: Transport> RemoteAgent<T> {
     ///
     /// Chunks remain chunks; ordering is not verified or assembled here. A UI
     /// wants [`Thread`](crate::client::Thread), while a proxy needing original
-    /// fields can call [`Transport::run_raw`].
+    /// fields calls [`Transport::run`] and takes
+    /// [`TransportStream::into_json`].
     ///
     /// Connecting is folded into the stream: a transport that cannot reach the
     /// agent yields one error item and ends.
-    /// Legacy binary message parts are translated to their 1.0 media form.
+    ///
+    /// The boundary's warnings are discarded here. A `Thread` reports them;
+    /// [`TransportStream::into_events`] over [`Transport::run`] hands them to
+    /// a callback.
+    ///
+    /// A legacy `binary` content part in the request's messages is sent as the
+    /// 1.0 media part it stands for.
     pub fn run_events(&self, params: impl Into<RunAgentInput>) -> EventStream {
-        let mut input = params.into();
-        crate::message::upgrade_legacy_content(&mut input.messages);
-        let connecting = self.transport.run_raw(input);
-        let raw = futures_util::stream::once(connecting).try_flatten();
-        boxed_stream(crate::client::enforce::stream(raw))
+        let input = match outgoing(params.into(), &mut Vec::new()) {
+            Ok(input) => input,
+            Err(error) => return Box::pin(futures_util::stream::once(async { Err(error) })),
+        };
+        Box::pin(crate::client::enforce::unchecked(
+            self.run_checked(input),
+            |_| {},
+        ))
     }
+
+    /// [`Self::run_events`] with the boundary's warnings left in the stream.
+    pub(crate) fn run_checked(
+        &self,
+        input: RunAgentInput,
+    ) -> crate::client::enforce::CheckedStream {
+        let connecting = self.transport.run(input);
+        Box::pin(
+            futures_util::stream::once(connecting)
+                .map_ok(TransportStream::into_checked)
+                .try_flatten(),
+        )
+    }
+}
+
+/// Translates retired content, then applies the outgoing 1.0 schema before
+/// handing a typed request to a transport. The original conversation is kept.
+pub(crate) fn outgoing(input: RunAgentInput, warnings: &mut Vec<String>) -> Result<RunAgentInput> {
+    Ok(serde_json::from_value(outgoing_json(input, warnings)?)?)
+}
+
+/// The wire form used by the HTTP transport, including direct Transport::run calls.
+pub(crate) fn outgoing_json(mut input: RunAgentInput, warnings: &mut Vec<String>) -> Result<Value> {
+    crate::message::upgrade_legacy_content(&mut input.messages);
+    crate::protocol::input(serde_json::to_value(input)?, warnings).map_err(Error::Request)
 }
 
 /// An HTTP endpoint and reusable connection settings. Create independent local
@@ -269,7 +299,8 @@ impl HttpAgent {
     }
     /// Typed events after compatibility translation and schema enforcement.
     /// Chunks are not assembled or applied to conversation state here. Use
-    /// [`Transport::run_raw`] to inspect the original wire JSON.
+    /// [`Transport::run`] and [`TransportStream::into_json`] to inspect the
+    /// original wire JSON.
     pub fn run_events(&self, params: impl Into<RunAgentInput>) -> EventStream {
         self.agent.run_events(params)
     }
@@ -320,6 +351,14 @@ impl HttpAgentBuilder {
         self
     }
 
+    /// Allows configured headers or URL credentials on a remote HTTP endpoint.
+    /// See [`HttpTransportBuilder::allow_insecure_http`].
+    #[must_use]
+    pub fn allow_insecure_http(mut self, allow: bool) -> Self {
+        self.transport = self.transport.allow_insecure_http(allow);
+        self
+    }
+
     /// Uses a caller-supplied `reqwest` client.
     #[must_use]
     pub fn client(mut self, client: reqwest::Client) -> Self {
@@ -331,7 +370,7 @@ impl HttpAgentBuilder {
     ///
     /// # Errors
     ///
-    /// [`Error::Config`](crate::client::Error::Config) when the URL or a header is not
+    /// [`Error::Config`] when the URL or a header is not
     /// valid.
     pub fn build(self) -> Result<HttpAgent> {
         Ok(HttpAgent::from_transport(self.transport.build()?))

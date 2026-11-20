@@ -39,8 +39,8 @@ pub const SSE_MEDIA_TYPE: &str = "text/event-stream";
 /// `@ag-ui/proto` package.
 pub const PROTOBUF_MEDIA_TYPE: &str = "application/vnd.ag-ui.event+proto";
 
-// Protobuf currently has a media type and coverage diagnostics, but no
-// formatter. Negotiation must advertise only encodings we can actually emit.
+// Protobuf has a media type and, behind its feature, a formatter that refuses
+// every event. Negotiation must advertise only encodings we can actually emit.
 #[cfg(feature = "sse")]
 const SUPPORTED: &[&str] = &[SSE_MEDIA_TYPE];
 #[cfg(not(feature = "sse"))]
@@ -67,8 +67,8 @@ pub const fn supported_media_types() -> &'static [&'static str] {
 ///
 /// A missing or empty header is treated as `*/*`, per RFC 9110. Candidates are
 /// scored by quality value; ties go to this crate's own preference order.
-/// At present SSE is the only implemented transport, even when the `protobuf`
-/// feature enables its media type and coverage diagnostics.
+/// SSE is the only implemented transport, with or without the `protobuf`
+/// feature, so the binary media type is never the answer.
 ///
 /// Returns [`Error::UnsupportedMediaType`] when the header excludes everything
 /// this build can emit — the case that deserves a `406`.

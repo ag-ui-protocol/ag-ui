@@ -10,7 +10,7 @@ impl Agent for Greeter {
     type State = ();
 
     async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
-        ctx.say("Hello from the community Rust SDK proposal.")?;
+        ctx.say(format!("Received {} messages.", ctx.input().messages.len()))?;
         Ok(RunOutcome::Success)
     }
 }
@@ -20,6 +20,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let app = axum::Router::new().route_agui("/agent", Greeter);
+    // The TypeScript interop test drives this same endpoint in a child process.
+    if std::env::args().nth(1).as_deref() == Some("--serve") {
+        println!("http://{addr}/agent");
+        axum::serve(listener, app).await?;
+        return Ok(());
+    }
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let agent = HttpAgent::new(format!("http://{addr}/agent"))?;
     let mut thread = agent.thread("example-thread");

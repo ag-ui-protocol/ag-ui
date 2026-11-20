@@ -11,7 +11,6 @@ use futures_util::StreamExt as _;
 
 async fn types(agent: impl Agent) -> Vec<EventType> {
     run(agent, RunAgentInput::new("t", "r"))
-        .map(|event| event.expect("the run stream should not break"))
         .map(|event| event.event_type())
         .collect()
         .await
@@ -145,10 +144,7 @@ async fn nested_steps_close_innermost_first() {
         }
     }
 
-    let events: Vec<Event> = run(Nested, RunAgentInput::new("t", "r"))
-        .map(|event| event.expect("the run stream should not break"))
-        .collect()
-        .await;
+    let events: Vec<Event> = run(Nested, RunAgentInput::new("t", "r")).collect().await;
 
     assert_eq!(
         events[1..3],

@@ -104,7 +104,17 @@
       "type": "TEXT_MESSAGE_START",
       "messageId": "m"
     },
-    "accepted": true
+    "accepted": true,
+    "rustValue": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m",
+      "role": "assistant"
+    },
+    "upstreamValue": {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m"
+    },
+    "difference": "An absent role means assistant. Typed Rust events store and serialize that default; the 1.0 TypeScript schema validates without filling it in."
   },
   {
     "name": "null text role",
@@ -197,7 +207,21 @@
       "activityType": "task",
       "content": {}
     },
-    "accepted": true
+    "accepted": true,
+    "rustValue": {
+      "type": "ACTIVITY_SNAPSHOT",
+      "messageId": "m",
+      "activityType": "task",
+      "content": {},
+      "replace": true
+    },
+    "upstreamValue": {
+      "type": "ACTIVITY_SNAPSHOT",
+      "messageId": "m",
+      "activityType": "task",
+      "content": {}
+    },
+    "difference": "An absent replace means true. Typed Rust events store and serialize that default; the 1.0 TypeScript schema validates without filling it in."
   },
   {
     "name": "null activity replace",
@@ -220,7 +244,14 @@
       "toolCallName": "tool",
       "parentMessageId": null
     },
-    "accepted": true
+    "accepted": false,
+    "rustAccepted": true,
+    "rustValue": {
+      "type": "TOOL_CALL_START",
+      "toolCallId": "c",
+      "toolCallName": "tool"
+    },
+    "difference": "AG-UI 1.0 retired this explicit null: its deprecation registry has a consumer read it as the omitted field, while the canonical schema rejects it. Typed Rust decoding reads it as absent and writes the event without the field."
   },
   {
     "name": "null run outcome normalization",
@@ -231,7 +262,14 @@
       "runId": "r",
       "outcome": null
     },
-    "accepted": true
+    "accepted": false,
+    "rustAccepted": true,
+    "rustValue": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r"
+    },
+    "difference": "AG-UI 1.0 retired this explicit null: its deprecation registry has a consumer read it as the omitted field, while the canonical schema rejects it. Typed Rust decoding reads it as absent and writes the event without the field."
   },
   {
     "name": "valid usage count",
@@ -280,7 +318,7 @@
     "accepted": false
   },
   {
-    "name": "usage strips unknown content",
+    "name": "unknown usage fields are discarded by typed Rust model",
     "kind": "event",
     "input": {
       "type": "RUN_FINISHED",
@@ -293,7 +331,29 @@
         }
       ]
     },
-    "accepted": true
+    "accepted": true,
+    "rustValue": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "usage": [
+        {
+          "inputTokens": 1
+        }
+      ]
+    },
+    "upstreamValue": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "usage": [
+        {
+          "inputTokens": 1,
+          "prompt": "must not survive"
+        }
+      ]
+    },
+    "difference": "Typed Rust token usage keeps only the protocol's fields; the 1.0 TypeScript schema is a loose object and preserves unknown ones."
   },
   {
     "name": "unknown event fields are discarded by typed Rust model",
@@ -365,7 +425,13 @@
       "type": "success",
       "future": true
     },
-    "accepted": false
+    "accepted": true,
+    "rustAccepted": false,
+    "upstreamValue": {
+      "type": "success",
+      "future": true
+    },
+    "difference": "The 1.0 JSON Schema closes outcome objects (unevaluatedProperties: false), and typed Rust outcomes reject an unknown field. The TypeScript parser is a loose object that keeps it for its enforcement stage to strip; the Rust client boundary strips it with a warning before typed decoding."
   },
   {
     "name": "unknown interrupt outcome field",
@@ -380,7 +446,19 @@
       ],
       "future": true
     },
-    "accepted": false
+    "accepted": true,
+    "rustAccepted": false,
+    "upstreamValue": {
+      "type": "interrupt",
+      "interrupts": [
+        {
+          "id": "i",
+          "reason": "approval"
+        }
+      ],
+      "future": true
+    },
+    "difference": "The 1.0 JSON Schema closes outcome objects (unevaluatedProperties: false), and typed Rust outcomes reject an unknown field. The TypeScript parser is a loose object that keeps it for its enforcement stage to strip; the Rust client boundary strips it with a warning before typed decoding."
   },
   {
     "name": "suspended subagent without identifiers",
@@ -415,7 +493,13 @@
       "type": "suspended",
       "future": true
     },
-    "accepted": false
+    "accepted": true,
+    "rustAccepted": false,
+    "upstreamValue": {
+      "type": "suspended",
+      "future": true
+    },
+    "difference": "The 1.0 JSON Schema closes outcome objects (unevaluatedProperties: false), and typed Rust outcomes reject an unknown field. The TypeScript parser is a loose object that keeps it for its enforcement stage to strip; the Rust client boundary strips it with a warning before typed decoding."
   },
   {
     "name": "unknown subagent success field",
@@ -424,7 +508,13 @@
       "type": "success",
       "future": true
     },
-    "accepted": false
+    "accepted": true,
+    "rustAccepted": false,
+    "upstreamValue": {
+      "type": "success",
+      "future": true
+    },
+    "difference": "The 1.0 JSON Schema closes outcome objects (unevaluatedProperties: false), and typed Rust outcomes reject an unknown field. The TypeScript parser is a loose object that keeps it for its enforcement stage to strip; the Rust client boundary strips it with a warning before typed decoding."
   },
   {
     "name": "complete run input",
@@ -477,7 +567,18 @@
         "future": true
       }
     },
-    "accepted": false
+    "accepted": true,
+    "rustAccepted": false,
+    "upstreamValue": {
+      "type": "RUN_FINISHED",
+      "threadId": "t",
+      "runId": "r",
+      "outcome": {
+        "type": "success",
+        "future": true
+      }
+    },
+    "difference": "The 1.0 JSON Schema closes outcome objects (unevaluatedProperties: false), and typed Rust outcomes reject an unknown field. The TypeScript parser is a loose object that keeps it for its enforcement stage to strip; the Rust client boundary strips it with a warning before typed decoding."
   },
   {
     "name": "unknown nested subagent outcome field",
@@ -490,6 +591,16 @@
         "future": true
       }
     },
-    "accepted": false
+    "accepted": true,
+    "rustAccepted": false,
+    "upstreamValue": {
+      "type": "SUBAGENT_FINISHED",
+      "subagentRunId": "child",
+      "outcome": {
+        "type": "success",
+        "future": true
+      }
+    },
+    "difference": "The 1.0 JSON Schema closes outcome objects (unevaluatedProperties: false), and typed Rust outcomes reject an unknown field. The TypeScript parser is a loose object that keeps it for its enforcement stage to strip; the Rust client boundary strips it with a warning before typed decoding."
   }
 ]

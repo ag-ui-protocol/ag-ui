@@ -1,6 +1,6 @@
 [package]
 name = "ag-ui"
-description = "A Rust SDK for the AG-UI protocol: protocol types and wire encoding, a server runtime for hosting an agent, and a client runtime for consuming one. Proposed unified community Rust SDK."
+description = "Rust SDK for AG-UI 1.0 with protocol types, JSON/SSE, client and server runtimes, and Axum integration."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,17 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 readme = "README.md"
+# These integration suites read the monorepo's frozen spec and run in workspace CI.
+exclude = [
+    "tests/client_conformance_1_0.rs",
+    "tests/client_thread_1_0.rs",
+    "tests/conformance_1_0.rs",
+    "tests/fixtures_1_0.rs",
+    "tests/fixtures/local",
+    "tests/optional_null_input.rs",
+    "tests/tool_content_1_0.rs",
+    "tests/upstream_payloads.rs",
+]
 
 # Every runtime past the protocol types is a feature, so docs.rs must build them
 # all or the rendered API is a fraction of the real one.
@@ -27,10 +38,11 @@ default = ["sse", "verify"]
 # ---- core: types and wire encoding, always compiled ----
 # Server-Sent Events framing. No extra dependencies.
 sse = []
-# Binary transport: its media type and coverage diagnostics only. There is no
-# encoder — events.proto covers 21 of the protocol's 36 event types, so encoding
-# would drop events silently. See `encode::protobuf`. Deliberately pulls in no
-# dependency: it would be a `prost` build for a module that never calls it.
+# Binary transport: the media type and content negotiation only. There is no
+# encoder: upstream's 1.0 events.proto covers all 31 1.0 event types, but the
+# stock TypeScript client asks for text/event-stream. See `encode::protobuf`.
+# Deliberately pulls in no dependency: it would be a `prost` build for a module
+# that never calls it.
 protobuf = []
 # Opt-in schema derives (see ag-ui-protocol/ag-ui#1407).
 schemars = ["dep:schemars"]
@@ -49,14 +61,14 @@ verify = []
 
 # ---- client: consume an agent ----
 # Transport-agnostic. Bring your own `Transport`, or turn on `http`.
-client = ["dep:futures-core", "dep:futures-util", "dep:json-patch", "dep:getrandom", "dep:chrono", "dep:js-sys"]
+client = ["dep:futures-core", "dep:futures-util", "dep:json-patch", "dep:getrandom", "dep:jiff", "dep:js-sys"]
 # reqwest-backed HTTP transport. What most consumers want; leave it off for
 # wasm or a custom transport. Implies `sse`, because the transport negotiates
 # the SSE media type on every request.
 http = ["client", "sse", "dep:reqwest", "dep:tokio"]
 
 # ---- axum: mount a hosted agent on a router ----
-axum = ["server", "sse", "dep:axum", "dep:mime", "dep:futures-util"]
+axum = ["server", "sse", "dep:axum"]
 
 [dependencies]
 serde.workspace = true
@@ -70,11 +82,10 @@ futures-core = { workspace = true, optional = true }
 futures-channel = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 json-patch = { workspace = true, optional = true }
-chrono = { version = "0.4.45", default-features = false, features = ["std"], optional = true }
+jiff = { version = "1.0.1", default-features = false, optional = true }
 reqwest = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 axum = { workspace = true, optional = true }
-mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 insta.workspace = true

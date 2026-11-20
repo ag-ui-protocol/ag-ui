@@ -1,8 +1,10 @@
 # AG-UI schema semantics
 
-This suite feeds the same boundary cases to `@ag-ui/core@0.0.59` and the Rust
-SDK. npm pins the official SDK and Zod with an integrity-checked lockfile. The
-Rust probe uses ordinary typed decoding and `RunOutcome::validate()` for its
+This suite feeds the same boundary cases to the Zod schemas of
+`@ag-ui/core@1.0.4` (`@ag-ui/core/schemas`), on `zod@4.6.7`, and the Rust SDK.
+npm pins the official SDK and its `zod` peer dependency with an
+integrity-checked lockfile.
+The Rust probe uses ordinary typed decoding and `RunOutcome::validate()` for its
 non-empty interrupt rule. It never substitutes an SDK parser with a test parser.
 
 ```sh
@@ -11,19 +13,37 @@ npm test --prefix e2e/interop
 ```
 
 The cases cover empty, absent, null and incorrectly typed deltas; default roles;
-metadata and attribution; nullable tool parents and run outcomes; token usage;
-strict outcome fields; and run input. Acceptance must agree with the official
-schema. Accepted values must normalize identically, except for this explicit
-Rust representation contract, with both outputs pinned in `cases.json`:
+metadata and attribution; null tool parents and run outcomes; token usage;
+unknown outcome fields; and run input. Acceptance must agree with the official
+schema, and accepted values must normalize identically. Every exception is a
+case in `cases.json` that states its reason in `difference` and pins both
+sides, so a change on either side fails the suite.
 
-- Typed `Event` decoding ignores unknown top-level fields; TypeScript's base
-  schema preserves them. Retain the raw JSON when forwarding unknown extensions,
-  or use the protocol's `metadata` field. Typed decoding is not a lossless proxy.
+Acceptance differs in two families (`rustAccepted`):
+
+- An explicit `null` for `TOOL_CALL_START.parentMessageId` or
+  `RUN_FINISHED.outcome`. AG-UI 1.0 retired both: its deprecation registry has
+  a consumer read them as the omitted field, and the canonical schema rejects
+  them. Typed Rust decoding reads them as absent.
+- An unknown field on a run or subagent outcome. The 1.0 JSON Schema closes
+  those objects and typed Rust outcomes reject the field. The TypeScript parser
+  is a loose object that keeps it for its enforcement stage to strip; the Rust
+  client boundary strips it with a warning before typed decoding.
+
+Accepted values differ in two more (`rustValue`, `upstreamValue`):
+
+- Typed `Event` decoding ignores unknown top-level fields and unknown fields of
+  a token usage entry; the TypeScript schemas are loose objects and preserve
+  them. Retain the raw JSON when forwarding unknown extensions, or use the
+  protocol's `metadata` field. Typed decoding is not a lossless proxy.
+- An absent `TEXT_MESSAGE_START.role` means `assistant` and an absent
+  `ACTIVITY_SNAPSHOT.replace` means `true`. Typed Rust events store and
+  serialize those defaults; the TypeScript schemas validate without filling
+  them in. Both reject an explicit `null`.
 
 Absent input `state` and `forwardedProps` are omitted on serialization. The
-1.0 request schema rejects explicit null for either field; this pinned older
-schema suite uses non-null input values when the field is present.
-`role` defaults only when absent, and outcome objects reject unknown fields.
+cases use non-null values when either field is present; an explicit `null` for
+them is not covered here.
 
 These are targeted semantic checks, not a claim that every possible protocol
 value has been proven equivalent. The separate `xtask drift-check` compares event

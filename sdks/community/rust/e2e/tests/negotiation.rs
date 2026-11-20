@@ -9,10 +9,11 @@
 
 mod common;
 
-use ag_ui::RunOutcome;
 use ag_ui::client::{Error as ClientError, HttpAgent, RunEnd, RunParams, Thread, Update};
 use ag_ui::server::{Agent, Result, RunContext};
+use ag_ui::{Event, EventType, RunOutcome};
 use axum::Router;
+use axum::http::header::CONTENT_TYPE;
 use axum::routing::post;
 use common::{serve, transport};
 use futures_util::StreamExt as _;
@@ -72,9 +73,25 @@ async fn an_accept_the_endpoint_cannot_satisfy_is_refused_before_the_agent_runs(
     );
 }
 
+/// Whether what a request got back is a run: every item an event, the first
+/// `RUN_STARTED` and the last `RUN_FINISHED`.
+///
+/// "No item is an error" does not say that. A response with no event in it
+/// has no error in it either.
+fn served(events: &[ag_ui::client::Result<Event>]) -> std::result::Result<(), String> {
+    if let Some(error) = events.iter().find_map(|item| item.as_ref().err()) {
+        return Err(format!("the stream carried an error: {error}"));
+    }
+    let types: Vec<EventType> = events.iter().flatten().map(Event::event_type).collect();
+    match (types.first(), types.last()) {
+        (Some(EventType::RunStarted), Some(EventType::RunFinished)) => Ok(()),
+        _ => Err(format!("not a run from start to finish: {types:?}")),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_accept_the_endpoint_can_satisfy_is_served() {
-    let (ran, _ran_rx) = unbounded_channel();
+    let (ran, mut ran_rx) = unbounded_channel();
     let url = serve(Tattletale { ran }).await;
 
     for accept in [
@@ -88,11 +105,45 @@ async fn an_accept_the_endpoint_can_satisfy_is_served() {
             .build()
             .expect("a valid endpoint");
         let events: Vec<_> = agent.run_events(RunParams::new("t", "r")).collect().await;
+        if let Err(why) = served(&events) {
+            panic!("{accept} should have been served: {why}");
+        }
+        // The whole response has been read, so the agent has run if it was
+        // going to: once for this request, and not a second time.
         assert!(
-            events.iter().all(std::result::Result::is_ok),
-            "{accept} should have been served: {events:?}"
+            ran_rx.try_recv().is_ok(),
+            "{accept} was answered without the agent running"
+        );
+        assert!(
+            ran_rx.try_recv().is_err(),
+            "the agent ran twice for one request with {accept}"
         );
     }
+}
+
+/// What the test above has to tell from a served run, and once could not:
+/// an endpoint that answers every `Accept` with an event stream that holds
+/// nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_event_stream_with_nothing_in_it_is_not_a_served_run() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port on loopback");
+    let addr = listener.local_addr().expect("the bound address");
+    let empty = || async { ([(CONTENT_TYPE, "text/event-stream")], "") };
+    let app = Router::new().route("/agent", post(empty));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("the server to run");
+    });
+
+    let agent = HttpAgent::from_transport(transport(&format!("http://{addr}/agent")));
+    let events: Vec<_> = agent.run_events(RunParams::new("t", "r")).collect().await;
+    assert!(
+        events.iter().all(std::result::Result::is_ok),
+        "no item of it is an error, which is all the test used to ask: {events:?}"
+    );
+    let why = served(&events).expect_err("an empty stream is not a run");
+    assert!(why.contains("not a run"), "{why}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

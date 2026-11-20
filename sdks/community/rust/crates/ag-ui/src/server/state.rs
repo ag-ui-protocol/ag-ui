@@ -22,7 +22,12 @@ use crate::server::emit::EventSink;
 use crate::server::error::Result;
 
 /// What a publish decided to send.
+///
+/// `#[non_exhaustive]`: another way to publish state can be added without a
+/// breaking release. [`into_event`](Self::into_event) covers every variant,
+/// so it is the arm to fall back on in a `match`.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum StatePublish {
     /// The whole state — the first publish, or a change too large to patch.
     Snapshot(Value),
@@ -139,11 +144,15 @@ impl StateManager {
     /// Computes the state a queued `STATE_DELTA` will produce. If no snapshot
     /// has reached the queue yet, the client may have an input state we cannot
     /// know here; a later automatic publish must use a snapshot.
+    ///
+    /// A patch that is not well formed is an error whether or not a snapshot
+    /// has reached the queue: a consumer treats it as a malformed stream, so
+    /// it is not sent.
     pub(crate) fn after_delta(&self, operations: &[PatchOperation]) -> Result<Option<Value>> {
+        let patch = well_formed(operations)?;
         let Some(mut next) = self.published.clone() else {
             return Ok(None);
         };
-        let patch: json_patch::Patch = serde_json::from_value(serde_json::to_value(operations)?)?;
         // A well-formed patch can fail against this particular state. The
         // client reports that as a diagnostic and keeps its previous value.
         // Forget the baseline here so the next automatic publish is a full
@@ -203,6 +212,17 @@ impl<S: AgentState> RunState<S> {
     fn publish_value(&mut self, sink: &mut EventSink, value: Value) -> Result<()> {
         sink.publish_state(value)
     }
+}
+
+/// Reads the protocol's operations as a patch that can be applied, which
+/// is what a consumer does before it applies one.
+///
+/// [`PatchOperation`] keeps `path` and `from` as the strings they arrived
+/// as. This is where one that is not a JSON Pointer is caught: a consumer
+/// reports a patch that does not apply to its state and carries on, and
+/// treats one it cannot read as a malformed stream.
+pub(crate) fn well_formed(operations: &[PatchOperation]) -> Result<json_patch::Patch> {
+    Ok(serde_json::from_value(serde_json::to_value(operations)?)?)
 }
 
 /// Computes an RFC 6902 patch and re-reads it as the protocol's own operation

@@ -13,11 +13,9 @@ use serde_json::{Value, json};
 
 #[tokio::test]
 async fn official_tool_result_parts_fixture_decodes_applies_and_round_trips() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../..");
-    if !root.join(".git").exists() {
-        return; // Published crates do not carry the monorepo corpus.
-    }
-    let file = root.join("spec/1.0/conformance/streams/tool-result-parts-mint-tool-message.json");
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../../../../spec/1.0/conformance/streams/tool-result-parts-mint-tool-message.json",
+    );
     let fixture: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     let body = fixture["stream"]
         .as_array()

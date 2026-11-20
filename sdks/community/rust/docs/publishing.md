@@ -22,10 +22,10 @@ uses this environment; dry-run verification needs no release approval.
 
 ## Manual release
 
-1. Review and agree on the proposed `0.5.0` candidate version, or choose another
-   unpublished version, then update the manifest, internal dependency and lockfile
-   together before merge. The imported `0.4.2` is already published by the
-   standalone project and cannot be reused.
+1. Select the `ag-ui` SDK version in the workspace manifest. Version `1.0.0`
+   is shared with the standalone release supporting AG-UI 1.0. Future releases
+   follow Cargo SemVer. An existing version with matching runtime source and
+   dependency declarations completes verification and skips the upload.
 2. Run **Publish Rust SDK** on `main`, enter that exact version, and keep
    `dry_run` enabled for verification. This does not request a publishing token.
 3. To publish, run it on official `main` with the same version and `dry_run`

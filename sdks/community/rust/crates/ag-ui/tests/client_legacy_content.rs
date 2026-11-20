@@ -19,13 +19,13 @@ fn history() -> Vec<Message> {
         {"id": "u1", "role": "user", "content": [
             {"type": "text", "text": "Describe these."},
             {"type": "binary", "mimeType": "image/png", "url": "https://example.com/a.png"},
-            {"type": "binary", "mimeType": "audio/wav", "data": "UklGRg==", "filename": "a.wav"},
+            {"type": "binary", "mimeType": "AUDIO/WAV", "data": "UklGRg==", "filename": "a.wav"},
             {"type": "binary", "mimeType": "application/pdf", "data": "JVBERg==",
              "url": "https://example.com/a.pdf"},
             {"type": "binary", "mimeType": "video/mp4", "id": "upload-7"},
             // A legacy mirror of the modern part next to it is dropped ...
             {"type": "image", "source":
-                {"type": "url", "value": "https://example.com/b.png", "mimeType": "image/png"}},
+                {"type": "url", "value": "https://example.com/b.png"}},
             {"type": "binary", "mimeType": "image/png", "url": "https://example.com/b.png"},
             // ... unless it carries a file name the modern part does not keep.
             {"type": "binary", "mimeType": "image/png", "url": "https://example.com/b.png",
@@ -41,32 +41,24 @@ fn history() -> Vec<Message> {
     .expect("the typed messages still read the legacy part")
 }
 
-fn id_only() -> Value {
-    json!({"type": "binary", "mimeType": "video/mp4", "id": "upload-7"})
-}
-
 fn url(kind: &str, value: &str, mime: &str) -> Value {
     json!({"type": kind, "source": {"type": "url", "value": value, "mimeType": mime}})
 }
 
-/// `id_only` is what became of the part that carries only an `id`, which has
-/// no 1.0 source to become: a request sends it as it is, and the boundary
-/// drops it from an event.
-fn assert_upgraded(sent: &[Message], id_only: Option<Value>) {
+fn assert_upgraded(sent: &[Message]) {
     let sent = serde_json::to_value(sent).unwrap();
     let mut expected = vec![
         json!({"type": "text", "text": "Describe these."}),
         url("image", "https://example.com/a.png", "image/png"),
         json!({"type": "audio",
-            "source": {"type": "data", "value": "UklGRg==", "mimeType": "audio/wav"},
+            "source": {"type": "data", "value": "UklGRg==", "mimeType": "AUDIO/WAV"},
             "metadata": {"filename": "a.wav"}}),
         // Inline data wins over a URL.
         json!({"type": "document",
             "source": {"type": "data", "value": "JVBERg==", "mimeType": "application/pdf"}}),
     ];
-    expected.extend(id_only);
     expected.extend([
-        url("image", "https://example.com/b.png", "image/png"),
+        json!({"type": "image", "source": {"type": "url", "value": "https://example.com/b.png"}}),
         json!({"type": "image",
             "source": {"type": "url", "value": "https://example.com/b.png", "mimeType": "image/png"},
             "metadata": {"filename": "b.png"}}),
@@ -92,14 +84,21 @@ async fn a_thread_sends_the_media_part_and_keeps_its_own_copy_as_written() {
         .messages(history())
         .build()
         .unwrap();
-    thread.run().unwrap().collect_report().await;
+    let report = thread.run().unwrap().collect_report().await;
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|warning| warning.message.contains("binary")
+                && warning.message.contains("/messages/0/content/4"))
+    );
 
-    assert_upgraded(&transport.last_request().unwrap().messages, Some(id_only()));
+    assert_upgraded(&transport.last_request().unwrap().messages);
     assert_eq!(thread.messages(), history());
 }
 
 #[tokio::test]
-async fn a_legacy_part_arriving_in_an_event_is_read_as_the_media_part() {
+async fn a_legacy_part_arriving_in_an_event_is_read_as_the_media_part_with_a_warning() {
     // AG-UI 1.0, "Retired shapes": "A consumer SHOULD translate a retired
     // shape into its replacement rather than drop it", before enforcement.
     // The same list as a request's, in a snapshot, and one in a tool result.
@@ -123,11 +122,33 @@ async fn a_legacy_part_arriving_in_an_event_is_read_as_the_media_part() {
     let report = thread.run().unwrap().collect_report().await;
 
     assert_eq!(report.end, ag_ui::client::RunEnd::Success { result: None });
-    assert_upgraded(thread.messages(), None);
+    assert_upgraded(thread.messages());
     let delivered = serde_json::to_value(thread.messages()).unwrap();
     assert_eq!(
         delivered[3]["content"],
         json!([url("audio", "https://example.com/b.wav", "audio/wav")])
+    );
+
+    let warnings: Vec<&str> = report
+        .diagnostics
+        .iter()
+        .inspect(|diagnostic| assert_eq!(diagnostic.kind, "warning", "{diagnostic:?}"))
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            "translated retired binary content part at /messages/0/content/1 to image",
+            "translated retired binary content part at /messages/0/content/2 to audio",
+            "translated retired binary content part at /messages/0/content/3 to document",
+            "dropped retired binary content part at /messages/0/content/6: the image part \
+             beside it carries the same payload",
+            "translated retired binary content part at /messages/0/content/7 to image",
+            "translated retired binary content part at /messages/2/content/0 to document",
+            // An id alone has no 1.0 form, so enforcement drops it as before.
+            r#"unrecognised union member "binary" at /messages/0/content/4"#,
+            "translated retired binary content part at /content/0 to audio",
+        ]
     );
 }
 
@@ -140,22 +161,30 @@ async fn run_events_sends_the_media_part_too() {
         .collect()
         .await;
     assert_eq!(events.len(), 2);
-    assert_upgraded(&transport.last_request().unwrap().messages, Some(id_only()));
+    assert_upgraded(&transport.last_request().unwrap().messages);
 }
 
 #[tokio::test]
-async fn input_echo_is_upgraded_before_schema_enforcement() {
-    let mut started = Event::run_started("t", "r");
-    let Event::RunStarted(start) = &mut started else {
-        unreachable!()
-    };
-    let mut input = ag_ui::RunAgentInput::new("t", "r");
-    input.messages = history();
-    start.input = Some(Box::new(input));
-    let agent = RemoteAgent::new(ReplayTransport::new([started]));
-    let events: Vec<_> = agent.run_events(RunParams::new("t", "r")).collect().await;
-    let Event::RunStarted(start) = events[0].as_ref().unwrap() else {
-        unreachable!()
-    };
-    assert_upgraded(&start.input.as_ref().unwrap().messages, None);
+async fn explicit_conflicting_mime_types_preserve_both_url_parts() {
+    let transport = ReplayTransport::new(success());
+    let agent = RemoteAgent::new(transport.clone());
+    let user: Message = serde_json::from_value(json!({
+        "role":"user", "id":"u", "content":[
+            {"type":"image","source":{"type":"url","value":"a","mimeType":"image/jpeg"}},
+            {"type":"binary","url":"a","mimeType":"IMAGE/PNG"}
+        ]
+    }))
+    .unwrap();
+    agent
+        .run_events(RunParams::new("t", "r").message(user))
+        .collect::<Vec<_>>()
+        .await;
+    let sent = serde_json::to_value(transport.last_request().unwrap()).unwrap();
+    assert_eq!(
+        sent["messages"][0]["content"],
+        json!([
+            url("image", "a", "image/jpeg"),
+            url("image", "a", "IMAGE/PNG")
+        ])
+    );
 }

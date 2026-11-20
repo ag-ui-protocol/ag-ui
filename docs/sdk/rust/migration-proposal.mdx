@@ -5,17 +5,16 @@ description: "Reviewing a feature-based Rust SDK and planning migration from the
 
 The proposal adds the feature-based `ag-ui` crate alongside `ag-ui-core` and
 `ag-ui-client`. Existing source, public APIs and package checks remain in place
-while the new implementation is reviewed. No package is published or ownership
-transferred. Adoption is under discussion
+while the new implementation is reviewed. Adoption is under discussion
 in [#2256](https://github.com/ag-ui-protocol/ag-ui/issues/2256).
 
 The candidate includes protocol types, an agent server API, HTTP/SSE client,
 conversation state, interrupt/resume handling and Axum integration. Applications
 enable `server`, `client`, `http` or `axum` features as needed. JSON/SSE is supported;
 protobuf encoding is not implemented. A2UI is outside this proposal.
-The Rust workspace uses `0.5.0` as an unpublished review candidate because the
-standalone project already published `0.4.2`; maintainers must agree on the
-first upstream release version before publishing.
+The Rust workspace uses SDK version `1.0.0` and declares protocol version
+`1.0` on the wire. The standalone release and this proposal share their runtime
+source.
 
 ## Review locally
 
@@ -39,15 +38,12 @@ flow are not source-compatible. Old asynchronous, mutating subscribers cannot be
 replaced by the new synchronous read-only `on_event` observer unchanged. Follow
 `sdks/community/rust/MIGRATION.md` for examples and the decisions needed before adoption.
 
-Existing package maintainers and the team must agree on final legacy releases,
-publishing access and maintenance responsibilities. Any existing source removal
-would be a separate follow-up after agreement. The new implementation stays as
-one `ag-ui` crate with features.
-See the [transition checklist](/sdk/rust/transition) for the pending agreements.
+The existing crates have a separate [1.0 parity proposal](https://github.com/ag-ui-protocol/ag-ui/pull/3214).
+Maintainers are discussing Rust review ownership in [#2367](https://github.com/ag-ui-protocol/ag-ui/pull/2367).
+The [coordination notes](/sdk/rust/transition) describe the release policy and open decisions.
 
-The imported public PR #11 tightens explicit-null roles and outcome fields,
-leaves JSON map ordering to consumers, and exposes the server event verifier.
-The 44 historical semantic cases run against a pinned pre-1.0 TypeScript SDK.
-The current TypeScript schemas and Rust codec also round-trip all 31 normative
-1.0 event variants, while Rust stream tests exercise selected official
-conformance fixtures. Representation differences are documented rather than hidden.
+The semantic suite exercises 44 cases against the official `@ag-ui/core@1.0.4`
+schemas. The checkout's TypeScript schemas and Rust codec round-trip all 31 AG-UI
+1.0 event variants. Rust exercises the frozen stream corpus and schema fixtures,
+with documented differences for optional peer downgrades and the reference
+client's unknown-role behavior.

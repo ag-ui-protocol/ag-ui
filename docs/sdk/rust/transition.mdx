@@ -1,38 +1,18 @@
 ---
-title: "Transition and versioning proposal"
-description: "Pending ownership, legacy-release and compatibility decisions for the Rust SDK"
+title: "Rust SDK maintenance and versioning"
+description: "Coordination of community Rust SDK work and the feature-based crate’s release policy"
 ---
 
-This is a proposal for discussion with the upstream team and existing maintainers.
-It records the plan from [the migration coordination issue](https://github.com/KimSoungRyoul/ag-ui-rust/issues/10),
-not an approved ownership change or release policy.
+The feature-based `ag-ui` crate is proposed alongside `ag-ui-core` and
+`ag-ui-client`. The existing packages have their own 1.0 parity proposal.
+Upstream maintainers decide how the implementations will be maintained and who
+reviews future changes. [Feature-based proposal](https://github.com/ag-ui-protocol/ag-ui/pull/2778) · [Existing packages' 1.0 parity](https://github.com/ag-ui-protocol/ag-ui/pull/3214) · [Code ownership](https://github.com/ag-ui-protocol/ag-ui/pull/2367).
 
-- Review `ag-ui` as a single crate with feature-selected runtimes alongside the
-  existing `ag-ui-core` and `ag-ui-client` packages.
-- Coordinate final `ag-ui-core` and `ag-ui-client` releases with @wdoppenberg.
-  Preserve their current APIs, add migration guidance, then communicate maintenance
-  status. Existing published versions stay available.
-- Agree on a crates.io organization team and at least two individual maintainers,
-  as proposed by Mike. The upstream team decides the maintainers and CODEOWNERS.
-- Agree on review, release sign-off, publishing access and the next release version.
-- Mike offered branch review, a later Rust documentation rewrite, relevant client
-  middleware/verifier work, and 34 captured event fixtures. Those contributions
-  remain follow-up work; this branch does not claim to include them.
+The feature-based SDK uses crate version `1.0.0` for its release supporting the
+frozen AG-UI 1.0 protocol. Cargo SemVer governs future crate versions. Compatible
+fixes increment the patch, compatible additions increment the minor, and breaking
+public API changes increment the major version. Wire peers continue to declare
+the protocol version they speak. [Cargo SemVer](https://doc.rust-lang.org/cargo/reference/semver.html).
 
-The detailed checklist is `sdks/community/rust/docs/transition.md`. Existing source
-is retained in this branch. Its removal and final registry releases would be
-follow-up work after agreement. No package is published or ownership transferred.
-
-## Versioning for agreement
-
-`Event` and `EventType` are exhaustive Rust enums. A new variant can break a
-downstream exhaustive match, so it requires a compatibility-breaking release.
-Before 1.0, the proposed boundary is the next minor series (for example, 0.4 to
-0.5); from 1.0 onward it is the next major version. This follows
-[Cargo's SemVer conventions](https://doc.rust-lang.org/cargo/reference/semver.html).
-
-Changes to field requirements, accepted JSON values, serialization defaults and
-public APIs also need a compatibility review and release notes. An unchanged
-event count does not prove compatibility. The team must confirm this policy and
-the first upstream version before publishing. The imported source was 0.4.2;
-this branch uses 0.5.0 as an unpublished candidate pending that agreement.
+The workflow and Trusted Publisher setup for future `ag-ui` releases from the
+monorepo are documented in `sdks/community/rust/docs/publishing.md`.

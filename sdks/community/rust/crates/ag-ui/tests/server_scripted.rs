@@ -46,10 +46,7 @@ impl Agent for Scripted {
 }
 
 async fn collect(agent: impl Agent, input: RunAgentInput) -> Vec<Event> {
-    run(agent, input)
-        .map(|event| event.expect("the run stream should not break"))
-        .collect()
-        .await
+    run(agent, input).collect().await
 }
 
 #[tokio::test]
@@ -161,7 +158,6 @@ async fn the_request_can_be_echoed_on_run_started() {
     let events: Vec<Event> = ag_ui::server::Runner::new(Scripted)
         .echo_input(true)
         .run(input.clone())
-        .map(|event| event.expect("the run stream should not break"))
         .collect()
         .await;
 

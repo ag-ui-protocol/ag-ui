@@ -54,10 +54,12 @@ impl<'a, S> StepGuard<'a, S> {
     /// Emits `STEP_FINISHED` and consumes the guard.
     ///
     /// Only worth calling over letting the guard drop when you want to see the
-    /// error.
+    /// error. Like `Drop`, it still closes the step after the run was
+    /// cancelled.
     pub fn finish(mut self) -> Result<()> {
         self.ended = true;
-        self.ctx.emit(Event::step_finished(self.name.clone()))
+        self.ctx
+            .emit_forced(Event::step_finished(self.name.clone()))
     }
 }
 
@@ -78,7 +80,9 @@ impl<S> DerefMut for StepGuard<'_, S> {
 impl<S> Drop for StepGuard<'_, S> {
     fn drop(&mut self) {
         if !self.ended {
-            let _ = self.ctx.emit(Event::step_finished(self.name.clone()));
+            let _ = self
+                .ctx
+                .emit_forced(Event::step_finished(self.name.clone()));
         }
     }
 }

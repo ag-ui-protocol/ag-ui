@@ -55,7 +55,6 @@
 //! # rt.block_on(async {
 //! let input = RunAgentInput::new("thread-1", "run-1");
 //! let events: Vec<Event> = run(Editor, input)
-//!     .map(|event| event.expect("the stream should not break"))
 //!     .collect()
 //!     .await;
 //!
@@ -100,7 +99,9 @@
 //! **Executor-agnostic.** `futures` primitives throughout, no tokio in the
 //! dependency list, no `spawn`. [`CancellationToken`] is an `AtomicBool` and a
 //! waker list rather than `tokio_util`'s. Polling the stream is what runs the
-//! agent.
+//! agent. A run that has to outlive its response is taken as two halves
+//! instead, the driver for an executor of your own and the events for your
+//! store: see [the `run` module](mod@run#a-run-that-outlives-its-response).
 //!
 //! **One extension point.** Everything that observes or rewrites the stream is
 //! a [`StreamTransformer`]. There is no parallel builder of callbacks; the
@@ -148,8 +149,9 @@
 //! output by who produced it:
 //!
 //! ```
-//! # use ag_ui::RunOutcome;
-//! # use ag_ui::server::{Agent, Result, RunContext};
+//! # use ag_ui::{Event, EventType, RunAgentInput, RunOutcome};
+//! # use ag_ui::server::{Agent, Result, RunContext, run};
+//! # use futures_util::StreamExt;
 //! # struct Supervisor;
 //! impl Agent for Supervisor {
 //!     type State = ();
@@ -160,13 +162,21 @@
 //!         {
 //!             let mut estimator = planner.subagent("estimator")?;   // nested
 //!             estimator.say("About a day each.")?;
-//!         }                                                          // SUBAGENT_FINISHED
+//!             estimator.finish()?;                                   // SUBAGENT_FINISHED
+//!         }
 //!         planner.finish_with(serde_json::json!({ "tasks": 2 }))?;
 //!
 //!         ctx.say("Plan ready.")?;                                   // the parent's own
 //!         Ok(RunOutcome::Success)
 //!     }
 //! }
+//! # let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+//! # rt.block_on(async {
+//! # let events: Vec<Event> = run(Supervisor, RunAgentInput::new("thread-1", "run-1"))
+//! #     .collect()
+//! #     .await;
+//! # assert_eq!(events.last().map(Event::event_type), Some(EventType::RunFinished));
+//! # });
 //! ```
 //!
 //! What a consumer sees is a producer-side choice, because a client older than
@@ -197,6 +207,7 @@ pub mod cancel;
 pub mod context;
 pub mod emit;
 pub mod error;
+pub mod progress;
 pub mod run;
 pub mod state;
 pub mod transform;
@@ -209,6 +220,7 @@ pub use emit::{
     EventReceiver, MessageHandle, ReasoningHandle, StepGuard, SubagentHandle, ToolCallHandle,
 };
 pub use error::{Error, Result, Rule, VerificationError};
+pub use progress::{OpenEntity, Prelude, RunProgress};
 pub use run::{Runner, run};
 pub use state::{StateManager, StatePublish};
 pub use transform::{

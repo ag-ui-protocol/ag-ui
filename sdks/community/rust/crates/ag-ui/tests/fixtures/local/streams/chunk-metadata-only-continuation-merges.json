@@ -1,0 +1,107 @@
+{
+  "name": "chunk-metadata-only-continuation-merges",
+  "area": "streaming",
+  "description": "a continuation chunk that carries only metadata, a final chunk reporting a finish reason, is legal: it adds no content, and its metadata still merges into the item it continues. For each of the three chunk kinds, and a tool call's lands on the call rather than its parent message. Local to this repository: the specification states the rule and the upstream corpus has no stream for it",
+  "specPage": "/spec/1.0/basic/patterns/streaming",
+  "kill": "expand a continuation chunk without a delta into nothing, so its metadata never reaches the item",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-chunk-metadata-only",
+      "runId": "chunk-metadata-only-r1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "REASONING_MESSAGE_CHUNK",
+      "messageId": "chunk-metadata-only-rm1",
+      "delta": "Look it up."
+    },
+    {
+      "type": "REASONING_MESSAGE_CHUNK",
+      "metadata": { "reasoningTokens": 4 }
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "chunk-metadata-only-m1",
+      "delta": "Found it.",
+      "metadata": { "stage": "content" }
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "metadata": { "stage": "final", "finishReason": "stop" }
+    },
+    {
+      "type": "TOOL_CALL_CHUNK",
+      "toolCallId": "chunk-metadata-only-tc1",
+      "toolCallName": "search",
+      "parentMessageId": "chunk-metadata-only-m1",
+      "delta": "{}"
+    },
+    {
+      "type": "TOOL_CALL_CHUNK",
+      "metadata": { "finishReason": "tool_calls" }
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-chunk-metadata-only",
+      "runId": "chunk-metadata-only-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 2,
+    "messages": [
+      {
+        "id": "chunk-metadata-only-rm1",
+        "role": "reasoning",
+        "content": "Look it up.",
+        "metadata": { "reasoningTokens": 4 }
+      },
+      {
+        "id": "chunk-metadata-only-m1",
+        "role": "assistant",
+        "content": "Found it.",
+        "metadata": { "stage": "final", "finishReason": "stop" },
+        "toolCalls": [
+          {
+            "id": "chunk-metadata-only-tc1",
+            "type": "function",
+            "function": { "name": "search", "arguments": "{}" },
+            "metadata": { "finishReason": "tool_calls" }
+          }
+        ]
+      }
+    ]
+  },
+  "expectOverrides": {
+    "typescript": {
+      "intentional": "How the metadata travels is observable only where chunks are expanded: each metadata-only continuation stands for a content event with an empty delta, carrying the chunk's metadata. So the list lives here rather than in `expect`, which stays lane-neutral.",
+      "eventTypes": [
+        "RUN_STARTED",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "RUN_FINISHED"
+      ],
+      "eventPaths": {
+        "3.delta": "",
+        "3.metadata": { "reasoningTokens": 4 },
+        "7.delta": "",
+        "7.metadata": { "stage": "final", "finishReason": "stop" },
+        "11.delta": "",
+        "11.metadata": { "finishReason": "tool_calls" }
+      },
+      "eventAbsentPaths": ["4.metadata", "8.metadata", "12.metadata"]
+    }
+  }
+}

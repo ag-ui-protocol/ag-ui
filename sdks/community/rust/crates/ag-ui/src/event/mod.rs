@@ -79,7 +79,11 @@ pub use tool::{
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct BaseEvent {
     /// When the event was produced, in milliseconds since the Unix epoch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_timestamp"
+    )]
     pub timestamp: Option<i64>,
     /// The provider event this was translated from, for debugging.
     #[serde(default, skip_serializing_if = "crate::serde_util::is_none_or_null")]
@@ -101,11 +105,6 @@ pub struct BaseEvent {
 }
 
 impl BaseEvent {
-    /// An empty base — no timestamp, no raw event, no metadata.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Whether every field is absent, in which case the base contributes
     /// nothing to the serialized event.
     pub const fn is_empty(&self) -> bool {
@@ -136,7 +135,7 @@ macro_rules! define_events {
         ///
         /// The consequence is that adding an event is a major version of this
         /// crate. New variants therefore require a compatibility-breaking release;
-        /// see the Rust workspace's `docs/transition.md` versioning proposal.
+        /// see `docs/DESIGN.md`, "`Event` is exhaustive on purpose".
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
         #[serde(tag = "type")]
         #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -351,92 +350,6 @@ impl Event {
 
     // ---- subagent attribution ------------------------------------------
 
-    /// The `subagentRunId` slot of the 24 event types that carry attribution.
-    ///
-    /// Hand-written and exhaustive: a new variant has to be placed on one
-    /// side or the other here, which is the point.
-    fn attribution(&self) -> Option<&Option<SubagentRunId>> {
-        match self {
-            Self::TextMessageStart(e) => Some(&e.subagent_run_id),
-            Self::TextMessageContent(e) => Some(&e.subagent_run_id),
-            Self::TextMessageEnd(e) => Some(&e.subagent_run_id),
-            Self::TextMessageChunk(e) => Some(&e.subagent_run_id),
-            Self::ToolCallStart(e) => Some(&e.subagent_run_id),
-            Self::ToolCallArgs(e) => Some(&e.subagent_run_id),
-            Self::ToolCallEnd(e) => Some(&e.subagent_run_id),
-            Self::ToolCallChunk(e) => Some(&e.subagent_run_id),
-            Self::ToolCallResult(e) => Some(&e.subagent_run_id),
-            Self::StateSnapshot(e) => Some(&e.subagent_run_id),
-            Self::StateDelta(e) => Some(&e.subagent_run_id),
-            Self::ActivitySnapshot(e) => Some(&e.subagent_run_id),
-            Self::ActivityDelta(e) => Some(&e.subagent_run_id),
-            Self::Raw(e) => Some(&e.subagent_run_id),
-            Self::Custom(e) => Some(&e.subagent_run_id),
-            Self::StepStarted(e) => Some(&e.subagent_run_id),
-            Self::StepFinished(e) => Some(&e.subagent_run_id),
-            Self::ReasoningStart(e) => Some(&e.subagent_run_id),
-            Self::ReasoningMessageStart(e) => Some(&e.subagent_run_id),
-            Self::ReasoningMessageContent(e) => Some(&e.subagent_run_id),
-            Self::ReasoningMessageEnd(e) => Some(&e.subagent_run_id),
-            Self::ReasoningMessageChunk(e) => Some(&e.subagent_run_id),
-            Self::ReasoningEnd(e) => Some(&e.subagent_run_id),
-            Self::ReasoningEncryptedValue(e) => Some(&e.subagent_run_id),
-            Self::RunStarted(_)
-            | Self::RunFinished(_)
-            | Self::RunError(_)
-            | Self::MessagesSnapshot(_)
-            | Self::ThinkingStart(_)
-            | Self::ThinkingEnd(_)
-            | Self::ThinkingTextMessageStart(_)
-            | Self::ThinkingTextMessageContent(_)
-            | Self::ThinkingTextMessageEnd(_)
-            | Self::SubagentStarted(_)
-            | Self::SubagentFinished(_)
-            | Self::SubagentError(_) => None,
-        }
-    }
-
-    fn attribution_mut(&mut self) -> Option<&mut Option<SubagentRunId>> {
-        match self {
-            Self::TextMessageStart(e) => Some(&mut e.subagent_run_id),
-            Self::TextMessageContent(e) => Some(&mut e.subagent_run_id),
-            Self::TextMessageEnd(e) => Some(&mut e.subagent_run_id),
-            Self::TextMessageChunk(e) => Some(&mut e.subagent_run_id),
-            Self::ToolCallStart(e) => Some(&mut e.subagent_run_id),
-            Self::ToolCallArgs(e) => Some(&mut e.subagent_run_id),
-            Self::ToolCallEnd(e) => Some(&mut e.subagent_run_id),
-            Self::ToolCallChunk(e) => Some(&mut e.subagent_run_id),
-            Self::ToolCallResult(e) => Some(&mut e.subagent_run_id),
-            Self::StateSnapshot(e) => Some(&mut e.subagent_run_id),
-            Self::StateDelta(e) => Some(&mut e.subagent_run_id),
-            Self::ActivitySnapshot(e) => Some(&mut e.subagent_run_id),
-            Self::ActivityDelta(e) => Some(&mut e.subagent_run_id),
-            Self::Raw(e) => Some(&mut e.subagent_run_id),
-            Self::Custom(e) => Some(&mut e.subagent_run_id),
-            Self::StepStarted(e) => Some(&mut e.subagent_run_id),
-            Self::StepFinished(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningStart(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningMessageStart(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningMessageContent(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningMessageEnd(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningMessageChunk(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningEnd(e) => Some(&mut e.subagent_run_id),
-            Self::ReasoningEncryptedValue(e) => Some(&mut e.subagent_run_id),
-            Self::RunStarted(_)
-            | Self::RunFinished(_)
-            | Self::RunError(_)
-            | Self::MessagesSnapshot(_)
-            | Self::ThinkingStart(_)
-            | Self::ThinkingEnd(_)
-            | Self::ThinkingTextMessageStart(_)
-            | Self::ThinkingTextMessageContent(_)
-            | Self::ThinkingTextMessageEnd(_)
-            | Self::SubagentStarted(_)
-            | Self::SubagentFinished(_)
-            | Self::SubagentError(_) => None,
-        }
-    }
-
     /// The subagent this event belongs to.
     ///
     /// `None` means the parent agent — or an event type that carries no
@@ -490,29 +403,91 @@ impl Event {
     }
 }
 
-impl EventType {
-    /// Whether this event type carries the optional `subagentRunId`
-    /// attribution — 24 of the 36 do.
-    ///
-    /// The three `SUBAGENT_*` lifecycle events return `false`: they carry the
-    /// field as their required subject, not as a tag. The run lifecycle,
-    /// `MESSAGES_SNAPSHOT` (whose messages carry their own) and the deprecated
-    /// `THINKING_*` family have no such field.
-    pub const fn is_attributable(self) -> bool {
-        !matches!(
-            self,
-            Self::RunStarted
-                | Self::RunFinished
-                | Self::RunError
-                | Self::MessagesSnapshot
-                | Self::ThinkingStart
-                | Self::ThinkingEnd
-                | Self::ThinkingTextMessageStart
-                | Self::ThinkingTextMessageContent
-                | Self::ThinkingTextMessageEnd
-                | Self::SubagentStarted
-                | Self::SubagentFinished
-                | Self::SubagentError
-        )
-    }
+/// Which event types carry the optional `subagentRunId` tag, stated once.
+///
+/// Every variant is on one side or the other, and what this generates matches
+/// without a wildcard arm: a new variant has to be placed here before the
+/// crate compiles, which is the point.
+macro_rules! attribution {
+    (
+        tagged: [$($tagged:ident),* $(,)?],
+        untagged: [$($untagged:ident),* $(,)?] $(,)?
+    ) => {
+        impl Event {
+            /// The `subagentRunId` slot of the event types that carry
+            /// attribution.
+            fn attribution(&self) -> Option<&Option<SubagentRunId>> {
+                match self {
+                    $(Self::$tagged(e) => Some(&e.subagent_run_id),)*
+                    $(Self::$untagged(_))|* => None,
+                }
+            }
+
+            fn attribution_mut(&mut self) -> Option<&mut Option<SubagentRunId>> {
+                match self {
+                    $(Self::$tagged(e) => Some(&mut e.subagent_run_id),)*
+                    $(Self::$untagged(_))|* => None,
+                }
+            }
+        }
+
+        impl EventType {
+            /// Whether this event type carries the optional `subagentRunId`
+            /// attribution — 24 of the 36 do.
+            ///
+            /// The three `SUBAGENT_*` lifecycle events return `false`: they
+            /// carry the field as their required subject, not as a tag. The
+            /// run lifecycle, `MESSAGES_SNAPSHOT` (whose messages carry their
+            /// own) and the deprecated `THINKING_*` family have no such field.
+            pub const fn is_attributable(self) -> bool {
+                match self {
+                    $(Self::$tagged)|* => true,
+                    $(Self::$untagged)|* => false,
+                }
+            }
+        }
+    };
+}
+
+attribution! {
+    tagged: [
+        TextMessageStart,
+        TextMessageContent,
+        TextMessageEnd,
+        TextMessageChunk,
+        ToolCallStart,
+        ToolCallArgs,
+        ToolCallEnd,
+        ToolCallChunk,
+        ToolCallResult,
+        StateSnapshot,
+        StateDelta,
+        ActivitySnapshot,
+        ActivityDelta,
+        Raw,
+        Custom,
+        StepStarted,
+        StepFinished,
+        ReasoningStart,
+        ReasoningMessageStart,
+        ReasoningMessageContent,
+        ReasoningMessageEnd,
+        ReasoningMessageChunk,
+        ReasoningEnd,
+        ReasoningEncryptedValue,
+    ],
+    untagged: [
+        RunStarted,
+        RunFinished,
+        RunError,
+        MessagesSnapshot,
+        ThinkingStart,
+        ThinkingEnd,
+        ThinkingTextMessageStart,
+        ThinkingTextMessageContent,
+        ThinkingTextMessageEnd,
+        SubagentStarted,
+        SubagentFinished,
+        SubagentError,
+    ],
 }

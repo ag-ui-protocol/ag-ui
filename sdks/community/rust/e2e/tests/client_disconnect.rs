@@ -47,11 +47,11 @@ impl Agent for Patient {
     type State = ();
 
     async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
-        let _ = self.token.send(ctx.cancel_token());
+        let _ = self.token.send(ctx.cancellation_token());
         ctx.say("working on it")?;
 
         let _guard = ExitGuard {
-            token: ctx.cancel_token(),
+            token: ctx.cancellation_token(),
             report: self.exit.clone(),
         };
         std::future::pending::<()>().await;
@@ -69,7 +69,7 @@ impl Agent for Prompt {
 
     async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
         let _guard = ExitGuard {
-            token: ctx.cancel_token(),
+            token: ctx.cancellation_token(),
             report: self.exit.clone(),
         };
         ctx.say("done")?;
@@ -153,7 +153,6 @@ async fn dropping_a_thread_run_stream_cancels_the_agent() {
                 .expect("the run should not have ended");
         }
     }
-    drop(thread);
 
     let token = timeout(DEADLINE, token_rx.recv())
         .await
@@ -167,6 +166,7 @@ async fn dropping_a_thread_run_stream_cancels_the_agent() {
         exit_report(&mut exit_rx).await,
         "the agent left the run without ever seeing the cancellation"
     );
+    drop(thread);
 }
 
 /// The guard's other half: finishing is not disconnecting.

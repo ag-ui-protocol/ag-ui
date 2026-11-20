@@ -24,10 +24,7 @@ fn types(events: &[Event]) -> Vec<EventType> {
 }
 
 async fn collect(agent: impl Agent) -> Vec<Event> {
-    run(agent, RunAgentInput::new("t", "run-1"))
-        .map(|event| event.expect("the run stream should not break"))
-        .collect()
-        .await
+    run(agent, RunAgentInput::new("t", "run-1")).collect().await
 }
 
 #[test]
@@ -331,10 +328,7 @@ async fn a_suspended_subagent_pauses_the_run_and_continues_under_the_same_id() {
 
     let mut input = RunAgentInput::new("t", "run-2");
     input.resume = Some(vec![ResumeEntry::resolved("int-1", json!(true))]);
-    let resumed: Vec<Event> = run(Deleter, input)
-        .map(|event| event.expect("the run stream should not break"))
-        .collect()
-        .await;
+    let resumed: Vec<Event> = run(Deleter, input).collect().await;
     let Event::SubagentStarted(again) = &resumed[1] else {
         panic!("expected SUBAGENT_STARTED, got {:?}", resumed[1]);
     };
@@ -406,11 +400,7 @@ async fn forgetting_to_finish_a_scope_rejects_success_and_interrupt_even_when_hi
             } else {
                 runner
             };
-            let events: Vec<_> = runner
-                .run(RunAgentInput::new("t", "r"))
-                .map(|event| event.unwrap())
-                .collect()
-                .await;
+            let events: Vec<_> = runner.run(RunAgentInput::new("t", "r")).collect().await;
             assert!(
                 !events.iter().any(|event| matches!(
                     event,

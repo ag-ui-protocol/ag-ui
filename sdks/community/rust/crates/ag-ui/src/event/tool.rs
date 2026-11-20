@@ -50,6 +50,13 @@ impl ToolCallStartEvent {
             subagent_run_id: None,
         }
     }
+
+    /// Names the assistant message that requested the call.
+    #[must_use]
+    pub fn with_parent_message_id(mut self, parent_message_id: impl Into<MessageId>) -> Self {
+        self.parent_message_id = Some(parent_message_id.into());
+        self
+    }
 }
 
 /// Appends a chunk of the argument JSON for an open tool call.

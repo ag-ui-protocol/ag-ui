@@ -1,8 +1,10 @@
 //! Shared schema enforcement before protocol values reach typed consumers.
 //!
-//! Unknown additions are removed; malformed known values fail. This module
-//! owns no transport or runtime dependencies, so clients and hosted endpoints
-//! apply the same rules with independent feature sets.
+//! Unknown additions are removed; malformed known values fail. What is removed
+//! is pushed onto the caller's `warnings`, which decides where it goes; nothing
+//! here prints. This module owns no transport or runtime dependencies, so
+//! clients and hosted endpoints apply the same rules with independent feature
+//! sets.
 
 use std::sync::OnceLock;
 
@@ -20,19 +22,24 @@ fn schema() -> &'static Value {
 }
 
 #[cfg(feature = "client")]
-pub(crate) fn event(mut value: Value) -> Result<Option<Value>> {
+pub(crate) fn event(mut value: Value, warnings: &mut Vec<String>) -> Result<Option<Value>> {
     if value.get("type").and_then(Value::as_str).is_none() {
         return Err(protocol_error("event /type must be a string"));
     }
-    Ok(enforce(&mut value, schema())?.then_some(value))
+    let shape = schema()
+        .pointer("/$defs/Event")
+        .expect("event schema exists");
+    Ok(normalize(&mut value, shape, "", warnings)?.then_some(value))
 }
 
-#[cfg(feature = "axum")]
-pub(crate) fn input(mut value: Value) -> Result<Value> {
+pub(crate) fn input(mut value: Value, warnings: &mut Vec<String>) -> Result<Value> {
+    // An older client's request may carry the registered nulls too; nothing
+    // ahead of this function reads them as omitted.
+    omit_input_nulls(&mut value, &mut Noticed::default(), warnings);
     let shape = schema()
         .pointer("/$defs/RunAgentInput")
         .expect("input schema exists");
-    if !enforce(&mut value, shape)? {
+    if !normalize(&mut value, shape, "", warnings)? {
         return Err(protocol_error(
             "run input contains an unrecognised required value",
         ));
@@ -40,17 +47,167 @@ pub(crate) fn input(mut value: Value) -> Result<Value> {
     Ok(value)
 }
 
-fn enforce(value: &mut Value, shape: &Value) -> Result<bool> {
-    let mut warnings = Vec::new();
-    let keep = normalize(value, shape, "", &mut warnings)?;
-    for warning in warnings {
-        eprintln!("ag-ui: {warning}");
-    }
-    Ok(keep)
-}
-
 fn protocol_error(message: impl Into<String>) -> String {
     message.into()
+}
+
+pub(crate) use crate::serde_util::excerpt;
+
+/// The AG-UI 1.0 optional-null registry: whole optional fields that pre-1.0
+/// producers wrote as `null`, which a consumer reads as omitted. Each row is a
+/// field and where it sits, in the order of the "`X: null` → omit the field"
+/// rows of upstream `DEPRECATIONS.md`, read at ag-ui-protocol/ag-ui
+/// 2330368a2a74573902858867072406638ba3073d. A location in capitals is an event
+/// type. A `null` in any other optional field is left for enforcement to
+/// reject, and a `null` inside application data is never touched.
+const OPTIONAL_NULLS: [(&str, &str); 23] = [
+    ("parentMessageId", "TOOL_CALL_START"),
+    ("parentMessageId", "TOOL_CALL_CHUNK"),
+    ("outcome", "RUN_FINISHED"),
+    ("rawEvent", "an event"),
+    ("result", "RUN_FINISHED"),
+    ("result", "SUBAGENT_FINISHED"),
+    ("payload", "a resume entry"),
+    ("metadata", "an image content part"),
+    ("metadata", "an audio content part"),
+    ("metadata", "a video content part"),
+    ("metadata", "a document content part"),
+    ("parameters", "a tool"),
+    ("forwardedProps", "RunAgentInput"),
+    ("subagentRunId", "an event"),
+    ("parentRunId", "RUN_STARTED"),
+    ("input", "RUN_STARTED"),
+    ("role", "TOOL_CALL_RESULT"),
+    ("pendingToolCallIds", "a RUN_FINISHED outcome"),
+    ("provider", "a RUN_FINISHED usage entry"),
+    ("reasoningTokens", "a RUN_FINISHED usage entry"),
+    ("cachedInputTokens", "a RUN_FINISHED usage entry"),
+    ("cacheWriteInputTokens", "a RUN_FINISHED usage entry"),
+    ("usage", "RUN_ERROR"),
+];
+
+/// Which registry rows have been reported, one bit per row. A producer that
+/// writes one of these nulls writes it on every event, so, as in the reference
+/// client, each row is reported once per run, or once per request.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Noticed(u32);
+
+const _: () = assert!(OPTIONAL_NULLS.len() <= u32::BITS as usize);
+
+/// Reads the registered `null`s on one wire event, whose type is `tag`, as
+/// omitted fields. This runs before enforcement, which would reject them.
+#[cfg(feature = "client")]
+pub(crate) fn omit_event_nulls(
+    event: &mut Value,
+    tag: &str,
+    noticed: &mut Noticed,
+    warnings: &mut Vec<String>,
+) {
+    omit_nulls(event, "an event", noticed, warnings);
+    if tag
+        .bytes()
+        .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+    {
+        omit_nulls(event, tag, noticed, warnings);
+    }
+    match tag {
+        "RUN_STARTED" => {
+            if let Some(input) = event.get_mut("input") {
+                omit_input_nulls(input, noticed, warnings);
+            }
+        }
+        "RUN_FINISHED" => {
+            if let Some(outcome) = event.get_mut("outcome") {
+                omit_nulls(outcome, "a RUN_FINISHED outcome", noticed, warnings);
+            }
+            for entry in event
+                .get_mut("usage")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                omit_nulls(entry, "a RUN_FINISHED usage entry", noticed, warnings);
+            }
+        }
+        "MESSAGES_SNAPSHOT" => {
+            for message in event
+                .get_mut("messages")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                omit_message_nulls(message, noticed, warnings);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The registry rows inside a `RunAgentInput`: on a request, and on the copy
+/// `RUN_STARTED.input` carries.
+fn omit_input_nulls(input: &mut Value, noticed: &mut Noticed, warnings: &mut Vec<String>) {
+    omit_nulls(input, "RunAgentInput", noticed, warnings);
+    for (list, location) in [("tools", "a tool"), ("resume", "a resume entry")] {
+        for entry in input
+            .get_mut(list)
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            omit_nulls(entry, location, noticed, warnings);
+        }
+    }
+    for message in input
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        omit_message_nulls(message, noticed, warnings);
+    }
+}
+
+fn omit_message_nulls(message: &mut Value, noticed: &mut Noticed, warnings: &mut Vec<String>) {
+    for part in message
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let location = match part.get("type").and_then(Value::as_str) {
+            Some("image") => "an image content part",
+            Some("audio") => "an audio content part",
+            Some("video") => "a video content part",
+            Some("document") => "a document content part",
+            _ => continue,
+        };
+        omit_nulls(part, location, noticed, warnings);
+    }
+}
+
+/// Removes each field the registry lists for `location` whose value is `null`.
+fn omit_nulls(
+    value: &mut Value,
+    location: &str,
+    noticed: &mut Noticed,
+    warnings: &mut Vec<String>,
+) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    for (row, (field, at)) in OPTIONAL_NULLS.iter().enumerate() {
+        if *at != location || !object.get(*field).is_some_and(Value::is_null) {
+            continue;
+        }
+        object.remove(*field);
+        let bit = 1 << row;
+        if noticed.0 & bit == 0 {
+            noticed.0 |= bit;
+            warnings.push(format!(
+                "deprecated {field}: null on {at} read as an omitted field"
+            ));
+        }
+    }
 }
 
 /// Returns `false` for an unknown union member, which the parent removes from
@@ -73,21 +230,18 @@ fn normalize(
         }
         // JSON Schema combines `$ref` with adjacent keywords. In particular,
         // RunAgentInput.state references open State while forbidding null here.
-        let mut adjacent = shape.clone();
-        adjacent
-            .as_object_mut()
-            .expect("schema reference is an object")
-            .remove("$ref");
-        return normalize(value, &adjacent, path, warnings);
+        // Nothing below reads `$ref`, so the adjacent keywords are checked in
+        // place rather than on a copy of the shape without it.
     }
 
     if let Some(branches) = shape.get("oneOf").and_then(Value::as_array) {
         if let Some(branch) = selected_branch(value, branches) {
             return normalize(value, branch, path, warnings);
         }
-        if has_unknown_discriminator(value, branches) {
+        if let Some(tag) = unknown_discriminator(value, branches) {
             warnings.push(format!(
-                "unrecognised union member at {}",
+                "unrecognised union member \"{}\" at {}",
+                excerpt(tag, false),
                 display_path(path)
             ));
             return Ok(false);
@@ -181,18 +335,27 @@ fn normalize(
 
     if let Some(items) = value.as_array_mut() {
         if let Some(item_schema) = shape.get("items") {
+            // One pass, so pruning stays linear. `index` counts every member
+            // read, kept or not: a path names the member's position in the
+            // input, which is where the producer can find it.
             let mut index = 0;
-            while index < items.len() {
-                if normalize(
-                    &mut items[index],
-                    item_schema,
-                    &format!("{path}/{index}"),
-                    warnings,
-                )? {
-                    index += 1;
-                } else {
-                    items.remove(index);
+            let mut failure = None;
+            items.retain_mut(|item| {
+                if failure.is_some() {
+                    return true;
                 }
+                let member_path = format!("{path}/{index}");
+                index += 1;
+                match normalize(item, item_schema, &member_path, warnings) {
+                    Ok(keep) => keep,
+                    Err(error) => {
+                        failure = Some(error);
+                        true
+                    }
+                }
+            });
+            if let Some(error) = failure {
+                return Err(error);
             }
         }
         if let Some(minimum) = shape.get("minItems").and_then(Value::as_u64) {
@@ -235,7 +398,10 @@ fn normalize(
             object.retain(|name, _| {
                 let known = properties.contains_key(name);
                 if !known {
-                    warnings.push(format!("unrecognised property at {path}/{name}"));
+                    warnings.push(format!(
+                        "unrecognised property at {path}/{}",
+                        excerpt(name, true)
+                    ));
                 }
                 known
             });
@@ -286,18 +452,22 @@ fn selected_branch<'a>(value: &Value, branches: &'a [Value]) -> Option<&'a Value
     matching.next().is_none().then_some(candidate)
 }
 
-fn has_unknown_discriminator(value: &Value, branches: &[Value]) -> bool {
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    ["type", "role", "op"].iter().any(|name| {
-        object.get(*name).is_some_and(Value::is_string)
-            && branches.iter().all(|branch| {
+/// The object's value for the discriminator every branch declares, if it has
+/// one. Called once no branch matched, so it names a member this version does
+/// not know.
+fn unknown_discriminator<'a>(value: &'a Value, branches: &[Value]) -> Option<&'a str> {
+    let object = value.as_object()?;
+    ["type", "role", "op"].iter().find_map(|name| {
+        let tag = object.get(*name)?.as_str()?;
+        branches
+            .iter()
+            .all(|branch| {
                 resolve(branch)
                     .unwrap_or(branch)
                     .pointer(&format!("/properties/{name}/const"))
                     .is_some()
             })
+            .then_some(tag)
     })
 }
 
@@ -361,4 +531,63 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 
 fn display_path(path: &str) -> &str {
     if path.is_empty() { "/" } else { path }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn pruning_is_linear_in_the_array_length() {
+        // Removing 300,000 rejected members one at a time shifts the rest of
+        // the list each time, about 1.4 TB of moves; one pass takes a fraction
+        // of a second even in a debug build.
+        let members = 300_000;
+        let shape = json!({"type": "array", "items": {"enum": ["known"]}});
+        let mut value = Value::Array(vec![Value::Null; members]);
+        let mut warnings = Vec::new();
+        let started = Instant::now();
+        assert!(normalize(&mut value, &shape, "", &mut warnings).unwrap());
+        let elapsed = started.elapsed();
+        assert_eq!(value, json!([]));
+        assert_eq!(warnings.len(), members);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "pruning {members} members took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn an_excerpt_is_bounded_escaped_and_marked_when_cut() {
+        assert_eq!(excerpt("a/b~c", true), "a~1b~0c");
+        assert_eq!(excerpt("a/b~c", false), "a/b~c");
+        assert_eq!(excerpt("line\nbreak\u{1b}", false), "line\\nbreak\\u{1b}");
+        let long = "é".repeat(crate::serde_util::EXCERPT + 1);
+        assert_eq!(
+            excerpt(&long, false),
+            format!("{}…", "é".repeat(crate::serde_util::EXCERPT))
+        );
+        assert_eq!(
+            excerpt(&"é".repeat(crate::serde_util::EXCERPT), false),
+            "é".repeat(crate::serde_util::EXCERPT)
+        );
+    }
+
+    #[test]
+    fn a_path_names_the_members_index_in_the_input_not_in_the_pruned_list() {
+        let shape = json!({"type": "array", "items": {"type": "string", "enum": ["known"]}});
+        let mut value = json!(["unknown", "unknown", 3]);
+        let mut warnings = Vec::new();
+        let error = normalize(&mut value, &shape, "/delta", &mut warnings).unwrap_err();
+        assert_eq!(error, "/delta/2 must be string");
+        assert_eq!(
+            warnings,
+            [
+                "unrecognised enum member at /delta/0",
+                "unrecognised enum member at /delta/1"
+            ]
+        );
+    }
 }

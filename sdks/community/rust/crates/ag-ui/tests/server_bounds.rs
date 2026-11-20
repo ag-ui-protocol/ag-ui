@@ -50,7 +50,6 @@ async fn overflow_ends_an_open_message_once_even_when_its_guard_drops() {
     let events: Vec<_> = Runner::new(Burst)
         .event_buffer_capacity(capacity(8))
         .run(RunAgentInput::new("t", "r"))
-        .map(Result::unwrap)
         .collect()
         .await;
     assert_overflow(&events, 8);
@@ -85,10 +84,9 @@ async fn ignored_overflow_then_pending_does_not_keep_the_stream_or_agent_alive()
     let stream = Runner::new(IgnoresError(dropped.clone()))
         .event_buffer_capacity(capacity(1))
         .run(RunAgentInput::new("t", "r"));
-    let events: Vec<_> =
-        tokio::time::timeout(Duration::from_secs(1), stream.map(Result::unwrap).collect())
-            .await
-            .expect("the overflow must close the stream");
+    let events: Vec<_> = tokio::time::timeout(Duration::from_secs(1), stream.collect())
+        .await
+        .expect("the overflow must close the stream");
     assert_overflow(&events, 1);
     assert!(dropped.load(Ordering::SeqCst));
 }
@@ -109,7 +107,6 @@ async fn capacity_applies_after_transformers_and_the_error_cannot_be_filtered_ou
         .transformer(Expander)
         .event_buffer_capacity(capacity(6))
         .run(RunAgentInput::new("t", "r"))
-        .map(Result::unwrap)
         .collect()
         .await;
     assert_overflow(&events, 6);
@@ -131,7 +128,6 @@ async fn draining_between_bursts_reuses_capacity_instead_of_limiting_total_event
     let events: Vec<_> = Runner::new(Paced)
         .event_buffer_capacity(capacity(4))
         .run(RunAgentInput::new("t", "r"))
-        .map(Result::unwrap)
         .collect()
         .await;
     assert_eq!(events.len(), 62);

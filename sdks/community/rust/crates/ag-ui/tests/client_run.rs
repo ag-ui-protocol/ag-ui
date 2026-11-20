@@ -52,19 +52,28 @@ fn a_whole_run_assembles_into_messages_and_state() {
         applier.apply(&event).expect("every event should apply");
     }
 
-    // Three messages: the reply, the message the parentless tool call opened,
-    // and the tool's result. Reasoning is not among them.
-    assert_eq!(applier.messages().len(), 3);
+    // Four messages, in the order they arrived: the reasoning, the reply, the
+    // message the parentless tool call opened, and the tool's result.
+    assert_eq!(applier.messages().len(), 4);
 
-    let Message::Assistant(assistant) = &applier.messages()[0] else {
-        panic!("the first message should be the assistant's");
+    let Message::Reasoning(reasoning) = &applier.messages()[0] else {
+        panic!("the reasoning came first, so it is the first message");
+    };
+    assert_eq!(reasoning.id, "reason-1");
+    assert_eq!(
+        reasoning.content,
+        "The user wants the weather. I should call the tool."
+    );
+
+    let Message::Assistant(assistant) = &applier.messages()[1] else {
+        panic!("the second message should be the assistant's");
     };
     assert_eq!(assistant.id, "msg-1");
     assert_eq!(assistant.content.as_deref(), Some("Let me check."));
 
     // A tool call with no parent message hangs off a message of its own, named
     // after the call because that is the only id available.
-    let Message::Assistant(with_call) = &applier.messages()[1] else {
+    let Message::Assistant(with_call) = &applier.messages()[2] else {
         panic!("the tool call should have opened an assistant message");
     };
     assert_eq!(with_call.id, "call-1-message");
@@ -74,7 +83,7 @@ fn a_whole_run_assembles_into_messages_and_state() {
     assert_eq!(calls[0].function.name, "get_weather");
     assert_eq!(calls[0].function.arguments, r#"{"city":"Seoul"}"#);
 
-    let Message::Tool(result) = &applier.messages()[2] else {
+    let Message::Tool(result) = &applier.messages()[3] else {
         panic!("the result should be a tool message");
     };
     assert_eq!(result.id, "msg-2");
@@ -86,10 +95,13 @@ fn a_whole_run_assembles_into_messages_and_state() {
         &json!({ "city": "Seoul, KR", "temperature": 21 })
     );
 
+    // The view over the same list, for a UI that draws reasoning apart.
+    assert_eq!(applier.reasoning().collect::<Vec<_>>(), [reasoning]);
     assert_eq!(
         applier.reasoning_text(&"reason-1".into()),
         Some("The user wants the weather. I should call the tool.")
     );
+    assert_eq!(applier.reasoning_text(&"msg-1".into()), None);
     assert_eq!(applier.thread_id().map(|id| id.as_str()), Some("thread-1"));
     assert_eq!(applier.run_id().map(|id| id.as_str()), Some("run-1"));
     assert!(applier.interrupts().is_empty());
@@ -195,7 +207,11 @@ fn a_messages_snapshot_drops_the_turns_it_leaves_out() {
         .expect("applies");
 
     assert_eq!(replaced, Changed::MessagesReplaced);
-    assert_eq!(applier.messages().len(), 1);
+    // The run's reasoning stays: the snapshot carries none, so it has not
+    // declared the reasoning set. `client_reasoning.rs` has the rest of that
+    // rule.
+    let ids: Vec<&str> = applier.messages().iter().map(|m| m.id().as_str()).collect();
+    assert_eq!(ids, ["reason-1", "summary-1"]);
     assert_eq!(
         applier.text_of("summary-1"),
         Some("Earlier turns, summarized.")
@@ -366,11 +382,11 @@ fn an_encrypted_reasoning_blob_attaches_to_its_entity() {
         ))
         .expect("applies");
 
-    assert_eq!(
-        applier.reasoning()[0].encrypted_value.as_deref(),
-        Some("opaque-blob")
-    );
-    let Message::Assistant(assistant) = &applier.messages()[0] else {
+    let Message::Reasoning(reasoning) = &applier.messages()[0] else {
+        panic!("expected the reasoning message");
+    };
+    assert_eq!(reasoning.encrypted_value.as_deref(), Some("opaque-blob"));
+    let Message::Assistant(assistant) = &applier.messages()[1] else {
         panic!("expected an assistant message");
     };
     let call = &assistant.tool_calls.as_ref().expect("calls")[0];
@@ -378,17 +394,14 @@ fn an_encrypted_reasoning_blob_attaches_to_its_entity() {
 }
 
 /// One reasoning change, short enough to compare a whole run against.
-fn thought(id: &str, kind: ReasoningChangeKind) -> Changed {
-    Changed::Reasoning(ReasoningChange {
-        id: id.into(),
-        kind,
-    })
+fn thought(index: usize, id: &str, kind: ReasoningChangeKind) -> Changed {
+    Changed::Reasoning(ReasoningChange::new(index, id, kind))
 }
 
 /// `ctx.think()` on the server emits `REASONING_MESSAGE_END` *and*
 /// `REASONING_END`, and opens with the matching pair — four events bracketing
-/// one thought. The applier reports the lifecycle rather than the framing, so a
-/// consumer that draws a finished thought draws it once.
+/// one thought. The applier reports the message and not the span around it, so
+/// a consumer that draws a finished thought draws it once.
 #[test]
 fn a_thought_starts_and_ends_once_however_it_is_bracketed() {
     let mut applier = Applier::new();
@@ -406,24 +419,25 @@ fn a_thought_starts_and_ends_once_however_it_is_bracketed() {
     assert_eq!(
         changes,
         [
-            thought("reason-1", ReasoningChangeKind::Started),
             Changed::Nothing,
+            thought(0, "reason-1", ReasoningChangeKind::Started),
             thought(
+                0,
                 "reason-1",
                 ReasoningChangeKind::Content {
                     delta: "hmm".to_owned()
                 }
             ),
-            thought("reason-1", ReasoningChangeKind::Ended),
+            thought(0, "reason-1", ReasoningChangeKind::Ended),
             Changed::Nothing,
         ]
     );
     assert_eq!(applier.reasoning_text(&"reason-1".into()), Some("hmm"));
 }
 
-/// The other half of that: collapsing the duplicate must not collapse two
-/// *different* thoughts. A block holding two messages ends three things — each
-/// message, then the block — and every one of them is somebody's redraw.
+/// The other half of that: two *different* thoughts in one span stay two. Each
+/// message ends on its own, and the span that held them ends nothing, because
+/// it opened no message.
 #[test]
 fn every_reasoning_message_in_a_block_ends_on_its_own() {
     let mut applier = Applier::new();
@@ -456,12 +470,13 @@ fn every_reasoning_message_in_a_block_ends_on_its_own() {
     assert_eq!(
         endings,
         [
-            &thought("msg-1", ReasoningChangeKind::Ended),
-            &thought("msg-2", ReasoningChangeKind::Ended),
-            &thought("block-1", ReasoningChangeKind::Ended),
+            &thought(0, "msg-1", ReasoningChangeKind::Ended),
+            &thought(1, "msg-2", ReasoningChangeKind::Ended),
         ]
     );
     assert_eq!(applier.reasoning_text(&"msg-2".into()), Some("second"));
+    assert_eq!(applier.messages().len(), 2, "nothing under the span's id");
+    assert!(applier.message(&"block-1".into()).is_none());
 }
 
 #[test]
@@ -586,8 +601,9 @@ async fn a_thread_yields_updates_and_keeps_the_conversation() {
     );
     assert_eq!(Some(thread.state().unwrap()), state.as_ref());
 
-    // The user's turn plus the three messages the agent produced.
-    assert_eq!(thread.messages().len(), 4);
+    // The user's turn plus the four messages the agent produced, its
+    // reasoning among them.
+    assert_eq!(thread.messages().len(), 5);
     assert_eq!(thread.messages()[0].role(), ag_ui::Role::User);
 
     // And the request carried the user's message.
@@ -876,11 +892,16 @@ async fn a_thread_can_be_seeded_with_history_and_run_without_a_new_message() {
     assert_eq!(request.state, json!({ "seeded": true }));
 }
 
+/// The applier keeps what it has somewhere to keep, and drops the rest; a
+/// `Thread` says what it dropped. Before, this was `Error::Protocol`
+/// ("TOOL_CALL_ARGS for unknown tool call ToolCallId(\"nope\")"), which a
+/// `Thread` made fatal.
 #[test]
-fn a_tool_call_argument_delta_for_an_unknown_call_is_an_error() {
+fn a_tool_call_argument_delta_for_an_unknown_call_changes_nothing() {
     let mut applier = Applier::new();
-    let error = applier
+    let changed = applier
         .apply(&Event::tool_call_args(ToolCallId::new("nope"), "{}"))
-        .expect_err("there is nowhere to put the arguments");
-    assert!(error.to_string().contains("unknown tool call"));
+        .expect("there is nowhere to put the arguments, which is not an error");
+    assert_eq!(changed, Changed::Nothing);
+    assert!(applier.messages().is_empty());
 }

@@ -142,17 +142,34 @@ impl SseResponse {
         self
     }
 
-    /// Attaches a run-owned event stream and builds the response.
+    /// Attaches a run's event stream and builds the response.
     ///
-    /// Preserves the native runner contract: a source error terminates this run
-    /// and is reported as `RUN_ERROR`. For a subscription whose transport can
-    /// fail independently of execution, use [`Self::stream_frames`] instead.
+    /// This is what [`Runner::run`](crate::server::Runner::run) returns: a
+    /// stream that reports its own failures as `RUN_ERROR` and so has no error
+    /// item. For a stream that can fail, use [`Self::try_stream`].
     pub fn stream<S>(self, events: S) -> Response
+    where
+        S: Stream<Item = Event> + Send + 'static,
+    {
+        self.stream_frames(
+            events.map(|event| Ok::<_, std::convert::Infallible>(SseFrame::Event(event))),
+        )
+    }
+
+    /// Attaches a run-owned event stream whose source can fail, and builds the
+    /// response.
+    ///
+    /// For a run supplied from outside [`Runner`](crate::server::Runner): a
+    /// source error ends that run, so it is reported as `RUN_ERROR`, trips the
+    /// cancellation token and nothing after it is read. For a subscription
+    /// whose transport can fail independently of execution, use
+    /// [`Self::stream_frames`] instead.
+    pub fn try_stream<S>(self, events: S) -> Response
     where
         S: Stream<Item = crate::server::Result<Event>> + Send + 'static,
     {
         let events = crate::server::run::terminal_error_events(events, self.cancellation.clone());
-        self.stream_frames(events.map(|event| event.map(SseFrame::Event)))
+        self.stream(events)
     }
 
     /// Optional lower-level SSE transport for supplied values and comments.

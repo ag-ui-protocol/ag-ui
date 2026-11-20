@@ -19,7 +19,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::{Event, MessageId, PatchOperation, SubagentRunId, ToolCallId};
+use crate::streams::{Kind, Opener, Stream, Streams};
+use crate::{Event, Message, MessageId, PatchOperation, SubagentRunId, ToolCallId};
 use serde_json::Value;
 
 /// Rewrites events on their way from an agent to the transport.
@@ -31,9 +32,41 @@ use serde_json::Value;
 /// its continuation and terminator too. The verifier cannot identify every
 /// orphaned ID-less chunk after filtering. Normalize chunks first, or track
 /// the producer's open streams before deciding which chunks to drop.
+///
+/// Dropping is silent: the emit that produced the event returns `Ok`.
 pub trait StreamTransformer: Send {
     /// Rewrites one event into zero or more events.
     fn transform(&mut self, event: Event) -> Vec<Event>;
+
+    /// Learns the conversation the run continues — the request's `messages` —
+    /// once, before the run's first event.
+    ///
+    /// Called whether or not `RUN_STARTED` echoes the input, which is optional
+    /// and off by default. A transformer that judges an event by the id it
+    /// names needs it: a resumed run may answer a tool call the interrupted
+    /// run opened, and that call is in the history, not in this run's events.
+    /// The default ignores it.
+    fn seed(&mut self, history: &[Message]) {
+        let _ = history;
+    }
+
+    /// Learns the events the run has already sent, once, after
+    /// [`seed`](Self::seed) and before the first event of a driver that
+    /// continues the run: [`Runner::continue_run`].
+    ///
+    /// `sent` is what a consumer holds: the output of the chain the earlier
+    /// driver ran, not what its agent emitted. An event that chain dropped is
+    /// not in it, and one it rewrote is there as rewritten. It may begin with
+    /// the runs that came before on the same stream.
+    ///
+    /// A transformer that judges an event by the id it names needs it, as it
+    /// needs the history: a continuation finishes and answers calls the
+    /// earlier driver opened. The default ignores it.
+    ///
+    /// [`Runner::continue_run`]: crate::server::Runner::continue_run
+    fn replay(&mut self, sent: &[Event]) {
+        let _ = sent;
+    }
 }
 
 /// Transformers applied in sequence.
@@ -102,6 +135,24 @@ impl StreamTransformer for TransformerChain {
     fn transform(&mut self, event: Event) -> Vec<Event> {
         Self::transform(self, event)
     }
+
+    /// Every transformer in the chain learns the history as the request
+    /// carries it: what one transformer would do to the history is a rewrite
+    /// of the stream, and the history is not part of the stream.
+    fn seed(&mut self, history: &[Message]) {
+        for transformer in &mut self.transformers {
+            transformer.seed(history);
+        }
+    }
+
+    /// Every transformer in the chain is shown the same events: what was
+    /// sent is the output of the whole chain, whichever of its transformers
+    /// shaped it.
+    fn replay(&mut self, sent: &[Event]) {
+        for transformer in &mut self.transformers {
+            transformer.replay(sent);
+        }
+    }
 }
 
 /// Which side of the list passes.
@@ -111,12 +162,30 @@ enum FilterMode {
     Deny,
 }
 
+/// What a filter makes of a tool call id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verdict {
+    /// The call passes: what belongs to it goes out.
+    Pass,
+    /// The call is filtered: what belongs to it is dropped.
+    Drop,
+    /// Nothing has named the tool this id calls. What belongs to it is
+    /// dropped too: see the type docs.
+    Unknown,
+}
+
 /// Drops whole tool calls by tool name.
 ///
-/// Both halves of a call are removed — `TOOL_CALL_START`, its `TOOL_CALL_ARGS`,
-/// the `TOOL_CALL_END`, the `TOOL_CALL_RESULT` and any encrypted reasoning blob
-/// attached to it — so what reaches the client is a stream that never mentions
-/// the tool.
+/// Both halves of a filtered call are removed — `TOOL_CALL_START`, its
+/// `TOOL_CALL_ARGS` or `TOOL_CALL_CHUNK`s, the `TOOL_CALL_END`, the
+/// `TOOL_CALL_RESULT` and the `REASONING_ENCRYPTED_VALUE` attached to the
+/// call — and so is the call where a conversation is restated: in a
+/// `MESSAGES_SNAPSHOT` and in the request echoed on `RUN_STARTED`.
+///
+/// That is what the filter covers. It does not look into `RAW` or `CUSTOM`
+/// events, into the `rawEvent` payload of an event it sends, or into an
+/// interrupt that names a filtered call's id. Keep the tool out of those
+/// where they are made.
 ///
 /// ```
 /// # use ag_ui::Event;
@@ -126,6 +195,85 @@ enum FilterMode {
 /// assert!(filter.transform(Event::tool_call_args("c1", "{}")).is_empty());
 /// assert_eq!(filter.transform(Event::tool_call_start("c2", "public")).len(), 1);
 /// ```
+///
+/// # A conversation the stream restates
+///
+/// A `MESSAGES_SNAPSHOT`, and the request echoed on `RUN_STARTED`, carry
+/// tool calls too, and are filtered by the same names. A filtered call is
+/// taken out of the assistant message that made it, with the encrypted value
+/// it carries, and the tool message that answers it is taken out of the
+/// list. So is:
+///
+/// - an assistant message that is left with neither content nor calls. It
+///   was there to carry the call, and a client that read the run's events
+///   never held it: the events that would have made it were dropped.
+///   Whatever else it carried goes with it;
+/// - a tool message that answers a call nothing named. It has no tool name
+///   of its own to judge it by.
+///
+/// The calls a restated conversation carries are judged as they are met,
+/// like a `TOOL_CALL_START`, so a result that follows one goes where the
+/// call went.
+///
+/// ```
+/// # use ag_ui::{AssistantMessage, Event, Message, ToolCall};
+/// # use ag_ui::server::{FilterToolCalls, StreamTransformer};
+/// let restated = Event::messages_snapshot(vec![
+///     Message::Assistant(AssistantMessage {
+///         id: "msg-1".into(),
+///         content: Some("Looking.".into()),
+///         tool_calls: Some(vec![
+///             ToolCall::new("c1", "search", "{}"),
+///             ToolCall::new("c2", "secret_tool", "{}"),
+///         ]),
+///         ..Default::default()
+///     }),
+///     Message::tool("msg-2", "c2", "the result"),
+/// ]);
+///
+/// let mut filter = FilterToolCalls::deny(["secret_tool"]);
+/// let Some(Event::MessagesSnapshot(snapshot)) = filter.transform(restated).pop() else {
+///     unreachable!("the snapshot is kept");
+/// };
+/// let [Message::Assistant(assistant)] = snapshot.messages.as_slice() else {
+///     unreachable!("the tool message went with its call");
+/// };
+/// assert_eq!(assistant.tool_calls.as_ref().unwrap().len(), 1);
+/// ```
+///
+/// # How a call is named
+///
+/// A call is judged by the name of its tool, and only what opens a call
+/// names it. The filter learns the names from four places:
+///
+/// - this run's events: a `TOOL_CALL_START`, or the `TOOL_CALL_CHUNK` that
+///   opens a call;
+/// - the request's messages ([`seed`](StreamTransformer::seed)), for a
+///   result a resumed run reports;
+/// - in a run that another driver began, the events already sent
+///   ([`replay`](StreamTransformer::replay)), for a call that driver left
+///   open;
+/// - a conversation restated in a `MESSAGES_SNAPSHOT` or the `RUN_STARTED`
+///   echo.
+///
+/// An event of a call none of these named is dropped, and the emit that
+/// produced it returns `Ok`: arguments, an end, a result, an encrypted
+/// value, a chunk that names no tool. The filter cannot tell such a call
+/// from one that was filtered where this filter could not see it: by the
+/// filter of an earlier run, so that the client never held the call and
+/// the request's messages do not either, or by the filter of the earlier
+/// driver of this run, so that the events sent do not. The result a resumed
+/// run reports for such a call, and the end a continuation gives it, go the
+/// way the call went.
+///
+/// In a run that another driver began, the filter does not take up the
+/// chunk streams the events sent left open. The earlier driver may have
+/// been streaming a call its filter removed in the same lane, and the
+/// events sent do not show it, so a chunk that names no id cannot be told
+/// from one meant for that call. A continuation that keeps streaming a call
+/// by chunks names the call's id on its first chunk, and the chunks after it
+/// continue that call, as within any single run. A chunk that names no id
+/// before that is dropped.
 #[derive(Clone, Debug)]
 pub struct FilterToolCalls {
     mode: FilterMode,
@@ -135,7 +283,9 @@ pub struct FilterToolCalls {
     call_names: HashMap<ToolCallId, String>,
     /// The producer's open streams, including calls removed from the output.
     /// A bare chunk must be resolved here, before filtering can make it look
-    /// like a continuation of a different call to the consumer.
+    /// like a continuation of a different call to the consumer. In a run
+    /// another driver began, they start empty: the events sent are not the
+    /// producer's stream.
     streams: Streams,
 }
 
@@ -179,119 +329,206 @@ impl FilterToolCalls {
         }
     }
 
-    /// Records the verdict for a call and reports whether it should be dropped.
-    fn judge(&mut self, id: &ToolCallId, name: &str) -> bool {
-        if let Some(original) = self.call_names.get(id) {
+    /// Records what names a call, and gives the verdict on the call.
+    fn judge(&mut self, id: &ToolCallId, name: &str) -> Verdict {
+        match self.call_names.get(id) {
             // The consumer keeps the name from the first chunk with this id.
             // A later name cannot reclassify its arguments as another tool.
-            if original != name {
-                self.dropped.insert(id.clone());
+            Some(original) => {
+                if original != name {
+                    self.dropped.insert(id.clone());
+                }
             }
-            return self.dropped.contains(id);
+            None => {
+                self.call_names.insert(id.clone(), name.to_owned());
+                if !self.passes(name) {
+                    self.dropped.insert(id.clone());
+                }
+            }
         }
-        self.call_names.insert(id.clone(), name.to_owned());
-        let drop = !self.passes(name);
-        if drop {
-            self.dropped.insert(id.clone());
-        }
-        drop
+        self.verdict(id)
     }
 
-    /// Judge all calls before filtering results, regardless of message order.
-    fn filter_messages(&mut self, messages: &mut Vec<crate::Message>) {
-        for message in messages.iter() {
-            if let crate::Message::Assistant(assistant) = message {
+    fn verdict(&self, id: &ToolCallId) -> Verdict {
+        if self.dropped.contains(id) {
+            Verdict::Drop
+        } else if self.call_names.contains_key(id) {
+            Verdict::Pass
+        } else {
+            Verdict::Unknown
+        }
+    }
+
+    /// Judges every call a restated conversation carries.
+    fn learn(&mut self, messages: &[Message]) {
+        for message in messages {
+            if let Message::Assistant(assistant) = message {
                 for call in assistant.tool_calls.iter().flatten() {
                     self.judge(&call.id, &call.function.name);
                 }
             }
         }
+    }
+
+    /// Takes the filtered calls out of a restated conversation, and what
+    /// only made sense with them. The type docs say what goes and why.
+    fn prune(&self, messages: &mut Vec<Message>) {
         messages.retain_mut(|message| match message {
-            crate::Message::Assistant(assistant) => {
-                if let Some(calls) = &mut assistant.tool_calls {
-                    if calls.is_empty() {
-                        return true;
-                    }
-                    calls.retain(|call| !self.dropped.contains(&call.id));
-                    if calls.is_empty() {
-                        assistant.tool_calls = None;
-                    }
+            Message::Assistant(assistant) => {
+                let Some(calls) = &mut assistant.tool_calls else {
+                    return true;
+                };
+                let carried = calls.len();
+                calls.retain(|call| self.verdict(&call.id) == Verdict::Pass);
+                // Untouched, or still carrying a call that passes.
+                if calls.len() == carried || !calls.is_empty() {
+                    return true;
                 }
-                true
+                // Every call it carried was filtered. It stays for what it
+                // says, if it says anything.
+                assistant.tool_calls = None;
+                assistant
+                    .content
+                    .as_deref()
+                    .is_some_and(|content| !content.is_empty())
             }
-            // Unrelated history may refer to a call outside this snapshot.
-            crate::Message::Tool(tool) => !self.dropped.contains(&tool.tool_call_id),
+            Message::Tool(tool) => self.verdict(&tool.tool_call_id) == Verdict::Pass,
             _ => true,
         });
     }
 
-    fn dropped_or_unknown(&self, id: &ToolCallId) -> bool {
-        !self.call_names.contains_key(id) || self.dropped.contains(id)
+    /// Whether an event is dropped: it belongs to a call that is filtered,
+    /// or to one nothing named.
+    fn drops(&mut self, event: &Event) -> bool {
+        match event {
+            Event::ToolCallStart(e) => {
+                self.judge(&e.tool_call_id, &e.tool_call_name) != Verdict::Pass
+            }
+            Event::ToolCallChunk(e) => match (&e.tool_call_id, &e.tool_call_name) {
+                (Some(id), Some(name)) => self.judge(id, name) != Verdict::Pass,
+                // It continues a call, or opens one without naming its tool.
+                (Some(id), None) => self.verdict(id) != Verdict::Pass,
+                (None, name) => {
+                    // A chunk that continues nothing belongs to no call.
+                    let Ok(stream) = self.streams.continued(Kind::Tool, &e.subagent_run_id) else {
+                        return true;
+                    };
+                    let id = ToolCallId::new(&stream.id);
+                    let renamed = name.as_ref().is_some_and(|name| {
+                        self.call_names
+                            .get(&id)
+                            .is_none_or(|original| original != name)
+                    });
+                    if renamed {
+                        self.dropped.insert(id.clone());
+                    }
+                    self.verdict(&id) != Verdict::Pass
+                }
+            },
+            Event::ToolCallArgs(e) => self.verdict(&e.tool_call_id) != Verdict::Pass,
+            Event::ToolCallEnd(e) => self.verdict(&e.tool_call_id) != Verdict::Pass,
+            Event::ToolCallResult(e) => self.verdict(&e.tool_call_id) != Verdict::Pass,
+            Event::ReasoningEncryptedValue(e)
+                if e.subtype == crate::ReasoningEncryptedValueSubtype::ToolCall =>
+            {
+                self.verdict(&ToolCallId::new(&e.entity_id)) != Verdict::Pass
+            }
+            Event::MessagesSnapshot(e) => {
+                self.learn(&e.messages);
+                false
+            }
+            Event::RunStarted(e) => {
+                if let Some(input) = &e.input {
+                    self.learn(&input.messages);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Follows the producer's open streams through an event.
+    ///
+    /// A chunk that names a call and not its tool, in a lane that is not
+    /// assembling that call, is taken to open the call's stream there: it
+    /// is how a continuation takes up a call the events sent left open, and
+    /// the chunks with no id after it are that call's, whatever the lane
+    /// held before. The open-stream model opens no stream without a tool's
+    /// name, so the one the filter knows is filled in, or an empty one for
+    /// a call nothing named, whose chunks are dropped all the same.
+    fn follow(&mut self, event: &Event) {
+        if let Event::ToolCallChunk(chunk) = event {
+            if let (Some(id), None) = (&chunk.tool_call_id, &chunk.tool_call_name) {
+                let tag = &chunk.subagent_run_id;
+                if assembling(&self.streams, Kind::Tool, id.as_str(), tag).is_none() {
+                    let mut opening = chunk.clone();
+                    let name = self.call_names.get(id).cloned().unwrap_or_default();
+                    opening.tool_call_name = Some(name);
+                    self.streams.track(&Event::ToolCallChunk(opening));
+                    return;
+                }
+            }
+        }
+        self.streams.track(event);
     }
 }
 
 impl StreamTransformer for FilterToolCalls {
+    /// A call an earlier run made is judged by its name like a new one, so the
+    /// result a resumed run reports for it goes the way the call went.
+    fn seed(&mut self, history: &[Message]) {
+        self.learn(history);
+    }
+
+    /// A call the earlier driver of the run opened is judged by its name
+    /// like a new one, so a continuation can finish and answer it.
+    ///
+    /// The chunk streams the events sent left open are not taken up: what
+    /// was sent is not what the earlier producer had open. A chunk that
+    /// names no id is dropped until a chunk of this driver names the call it
+    /// continues.
+    fn replay(&mut self, sent: &[Event]) {
+        for event in sent {
+            match event {
+                Event::ToolCallStart(e) => {
+                    self.judge(&e.tool_call_id, &e.tool_call_name);
+                }
+                Event::ToolCallChunk(e) => {
+                    if let (Some(id), Some(name)) = (&e.tool_call_id, &e.tool_call_name) {
+                        self.judge(id, name);
+                    }
+                }
+                Event::MessagesSnapshot(e) => self.learn(&e.messages),
+                Event::RunStarted(e) => {
+                    if let Some(input) = &e.input {
+                        self.learn(&input.messages);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn transform(&mut self, mut event: Event) -> Vec<Event> {
+        let drop = self.drops(&event);
+
+        // Observe the unfiltered input. A removed start still changes where
+        // the producer's later ID-less chunks belong.
+        self.follow(&event);
+
+        if drop {
+            return Vec::new();
+        }
         match &mut event {
-            Event::MessagesSnapshot(snapshot) => self.filter_messages(&mut snapshot.messages),
+            Event::MessagesSnapshot(snapshot) => self.prune(&mut snapshot.messages),
             Event::RunStarted(started) => {
                 if let Some(input) = &mut started.input {
-                    self.filter_messages(&mut input.messages);
+                    self.prune(&mut input.messages);
                 }
             }
             _ => {}
         }
-        let tag = event.subagent_run_id().cloned();
-        let bare_tool = match &event {
-            Event::ToolCallChunk(chunk) if chunk.tool_call_id.is_none() => self
-                .streams
-                .resolve(Family::Tool, &chunk.subagent_run_id)
-                .map(|(_, stream)| ToolCallId::new(stream.id)),
-            _ => None,
-        };
-        let drop = match &event {
-            Event::ToolCallStart(payload) => {
-                self.judge(&payload.tool_call_id, &payload.tool_call_name)
-            }
-            Event::ToolCallChunk(payload) => match (&payload.tool_call_id, &payload.tool_call_name)
-            {
-                (Some(id), Some(name)) => self.judge(id, name),
-                (Some(id), None) => self.dropped_or_unknown(id),
-                (None, name) => match bare_tool.as_ref() {
-                    Some(id) => {
-                        if name.as_ref().is_some_and(|name| {
-                            self.call_names
-                                .get(id)
-                                .is_none_or(|original| original != name)
-                        }) {
-                            self.dropped.insert(id.clone());
-                        }
-                        self.dropped_or_unknown(id)
-                    }
-                    None => true,
-                },
-            },
-            Event::ToolCallArgs(payload) => self.dropped_or_unknown(&payload.tool_call_id),
-            Event::ToolCallEnd(payload) => self.dropped_or_unknown(&payload.tool_call_id),
-            Event::ToolCallResult(payload) => self.dropped_or_unknown(&payload.tool_call_id),
-            Event::ReasoningEncryptedValue(payload) => {
-                payload.subtype == crate::ReasoningEncryptedValueSubtype::ToolCall && {
-                    let id = ToolCallId::new(&payload.entity_id);
-                    self.dropped_or_unknown(&id)
-                }
-            }
-            _ => false,
-        };
-
-        // Observe the unfiltered input. A removed start still changes where
-        // the producer's later ID-less chunks belong.
-        let owner = tag.clone().or_else(|| {
-            SubagentFilter::entity(&event)
-                .and_then(|(family, id)| self.streams.owner_of_open(family, id))
-        });
-        self.streams.observe(&event, &owner, &tag);
-
-        if drop { Vec::new() } else { vec![event] }
+        vec![event]
     }
 }
 
@@ -314,7 +551,11 @@ enum StateForm {
 /// The result event is kept by default so the client still sees the tool
 /// completed; [`replacing`](Self::replacing) drops it instead. Content that is
 /// not JSON of the expected shape is left alone — a malformed result must not
-/// take down the run.
+/// take down the run. For [`delta`](Self::delta) the expected shape is a JSON
+/// Patch a consumer can read: an array of RFC 6902 operations whose `path`
+/// and `from` are JSON Pointers. A patch that is well formed and does not
+/// apply to the state is still promoted; a consumer reports that and keeps
+/// the state it has.
 ///
 /// ```
 /// # use ag_ui::Event;
@@ -324,12 +565,18 @@ enum StateForm {
 /// let out = promote.transform(Event::tool_call_result("m1", "c1", r#"{"title":"Notes"}"#));
 /// assert_eq!(out, vec![Event::state_snapshot(serde_json::json!({"title": "Notes"}))]);
 /// ```
+///
+/// The call need not have started in this run. One the request's history
+/// holds unanswered, one a restated conversation carries, and in a run that
+/// another driver began one the events already sent opened, are all calls
+/// whose result is promoted.
 #[derive(Clone, Debug)]
 pub struct ToolResultToState {
     tool_name: String,
     form: StateForm,
     keep_result: bool,
-    names: HashMap<ToolCallId, String>,
+    /// The calls to the tool that have no result yet.
+    awaiting: HashSet<ToolCallId>,
 }
 
 impl ToolResultToState {
@@ -349,7 +596,7 @@ impl ToolResultToState {
             tool_name: tool_name.into(),
             form,
             keep_result: true,
-            names: HashMap::new(),
+            awaiting: HashSet::new(),
         }
     }
 
@@ -366,59 +613,100 @@ impl ToolResultToState {
             StateForm::Snapshot => serde_json::from_str::<Value>(content)
                 .ok()
                 .map(Event::state_snapshot),
+            // A patch a consumer could not read is no more the expected
+            // shape than content that is not JSON.
             StateForm::Delta => serde_json::from_str::<Vec<PatchOperation>>(content)
                 .ok()
+                .filter(|patch| crate::server::state::well_formed(patch).is_ok())
                 .map(Event::state_delta),
+        }
+    }
+
+    /// Learns the calls to the tool that a conversation holds unanswered.
+    fn learn(&mut self, messages: &[Message]) {
+        for message in messages {
+            if let Message::Assistant(assistant) = message {
+                for call in assistant.tool_calls.iter().flatten() {
+                    if call.function.name == self.tool_name {
+                        self.awaiting.insert(call.id.clone());
+                    }
+                }
+            }
+        }
+        // A call the conversation answers is not waiting for a result.
+        for message in messages {
+            if let Message::Tool(tool) = message {
+                self.awaiting.remove(&tool.tool_call_id);
+            }
+        }
+    }
+
+    /// Learns from an event which calls are to the tool.
+    fn note(&mut self, event: &Event) {
+        match event {
+            Event::ToolCallStart(e) if e.tool_call_name == self.tool_name => {
+                self.awaiting.insert(e.tool_call_id.clone());
+            }
+            Event::ToolCallChunk(e) => {
+                if let (Some(id), Some(name)) = (&e.tool_call_id, &e.tool_call_name) {
+                    if name == &self.tool_name {
+                        self.awaiting.insert(id.clone());
+                    }
+                }
+            }
+            Event::MessagesSnapshot(e) => self.learn(&e.messages),
+            Event::RunStarted(e) => {
+                if let Some(input) = &e.input {
+                    self.learn(&input.messages);
+                }
+            }
+            _ => {}
         }
     }
 }
 
 impl StreamTransformer for ToolResultToState {
-    fn transform(&mut self, event: Event) -> Vec<Event> {
-        match &event {
-            Event::ToolCallStart(payload) => {
-                if payload.tool_call_name == self.tool_name {
-                    self.names
-                        .insert(payload.tool_call_id.clone(), payload.tool_call_name.clone());
-                }
+    /// A call to the tool that an earlier run left unanswered is one whose
+    /// result a resumed run reports, and it is promoted like any other.
+    fn seed(&mut self, history: &[Message]) {
+        self.learn(history);
+    }
+
+    /// The same for a call the earlier driver of the run opened.
+    fn replay(&mut self, sent: &[Event]) {
+        for event in sent {
+            self.note(event);
+            if let Event::ToolCallResult(result) = event {
+                self.awaiting.remove(&result.tool_call_id);
             }
-            Event::ToolCallChunk(payload) => {
-                match (&payload.tool_call_id, &payload.tool_call_name) {
-                    (Some(id), Some(name)) if name == &self.tool_name => {
-                        self.names.insert(id.clone(), name.clone());
-                    }
-                    _ => {}
-                }
-            }
-            Event::ToolCallResult(payload) => {
-                let promoted = self
-                    .names
-                    .remove(&payload.tool_call_id)
-                    .and_then(|_| {
-                        payload
-                            .content
-                            .as_text()
-                            .and_then(|text| self.state_event(text))
-                    })
-                    .map(|mut state| {
-                        // Provenance travels with the state: a subagent's
-                        // result promoted is the subagent's publish.
-                        if let Some(id) = &payload.subagent_run_id {
-                            state.set_subagent_run_id(id.clone());
-                        }
-                        state
-                    });
-                if let Some(state) = promoted {
-                    return if self.keep_result {
-                        vec![event, state]
-                    } else {
-                        vec![state]
-                    };
-                }
-            }
-            _ => {}
         }
-        vec![event]
+    }
+
+    fn transform(&mut self, event: Event) -> Vec<Event> {
+        self.note(&event);
+        let Event::ToolCallResult(payload) = &event else {
+            return vec![event];
+        };
+        if !self.awaiting.remove(&payload.tool_call_id) {
+            return vec![event];
+        }
+        let promoted = payload
+            .content
+            .as_text()
+            .and_then(|text| self.state_event(text));
+        let Some(mut state) = promoted else {
+            return vec![event];
+        };
+        // Provenance travels with the state: a subagent's result promoted
+        // is the subagent's publish.
+        if let Some(id) = &payload.subagent_run_id {
+            state.set_subagent_run_id(id.clone());
+        }
+        if self.keep_result {
+            vec![event, state]
+        } else {
+            vec![state]
+        }
     }
 }
 
@@ -450,7 +738,11 @@ impl StreamTransformer for ToolResultToState {
 /// let runner = Runner::new(MyAgent).transformer(SubagentVisibility::inline());
 /// # let _ = runner;
 /// ```
+///
+/// The list of modes is `#[non_exhaustive]`: another way to show subagents
+/// to a consumer can be added without a breaking release.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SubagentVisibility {
     /// The full surface: the lifecycle events, and `subagentRunId` on
     /// everything a subagent produced.
@@ -507,12 +799,26 @@ impl SubagentVisibility {
 
 /// The transformer behind [`SubagentVisibility`].
 ///
-/// Both modes keep the consuming normalizer's model of the stream — one open
-/// chunk-continuable stream per owner — because a `*_CHUNK` event that names
-/// no id is resolved *through its attribution* on the consuming side, and
-/// stripping the attribution would send it to the wrong stream. Such a chunk
-/// is given the id it resolves to (and, for a tool call, the name the
-/// consumer needs to reopen it) before its tag goes.
+/// Both modes keep the model of the stream a consumer expands chunks by — one
+/// chunk stream per owner, ended by what AG-UI 1.0 says ends it — because a
+/// `*_CHUNK` event that names no id is resolved *through its attribution* on
+/// the consuming side, and stripping the attribution would send it to the
+/// wrong stream. Such a chunk is given the id it resolves to before its tag
+/// goes.
+///
+/// They keep that model twice: once for the stream the agent emits, and once
+/// for the stream the filter sends, which is the one a consumer follows. The
+/// two differ, because an event that leaves its subagent's lane ends a chunk
+/// stream in the lane it arrives in. Two subagents that stream at once take
+/// turns ending each other's stream once [`Inline`](SubagentVisibility::Inline)
+/// has put both in the parent's lane, and the state a subagent publishes,
+/// which [`Hidden`](SubagentVisibility::Hidden) keeps as the parent's, ends
+/// the parent's. The agent's stream is still open then, so its next chunk
+/// says only what a continuation says, and on the consuming side that chunk
+/// opens the item again. It is given what opens it, from what the agent
+/// opened the stream with: `toolCallName` and `parentMessageId` for a tool
+/// call, `role` and `name` for a message. A chunk whose stream the consumer
+/// still holds is sent as it is.
 ///
 /// [`Hidden`](SubagentVisibility::Hidden) additionally remembers what each
 /// subagent owns — messages, tool calls, activities — for the rest of the
@@ -527,8 +833,10 @@ impl SubagentVisibility {
 #[derive(Debug)]
 pub struct SubagentFilter {
     mode: SubagentVisibility,
-    /// The open streams, per owner.
+    /// The chunk streams the agent has open, per owner: what it emitted.
     streams: Streams,
+    /// The chunk streams a consumer has open: what this filter sent.
+    output: Streams,
     /// Text message ids a subagent owns, and which.
     hidden_text: HashMap<MessageId, SubagentRunId>,
     /// Reasoning ids — the block and the message inside it — a subagent
@@ -540,40 +848,12 @@ pub struct SubagentFilter {
     /// Every activity seen, and whether a subagent owns it.
     activities: HashMap<MessageId, bool>,
     /// What is open, and whether the consumer saw it open.
-    open_visibility: HashMap<(Family, String), bool>,
+    open_visibility: HashMap<(Kind, String), bool>,
     /// Whether the consumer saw each tool call start, for the result that
     /// may arrive long after the call closed.
     call_visibility: HashMap<ToolCallId, bool>,
-    /// Already delivered messages; snapshots may only restore this visible copy.
-    visible_messages: crate::client::apply::Applier,
-    visible_chunks: crate::client::chunks::ChunkNormalizer,
-}
-
-/// The families a `*_CHUNK` event may continue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Family {
-    Text,
-    Reasoning,
-    Tool,
-}
-
-/// One open stream, as the consuming normalizer models it.
-#[derive(Clone, Debug)]
-struct Stream {
-    family: Family,
-    opened_by_chunk: bool,
-    id: String,
-    /// What a chunk reopening a tool call on the consuming side must carry.
-    tool_name: Option<String>,
-    parent_message_id: Option<MessageId>,
-}
-
-/// The open streams: one per owner, replaced by the next that owner opens,
-/// closed by a terminator or — for whoever executed it — by a tool result.
-#[derive(Clone, Debug, Default)]
-struct Streams {
-    parent: Option<Stream>,
-    subagents: HashMap<SubagentRunId, Stream>,
+    // Only Hidden projects the messages actually sent to the consumer.
+    visible_messages: Option<Box<crate::client::apply::Applier>>,
 }
 
 /// What a chunk naming no id turned out to be.
@@ -583,200 +863,11 @@ enum Bare {
     /// Resolved to a stream, and given its id.
     Resolved {
         owner: Option<SubagentRunId>,
-        family: Family,
+        kind: Kind,
         id: String,
     },
     /// Nothing to resolve it against; the consumer will say so.
     Unresolved,
-}
-
-impl Streams {
-    /// `owner` now has `stream` open, and nothing else — unless it is the
-    /// same stream, in which case what is known about it is kept.
-    fn open(&mut self, owner: &Option<SubagentRunId>, stream: Stream) {
-        let current = match owner {
-            None => &mut self.parent,
-            Some(owner) => match self.subagents.get_mut(owner) {
-                Some(current) => {
-                    Self::replace(current, stream);
-                    return;
-                }
-                None => {
-                    self.subagents.insert(owner.clone(), stream);
-                    return;
-                }
-            },
-        };
-        match current {
-            Some(current) => Self::replace(current, stream),
-            None => *current = Some(stream),
-        }
-    }
-
-    fn current(&self, owner: &Option<SubagentRunId>) -> Option<&Stream> {
-        match owner {
-            Some(owner) => self.subagents.get(owner),
-            None => self.parent.as_ref(),
-        }
-    }
-
-    fn replace(current: &mut Stream, stream: Stream) {
-        if current.family == stream.family && current.id == stream.id {
-            if current.tool_name.is_none() {
-                current.tool_name = stream.tool_name;
-            }
-            if current.parent_message_id.is_none() {
-                current.parent_message_id = stream.parent_message_id;
-            }
-        } else {
-            *current = stream;
-        }
-    }
-
-    fn close_id(&mut self, family: Family, id: &str) {
-        if self
-            .parent
-            .as_ref()
-            .is_some_and(|open| open.family == family && open.id == id)
-        {
-            self.parent = None;
-        }
-        self.subagents
-            .retain(|_, open| !(open.family == family && open.id == id));
-    }
-
-    fn close_owner(&mut self, owner: &Option<SubagentRunId>) {
-        match owner {
-            None => self.parent = None,
-            Some(owner) => {
-                self.subagents.remove(owner);
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        self.parent = None;
-        self.subagents.clear();
-    }
-
-    /// The subagent under which `id` is open, if it is open under one.
-    fn owner_of_open(&self, family: Family, id: &str) -> Option<SubagentRunId> {
-        self.subagents
-            .iter()
-            .find(|(_, open)| open.family == family && open.id == id)
-            .map(|(owner, _)| owner.clone())
-    }
-
-    /// The stream a chunk naming no id continues — the normalizer's rule:
-    /// the tagged owner's open stream; untagged, the parent's, else the only
-    /// open one.
-    fn resolve(
-        &self,
-        family: Family,
-        tag: &Option<SubagentRunId>,
-    ) -> Option<(Option<SubagentRunId>, Stream)> {
-        let of_family = |open: &&Stream| open.family == family;
-        if let Some(owner) = tag {
-            return self
-                .subagents
-                .get(owner)
-                .filter(of_family)
-                .map(|open| (Some(owner.clone()), open.clone()));
-        }
-        if let Some(open) = self.parent.as_ref().filter(of_family) {
-            return Some((None, open.clone()));
-        }
-        let mut candidates = self
-            .subagents
-            .iter()
-            .filter(|(_, open)| open.family == family);
-        match (candidates.next(), candidates.next()) {
-            (Some((owner, open)), None) => Some((Some(owner.clone()), open.clone())),
-            _ => None,
-        }
-    }
-
-    /// Folds an event with an id into the model. `owner` is whose the event
-    /// is; `tag` is what it carries, which is what a result closes by.
-    fn observe(
-        &mut self,
-        event: &Event,
-        owner: &Option<SubagentRunId>,
-        tag: &Option<SubagentRunId>,
-    ) {
-        let opened_by_chunk = matches!(
-            event,
-            Event::TextMessageChunk(_) | Event::ReasoningMessageChunk(_) | Event::ToolCallChunk(_)
-        );
-        let text = |id: &MessageId| Stream {
-            opened_by_chunk,
-            family: Family::Text,
-            id: id.as_str().to_owned(),
-            tool_name: None,
-            parent_message_id: None,
-        };
-        let reasoning = |id: &MessageId| Stream {
-            opened_by_chunk,
-            family: Family::Reasoning,
-            id: id.as_str().to_owned(),
-            tool_name: None,
-            parent_message_id: None,
-        };
-        let tool = |id: &ToolCallId, name: Option<&String>, parent: Option<&MessageId>| Stream {
-            opened_by_chunk,
-            family: Family::Tool,
-            id: id.as_str().to_owned(),
-            tool_name: name.cloned(),
-            parent_message_id: parent.cloned(),
-        };
-        match event {
-            Event::TextMessageStart(e) => self.open(owner, text(&e.message_id)),
-            Event::TextMessageContent(e) => self.open(owner, text(&e.message_id)),
-            Event::TextMessageEnd(e) => self.close_id(Family::Text, e.message_id.as_str()),
-            Event::TextMessageChunk(e) => {
-                if let Some(id) = &e.message_id {
-                    self.open(owner, text(id));
-                }
-            }
-            Event::ReasoningMessageStart(e) => self.open(owner, reasoning(&e.message_id)),
-            Event::ReasoningMessageContent(e) => self.open(owner, reasoning(&e.message_id)),
-            Event::ReasoningMessageEnd(e) => {
-                self.close_id(Family::Reasoning, e.message_id.as_str());
-            }
-            Event::ReasoningEnd(e) => self.close_id(Family::Reasoning, e.message_id.as_str()),
-            Event::ReasoningMessageChunk(e) => {
-                if let Some(id) = &e.message_id {
-                    self.open(owner, reasoning(id));
-                }
-            }
-            Event::ToolCallStart(e) => self.open(
-                owner,
-                tool(
-                    &e.tool_call_id,
-                    Some(&e.tool_call_name),
-                    e.parent_message_id.as_ref(),
-                ),
-            ),
-            Event::ToolCallArgs(e) => self.open(owner, tool(&e.tool_call_id, None, None)),
-            Event::ToolCallEnd(e) => self.close_id(Family::Tool, e.tool_call_id.as_str()),
-            Event::ToolCallChunk(e) => {
-                if let Some(id) = &e.tool_call_id {
-                    self.open(
-                        owner,
-                        tool(id, e.tool_call_name.as_ref(), e.parent_message_id.as_ref()),
-                    );
-                }
-            }
-            // A result answers a call, so the call is over — and the party
-            // answering has moved on from whatever else it had open.
-            Event::ToolCallResult(e) => {
-                self.close_id(Family::Tool, e.tool_call_id.as_str());
-                self.close_owner(tag);
-            }
-            Event::RunFinished(_) | Event::RunError(_) => self.clear(),
-            _ => {}
-        }
-    }
 }
 
 impl SubagentFilter {
@@ -785,14 +876,14 @@ impl SubagentFilter {
         Self {
             mode,
             streams: Streams::default(),
+            output: Streams::default(),
             hidden_text: HashMap::new(),
             hidden_reasoning: HashMap::new(),
             hidden_tool_calls: HashMap::new(),
             activities: HashMap::new(),
             open_visibility: HashMap::new(),
             call_visibility: HashMap::new(),
-            visible_messages: Default::default(),
-            visible_chunks: Default::default(),
+            visible_messages: (mode == SubagentVisibility::Hidden).then(Default::default),
         }
     }
 
@@ -802,23 +893,23 @@ impl SubagentFilter {
     }
 
     /// The stream a stream-bearing event belongs to, if it names one.
-    fn entity(event: &Event) -> Option<(Family, &str)> {
+    fn entity(event: &Event) -> Option<(Kind, &str)> {
         Some(match event {
-            Event::TextMessageStart(e) => (Family::Text, e.message_id.as_str()),
-            Event::TextMessageContent(e) => (Family::Text, e.message_id.as_str()),
-            Event::TextMessageEnd(e) => (Family::Text, e.message_id.as_str()),
-            Event::TextMessageChunk(e) => (Family::Text, e.message_id.as_ref()?.as_str()),
-            Event::ReasoningStart(e) => (Family::Reasoning, e.message_id.as_str()),
-            Event::ReasoningMessageStart(e) => (Family::Reasoning, e.message_id.as_str()),
-            Event::ReasoningMessageContent(e) => (Family::Reasoning, e.message_id.as_str()),
-            Event::ReasoningMessageEnd(e) => (Family::Reasoning, e.message_id.as_str()),
-            Event::ReasoningEnd(e) => (Family::Reasoning, e.message_id.as_str()),
-            Event::ReasoningMessageChunk(e) => (Family::Reasoning, e.message_id.as_ref()?.as_str()),
-            Event::ToolCallStart(e) => (Family::Tool, e.tool_call_id.as_str()),
-            Event::ToolCallArgs(e) => (Family::Tool, e.tool_call_id.as_str()),
-            Event::ToolCallEnd(e) => (Family::Tool, e.tool_call_id.as_str()),
-            Event::ToolCallResult(e) => (Family::Tool, e.tool_call_id.as_str()),
-            Event::ToolCallChunk(e) => (Family::Tool, e.tool_call_id.as_ref()?.as_str()),
+            Event::TextMessageStart(e) => (Kind::Text, e.message_id.as_str()),
+            Event::TextMessageContent(e) => (Kind::Text, e.message_id.as_str()),
+            Event::TextMessageEnd(e) => (Kind::Text, e.message_id.as_str()),
+            Event::TextMessageChunk(e) => (Kind::Text, e.message_id.as_ref()?.as_str()),
+            Event::ReasoningStart(e) => (Kind::Reasoning, e.message_id.as_str()),
+            Event::ReasoningMessageStart(e) => (Kind::Reasoning, e.message_id.as_str()),
+            Event::ReasoningMessageContent(e) => (Kind::Reasoning, e.message_id.as_str()),
+            Event::ReasoningMessageEnd(e) => (Kind::Reasoning, e.message_id.as_str()),
+            Event::ReasoningEnd(e) => (Kind::Reasoning, e.message_id.as_str()),
+            Event::ReasoningMessageChunk(e) => (Kind::Reasoning, e.message_id.as_ref()?.as_str()),
+            Event::ToolCallStart(e) => (Kind::Tool, e.tool_call_id.as_str()),
+            Event::ToolCallArgs(e) => (Kind::Tool, e.tool_call_id.as_str()),
+            Event::ToolCallEnd(e) => (Kind::Tool, e.tool_call_id.as_str()),
+            Event::ToolCallResult(e) => (Kind::Tool, e.tool_call_id.as_str()),
+            Event::ToolCallChunk(e) => (Kind::Tool, e.tool_call_id.as_ref()?.as_str()),
             _ => return None,
         })
     }
@@ -839,56 +930,144 @@ impl SubagentFilter {
         if tag.is_some() {
             return tag.clone();
         }
-        let (family, id) = Self::entity(event)?;
-        let recorded = match family {
-            Family::Text => self.hidden_text.get(&MessageId::new(id)).cloned(),
-            Family::Reasoning => self.hidden_reasoning.get(&MessageId::new(id)).cloned(),
-            Family::Tool => Self::carrier(event)
+        let (kind, id) = Self::entity(event)?;
+        let recorded = match kind {
+            Kind::Text => self.hidden_text.get(&MessageId::new(id)).cloned(),
+            Kind::Reasoning => self.hidden_reasoning.get(&MessageId::new(id)).cloned(),
+            Kind::Tool => Self::carrier(event)
                 .and_then(|parent| self.hidden_text.get(parent).cloned())
                 .or_else(|| self.hidden_tool_calls.get(&ToolCallId::new(id)).cloned()),
         };
-        recorded.or_else(|| self.streams.owner_of_open(family, id))
+        // Untagged, it continues whatever chunk stream is assembling its id.
+        recorded.or_else(|| {
+            let holder = self.streams.holder(kind, id)?;
+            holder.owner.clone()
+        })
     }
 
     /// Gives a chunk naming no id the id its attribution resolves to on the
     /// consuming side, so that stripping the attribution afterwards cannot
     /// send it to another stream.
     fn fill_bare(&self, event: &mut Event, tag: &Option<SubagentRunId>) -> Bare {
-        let family = match event {
-            Event::TextMessageChunk(e) if e.message_id.is_none() => Family::Text,
-            Event::ReasoningMessageChunk(e) if e.message_id.is_none() => Family::Reasoning,
-            Event::ToolCallChunk(e) if e.tool_call_id.is_none() => Family::Tool,
+        let kind = match event {
+            Event::TextMessageChunk(e) if e.message_id.is_none() => Kind::Text,
+            Event::ReasoningMessageChunk(e) if e.message_id.is_none() => Kind::Reasoning,
+            Event::ToolCallChunk(e) if e.tool_call_id.is_none() => Kind::Tool,
             _ => return Bare::No,
         };
-        let Some((owner, stream)) = self.streams.resolve(family, tag) else {
+        let Ok(stream) = self.streams.continued(kind, tag) else {
             return Bare::Unresolved;
         };
-        let id = stream.id.clone();
+        let (owner, id) = (stream.owner.clone(), stream.id.clone());
         match event {
             Event::TextMessageChunk(e) => e.message_id = Some(MessageId::new(&id)),
             Event::ReasoningMessageChunk(e) => e.message_id = Some(MessageId::new(&id)),
-            Event::ToolCallChunk(e) => {
-                e.tool_call_id = Some(ToolCallId::new(&id));
-                if e.tool_call_name.is_none() {
-                    e.tool_call_name = stream.tool_name;
-                }
-                if e.parent_message_id.is_none() {
-                    e.parent_message_id = stream.parent_message_id;
-                }
-            }
+            Event::ToolCallChunk(e) => e.tool_call_id = Some(ToolCallId::new(&id)),
             _ => unreachable!("matched above"),
         }
-        Bare::Resolved { owner, family, id }
+        Bare::Resolved { owner, kind, id }
+    }
+
+    /// What the agent opened the stream a chunk continues with.
+    ///
+    /// Read once the chunk has its id and before it is tracked. `None` for
+    /// a chunk that continues nothing the agent has open: it opens its own
+    /// stream, and carries what opens it or is malformed as emitted.
+    fn opener(&self, event: &Event, tag: &Option<SubagentRunId>) -> Option<Opener> {
+        let (kind, id) = chunk_item(event)?;
+        assembling(&self.streams, kind, id, tag).map(|stream| stream.opener.clone())
+    }
+
+    /// Sends an event on, as the last thing either mode does with it.
+    ///
+    /// `opener` is what [`opener`](Self::opener) read for it. A chunk that
+    /// continues a stream the consumer no longer holds is given the fields
+    /// that open its item there, and the consumer's streams are followed
+    /// with what is sent.
+    fn send(&mut self, mut event: Event, opener: Option<Opener>) -> Vec<Event> {
+        if let Some(opener) = opener {
+            self.reopen(&mut event, opener);
+        }
+        self.record_output(&event);
+        vec![event]
+    }
+
+    fn record_output(&mut self, event: &Event) {
+        let expanded = self.output.track(event);
+        let Some(visible) = &mut self.visible_messages else {
+            return;
+        };
+        for update in expanded {
+            let _ = visible.apply(&update);
+        }
+        match event {
+            Event::RunStarted(started) => {
+                if let Some(input) = &started.input {
+                    **visible =
+                        crate::client::apply::Applier::new().with_messages(input.messages.clone());
+                }
+            }
+            Event::RunFinished(_) | Event::RunError(_) => **visible = Default::default(),
+            Event::TextMessageStart(_)
+            | Event::TextMessageContent(_)
+            | Event::TextMessageEnd(_)
+            | Event::ReasoningMessageStart(_)
+            | Event::ReasoningMessageContent(_)
+            | Event::ReasoningMessageEnd(_)
+            | Event::ToolCallStart(_)
+            | Event::ToolCallArgs(_)
+            | Event::ToolCallEnd(_)
+            | Event::ToolCallResult(_)
+            | Event::ReasoningEncryptedValue(_)
+            | Event::MessagesSnapshot(_) => {
+                let _ = visible.apply(event);
+            }
+            _ => {}
+        }
+    }
+
+    /// Fills in what opens a chunk's item, unless the consumer has the
+    /// chunk's stream open and so reads the chunk as a continuation.
+    fn reopen(&self, event: &mut Event, opener: Opener) {
+        let tag = event.subagent_run_id().cloned();
+        let continues = chunk_item(event)
+            .is_some_and(|(kind, id)| assembling(&self.output, kind, id, &tag).is_some());
+        if continues {
+            return;
+        }
+        match (event, opener) {
+            (Event::TextMessageChunk(chunk), Opener::Text { role, name }) => {
+                chunk.role.get_or_insert(role);
+                if chunk.name.is_none() {
+                    chunk.name = name;
+                }
+            }
+            (
+                Event::ToolCallChunk(chunk),
+                Opener::Tool {
+                    name,
+                    parent_message_id,
+                },
+            ) => {
+                chunk.tool_call_name.get_or_insert(name);
+                if chunk.parent_message_id.is_none() {
+                    chunk.parent_message_id = parent_message_id;
+                }
+            }
+            // A reasoning message is opened by its id alone.
+            _ => {}
+        }
     }
 
     /// Strips the subagent surface from an event, or drops it entirely when
     /// it *is* the subagent surface — the lifecycle, and a subagent's steps.
     fn inline(&mut self, mut event: Event) -> Vec<Event> {
         let tag = event.subagent_run_id().cloned();
-        if let Bare::No = self.fill_bare(&mut event, &tag) {
-            let owner = self.owner_for(&event, &tag);
-            self.streams.observe(&event, &owner, &tag);
-        }
+        // Filled before it is tracked: with its id a chunk continues the
+        // stream it resolved to, which is what the consumer will see.
+        self.fill_bare(&mut event, &tag);
+        let opener = self.opener(&event, &tag);
+        self.streams.track(&event);
         let subagents_step =
             matches!(event, Event::StepStarted(_) | Event::StepFinished(_)) && tag.is_some();
         if subagents_step {
@@ -915,7 +1094,7 @@ impl SubagentFilter {
                 event.clear_subagent_run_id();
             }
         }
-        vec![event]
+        self.send(event, opener)
     }
 
     /// The interrupts a paused run reports name the subagent that raised
@@ -935,42 +1114,30 @@ impl SubagentFilter {
     fn hidden(&mut self, mut event: Event) -> Vec<Event> {
         let tag = event.subagent_run_id().cloned();
         let owned = tag.is_some();
-        let keep = match self.fill_bare(&mut event, &tag) {
+        let bare = self.fill_bare(&mut event, &tag);
+        let opener = self.opener(&event, &tag);
+        let mut expanded = Vec::new();
+        let keep = match bare {
             // The chunk continues a stream: it goes where the stream went.
-            Bare::Resolved { owner, family, id } => self
+            Bare::Resolved { owner, kind, id } => self
                 .open_visibility
-                .get(&(family, id))
+                .get(&(kind, id))
                 .copied()
                 .unwrap_or(owner.is_none()),
             Bare::Unresolved => !owned,
             Bare::No => {
+                // Before the event is tracked: it may end the stream that
+                // says whose it is.
                 let owner = self.owner_for(&event, &tag);
-                // An implicitly opened stream ends when its owner moves on.
-                // Its old visibility must not suppress a later authoritative snapshot.
-                let lane = if matches!(event, Event::ToolCallResult(_)) {
-                    &tag
-                } else {
-                    &owner
-                };
-                let implicit = self
-                    .streams
-                    .current(lane)
-                    .filter(|s| s.opened_by_chunk)
-                    .map(|s| (s.family, s.id.clone()));
-                self.streams.observe(&event, &owner, &tag);
-                let keep = self.judge(&event, &tag, owner.as_ref());
-                if let Some(key) = implicit {
-                    if self
-                        .streams
-                        .current(lane)
-                        .is_none_or(|s| s.family != key.0 || s.id != key.1)
-                    {
-                        self.open_visibility.remove(&key);
-                    }
-                }
-                keep
+                expanded = self.streams.track(&event);
+                self.judge(&event, &tag, owner.as_ref())
             }
         };
+        // An implicit end releases the visibility of that chunked item. A
+        // snapshot still filters against the visibility immediately before it.
+        if !matches!(event, Event::MessagesSnapshot(_)) {
+            self.forget_chunk_ends(&expanded);
+        }
         if !keep
             || (owned
                 && matches!(
@@ -990,42 +1157,51 @@ impl SubagentFilter {
             // the run established it, as the verifiers leave it.
             Event::MessagesSnapshot(snapshot) => {
                 self.seed_hidden(&snapshot.messages, true);
+                let mut present = HashSet::new();
                 snapshot.messages.retain_mut(|message| {
-                    let family = if matches!(message, crate::Message::Reasoning(_)) {
-                        Family::Reasoning
-                    } else {
-                        Family::Text
-                    };
-                    if self
-                        .open_visibility
-                        .get(&(family, message.id().as_str().to_owned()))
-                        == Some(&false)
-                    {
-                        return false;
+                    // A result's visibility follows the final list of calls,
+                    // including any restored with an open parent below.
+                    let keep = matches!(message, Message::Tool(_)) || self.show_message(message);
+                    if keep {
+                        present.insert(message.id().clone());
                     }
-                    Self::show_message(message, &self.hidden_tool_calls)
+                    keep
                 });
-                // A filtered or omitted entry would delete a still-open parent
-                // message on the client. Restore only what it has already seen.
-                let present: HashSet<_> =
-                    snapshot.messages.iter().map(|m| m.id().clone()).collect();
-                for message in self.visible_messages.open_text_messages() {
-                    if !present.contains(message.id()) {
+                if let Some(visible) = &self.visible_messages {
+                    for message in visible.open_messages() {
+                        if present.contains(message.id()) {
+                            continue;
+                        }
+                        if let Message::Assistant(assistant) = message {
+                            for call in assistant.tool_calls.iter().flatten() {
+                                self.hidden_tool_calls.remove(&call.id);
+                                self.call_visibility.insert(call.id.clone(), true);
+                            }
+                        }
                         snapshot.messages.push(message.clone());
                     }
                 }
+                snapshot.messages.retain_mut(|message| {
+                    let Message::Tool(tool) = message else {
+                        return true;
+                    };
+                    if self.hidden_tool_calls.contains_key(&tool.tool_call_id) {
+                        return false;
+                    }
+                    self.hidden_text.remove(&tool.id);
+                    tool.subagent_run_id = None;
+                    true
+                });
+                self.forget_chunk_ends(&expanded);
             }
             // History, not a rewrite: what it carries is remembered alongside
             // what the run has already shown.
             Event::RunStarted(started) => {
                 if let Some(input) = &mut started.input {
                     self.seed_hidden(&input.messages, false);
-                    let hidden_calls = &self.hidden_tool_calls;
                     input
                         .messages
-                        .retain_mut(|message| Self::show_message(message, hidden_calls));
-                    self.visible_messages =
-                        crate::client::apply::Applier::new().with_messages(input.messages.clone());
+                        .retain_mut(|message| self.show_message(message));
                 }
             }
             Event::StateSnapshot(_)
@@ -1038,58 +1214,20 @@ impl SubagentFilter {
             Event::RunFinished(finished) => Self::strip_interrupt_tags(finished),
             _ => {}
         }
-        // Project only events that can change a published message. This keeps
-        // shared state and other unrelated payloads out of the retained copy.
-        match &event {
-            Event::RunFinished(_) | Event::RunError(_) => {
-                self.visible_messages = Default::default();
-                self.visible_chunks = Default::default();
-            }
-            Event::MessagesSnapshot(_) => {
-                let _ = self.visible_messages.apply(&event);
-            }
-            Event::TextMessageStart(_)
-            | Event::TextMessageContent(_)
-            | Event::TextMessageEnd(_)
-            | Event::TextMessageChunk(_)
-            | Event::ToolCallStart(_)
-            | Event::ToolCallArgs(_)
-            | Event::ToolCallEnd(_)
-            | Event::ToolCallResult(_)
-            | Event::ToolCallChunk(_)
-            | Event::ReasoningMessageStart(_)
-            | Event::ReasoningMessageChunk(_)
-            | Event::ReasoningMessageContent(_)
-            | Event::ReasoningMessageEnd(_)
-            | Event::ReasoningEnd(_)
-            | Event::ReasoningEncryptedValue(_) => {
-                // Stream validation belongs to the verifier. The projection
-                // only retains material that the consumer can apply.
-                let mut normalized = Vec::new();
-                if self
-                    .visible_chunks
-                    .normalize(event.clone(), &mut normalized)
-                    .is_ok()
-                {
-                    for update in normalized {
-                        // Reasoning can close a chunked text stream, but its
-                        // own content lives outside the transcript.
-                        if !matches!(
-                            update,
-                            Event::ReasoningStart(_)
-                                | Event::ReasoningEnd(_)
-                                | Event::ReasoningMessageStart(_)
-                                | Event::ReasoningMessageContent(_)
-                                | Event::ReasoningMessageEnd(_)
-                        ) {
-                            let _ = self.visible_messages.apply(&update);
-                        }
-                    }
+        self.send(event, opener)
+    }
+
+    fn forget_chunk_ends(&mut self, expanded: &[Event]) {
+        for end in expanded {
+            if matches!(
+                end,
+                Event::TextMessageEnd(_) | Event::ReasoningMessageEnd(_) | Event::ToolCallEnd(_)
+            ) {
+                if let Some((kind, id)) = Self::entity(end) {
+                    self.open_visibility.remove(&(kind, id.to_owned()));
                 }
             }
-            _ => {}
         }
-        vec![event]
     }
 
     /// Whether the consumer sees an event with an id, by who owns it.
@@ -1105,25 +1243,25 @@ impl SubagentFilter {
                 false
             }
 
-            Event::TextMessageStart(e) => self.opened(Family::Text, &e.message_id, owner),
+            Event::TextMessageStart(e) => self.opened(Kind::Text, &e.message_id, owner),
             Event::TextMessageChunk(e) => match &e.message_id {
-                Some(id) => self.opened(Family::Text, id, owner),
+                Some(id) => self.opened(Kind::Text, id, owner),
                 None => unreachable!("a bare chunk was resolved or passed through"),
             },
-            Event::TextMessageContent(e) => self.continued(Family::Text, &e.message_id, owned),
-            Event::TextMessageEnd(e) => self.closed(Family::Text, &e.message_id, owned),
+            Event::TextMessageContent(e) => self.continued(Kind::Text, &e.message_id, owned),
+            Event::TextMessageEnd(e) => self.closed(Kind::Text, &e.message_id, owned),
 
-            Event::ReasoningStart(e) => self.opened(Family::Reasoning, &e.message_id, owner),
-            Event::ReasoningMessageStart(e) => self.opened(Family::Reasoning, &e.message_id, owner),
+            Event::ReasoningStart(e) => self.opened(Kind::Reasoning, &e.message_id, owner),
+            Event::ReasoningMessageStart(e) => self.opened(Kind::Reasoning, &e.message_id, owner),
             Event::ReasoningMessageChunk(e) => match &e.message_id {
-                Some(id) => self.opened(Family::Reasoning, id, owner),
+                Some(id) => self.opened(Kind::Reasoning, id, owner),
                 None => unreachable!("a bare chunk was resolved or passed through"),
             },
             Event::ReasoningMessageContent(e) => {
-                self.continued(Family::Reasoning, &e.message_id, owned)
+                self.continued(Kind::Reasoning, &e.message_id, owned)
             }
-            Event::ReasoningMessageEnd(e) => self.closed(Family::Reasoning, &e.message_id, owned),
-            Event::ReasoningEnd(e) => self.closed(Family::Reasoning, &e.message_id, owned),
+            Event::ReasoningMessageEnd(e) => self.closed(Kind::Reasoning, &e.message_id, owned),
+            Event::ReasoningEnd(e) => self.closed(Kind::Reasoning, &e.message_id, owned),
 
             Event::ToolCallStart(e) => self.call_opened(&e.tool_call_id, owner),
             Event::ToolCallChunk(e) => match &e.tool_call_id {
@@ -1134,17 +1272,23 @@ impl SubagentFilter {
             Event::ToolCallEnd(e) => {
                 let keep = self.call_continued(&e.tool_call_id, owned);
                 self.open_visibility
-                    .remove(&(Family::Tool, e.tool_call_id.as_str().to_owned()));
+                    .remove(&(Kind::Tool, e.tool_call_id.as_str().to_owned()));
                 keep
             }
             // A result goes where its call went, whoever executed it: one for
             // a call the consumer never saw is a protocol error, and one for
             // a call it did see is owed.
-            Event::ToolCallResult(e) => self
-                .call_visibility
-                .get(&e.tool_call_id)
-                .copied()
-                .unwrap_or_else(|| !self.hidden_tool_calls.contains_key(&e.tool_call_id)),
+            Event::ToolCallResult(e) => {
+                if let Some(owner) = self.hidden_tool_calls.get(&e.tool_call_id) {
+                    self.hidden_text.insert(e.message_id.clone(), owner.clone());
+                } else {
+                    self.hidden_text.remove(&e.message_id);
+                }
+                self.call_visibility
+                    .get(&e.tool_call_id)
+                    .copied()
+                    .unwrap_or_else(|| !self.hidden_tool_calls.contains_key(&e.tool_call_id))
+            }
 
             // An activity is owned by the snapshot that minted it, and only a
             // replacing snapshot re-mints it — the verifiers' rule. A merge
@@ -1161,7 +1305,7 @@ impl SubagentFilter {
                 !hidden
             }
             Event::ActivityDelta(e) => {
-                !self.activities.get(&e.message_id).copied().unwrap_or(false)
+                !self.activities.get(&e.message_id).copied().unwrap_or(owned)
             }
 
             // An opaque blob for an entity the consumer never saw goes with
@@ -1192,49 +1336,49 @@ impl SubagentFilter {
         }
     }
 
-    fn owners_mut(&mut self, family: Family) -> &mut HashMap<MessageId, SubagentRunId> {
-        match family {
-            Family::Text => &mut self.hidden_text,
-            Family::Reasoning => &mut self.hidden_reasoning,
-            Family::Tool => unreachable!("tool calls have their own map"),
+    fn owners_mut(&mut self, kind: Kind) -> &mut HashMap<MessageId, SubagentRunId> {
+        match kind {
+            Kind::Text => &mut self.hidden_text,
+            Kind::Reasoning => &mut self.hidden_reasoning,
+            Kind::Tool => unreachable!("tool calls have their own map"),
         }
     }
 
-    fn is_hidden(&self, family: Family, id: &str) -> bool {
-        match family {
-            Family::Text => self.hidden_text.contains_key(&MessageId::new(id)),
-            Family::Reasoning => self.hidden_reasoning.contains_key(&MessageId::new(id)),
-            Family::Tool => self.hidden_tool_calls.contains_key(&ToolCallId::new(id)),
+    fn is_hidden(&self, kind: Kind, id: &str) -> bool {
+        match kind {
+            Kind::Text => self.hidden_text.contains_key(&MessageId::new(id)),
+            Kind::Reasoning => self.hidden_reasoning.contains_key(&MessageId::new(id)),
+            Kind::Tool => self.hidden_tool_calls.contains_key(&ToolCallId::new(id)),
         }
     }
 
     /// A message opens under `owner` — the first writer keeps it — and the
     /// consumer sees it iff the owner is the parent, unless it is already
     /// open, in which case it keeps the visibility it was opened with.
-    fn opened(&mut self, family: Family, id: &MessageId, owner: Option<&SubagentRunId>) -> bool {
+    fn opened(&mut self, kind: Kind, id: &MessageId, owner: Option<&SubagentRunId>) -> bool {
         if let Some(owner) = owner {
-            self.owners_mut(family)
+            self.owners_mut(kind)
                 .entry(id.clone())
                 .or_insert_with(|| owner.clone());
         }
         *self
             .open_visibility
-            .entry((family, id.as_str().to_owned()))
+            .entry((kind, id.as_str().to_owned()))
             .or_insert(owner.is_none())
     }
 
-    fn continued(&self, family: Family, id: &MessageId, owned: bool) -> bool {
+    fn continued(&self, kind: Kind, id: &MessageId, owned: bool) -> bool {
         !owned
             && self
                 .open_visibility
-                .get(&(family, id.as_str().to_owned()))
+                .get(&(kind, id.as_str().to_owned()))
                 .copied()
-                .unwrap_or_else(|| !self.is_hidden(family, id.as_str()))
+                .unwrap_or_else(|| !self.is_hidden(kind, id.as_str()))
     }
 
-    fn closed(&mut self, family: Family, id: &MessageId, owned: bool) -> bool {
-        let keep = self.continued(family, id, owned);
-        let key = (family, id.as_str().to_owned());
+    fn closed(&mut self, kind: Kind, id: &MessageId, owned: bool) -> bool {
+        let keep = self.continued(kind, id, owned);
+        let key = (kind, id.as_str().to_owned());
         if !owned || self.open_visibility.get(&key) != Some(&true) {
             self.open_visibility.remove(&key);
         }
@@ -1249,7 +1393,7 @@ impl SubagentFilter {
         }
         let visible = *self
             .open_visibility
-            .entry((Family::Tool, id.as_str().to_owned()))
+            .entry((Kind::Tool, id.as_str().to_owned()))
             .or_insert(owner.is_none());
         self.call_visibility.insert(id.clone(), visible);
         visible
@@ -1259,7 +1403,7 @@ impl SubagentFilter {
         !owned
             && self
                 .open_visibility
-                .get(&(Family::Tool, id.as_str().to_owned()))
+                .get(&(Kind::Tool, id.as_str().to_owned()))
                 .copied()
                 .unwrap_or_else(|| !self.hidden_tool_calls.contains_key(id))
     }
@@ -1279,74 +1423,108 @@ impl SubagentFilter {
                 }
                 continue;
             }
-            let owner = match message {
-                crate::Message::Tool(tool) => {
-                    self.hidden_tool_calls.get(&tool.tool_call_id).cloned()
-                }
-                _ => message.subagent_run_id().cloned(),
+            if matches!(message, Message::Tool(_)) {
+                continue; // Its owner follows the call, regardless of history order.
+            }
+            let kind = if matches!(message, Message::Reasoning(_)) {
+                Kind::Reasoning
+            } else {
+                Kind::Text
             };
-            let calls: Vec<ToolCallId> = match message {
-                crate::Message::Assistant(assistant) => assistant
-                    .tool_calls
-                    .iter()
-                    .flatten()
-                    .map(|call| call.id.clone())
-                    .collect(),
-                _ => Vec::new(),
-            };
-            let family = match message {
-                crate::Message::Reasoning(_) => Family::Reasoning,
-                _ => Family::Text,
-            };
-            match owner {
-                Some(owner) => {
-                    for call in calls {
-                        self.hidden_tool_calls.insert(call, owner.clone());
-                    }
-                    self.owners_mut(family).insert(id, owner);
-                }
-                None if authoritative => {
-                    let previous = self.owners_mut(family).remove(&id);
-                    let hidden_open =
-                        self.open_visibility.get(&(family, id.as_str().to_owned())) == Some(&false);
-                    for call in calls {
-                        if hidden_open {
-                            // The restatement itself is omitted. Its calls and
-                            // their results must stay hidden together.
-                            if let Some(owner) = &previous {
-                                self.hidden_tool_calls.insert(call, owner.clone());
-                            }
-                        } else {
-                            self.hidden_tool_calls.remove(&call);
-                        }
+            let hidden_open =
+                self.open_visibility.get(&(kind, id.as_str().to_owned())) == Some(&false);
+            if let Some(owner) = message.subagent_run_id() {
+                self.owners_mut(kind).insert(id.clone(), owner.clone());
+            } else if authoritative && !hidden_open {
+                self.owners_mut(kind).remove(&id);
+            }
+            if let Message::Assistant(assistant) = message {
+                let owner = self.hidden_text.get(&id).cloned();
+                for call in assistant.tool_calls.iter().flatten() {
+                    if let Some(owner) = &owner {
+                        self.hidden_tool_calls
+                            .insert(call.id.clone(), owner.clone());
+                        self.call_visibility.insert(call.id.clone(), false);
+                    } else if authoritative || !self.call_visibility.contains_key(&call.id) {
+                        self.hidden_tool_calls.remove(&call.id);
+                        self.call_visibility.insert(call.id.clone(), true);
                     }
                 }
-                None => {}
+            }
+        }
+        for message in messages {
+            if let Message::Tool(tool) = message {
+                if let Some(owner) = self.hidden_tool_calls.get(&tool.tool_call_id) {
+                    self.hidden_text.insert(tool.id.clone(), owner.clone());
+                } else if authoritative {
+                    self.hidden_text.remove(&tool.id);
+                }
             }
         }
     }
 
-    /// Whether a replayed message reaches the consumer, stripping the tag
-    /// from the one kind that may carry one there: a tool message answering
-    /// a call the consumer saw is the parent's, whoever executed it.
-    fn show_message(
-        message: &mut crate::Message,
-        hidden_calls: &HashMap<ToolCallId, SubagentRunId>,
-    ) -> bool {
-        match message {
-            crate::Message::Tool(tool) => {
-                if hidden_calls.contains_key(&tool.tool_call_id) {
-                    return false;
-                }
-                tool.subagent_run_id = None;
-                true
+    fn show_message(&self, message: &mut Message) -> bool {
+        if let Message::Tool(tool) = message {
+            if self.hidden_tool_calls.contains_key(&tool.tool_call_id) {
+                return false;
             }
-            _ => message.subagent_run_id().is_none(),
+            tool.subagent_run_id = None;
+            return true;
         }
+        let kind = if matches!(message, Message::Reasoning(_)) {
+            Kind::Reasoning
+        } else {
+            Kind::Text
+        };
+        message.subagent_run_id().is_none()
+            && self
+                .open_visibility
+                .get(&(kind, message.id().as_str().to_owned()))
+                != Some(&false)
     }
 }
 
+/// The chunk stream a chunk belongs to: its kind and the id it names.
+fn chunk_item(event: &Event) -> Option<(Kind, &str)> {
+    Some(match event {
+        Event::TextMessageChunk(e) => (Kind::Text, e.message_id.as_ref()?.as_str()),
+        Event::ReasoningMessageChunk(e) => (Kind::Reasoning, e.message_id.as_ref()?.as_str()),
+        Event::ToolCallChunk(e) => (Kind::Tool, e.tool_call_id.as_ref()?.as_str()),
+        _ => return None,
+    })
+}
+
+/// The stream a chunk that names `id` continues, as the open-stream model
+/// places it: the one assembling that id, which for an attributed chunk has
+/// to be in the lane it is attributed to.
+fn assembling<'a>(
+    streams: &'a Streams,
+    kind: Kind,
+    id: &str,
+    tag: &Option<SubagentRunId>,
+) -> Option<&'a Stream> {
+    streams
+        .holder(kind, id)
+        .filter(|stream| tag.is_none() || &stream.owner == tag)
+}
+
 impl StreamTransformer for SubagentFilter {
+    /// History, as the `RUN_STARTED` echo would carry it: what a subagent
+    /// owned in an earlier run stays hidden in this one, echo or not.
+    fn seed(&mut self, history: &[Message]) {
+        if self.mode == SubagentVisibility::Hidden {
+            self.seed_hidden(history, false);
+        }
+    }
+
+    /// What was sent is what a consumer holds, so the chunk streams it left
+    /// open are the ones a consumer has open now.
+    fn replay(&mut self, sent: &[Event]) {
+        for event in sent {
+            self.record_output(event);
+        }
+    }
+
     fn transform(&mut self, event: Event) -> Vec<Event> {
         match self.mode {
             SubagentVisibility::Attributed => vec![event],
@@ -1406,6 +1584,211 @@ mod tests {
             "opaque",
         );
         assert!(filter.transform(blob).is_empty());
+    }
+
+    /// Nothing named the call, so the filter cannot tell it from one it
+    /// removed where it could not see: what belongs to it is dropped.
+    #[test]
+    fn an_event_of_a_call_nothing_named_is_dropped() {
+        let blob = Event::reasoning_encrypted_value(
+            ReasoningEncryptedValueSubtype::ToolCall,
+            "c1",
+            "opaque",
+        );
+        let chunk = |id: Option<&str>| {
+            Event::tool_call_chunk(id.map(ToolCallId::new), None, Some("{}".to_owned()))
+        };
+        let unknown = [
+            Event::tool_call_args("c1", "{}"),
+            Event::tool_call_end("c1"),
+            Event::tool_call_result("m1", "c1", "done"),
+            blob,
+            chunk(Some("c1")),
+            chunk(None),
+        ];
+        for mut filter in [
+            FilterToolCalls::deny(["nope"]),
+            FilterToolCalls::allow(["search"]),
+        ] {
+            for event in &unknown {
+                assert_eq!(filter.transform(event.clone()), [], "{event:?}");
+            }
+            // Named, the same call is judged, and what follows goes with it.
+            let start = Event::tool_call_start("c1", "search");
+            assert_eq!(filter.transform(start.clone()), [start]);
+            let args = Event::tool_call_args("c1", "{}");
+            assert_eq!(filter.transform(args.clone()), [args]);
+        }
+    }
+
+    /// A dropped event is one its producer takes as sent, since the emit
+    /// returned `Ok`: one of a call nothing named still ends the chunk
+    /// stream in its lane.
+    #[test]
+    fn an_event_dropped_for_an_unknown_call_ends_the_chunk_stream_in_its_lane() {
+        let open = || Event::tool_call_chunk(Some("c1".into()), Some("search".into()), None);
+        let bare = || Event::tool_call_chunk(None, None, Some("{}".into()));
+
+        let mut filter = FilterToolCalls::deny(["nope"]);
+        assert_eq!(filter.transform(open()), [open()]);
+        assert_eq!(filter.transform(bare()), [bare()]);
+        assert_eq!(filter.transform(Event::tool_call_args("c9", "{}")), []);
+        assert_eq!(filter.transform(bare()), []);
+
+        // A chunk that names such a call takes up its stream, so the chunks
+        // with no id after it are its own, and not the call that passes.
+        let mut filter = FilterToolCalls::deny(["nope"]);
+        assert_eq!(filter.transform(open()), [open()]);
+        let unknown = Event::tool_call_chunk(Some("c9".into()), None, Some("{}".into()));
+        assert_eq!(filter.transform(unknown), []);
+        assert_eq!(filter.transform(bare()), []);
+    }
+
+    #[test]
+    fn a_restated_conversation_loses_only_what_the_filter_is_about() {
+        use crate::{AssistantMessage, ToolCall};
+
+        let untouched = [
+            // Neither content nor calls, and no filtered call was taken out
+            // of it: it stays as it is.
+            Message::Assistant(AssistantMessage {
+                id: "empty".into(),
+                ..Default::default()
+            }),
+            Message::Assistant(AssistantMessage {
+                id: "no-calls".into(),
+                tool_calls: Some(Vec::new()),
+                ..Default::default()
+            }),
+            Message::Assistant(AssistantMessage {
+                id: "public".into(),
+                tool_calls: Some(vec![ToolCall::new("c-public", "search", "{}")]),
+                ..Default::default()
+            }),
+            Message::tool("answer", "c-public", "1 hit"),
+        ];
+        let mut restated = untouched.to_vec();
+        restated.extend([
+            // Its content is all that is left of it.
+            Message::Assistant(AssistantMessage {
+                id: "says-and-calls".into(),
+                content: Some("One moment.".into()),
+                tool_calls: Some(vec![ToolCall::new("c-private", "nope", "{}")]),
+                ..Default::default()
+            }),
+            // Nothing is left of it: an empty content is no content.
+            Message::Assistant(AssistantMessage {
+                id: "only-calls".into(),
+                content: Some(String::new()),
+                encrypted_value: Some("opaque".into()),
+                tool_calls: Some(vec![ToolCall::new("c-private-2", "nope", "{}")]),
+                ..Default::default()
+            }),
+            Message::tool("hidden-answer", "c-private", "everything"),
+            // No call in the conversation, or before it, has this id.
+            Message::tool("orphan", "c-unheard-of", "whose result is this?"),
+        ]);
+
+        let mut filter = FilterToolCalls::deny(["nope"]);
+        let out = filter.transform(Event::messages_snapshot(restated));
+        let [Event::MessagesSnapshot(snapshot)] = out.as_slice() else {
+            panic!("the snapshot is kept: {out:?}");
+        };
+        let mut expected = untouched.to_vec();
+        expected.push(Message::assistant("says-and-calls", "One moment."));
+        assert_eq!(snapshot.messages, expected);
+
+        // The calls the snapshot carried were judged as it passed.
+        let answered = Event::tool_call_result("m1", "c-public", "again");
+        assert_eq!(filter.transform(answered.clone()), [answered]);
+        let hidden = Event::tool_call_result("m2", "c-private", "again");
+        assert_eq!(filter.transform(hidden), []);
+    }
+
+    /// What was sent names calls, which the filter learns, and leaves a
+    /// chunk stream open, which it does not take up: the earlier producer
+    /// may have had another stream open in that lane, one its filter
+    /// removed. A chunk that names the call takes it up.
+    #[test]
+    fn a_filter_learns_the_calls_that_were_sent_and_not_their_chunk_streams() {
+        let sent = [
+            Event::run_started("t", "r"),
+            Event::tool_call_start("c1", "search"),
+            Event::tool_call_args("c1", "{"),
+            Event::tool_call_chunk(Some("c2".into()), Some("lookup".into()), Some("{".into())),
+        ];
+        let bare = || Event::tool_call_chunk(None, None, Some("}".into()));
+        let named = || Event::tool_call_chunk(Some("c2".into()), None, Some("}".into()));
+        let args = || Event::tool_call_args("c1", "}");
+
+        let mut filter = FilterToolCalls::allow(["search", "lookup"]);
+        filter.replay(&sent);
+        assert_eq!(filter.transform(bare()), []);
+        assert_eq!(filter.transform(named()), [named()]);
+        assert_eq!(filter.transform(bare()), [bare()]);
+        assert_eq!(filter.transform(args()), [args()]);
+        // The explicit event ended the chunk stream in its lane: a chunk
+        // that names no id has nothing left to continue.
+        assert_eq!(filter.transform(bare()), []);
+
+        // Each call is judged by its own name.
+        let mut filter = FilterToolCalls::deny(["lookup"]);
+        filter.replay(&sent);
+        assert_eq!(filter.transform(named()), []);
+        assert_eq!(filter.transform(bare()), []);
+        assert_eq!(filter.transform(args()), [args()]);
+    }
+
+    #[test]
+    fn a_call_the_history_answered_is_not_waiting_for_a_result() {
+        use crate::{AssistantMessage, ToolCall};
+
+        let history = [
+            Message::Assistant(AssistantMessage {
+                id: "a0".into(),
+                tool_calls: Some(vec![
+                    ToolCall::new("answered", "load", "{}"),
+                    ToolCall::new("waiting", "load", "{}"),
+                    ToolCall::new("another-tool", "search", "{}"),
+                ]),
+                ..Default::default()
+            }),
+            Message::tool("t0", "answered", r#"{"a":0}"#),
+        ];
+        let mut promote = ToolResultToState::snapshot("load");
+        promote.seed(&history);
+        for (call, promoted) in [
+            ("answered", false),
+            ("another-tool", false),
+            ("waiting", true),
+        ] {
+            let result = Event::tool_call_result("m1", call, r#"{"a":1}"#);
+            let out = promote.transform(result);
+            assert_eq!(out.len(), if promoted { 2 } else { 1 }, "{call}");
+        }
+        // One result answers a call: a second is not promoted again.
+        let again = Event::tool_call_result("m2", "waiting", r#"{"a":2}"#);
+        assert_eq!(promote.transform(again).len(), 1);
+    }
+
+    #[test]
+    fn a_patch_with_a_malformed_pointer_is_not_promoted() {
+        let mut promote = ToolResultToState::delta("patch_state");
+        for (call, content) in [
+            ("c1", r#"[{"op":"add","path":"oops","value":1}]"#),
+            ("c2", r#"[{"op":"move","from":"oops","path":"/a"}]"#),
+            ("c3", r#"[{"op":"add","path":"/a/~2","value":1}]"#),
+        ] {
+            promote.transform(Event::tool_call_start(call, "patch_state"));
+            let result = Event::tool_call_result("m1", call, content);
+            assert_eq!(promote.transform(result.clone()), vec![result], "{content}");
+        }
+        // The root is a pointer, and so is an escaped segment.
+        promote.transform(Event::tool_call_start("c4", "patch_state"));
+        let content =
+            r#"[{"op":"add","path":"/a~1b","value":1},{"op":"test","path":"","value":{}}]"#;
+        let out = promote.transform(Event::tool_call_result("m1", "c4", content));
+        assert_eq!(out.len(), 2, "{out:?}");
     }
 
     #[test]

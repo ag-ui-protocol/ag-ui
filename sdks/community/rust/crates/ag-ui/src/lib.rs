@@ -5,10 +5,10 @@
 //! text and reasoning, calls tools, publishes state, and finishes — or pauses
 //! for human input.
 //!
-//! Imported for review as a proposed unified community Rust SDK. The event
-//! surface is checked against the TypeScript definitions in this checkout.
-//! See the Rust workspace's migration guide for differences from the previously published
-//! `ag-ui-core` and `ag-ui-client` packages.
+//! An independent SDK, not an official AG-UI project. The event surface is
+//! checked against a vendored copy of the AG-UI 1.0 JSON Schema. The
+//! `ag-ui-core` and `ag-ui-client` packages on crates.io are an earlier,
+//! unrelated SDK.
 //!
 //! # What is in the box
 //!
@@ -97,7 +97,8 @@
     not(feature = "sse"),
     doc = "- `sse` *(default, off in this build)* — `SseFormatter` and `text/event-stream` framing."
 )]
-//! - `protobuf` — the binary transport's media type and a documented stub; the
+//! - `protobuf` — a documented stub that names the binary media type and
+//!   encodes nothing. The stock TypeScript client asks for SSE; the
 //!   `encode::protobuf` module explains why there is no encoder.
 //! - `schemars` — derives `schemars::JsonSchema` on the public types.
 //! - `utoipa` — derives `utoipa::ToSchema` on the public types.
@@ -126,6 +127,9 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+// A library writes only to what its caller hands it. What it has to report
+// goes back through the API: a run's diagnostics, a hook, a return value.
+#![warn(clippy::print_stdout, clippy::print_stderr)]
 // Stamps "Available on crate feature X" on every gated item in the rendered
 // docs. Only ever set by docs.rs and the `cargo doc` recipe in CONTRIBUTING, so
 // it costs a stable build nothing.
@@ -159,6 +163,13 @@ mod serde_util;
 #[cfg(any(feature = "client", feature = "axum"))]
 mod protocol;
 
+// The protocol rules both runtimes enforce, each in one place: the order
+// events may arrive in, and what a `*_CHUNK` event stands for.
+#[cfg(any(feature = "client", all(feature = "server", feature = "verify")))]
+mod ordering;
+#[cfg(any(feature = "client", feature = "server"))]
+mod streams;
+
 #[cfg(any(feature = "sse", feature = "protobuf"))]
 pub mod encode;
 
@@ -170,13 +181,11 @@ pub mod encode;
 pub mod axum;
 #[cfg(feature = "client")]
 pub mod client;
-// Hidden visibility reconstructs previously published messages with the same
-// reducer as a client. A server-only build needs no transport or executor.
+// Hidden subagent streams reuse the message reducer without enabling client I/O.
 #[cfg(all(feature = "server", not(feature = "client")))]
 #[allow(dead_code)]
 mod client {
     pub(crate) mod apply;
-    pub(crate) mod chunks;
     mod error;
 }
 #[cfg(feature = "server")]
@@ -192,8 +201,11 @@ pub use capabilities::{
     AgentCapabilities, ExecutionCapabilities, HumanInTheLoopCapabilities, IdentityCapabilities,
     MultiAgentCapabilities, MultimodalCapabilities, MultimodalInputCapabilities,
     MultimodalOutputCapabilities, OutputCapabilities, ReasoningCapabilities, StateCapabilities,
-    SubAgentInfo, ToolsCapabilities, TransportCapabilities,
+    SubagentInfo, ToolsCapabilities, TransportCapabilities,
 };
+// The pre-1.0 spelling, kept as a deprecated alias.
+#[allow(deprecated)]
+pub use capabilities::SubAgentInfo;
 pub use context::Context;
 pub use error::{Error, Result};
 pub use event::{

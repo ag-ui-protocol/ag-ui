@@ -7,7 +7,9 @@ use std::sync::{
 };
 use std::task::Poll;
 
-use ag_ui::client::transport::{ReplayTransport, Transport, TransportFuture, boxed_stream};
+use ag_ui::client::transport::{
+    EventStream, ReplayTransport, Transport, TransportFuture, TransportStream,
+};
 use ag_ui::client::{Error, RunEnd, SubagentStatus, SubmissionStatus, Thread, Update};
 use ag_ui::{Event, Interrupt, Message, ResumeEntry, RunAgentInput, TextMessageRole};
 use futures_util::{
@@ -43,6 +45,55 @@ fn answers() -> Vec<ResumeEntry> {
         ResumeEntry::resolved("first", json!({"approved":true})),
         ResumeEntry::cancelled("second"),
     ]
+}
+
+#[tokio::test]
+async fn a_refused_request_says_what_is_outstanding_without_its_text_being_read() {
+    // Paused on two interrupts: a run that answers neither is refused.
+    let mut thread = Thread::new(script(pause()), "t");
+    thread.send("go").unwrap().collect_report().await;
+    for refused in [thread.send("again").err(), thread.run().err()] {
+        let Some(Error::PendingInterrupts(ids)) = refused else {
+            panic!("{refused:?}");
+        };
+        assert_eq!(ids, ["first", "second"]);
+    }
+    assert_eq!(
+        thread.send("again").unwrap_err().to_string(),
+        "request rejected: pending interrupts must be answered with resume_many"
+    );
+
+    // A tool call nobody answered: every way of starting a run names it.
+    let call = Message::Assistant(ag_ui::AssistantMessage {
+        id: "m-1".into(),
+        tool_calls: Some(vec![
+            ag_ui::ToolCall::new("call-1", "pick_file", "{}"),
+            ag_ui::ToolCall::new("call-2", "pick_file", "{}"),
+        ]),
+        ..Default::default()
+    });
+    let mut thread = Thread::<_>::builder(script(success()), "t")
+        .messages(vec![call])
+        .build()
+        .unwrap();
+    for refused in [
+        thread.send("go").err(),
+        thread.run().err(),
+        thread
+            .send_message(Message::tool("m-2", "call-1", "a.pdf"))
+            .err(),
+    ] {
+        match refused {
+            Some(Error::UnansweredToolCalls(ids)) => {
+                assert_eq!(ids.last().map(|id| id.as_str()), Some("call-2"))
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(
+        thread.send("go").unwrap_err().to_string(),
+        "request rejected: unanswered tool calls must be answered with tool messages, or abandoned, before another run: call-1, call-2"
+    );
 }
 
 #[tokio::test]
@@ -96,6 +147,46 @@ async fn a_thread_declares_its_version_unless_its_peer_is_pinned_as_legacy() {
             .as_deref(),
         Some("1.0")
     );
+}
+
+#[tokio::test]
+async fn context_and_forwarded_props_go_with_every_run_after_they_are_set_until_replaced() {
+    let transport = ReplayTransport::with_runs([success(), success(), success(), success()])
+        .matching_requests();
+    let mut thread = Thread::new(transport.clone(), "t");
+    thread.send("before").unwrap().collect_report().await;
+
+    let context = vec![ag_ui::Context::new("locale", "en-GB")];
+    let props = json!({ "tenant": "acme" });
+    thread.set_context(context.clone());
+    thread.set_forwarded_props(props.clone());
+    thread.send("set").unwrap().collect_report().await;
+    // Not set again: a later run sends the same.
+    thread.send("kept").unwrap().collect_report().await;
+
+    thread.set_context(Vec::<ag_ui::Context>::new());
+    thread.set_forwarded_props(serde_json::Value::Null);
+    thread.send("cleared").unwrap().collect_report().await;
+
+    let wire: Vec<_> = transport
+        .requests()
+        .iter()
+        .map(|request| serde_json::to_value(request).unwrap())
+        .collect();
+    let [before, set, kept, cleared] = wire.as_slice() else {
+        panic!("four runs, four requests: {wire:?}");
+    };
+    for request in [before, cleared] {
+        assert_eq!(request["context"], json!([]));
+        assert!(request.get("forwardedProps").is_none(), "{request}");
+    }
+    for request in [set, kept] {
+        assert_eq!(
+            request["context"],
+            json!([{"description": "locale", "value": "en-GB"}])
+        );
+        assert_eq!(request["forwardedProps"], props);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -225,78 +316,134 @@ async fn expiry_comes_from_stored_interrupt_not_a_forged_argument() {
     assert_eq!(thread.interrupts().len(), 1);
 }
 
-#[tokio::test]
-async fn expiry_preflight_handles_offsets_fractional_seconds_and_invalid_dates() {
-    for (timestamp, expected_error) in [
-        ("9999-12-31T23:59:59.999999999+09:00", None),
-        ("2999-01-01t00:00:00.123456789z", None),
-        ("2000-01-01T09:00:00+09:00", Some("expired")),
-        ("1969-12-31T23:59:59.999999999Z", Some("expired")),
-        ("2016-12-31T23:59:60Z", Some("expired")),
-        ("2017-01-01T08:59:60+09:00", Some("expired")),
-        ("2999-01-01T12:00:60Z", Some("invalid expiry timestamp")),
-        ("2999-02-30T00:00:00Z", Some("invalid expiry timestamp")),
-        ("2999-01-01T00:00:00", Some("invalid expiry timestamp")),
-        (
-            "Fri, 01 Jan 2999 00:00:00 GMT",
-            Some("invalid expiry timestamp"),
-        ),
-        (
-            "2999-01-01T00:00:00Z trailing",
-            Some("invalid expiry timestamp"),
-        ),
-    ] {
-        let mut interrupt = Interrupt::new("first", "approval");
-        interrupt.expires_at = Some(timestamp.into());
-        let transport = script([
+/// What resuming an interrupt with a given `expiresAt` does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Expiry {
+    /// The value names an instant that has passed: refused before dispatch.
+    Expired,
+    /// It names one still to come: sent, and nothing is said.
+    InTime,
+    /// It names no instant the thread reads: sent, with one warning.
+    Unread,
+}
+
+/// A thread paused on one interrupt with this `expiresAt`, and the transport
+/// that answers one more run with success.
+async fn paused_until(timestamp: &str) -> (Thread<ReplayTransport>, ReplayTransport, Interrupt) {
+    let mut interrupt = Interrupt::new("first", "approval");
+    interrupt.expires_at = Some(timestamp.into());
+    let transport = ReplayTransport::with_runs([
+        vec![
             Event::run_started("t", "r"),
             Event::run_finished_interrupt("t", "r", vec![interrupt.clone()]),
-        ]);
-        let mut thread = Thread::new(transport.clone(), "t");
-        thread.send("go").unwrap().collect_report().await;
+        ],
+        success(),
+    ])
+    .matching_requests();
+    let mut thread = Thread::new(transport.clone(), "t");
+    thread.send("go").unwrap().collect_report().await;
+    (thread, transport, interrupt)
+}
+
+/// AG-UI 1.0, `basic/patterns/interrupt-resume`: "`expiresAt` is deliberately
+/// format-unconstrained, so *whether* an interrupt has expired is the judging
+/// consumer's own reading of it — the reference reads it as a date and treats
+/// now-or-earlier as expired." And the schema: "a value that is not one
+/// leaves the interrupt looking permanently unexpired."
+///
+/// Before, every value below that is not RFC 3339 made `resume` refuse with
+/// "has an invalid expiry timestamp; it can only be declined".
+#[tokio::test]
+async fn an_interrupt_expires_only_by_a_value_that_names_an_instant() {
+    use Expiry::{Expired, InTime, Unread};
+    for (timestamp, expected) in [
+        // A date and time with its offset.
+        ("9999-12-31T23:59:59.999999999+09:00", InTime),
+        ("2999-01-01t00:00:00.123456789z", InTime),
+        ("2000-01-01T09:00:00+09:00", Expired),
+        ("2000-01-01T09:00:00.123456789+09:00", Expired),
+        ("1969-12-31T23:59:59.999999999Z", Expired),
+        ("2016-12-31T23:59:60Z", Expired),
+        ("2017-01-01T08:59:60+09:00", Expired),
+        // A date alone is the start of that day in UTC, as ECMAScript and so
+        // the reference client read it in every time zone.
+        ("2099-01-01", InTime),
+        ("2000-01-01", Expired),
+        // A date and time with no offset names a different instant in each
+        // zone, and the reference reads it in the viewer's: not read here,
+        // even when it is past everywhere.
+        ("2099-01-01T00:00:00", Unread),
+        ("2000-01-01T00:00:00", Unread),
+        // Not a date the thread reads at all.
+        ("20990101T000000Z", Unread),
+        ("4102444800000", Unread),
+        ("Fri, 01 Jan 2999 00:00:00 GMT", Unread),
+        ("2999-01-01T00:00:00Z trailing", Unread),
+        ("2999-01-01T12:00:60Z", Unread),
+        ("2000-02-30T00:00:00Z", Unread),
+        ("2000-02-30", Unread),
+        ("2000-1-1", Unread),
+        ("not-a-timestamp", Unread),
+    ] {
+        let (mut thread, transport, interrupt) = paused_until(timestamp).await;
         let before = thread.snapshot();
-        match expected_error {
-            Some(message) => assert!(
-                thread
-                    .resume(&interrupt, true)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(message),
-                "{timestamp}"
-            ),
-            None => drop(thread.resume(&interrupt, true).unwrap()),
+
+        if expected == Expired {
+            let refused = thread.resume(&interrupt, true).unwrap_err().to_string();
+            assert!(refused.contains("has expired"), "{timestamp}: {refused}");
+            assert_eq!(thread.snapshot(), before, "{timestamp}");
+            assert_eq!(transport.requests().len(), 1, "{timestamp}");
+            continue;
         }
+
+        // Preparing the request changes nothing and sends nothing.
+        drop(thread.resume(&interrupt, true).unwrap());
         assert_eq!(thread.snapshot(), before, "{timestamp}");
         assert_eq!(transport.requests().len(), 1, "{timestamp}");
+
+        let updates: Vec<_> = thread.resume(&interrupt, true).unwrap().collect().await;
+        assert!(
+            matches!(
+                updates.last(),
+                Some(Update::Done(RunEnd::Success { result: None }))
+            ),
+            "{timestamp}: {updates:?}"
+        );
+        let warnings: Vec<_> = updates
+            .iter()
+            .filter_map(|update| match update {
+                Update::Warning(warning) => Some(warning.as_str()),
+                _ => None,
+            })
+            .collect();
+        if expected == Unread {
+            assert_eq!(
+                warnings,
+                [format!(
+                    "interrupt \"first\" carries an expiresAt this thread does not read as a \
+                     date, \"{timestamp}\": the answer is sent as in time, and the agent decides \
+                     whether it is"
+                )],
+                "{timestamp}"
+            );
+            // It is the first thing the stream says, before any event.
+            assert!(matches!(updates[0], Update::Warning(_)), "{timestamp}");
+        } else {
+            assert!(warnings.is_empty(), "{timestamp}: {warnings:?}");
+        }
+        let sent = transport.last_request().unwrap().resume.unwrap();
+        assert_eq!(sent, [ResumeEntry::resolved("first", true)], "{timestamp}");
+        assert!(thread.interrupts().is_empty(), "{timestamp}");
     }
 }
 
 #[tokio::test]
-async fn expiry_rejects_invalid_and_offset_timestamps_before_dispatch() {
-    for (timestamp, expected) in [
-        ("2000-01-01T09:00:00.123456789+09:00", "expired"),
-        ("not-a-timestamp", "invalid expiry"),
-        ("2000-02-30T00:00:00Z", "invalid expiry"),
-    ] {
-        let mut interrupt = Interrupt::new("first", "approval");
-        interrupt.expires_at = Some(timestamp.into());
-        let transport = script([
-            Event::run_started("t", "r"),
-            Event::run_finished_interrupt("t", "r", vec![interrupt]),
-        ]);
-        let mut thread = Thread::new(transport.clone(), "t");
-        thread.send("go").unwrap().collect_report().await;
-        let before = thread.snapshot();
-        let pending = thread.interrupts()[0].clone();
-        assert!(
-            thread
-                .resume(&pending, true)
-                .unwrap_err()
-                .to_string()
-                .contains(expected)
-        );
-        assert_eq!(thread.snapshot(), before);
-        assert_eq!(transport.requests().len(), 1);
+async fn declining_says_nothing_about_an_expiry_whether_it_is_read_or_not() {
+    for timestamp in ["2000-01-01T00:00:00Z", "whenever"] {
+        let (mut thread, _, interrupt) = paused_until(timestamp).await;
+        let report = thread.decline(&interrupt).unwrap().collect_report().await;
+        assert_eq!(report.end, RunEnd::Success { result: None }, "{timestamp}");
+        assert!(report.diagnostics.is_empty(), "{timestamp}: {report:?}");
     }
 }
 
@@ -305,6 +452,12 @@ async fn lost_response_run_error_and_invalid_terminal_keep_unconfirmed_submissio
     let error_cases = [
         vec![Event::run_started("t", "r")],
         vec![Event::run_started("t", "r"), Event::run_error("failed")],
+        vec![Event::run_error("failed before the run began")],
+        vec![
+            Event::run_started("t", "r"),
+            Event::run_finished_success("t", "r"),
+            Event::run_error("failed after reporting success"),
+        ],
         vec![
             Event::run_started("t", "r"),
             Event::step_started("open"),
@@ -381,14 +534,47 @@ async fn a_terminal_for_another_request_never_confirms_submission_even_without_v
         thread.submission().unwrap().status,
         SubmissionStatus::Unconfirmed
     );
-    let mut wrong = Thread::new(ReplayTransport::new(success()), "t");
+
+    // A stream that carries another run only is a replay with nothing after
+    // it: it is read, and it does not answer the request.
+    let other = vec![
+        Event::run_started("t", "another-request"),
+        Event::run_finished_success("t", "another-request"),
+    ];
+    let mut wrong = Thread::new(ReplayTransport::with_runs([pause(), other]), "t");
+    wrong.set_verify(false);
+    wrong.set_next_run_id("r");
+    wrong.run().unwrap().collect_report().await;
     wrong.set_next_run_id("actual-request");
+    let report = wrong.resume_many(answers()).unwrap().collect_report().await;
+    assert!(matches!(report.end, RunEnd::Failed { .. }), "{report:?}");
+    assert_eq!(report.diagnostics.len(), 1, "{report:?}");
+    assert!(
+        report.diagnostics[0].message.contains(
+            r#"without the requested run: no RUN_STARTED carried run ID "actual-request""#
+        ),
+        "{report:?}"
+    );
+    assert_eq!(report.runs.len(), 1);
+    assert!(!report.runs[0].requested);
+    assert_eq!(report.runs[0].end, RunEnd::Success { result: None });
+    assert_eq!(
+        wrong.submission().unwrap().status,
+        SubmissionStatus::Unconfirmed
+    );
+    assert_eq!(wrong.interrupts().len(), answers().len());
+
+    // Another thread's run is not read at all.
+    let mut wrong = Thread::new(ReplayTransport::new(success()), "another-thread");
+    wrong.set_next_run_id("r");
     let report = wrong.send("wrong response").unwrap().collect_report().await;
     assert!(
         report.diagnostics[0]
             .message
-            .contains("requested thread and run IDs")
+            .contains("does not match the requested thread ID"),
+        "{report:?}"
     );
+    assert!(report.runs.is_empty());
 }
 
 #[tokio::test]
@@ -445,12 +631,14 @@ impl Transport for PendingTransport {
         } else {
             Box::pin(async move {
                 let start = Event::run_started(input.thread_id, input.run_id);
-                Ok(boxed_stream(futures_util::stream::iter([Ok(start)]).chain(
-                    futures_util::stream::poll_fn(move |_| {
-                        let _ = &guard;
-                        Poll::Pending
-                    }),
-                )))
+                Ok(TransportStream::typed(
+                    futures_util::stream::iter([Ok(start)]).chain(futures_util::stream::poll_fn(
+                        move |_| {
+                            let _ = &guard;
+                            Poll::Pending
+                        },
+                    )),
+                ))
             })
         }
     }
@@ -506,6 +694,10 @@ async fn terminal_application_wins_late_abort_and_old_handle_cannot_cancel_next_
     let abort = run.abort_handle();
     assert!(matches!(
         run.next().await,
+        Some(Update::RunEnded(run)) if run.requested && matches!(run.end, RunEnd::Success { .. })
+    ));
+    assert!(matches!(
+        run.next().await,
         Some(Update::Done(RunEnd::Success { .. }))
     ));
     abort.abort();
@@ -518,6 +710,86 @@ async fn terminal_application_wins_late_abort_and_old_handle_cannot_cancel_next_
         thread.send("second").unwrap().collect_report().await.end,
         RunEnd::Success { .. }
     ));
+}
+
+/// Reports success, then fails the connection or holds it open.
+struct AfterSuccess {
+    connection_fails: bool,
+}
+impl Transport for AfterSuccess {
+    fn run(&self, input: RunAgentInput) -> TransportFuture {
+        let events = [
+            Ok(Event::run_started(
+                input.thread_id.clone(),
+                input.run_id.clone(),
+            )),
+            Ok(Event::run_finished_success(input.thread_id, input.run_id)),
+        ];
+        let rest: EventStream = if self.connection_fails {
+            Box::pin(futures_util::stream::iter([Err(Error::Transport(
+                "connection reset".into(),
+            ))]))
+        } else {
+            Box::pin(futures_util::stream::pending())
+        };
+        Box::pin(async move {
+            Ok(TransportStream::typed(
+                futures_util::stream::iter(events).chain(rest),
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_reported_success_waits_for_the_stream_and_outlives_a_local_stop() {
+    use futures_util::FutureExt;
+    // A RUN_ERROR may still follow RUN_FINISHED, so the run is not over until
+    // the stream is. Stopping locally in that window keeps the outcome the
+    // server already reported, as stopping after `Done` does.
+    for drop_it in [false, true] {
+        let mut thread = Thread::new(
+            AfterSuccess {
+                connection_fails: false,
+            },
+            "t",
+        );
+        let mut run = thread.send("go").unwrap();
+        assert!(
+            run.next().now_or_never().is_none(),
+            "the run's end before the stream said what follows it"
+        );
+        if !drop_it {
+            run.abort();
+            assert!(matches!(
+                run.next().await,
+                Some(Update::RunEnded(run)) if matches!(run.end, RunEnd::Success { .. })
+            ));
+            assert!(matches!(
+                run.next().await,
+                Some(Update::Done(RunEnd::Success { .. }))
+            ));
+            assert!(run.next().await.is_none());
+        }
+        drop(run);
+        assert!(
+            matches!(thread.last_run_end(), Some(RunEnd::Success { .. })),
+            "{:?}",
+            thread.last_run_end()
+        );
+    }
+
+    // A connection that breaks after the run closed truncates nothing: the
+    // break is reported, and the run keeps its outcome.
+    let mut thread = Thread::new(
+        AfterSuccess {
+            connection_fails: true,
+        },
+        "t",
+    );
+    let report = thread.send("go").unwrap().collect_report().await;
+    assert!(matches!(report.end, RunEnd::Success { .. }), "{report:?}");
+    assert_eq!(report.diagnostics.len(), 1, "{report:?}");
+    assert_eq!(report.diagnostics[0].kind, "transport");
 }
 
 #[tokio::test]
@@ -573,7 +845,7 @@ async fn restored_ids_are_never_reused_and_malformed_snapshots_are_rejected() {
     assert!(restored.send("collision").is_err());
     assert_eq!(restored.messages(), thread.messages());
     let mut bad = snapshot.clone();
-    bad.version = 2;
+    bad.version = 3;
     assert!(Thread::<_>::restore(script([]), bad).is_err());
     let mut bad = snapshot.clone();
     bad.messages.push(bad.messages[0].clone());
@@ -653,10 +925,11 @@ async fn restored_legacy_reasoning_ids_do_not_overwrite_saved_reasoning() {
     ]);
     let mut restored = Thread::<_>::restore(transport, thread.snapshot()).unwrap();
     restored.run().unwrap().collect_report().await;
-    assert_eq!(restored.reasoning().len(), 2);
-    assert_ne!(restored.reasoning()[0].id, restored.reasoning()[1].id);
-    assert_eq!(restored.reasoning()[0].content, "original");
-    assert_eq!(restored.reasoning()[1].content, "next");
+    let reasoning: Vec<_> = restored.reasoning().collect();
+    assert_eq!(reasoning.len(), 2);
+    assert_ne!(reasoning[0].id, reasoning[1].id);
+    assert_eq!(reasoning[0].content, "original");
+    assert_eq!(reasoning[1].content, "next");
 }
 
 #[tokio::test]
@@ -694,7 +967,7 @@ async fn dropping_a_run_clears_open_text_and_reasoning_even_without_subagents() 
     let transport = script([
         Event::run_started("t", "r"),
         Event::text_message_start("partial-text", TextMessageRole::Assistant),
-        Event::reasoning_start("partial-reason"),
+        Event::reasoning_message_start("partial-reason"),
     ]);
     let mut thread = Thread::new(transport, "t");
     let mut run = thread.send("go").unwrap();

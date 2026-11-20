@@ -2,7 +2,7 @@
 //!
 //! The agent emits every family that has an emitter — reasoning, a tool call
 //! with its result, streamed assistant text, a state publish — all inside a
-//! step. The assertions are on what `ag-ui-client` assembled after the bytes
+//! step. The assertions are on what `ag_ui::client` assembled after the bytes
 //! came back off a socket, so a fault anywhere in SSE framing, event decoding
 //! or delta application lands here.
 
@@ -11,7 +11,10 @@ mod common;
 use ag_ui::client::transport::HttpTransport;
 use ag_ui::client::{RunEnd, Thread, Update};
 use ag_ui::server::{Agent, Result, RunContext};
-use ag_ui::{AssistantMessage, FunctionCall, Message, RunOutcome, ToolCall, ToolMessage};
+use ag_ui::{
+    AssistantMessage, FunctionCall, Message, ReasoningMessage, Role, RunOutcome, ToolCall,
+    ToolMessage,
+};
 use common::{serve, transport};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
@@ -120,6 +123,11 @@ async fn a_full_run_round_trips_into_the_conversation_the_agent_meant_to_have() 
     let run = "weather-run-1";
     let expected = vec![
         Message::user("weather-msg-1", "what is the weather in Seoul?"),
+        Message::Reasoning(ReasoningMessage {
+            id: format!("{run}-msg-1").into(),
+            content: THOUGHT.to_owned(),
+            ..Default::default()
+        }),
         Message::Assistant(AssistantMessage {
             id: format!("{run}-call-1-message").into(),
             content: None,
@@ -172,30 +180,46 @@ async fn the_state_the_client_ends_with_is_the_state_the_agent_published() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn reasoning_stays_out_of_the_transcript() {
+async fn reasoning_is_a_message_of_the_transcript_announced_on_its_own() {
     let (thread, updates) = run_once().await;
 
-    let reasoning = thread.reasoning();
+    // One message, where it arrived: after the user's turn, before the call
+    // it led to. The view over the list finds the same one.
+    let reasoning: Vec<_> = thread.reasoning().collect();
     assert_eq!(reasoning.len(), 1, "{reasoning:?}");
     assert_eq!(reasoning[0].id.as_str(), "weather-run-1-msg-1");
     assert_eq!(reasoning[0].content, THOUGHT);
+    assert_eq!(
+        thread.messages()[1],
+        Message::Reasoning(reasoning[0].clone())
+    );
 
+    // Nothing else holds the thought, so a view that leaves the role out
+    // draws the conversation without it.
     for message in thread.messages() {
-        assert!(
-            !format!("{message:?}").contains(THOUGHT),
-            "reasoning leaked into the transcript: {message:?}"
+        assert_eq!(
+            format!("{message:?}").contains(THOUGHT),
+            message.role() == Role::Reasoning,
+            "{message:?}"
         );
     }
 
-    // A view hears about it separately, and hears the whole of it.
-    let text: Vec<&str> = updates
+    // A view hears about it separately from the reply, hears the whole of it,
+    // and is told where in the list it is.
+    let heard: Vec<(usize, &str)> = updates
         .iter()
         .filter_map(|update| match update {
-            Update::Reasoning(update) => Some(update.text.as_str()),
+            Update::Reasoning(update) => Some((update.index, update.text.as_str())),
             _ => None,
         })
         .collect();
-    assert_eq!(text.last(), Some(&THOUGHT), "{text:?}");
+    assert_eq!(heard.last(), Some(&(1, THOUGHT)), "{heard:?}");
+    assert!(
+        !updates.iter().any(
+            |update| matches!(update, Update::Message(update) if update.message.role() == Role::Reasoning)
+        ),
+        "a reasoning message is not also announced as a message update"
+    );
 }
 
 /// The order a UI redraws in: nothing arrives before the thing it describes,
@@ -213,6 +237,7 @@ async fn updates_arrive_in_the_order_the_agent_emitted_them() {
             Update::Reasoning(_) => "reasoning",
             Update::Interrupt(_) => "interrupt",
             Update::Error(error) => panic!("a well-formed run produced {error}"),
+            Update::RunEnded(_) => "run ended",
             Update::Done(_) => "done",
             _ => "unrecognised",
         })
@@ -228,7 +253,7 @@ async fn updates_arrive_in_the_order_the_agent_emitted_them() {
     }
     assert_eq!(
         phases,
-        ["reasoning", "message", "state", "done"],
+        ["reasoning", "message", "state", "run ended", "done"],
         "{kinds:?}"
     );
 }

@@ -1,49 +1,26 @@
 # Import provenance
 
-The proposed `ag-ui` crate, drift tooling and selected deterministic E2E tests were
-imported from [KimSoungRyoul/ag-ui-rust](https://github.com/KimSoungRyoul/ag-ui-rust)
-at commit `43089f4cbf8566887daa5895f13728b4006f8321` (v0.4.2), under the MIT license.
-The original copyright notice is retained in `crates/ag-ui/LICENSE` and
-`LICENSE-ag-ui` for the imported tooling and tests.
+The feature-based `ag-ui` SDK originates in
+[KimSoungRyoul/ag-ui-rust](https://github.com/KimSoungRyoul/ag-ui-rust).
+The first import came from v0.4.2. The full runtime and protocol models for
+the 1.0.0 release match standalone commit
+`77061a66aba60e9d387aac77b65dcf2f87f7d03c`. The Git tree for
+`crates/ag-ui/src` is `6b9813f4d4e0ea88571b8d57dcf7718236c9cb82` in both
+workspaces. This update also synchronizes the AG-UI tests and deterministic
+examples, with the checkout-specific adaptations below.
+The MIT notice is included in `crates/ag-ui/LICENSE` and `LICENSE-ag-ui`.
 
-The AG-UI changes from public [PR #11](https://github.com/KimSoungRyoul/ag-ui-rust/pull/11),
-commit `515586d47162663ffbb55b58e7877536151fba25`, are also included. That PR was
-merged publicly as `d228b0467a29f4e631b0f9b30628ab09d78765ed`; it is not a new
-crate release. The semantic probe, 44-case interoperability suite and AG-UI-only
-JSON ordering regression were brought over without the A2UI or website changes.
+Both copies embed the frozen AG-UI 1.0 schema. This checkout reads the official
+fixtures and conformance streams from `spec/1.0/` directly. The Rust-only stream
+cases live in `crates/ag-ui/tests/fixtures/local/`. Cargo exercises the tests
+that read the monorepo’s fixtures in the workspace and omits those targets
+from the registry archive. The monorepo also runs its
+checkout-specific drift checker, TypeScript source interop suite and existing
+community crate tests. A2UI, live model tests, the standalone website and the
+standalone release workflow have separate ownership.
 
-The existing community SDK by @wdoppenberg and contributions by others is retained
-in `crates/ag-ui-core` and `crates/ag-ui-client`, unchanged from the upstream base.
-The proposal follows the coordination in upstream #2256/#972 and the standalone
-SDK's #10. It does not imply adoption, source removal, or package ownership changes.
-
-The import excludes `ag-ui-a2ui`, model-provider test helpers, live model tests,
-personal skills, website assets and the standalone publishing workflows. Integration changes
-adapt the manifests and documentation to this workspace, add a local-source
-protocol check, and verify the migration path without publishing any package.
-
-A monorepo-specific `publish-rust.yml` is proposed separately. It defaults to a
-manual dry run; its publishing job is restricted to `ag-ui-protocol/ag-ui` main
-and only uploads the `ag-ui` crate.
-
-The bounded HTTP error-body reader and three regression tests now match the
-standalone SDK's [PR #12](https://github.com/KimSoungRyoul/ag-ui-rust/pull/12), commit
-`638b4407722d432dcdeb38ee2f7b9740b650002a`. The cases cover an open-ended error body,
-small HTTP errors and truncation across a UTF-8 boundary.
-
-The framework-independent SSE encoder and Axum response ownership changes are
-adapted from standalone commit
-[`0b654e4`](https://github.com/KimSoungRyoul/ag-ui-rust/commit/0b654e406d8b3148fb5211ac5c6e08f8fe5544f3).
-They preserve the run-owned response path and make externally owned subscriptions
-stop on transport errors without reporting a new run outcome. The 1.0 protocol
-boundary and conformance fixtures are reviewed against this monorepo's
-`spec/1.0/schema.json` and `spec/1.0/conformance/`.
-
-The combined lockfile updates vulnerable/yanked `bytes`, `h2`, `rustls`,
-`rustls-webpki`, `slab` and `zerovec` dependencies within the existing manifest
-constraints. Existing package source and public APIs are retained.
-
-Legacy binary content conversion and its compatibility tests are narrowly adapted
-from standalone commit `5837d337a35a8efe5d43144c650866ed63474165`.
-Only the message conversion helpers and their incoming/outgoing boundary hooks
-are included; this checkout retains its Transport API and diagnostic behavior.
+The existing `ag-ui-core` and `ag-ui-client` packages carry the work of
+@wdoppenberg and other contributors. Their separate
+[1.0 parity proposal](https://github.com/ag-ui-protocol/ag-ui/pull/3214) and the
+[Rust code owners proposal](https://github.com/ag-ui-protocol/ag-ui/pull/2367)
+remain under upstream review.

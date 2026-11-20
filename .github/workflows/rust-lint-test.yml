@@ -121,7 +121,7 @@ jobs:
         run: npm test --prefix interop
       - name: Install pinned official-schema suite
         run: npm ci --ignore-scripts --prefix e2e/interop
-      - name: Pinned pre-1.0 TypeScript schema semantics
+      - name: Pinned AG-UI 1.0 TypeScript schema semantics
         run: npm test --prefix e2e/interop
 
   audit:

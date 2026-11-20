@@ -140,7 +140,10 @@ pub fn scan(dir: &Path, repo_root: &Path) -> Result<RustSurface, String> {
                     // exist. An enum with no readable variants at all is the
                     // macro-generated union, whose members come from the
                     // macro's table instead, so it still counts.
-                    if !members.is_empty() && !members.iter().any(|m| is_wire_tag(&m.tag)) {
+                    if item.name != "Event"
+                        && !members.is_empty()
+                        && !members.iter().any(|m| is_wire_tag(&m.tag))
+                    {
                         continue;
                     }
                     if let Some(previous) = tagged_enum.replace(item.name.clone()) {
@@ -150,7 +153,11 @@ pub fn scan(dir: &Path, repo_root: &Path) -> Result<RustSurface, String> {
                             item.name
                         ));
                     }
-                    variants.extend(members.into_iter().filter(|m| is_wire_tag(&m.tag)));
+                    variants.extend(
+                        members
+                            .into_iter()
+                            .filter(|m| item.name == "Event" || is_wire_tag(&m.tag)),
+                    );
                 }
                 ItemKind::Macro => variants.extend(parse_macro_table(&item.body, &rel)),
                 ItemKind::Other => {}
@@ -602,10 +609,7 @@ fn parse_variants(
             pos = line_end + 1;
             continue;
         }
-        // An explicit rename wins; otherwise apply the container rule to the
-        // variant name. Serde's own default is the bare variant name, but the
-        // AG-UI wire form is always SCREAMING_SNAKE, so that is what an
-        // unannotated variant is read as rather than reported as drift.
+        // Serde uses the variant identifier unless a rename rule says otherwise.
         let tag = args
             .iter()
             .find_map(|a| arg_value(a, "rename"))
@@ -614,7 +618,7 @@ fn parse_variants(
                 Some(rule) => {
                     apply_rename_all(&pascal_to_screaming_snake(&name).to_lowercase(), rule)
                 }
-                None => pascal_to_screaming_snake(&name),
+                None => name.clone(),
             });
 
         let after = line[name.len()..].trim_start();
@@ -795,6 +799,12 @@ fn container_rename_all(attrs: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unrenamed_event_variants_keep_their_serde_tag() {
+        let variants = parse_variants("RunError(RunErrorEvent),", None, None, "events.rs");
+        assert_eq!(variants[0].tag, "RunError");
+    }
 
     fn fields(surface: &RustSurface, tag: &str) -> Vec<RustField> {
         surface

@@ -210,29 +210,139 @@ fn an_activity_patch_may_replace_the_whole_document_with_another_object() {
 }
 
 #[test]
-fn an_activity_snapshot_can_merge_instead_of_replacing() {
-    let mut applier = Applier::new();
-    let mut first = ag_ui::JsonObject::new();
-    first.insert("query".into(), json!("weather"));
-    first.insert("hits".into(), json!(0));
-    applier
-        .apply(&Event::activity_snapshot("act-1", "web_search", first))
-        .expect("applies");
-
-    let mut second = ag_ui::JsonObject::new();
-    second.insert("hits".into(), json!(3));
-    applier
-        .apply(&Event::ActivitySnapshot(ag_ui::ActivitySnapshotEvent {
+fn an_activity_snapshot_with_replace_false_leaves_an_existing_activity_as_it_stands() {
+    // AG-UI 1.0: `replace: false` asks the consumer to leave the existing
+    // message alone, content and `activityType`; "it is not a merge". The
+    // snapshot's own values apply only when it creates the message.
+    let keep = |activity_type: &str, content: serde_json::Value| {
+        let serde_json::Value::Object(content) = content else {
+            unreachable!()
+        };
+        Event::ActivitySnapshot(ag_ui::ActivitySnapshotEvent {
             replace: false,
-            ..ag_ui::ActivitySnapshotEvent::new("act-1", "web_search", second)
-        }))
+            ..ag_ui::ActivitySnapshotEvent::new("act-1", activity_type, content)
+        })
+    };
+    let mut applier = Applier::new();
+    let created = applier
+        .apply(&keep(
+            "web_search",
+            json!({ "query": "weather", "hits": 0 }),
+        ))
         .expect("applies");
+    assert!(matches!(created, Changed::Message(_)));
+
+    let unchanged = applier
+        .apply(&keep("file_search", json!({ "hits": 3, "extra": true })))
+        .expect("applies");
+    assert_eq!(unchanged, Changed::Nothing);
 
     let ag_ui::Message::Activity(activity) = &applier.messages()[0] else {
         panic!("expected an activity message");
     };
-    assert_eq!(activity.content["query"], json!("weather"));
-    assert_eq!(activity.content["hits"], json!(3));
+    assert_eq!(applier.messages().len(), 1);
+    assert_eq!(activity.activity_type, "web_search");
+    assert_eq!(
+        serde_json::Value::Object(activity.content.clone()),
+        json!({ "query": "weather", "hits": 0 })
+    );
+}
+
+#[test]
+fn an_activity_delta_gives_the_activity_its_own_type() {
+    // AG-UI 1.0, `ACTIVITY_DELTA`: "The delta's `activityType` replaces the
+    // message's — a delta MAY retype the activity it amends".
+    let mut applier = Applier::new();
+    let mut content = ag_ui::JsonObject::new();
+    content.insert("found".into(), json!(0));
+    applier
+        .apply(&Event::activity_snapshot("act-1", "web_search", content))
+        .expect("applies");
+    let activity_type = |applier: &Applier| {
+        let ag_ui::Message::Activity(activity) = &applier.messages()[0] else {
+            panic!("expected an activity message");
+        };
+        (
+            activity.activity_type.clone(),
+            activity.content["found"].clone(),
+        )
+    };
+
+    applier
+        .apply(&Event::activity_delta(
+            "act-1",
+            "search_results",
+            vec![PatchOperation::replace("/found", json!(3))],
+        ))
+        .expect("applies");
+    assert_eq!(
+        activity_type(&applier),
+        ("search_results".to_owned(), json!(3))
+    );
+
+    // A patch that does not apply changes nothing, the type included.
+    applier
+        .apply(&Event::activity_delta(
+            "act-1",
+            "web_search",
+            vec![PatchOperation::replace("/absent", json!(1))],
+        ))
+        .expect_err("the path does not resolve");
+    assert_eq!(
+        activity_type(&applier),
+        ("search_results".to_owned(), json!(3))
+    );
+}
+
+#[test]
+fn an_activity_delta_with_no_activity_to_patch_is_skipped_and_reported() {
+    // AG-UI 1.0: a delta naming a message that does not exist, or one that is
+    // not an activity, is skipped with a warning. It creates nothing.
+    let mut applier = Applier::new();
+    applier
+        .apply(&Event::text_message_start(
+            "msg-1",
+            ag_ui::TextMessageRole::Assistant,
+        ))
+        .expect("applies");
+    let before = applier.messages().to_vec();
+
+    for target in ["never-created", "msg-1"] {
+        let error = applier
+            .apply(&Event::activity_delta(
+                target,
+                "web_search",
+                vec![PatchOperation::replace("/found", json!(3))],
+            ))
+            .expect_err("there is no activity to patch");
+        assert!(
+            matches!(&error, Error::Patch { target: named, .. } if *named == format!("activity {target}")),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("was skipped"), "{error}");
+        assert_eq!(applier.messages(), before, "{target}");
+    }
+}
+
+#[tokio::test]
+async fn a_thread_reports_a_skipped_activity_delta_without_failing_the_run() {
+    use ag_ui::client::RunEnd;
+    let transport = ReplayTransport::new([
+        Event::run_started("t", "r"),
+        Event::activity_delta(
+            "never-created",
+            "web_search",
+            vec![PatchOperation::replace("/found", json!(3))],
+        ),
+        Event::run_finished_success("t", "r"),
+    ])
+    .matching_requests();
+    let mut thread = Thread::new(transport, "t");
+    let report = thread.run().unwrap().collect_report().await;
+    assert_eq!(report.end, RunEnd::Success { result: None });
+    let kinds: Vec<_> = report.diagnostics.iter().map(|d| d.kind).collect();
+    assert_eq!(kinds, ["patch"], "{:?}", report.diagnostics);
+    assert!(thread.messages().is_empty());
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

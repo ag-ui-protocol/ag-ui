@@ -1,10 +1,12 @@
 //! What an agent is handed for one run.
 
+use std::collections::HashSet;
 use std::future::Future;
 
 use crate::{
     Context, Event, Message, MessageId, ResumeEntry, RunAgentInput, RunId, StepName, SubagentRunId,
-    SubagentStartedEvent, TextMessageRole, ThreadId, Tool, ToolCallId,
+    SubagentStartedEvent, TextMessageRole, ThreadId, TokenUsage, Tool, ToolCallId,
+    ToolCallStartEvent,
 };
 use futures_channel::mpsc;
 use futures_util::future::{Either, select};
@@ -44,9 +46,152 @@ pub struct RunContext<S> {
     input: RunAgentInput,
     state: RunState<S>,
     sink: EventSink,
-    next_message: u64,
-    next_tool_call: u64,
-    next_subagent: u64,
+    minted: Minted,
+    terminal: Terminal,
+}
+
+/// How many ids of each kind a run's contexts have handed out.
+///
+/// An id is the run id and a counter, so a context that continues a run
+/// counts on from where the earlier one stopped. A message id handed out
+/// twice does not start a second message: it re-opens the first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Minted {
+    messages: IdCounter,
+    tool_calls: IdCounter,
+    subagents: IdCounter,
+}
+
+/// The counter behind the ids of one kind.
+///
+/// The numbers a run already uses are not this crate's to choose. An id of
+/// the shape a context hands out can come from a request, which a run
+/// echoes, or from an agent that names its own ids. So the counter trusts
+/// none of them to be small: it never overflows, and it never hands out a
+/// number that was noted.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct IdCounter {
+    /// The last number handed out, or the highest that was noted.
+    last: u64,
+    /// Every number that was noted. Empty unless the context continues a
+    /// run: nothing is noted for a run that starts here.
+    taken: HashSet<u64>,
+}
+
+impl IdCounter {
+    /// Records a number an id of the run already carries.
+    fn note(&mut self, number: u64) {
+        self.taken.insert(number);
+        self.last = self.last.max(number);
+    }
+
+    /// The next number: one more than the last, and past every number that
+    /// was noted.
+    ///
+    /// A noted number can be the largest there is. The count then starts
+    /// again from 1 and passes over what was noted, where adding one more
+    /// would overflow, and saturating would hand the same number out twice.
+    /// The noted numbers are fewer than there are numbers, so there is
+    /// always a next one.
+    fn next(&mut self) -> u64 {
+        loop {
+            self.last = self.last.checked_add(1).unwrap_or(1);
+            if !self.taken.contains(&self.last) {
+                return self.last;
+            }
+        }
+    }
+}
+
+impl Minted {
+    /// Notes the ids `event` introduces, where they have the shape a context
+    /// of the run `run_id` hands out, so that the context counts on past them.
+    pub(crate) fn note(&mut self, run_id: &RunId, event: &Event) {
+        let prefix = id_prefix(run_id);
+        let past = |counter: &mut IdCounter, kind: &str, id: &str| {
+            let number = id
+                .strip_prefix(prefix)
+                .and_then(|rest| rest.strip_prefix(kind))
+                .and_then(|number| number.parse::<u64>().ok());
+            if let Some(number) = number {
+                counter.note(number);
+            }
+        };
+        // Attribution needs no `SUBAGENT_STARTED`, so a subagent id is in
+        // use wherever something is attributed to it.
+        if let Some(id) = event.subagent_run_id() {
+            past(&mut self.subagents, SUBAGENT_ID, id);
+        }
+        let mut message = |id: &MessageId| past(&mut self.messages, MESSAGE_ID, id);
+        let mut call = |id: &ToolCallId| past(&mut self.tool_calls, TOOL_CALL_ID, id);
+        let mut subagent = |id: &SubagentRunId| past(&mut self.subagents, SUBAGENT_ID, id);
+        // A restated conversation uses the ids of its messages, of the calls
+        // they carry and of the subagents they are attributed to, whether or
+        // not an event of this run introduced them.
+        let mut replayed = |messages: &[Message]| {
+            for replayed in messages {
+                message(replayed.id());
+                replayed
+                    .subagent_run_id()
+                    .into_iter()
+                    .for_each(&mut subagent);
+                if let Message::Assistant(assistant) = replayed {
+                    let calls = assistant.tool_calls.iter().flatten();
+                    calls.for_each(|carried| call(&carried.id));
+                }
+            }
+        };
+        match event {
+            Event::TextMessageStart(e) => message(&e.message_id),
+            Event::ReasoningStart(e) => message(&e.message_id),
+            Event::ReasoningMessageStart(e) => message(&e.message_id),
+            Event::ActivitySnapshot(e) => message(&e.message_id),
+            Event::ToolCallResult(e) => message(&e.message_id),
+            Event::TextMessageChunk(e) => e.message_id.iter().for_each(message),
+            Event::ReasoningMessageChunk(e) => e.message_id.iter().for_each(message),
+            Event::MessagesSnapshot(e) => replayed(&e.messages),
+            Event::RunStarted(e) => {
+                if let Some(input) = &e.input {
+                    replayed(&input.messages);
+                }
+            }
+            Event::ToolCallStart(e) => call(&e.tool_call_id),
+            Event::ToolCallChunk(e) => e.tool_call_id.iter().for_each(call),
+            _ => {}
+        }
+    }
+}
+
+/// What separates the run id from the counter in an id a context hands out.
+const MESSAGE_ID: &str = "-msg-";
+const TOOL_CALL_ID: &str = "-call-";
+const SUBAGENT_ID: &str = "-sub-";
+
+/// What the ids a context hands out begin with.
+fn id_prefix(run_id: &RunId) -> &str {
+    if run_id.is_empty() {
+        "run"
+    } else {
+        run_id.as_str()
+    }
+}
+
+/// What the agent asked the driver to put on the terminal event.
+#[derive(Debug, Default)]
+pub(crate) struct Terminal {
+    /// `RUN_FINISHED.result`.
+    pub(crate) result: Option<Value>,
+    /// One entry per model call, summed per `(provider, model)` at the end.
+    pub(crate) usage: Vec<TokenUsage>,
+}
+
+impl Terminal {
+    /// The `usage` list for a terminal event, or `None` when nothing was
+    /// reported.
+    pub(crate) fn usage(&self) -> Option<Vec<TokenUsage>> {
+        let usage = crate::aggregate_token_usage(&self.usage);
+        (!usage.is_empty()).then_some(usage)
+    }
 }
 
 impl<S: AgentState> RunContext<S> {
@@ -56,26 +201,39 @@ impl<S: AgentState> RunContext<S> {
     /// the run driver: call the agent's body, then assert on
     /// [`EventReceiver::drain`]. Nothing emits `RUN_STARTED` here — that is the
     /// driver's job, and skipping it lets a test exercise one method in
-    /// isolation.
+    /// isolation. The ordering verifier takes the run as started.
     pub fn new(input: RunAgentInput) -> Result<(Self, EventReceiver)> {
         let (tx, rx) = mpsc::unbounded();
-        let sink = EventSink::new(tx, TransformerChain::new(), CancellationToken::new());
+        let mut sink = EventSink::new(tx, TransformerChain::new(), CancellationToken::new());
+        // As the driver does, so an agent that answers a call from an earlier
+        // run behaves here as it will in a real one.
+        sink.seed(&input.messages);
+        sink.assume_run_started();
         let state = decode_state(&input.state)?;
-        Ok((Self::from_parts(input, state, sink), EventReceiver::new(rx)))
+        Ok((
+            Self::from_parts(input, state, sink, Minted::default()),
+            EventReceiver::new(rx),
+        ))
     }
 
     /// Assembles a context from an already-decoded state.
     ///
     /// The run driver decodes first so that a state that does not fit `S` is
-    /// reported through the sink it still owns, as a `RUN_ERROR`.
-    pub(crate) fn from_parts(input: RunAgentInput, state: S, sink: EventSink) -> Self {
+    /// reported through the sink it still owns, as a `RUN_ERROR`. `minted`
+    /// is where the run's ids stand: nothing handed out yet, unless this
+    /// context continues a run.
+    pub(crate) fn from_parts(
+        input: RunAgentInput,
+        state: S,
+        sink: EventSink,
+        minted: Minted,
+    ) -> Self {
         Self {
             input,
             state: RunState::new(state),
             sink,
-            next_message: 0,
-            next_tool_call: 0,
-            next_subagent: 0,
+            minted,
+            terminal: Terminal::default(),
         }
     }
 
@@ -237,9 +395,17 @@ impl<S> RunContext<S> {
         Ok(())
     }
 
-    /// A handle a transport can trip on client disconnect.
-    pub fn cancel_token(&self) -> CancellationToken {
+    /// A handle a transport can trip on client disconnect. The same token
+    /// [`Runner::cancellation_token`](crate::server::Runner::cancellation_token)
+    /// returns.
+    pub fn cancellation_token(&self) -> CancellationToken {
         self.sink.cancel_token().clone()
+    }
+
+    /// The old name of [`cancellation_token`](Self::cancellation_token).
+    #[deprecated(since = "0.5.0", note = "renamed to `cancellation_token`")]
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancellation_token()
     }
 
     /// Resolves once the run is cancelled.
@@ -290,6 +456,12 @@ impl<S> RunContext<S> {
         self.sink.emit(event)
     }
 
+    /// Emits a terminator, even after cancellation. Only the scope handles
+    /// call this, to close the step or subagent they opened.
+    pub(crate) fn emit_forced(&mut self, event: Event) -> Result<()> {
+        self.sink.emit_forced(event)
+    }
+
     /// A fresh message id, unique within the run.
     ///
     /// Derived from the run id and a counter rather than a UUID: the protocol
@@ -297,14 +469,16 @@ impl<S> RunContext<S> {
     /// deterministic id makes a recorded stream diffable. Pass your own id to
     /// [`message_with_id`](Self::message_with_id) when you need one.
     pub fn new_message_id(&mut self) -> MessageId {
-        self.next_message += 1;
-        MessageId::new(format!("{}-msg-{}", self.id_prefix(), self.next_message))
+        let number = self.minted.messages.next();
+        let prefix = id_prefix(&self.input.run_id);
+        MessageId::new(format!("{prefix}{MESSAGE_ID}{number}"))
     }
 
     /// A fresh tool call id, unique within the run.
     pub fn new_tool_call_id(&mut self) -> ToolCallId {
-        self.next_tool_call += 1;
-        ToolCallId::new(format!("{}-call-{}", self.id_prefix(), self.next_tool_call))
+        let number = self.minted.tool_calls.next();
+        let prefix = id_prefix(&self.input.run_id);
+        ToolCallId::new(format!("{prefix}{TOOL_CALL_ID}{number}"))
     }
 
     /// A fresh subagent invocation id, unique within the run.
@@ -314,8 +488,9 @@ impl<S> RunContext<S> {
     /// resuming run that continues a *suspended* subagent should reuse the
     /// suspended id instead — see [`subagent_with`](Self::subagent_with).
     pub fn new_subagent_run_id(&mut self) -> SubagentRunId {
-        self.next_subagent += 1;
-        SubagentRunId::new(format!("{}-sub-{}", self.id_prefix(), self.next_subagent))
+        let number = self.minted.subagents.next();
+        let prefix = id_prefix(&self.input.run_id);
+        SubagentRunId::new(format!("{prefix}{SUBAGENT_ID}{number}"))
     }
 
     /// The subagent everything emitted right now is attributed to — `None`
@@ -391,14 +566,6 @@ impl<S> RunContext<S> {
         SubagentHandle::start(self, started)
     }
 
-    fn id_prefix(&self) -> &str {
-        if self.input.run_id.is_empty() {
-            "run"
-        } else {
-            self.input.run_id.as_str()
-        }
-    }
-
     /// Opens an assistant message under a fresh id — `TEXT_MESSAGE_START`.
     pub fn assistant_message(&mut self) -> Result<MessageHandle<'_, S>> {
         self.message(TextMessageRole::Assistant)
@@ -466,16 +633,49 @@ impl<S> RunContext<S> {
         id: impl Into<ToolCallId>,
         name: &str,
     ) -> Result<ToolCallHandle<'_, S>> {
-        let id = id.into();
+        self.tool_call_with(ToolCallStartEvent::new(id, name))
+    }
+
+    /// Opens a call from a `TOOL_CALL_START` you built — for
+    /// `parentMessageId`, the assistant message that requested the call.
+    ///
+    /// ```
+    /// # use ag_ui::{Event, RunAgentInput, ToolCallStartEvent};
+    /// # use ag_ui::server::RunContext;
+    /// # let (mut ctx, mut events) = RunContext::<()>::new(RunAgentInput::new("t", "r"))?;
+    /// let message_id = ctx.say("Let me check the forecast.")?;
+    ///
+    /// let id = ctx.new_tool_call_id();
+    /// let start = ToolCallStartEvent::new(id, "get_weather").with_parent_message_id(message_id.clone());
+    /// ctx.tool_call_with(start)?.result("21 C")?;
+    ///
+    /// let Event::ToolCallStart(start) = &events.drain()[3] else { unreachable!() };
+    /// assert_eq!(start.parent_message_id.as_ref(), Some(&message_id));
+    /// # Ok::<(), ag_ui::server::Error>(())
+    /// ```
+    pub fn tool_call_with(&mut self, start: ToolCallStartEvent) -> Result<ToolCallHandle<'_, S>> {
         let result_message_id = self.new_message_id();
-        ToolCallHandle::start(
-            &mut self.sink,
-            &mut self.state,
-            id,
-            name,
-            None,
-            result_message_id,
-        )
+        ToolCallHandle::start(&mut self.sink, &mut self.state, start, result_message_id)
+    }
+
+    /// Sets the run's return value: the `result` of `RUN_FINISHED`.
+    ///
+    /// The driver writes it when the run finishes, whatever the outcome. A run
+    /// that ends in `RUN_ERROR` has no result. `Value::Null` clears it.
+    pub fn set_result(&mut self, result: impl Into<Value>) {
+        let result = result.into();
+        self.terminal.result = (!result.is_null()).then_some(result);
+    }
+
+    /// Records the token usage of one model call.
+    ///
+    /// The driver sums the entries per `(provider, model)` and reports them as
+    /// `usage` on the terminal event, `RUN_FINISHED` or `RUN_ERROR`. An entry
+    /// with no counts is ignored.
+    pub fn add_usage(&mut self, usage: TokenUsage) {
+        if usage.has_counts() {
+            self.terminal.usage.push(usage);
+        }
     }
 
     /// Opens a named step — `STEP_STARTED`.
@@ -492,9 +692,10 @@ impl<S> RunContext<S> {
     }
 
     /// Recovers the sink so the run driver can emit the terminal event through
-    /// the same transformers and the same verifier the agent used.
-    pub(crate) fn into_sink(self) -> EventSink {
-        self.sink
+    /// the same transformers and the same verifier the agent used, with what
+    /// the agent asked to have written on it.
+    pub(crate) fn into_parts(self) -> (EventSink, Terminal) {
+        (self.sink, self.terminal)
     }
 }
 
@@ -532,6 +733,55 @@ mod tests {
         assert_eq!(ctx.new_message_id().as_str(), "run-7-msg-1");
         assert_eq!(ctx.new_message_id().as_str(), "run-7-msg-2");
         assert_eq!(ctx.new_tool_call_id().as_str(), "run-7-call-1");
+    }
+
+    #[test]
+    fn a_counter_counts_on_from_the_highest_number_noted() {
+        let mut counter = IdCounter::default();
+        assert_eq!([counter.next(), counter.next()], [1, 2]);
+
+        let mut counter = IdCounter::default();
+        for noted in [3, 1, 7] {
+            counter.note(noted);
+        }
+        assert_eq!([counter.next(), counter.next()], [8, 9]);
+    }
+
+    #[test]
+    fn a_counter_never_overflows_and_never_repeats_a_number_that_was_noted() {
+        // The largest number there is cannot be counted past. The count
+        // starts again from 1, over what is in use.
+        let mut counter = IdCounter::default();
+        for noted in [1, 2, 4, u64::MAX] {
+            counter.note(noted);
+        }
+        assert_eq!([counter.next(), counter.next(), counter.next()], [3, 5, 6]);
+
+        // One short of it: the largest number is handed out, once, and the
+        // count starts again after it.
+        let mut counter = IdCounter::default();
+        counter.note(1);
+        counter.note(u64::MAX - 1);
+        assert_eq!([counter.next(), counter.next()], [u64::MAX, 2]);
+    }
+
+    #[test]
+    fn only_an_id_of_the_shape_a_context_hands_out_is_noted() {
+        let run_id = RunId::new("run-7");
+        let mut minted = Minted::default();
+        for id in [
+            "run-7-msg-12",
+            "run-7-msg-twelve",
+            "run-7-msg-",
+            "run-7-msg-99999999999999999999",
+            "run-8-msg-40",
+            "msg-40",
+        ] {
+            let start = Event::text_message_start(id, TextMessageRole::Assistant);
+            minted.note(&run_id, &start);
+        }
+        assert_eq!(minted.messages.next(), 13);
+        assert_eq!(minted.tool_calls.next(), 1);
     }
 
     #[test]
@@ -587,7 +837,7 @@ mod tests {
     #[test]
     fn a_cancelled_run_fails_every_emit() {
         let (mut ctx, _events) = context::<()>(RunAgentInput::new("t", "r"));
-        ctx.cancel_token().cancel();
+        ctx.cancellation_token().cancel();
         assert!(ctx.is_cancelled());
         let error = ctx.say("too late").expect_err("emit should fail");
         assert!(error.is_cancelled(), "{error}");

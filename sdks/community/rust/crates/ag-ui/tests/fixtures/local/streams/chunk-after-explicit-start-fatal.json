@@ -1,0 +1,46 @@
+{
+  "name": "chunk-after-explicit-start-fatal",
+  "area": "streaming",
+  "description": "the two spellings do not mix within one item: a message opened by TEXT_MESSAGE_START is continued explicitly, so a TEXT_MESSAGE_CHUNK naming its id is the first chunk of a new item under an id that is already open, and fatal. Local to this repository: the specification states the rule and the upstream corpus has no stream for it",
+  "specPage": "/spec/1.0/basic/patterns/streaming",
+  "kill": "let a chunk that names an explicitly opened message continue that message instead of opening the id again",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-chunk-after-start",
+      "runId": "chunk-after-start-r1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "chunk-after-start-m1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "chunk-after-start-m1",
+      "delta": "a"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "chunk-after-start-m1"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-chunk-after-start",
+      "runId": "chunk-after-start-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "A text message with ID 'chunk-after-start-m1' is already in progress",
+    "messageCount": 1,
+    "messages": [
+      {
+        "id": "chunk-after-start-m1",
+        "role": "assistant",
+        "content": ""
+      }
+    ]
+  }
+}

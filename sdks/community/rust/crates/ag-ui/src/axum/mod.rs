@@ -60,7 +60,7 @@
 //! |---|---|
 //! | A run, however it ends | `200`, `text/event-stream`, terminated by `RUN_FINISHED` or `RUN_ERROR` |
 //! | Body is not AG-UI JSON | `400` and a JSON message naming the field |
-//! | `Content-Type` is not JSON | `415` |
+//! | `Content-Type` is missing or not JSON | `415` — see [`AgUiInput`](extract::AgUiInput#the-content-type-is-required) |
 //! | Body over the body limit | `413` |
 //! | `Accept` excludes everything this build emits | `406` |
 //! | Any method but `POST` | `405`, from axum |
@@ -87,7 +87,8 @@
 //! itself if the run got to finish. An agent sees it through
 //! [`RunContext::is_cancelled`](crate::server::context::RunContext::is_cancelled),
 //! [`until_cancelled`](crate::server::context::RunContext::until_cancelled), or simply by
-//! using `?` on its emits — every emit after cancellation fails.
+//! using `?` on its emits — every emit after cancellation fails, except the
+//! terminators the handles close with on the way out.
 //!
 //! # Why there is no `AgUiLayer`
 //!

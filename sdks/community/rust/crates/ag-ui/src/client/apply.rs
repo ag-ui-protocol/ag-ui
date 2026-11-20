@@ -4,7 +4,8 @@
 //! opens, text arrives a fragment at a time, tool arguments accumulate as
 //! unparseable JSON fragments, state moves by RFC 6902 patch. [`Applier`] is the
 //! state machine that folds all of that back into something a UI can draw:
-//! a message list, a JSON state document, reasoning text, activities.
+//! a message list, reasoning and activities included, and a JSON state
+//! document.
 //!
 //! It is a plain synchronous struct. No async, no runtime, no I/O — feed it
 //! events from anywhere.
@@ -31,7 +32,8 @@
 //! assert_eq!(applier.text_of("msg-1"), Some("Hello, world"));
 //! # Ok(())
 //! # }
-//! # #[cfg(not(feature = "client"))] fn main() {}
+//! # #[cfg(not(feature = "client"))]
+//! # fn main() {}
 //! ```
 //!
 //! # What it does not do
@@ -41,21 +43,31 @@
 //! Catching the producer's mistake is [`crate::client::verify`]'s job, and
 //! [`crate::client::Thread`] runs both. The one thing the applier refuses to do
 //! quietly is corrupt state: a patch that does not apply is an error.
+//!
+//! It applies the explicit form of the protocol only. A `*_CHUNK` event
+//! stands for a start, content and an end that depend on what came before it,
+//! and a retired `THINKING_*` event for a `REASONING_*` one; expanding the
+//! first is [`crate::client::chunks`]'s job and translating the second is the
+//! compatibility boundary's
+//! ([`TransportStream::into_events`](crate::client::transport::TransportStream::into_events),
+//! [`enforce_events`](crate::client::transport::enforce_events)). Both run
+//! before the applier in a [`Thread`](crate::client::Thread). Handed one
+//! directly, [`Applier::apply`] returns [`Error::Unsupported`] and changes
+//! nothing.
 
-// The THINKING_* events are deprecated but still arrive on real streams, so
-// this module has to name them. Downstream users still get the warnings.
+// The THINKING_* events are deprecated, and this module has to name them to
+// refuse them. Downstream users still get the warnings.
 #![allow(deprecated)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     ActivityDeltaEvent, ActivityMessage, ActivitySnapshotEvent, AssistantMessage, DeveloperMessage,
     Event, InputContent, Interrupt, JsonObject, Message, MessageId, PatchOperation,
-    ReasoningEncryptedValueEvent, ReasoningEncryptedValueSubtype, ReasoningMessage,
-    ReasoningMessageChunkEvent, RunId, RunOutcome, SubagentErrorEvent, SubagentFinishedEvent,
-    SubagentOutcome, SubagentRunId, SubagentStartedEvent, SystemMessage, TextInputContent,
-    TextMessageChunkEvent, TextMessageRole, ThreadId, ToolCall, ToolCallChunkEvent, ToolCallId,
-    ToolContent, ToolMessage, UserContent, UserMessage,
+    ReasoningEncryptedValueEvent, ReasoningEncryptedValueSubtype, ReasoningMessage, RunId,
+    RunOutcome, SubagentErrorEvent, SubagentFinishedEvent, SubagentOutcome, SubagentRunId,
+    SubagentStartedEvent, SystemMessage, TextInputContent, TextMessageRole, ThreadId, ToolCall,
+    ToolCallId, ToolContent, ToolMessage, UserContent, UserMessage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -71,8 +83,9 @@ use crate::metadata::merge_metadata_into;
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Changed {
-    /// Nothing a view would redraw: `STEP_*`, `RAW`, `CUSTOM`, or an event
-    /// whose target does not exist.
+    /// Nothing a view would redraw: `STEP_*`, `RAW`, `CUSTOM`, a reasoning
+    /// span (`REASONING_START`, `REASONING_END`), or an event whose target
+    /// does not exist.
     Nothing,
     /// One message was created, appended to, or completed.
     Message(MessageChange),
@@ -81,8 +94,10 @@ pub enum Changed {
     MessagesReplaced,
     /// The application state was replaced or patched.
     State,
-    /// Reasoning content changed. Reasoning is kept out of [`Applier::messages`];
-    /// see [`Applier::reasoning`].
+    /// A `REASONING_MESSAGE_*` event created, appended to or completed a
+    /// message, or a reasoning message took an encrypted value. The message
+    /// is in [`Applier::messages`] like any other. The variant is its own so
+    /// that a view can draw reasoning apart from the reply, or leave it out.
     Reasoning(ReasoningChange),
     /// A subagent was announced, resumed, finished, suspended or failed. What
     /// it *produces* arrives as ordinary message and reasoning changes,
@@ -113,7 +128,37 @@ pub enum Changed {
 }
 
 /// Which message changed, and how.
+///
+/// `#[non_exhaustive]`: read the fields, match with `..`, and build one, to
+/// compare with what [`Applier::apply`] returned, with [`MessageChange::new`].
+///
+/// ```
+/// # #[cfg(feature = "client")]
+/// # fn main() -> Result<(), ag_ui::client::Error> {
+/// use ag_ui::client::apply::{Applier, Changed, MessageChange, MessageChangeKind};
+/// use ag_ui::{Event, TextMessageRole};
+///
+/// let mut applier = Applier::new();
+/// let started = applier.apply(&Event::text_message_start("m-1", TextMessageRole::Assistant))?;
+/// assert_eq!(
+///     started,
+///     Changed::Message(MessageChange::new(0, "m-1", MessageChangeKind::Started))
+/// );
+/// # Ok(())
+/// # }
+/// # #[cfg(not(feature = "client"))]
+/// # fn main() {}
+/// ```
+///
+/// A struct literal does not compile outside this crate:
+///
+/// ```compile_fail,E0639
+/// use ag_ui::client::apply::{MessageChange, MessageChangeKind};
+///
+/// let change = MessageChange { index: 0, id: "m-1".into(), kind: MessageChangeKind::Ended };
+/// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct MessageChange {
     /// Index into [`Applier::messages`].
     pub index: usize,
@@ -121,6 +166,18 @@ pub struct MessageChange {
     pub id: MessageId,
     /// What happened to it.
     pub kind: MessageChangeKind,
+}
+
+impl MessageChange {
+    /// A change of `kind` to the message `id`, at `index` of
+    /// [`Applier::messages`].
+    pub fn new(index: usize, id: impl Into<MessageId>, kind: MessageChangeKind) -> Self {
+        Self {
+            index,
+            id: id.into(),
+            kind,
+        }
+    }
 }
 
 /// What happened to a message.
@@ -176,22 +233,47 @@ pub enum MessageChangeKind {
 }
 
 /// Which reasoning message changed, and how.
+///
+/// `#[non_exhaustive]`: read the fields, match with `..`, and build one, to
+/// compare with what [`Applier::apply`] returned, with
+/// [`ReasoningChange::new`]. A struct literal does not compile outside this
+/// crate:
+///
+/// ```compile_fail,E0639
+/// use ag_ui::client::apply::{ReasoningChange, ReasoningChangeKind};
+///
+/// let change = ReasoningChange { index: 0, id: "r-1".into(), kind: ReasoningChangeKind::Ended };
+/// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ReasoningChange {
+    /// Index into [`Applier::messages`].
+    pub index: usize,
     /// The reasoning message's id.
     pub id: MessageId,
     /// What happened to it.
     pub kind: ReasoningChangeKind,
 }
 
+impl ReasoningChange {
+    /// A change of `kind` to the reasoning message `id`, at `index` of
+    /// [`Applier::messages`].
+    pub fn new(index: usize, id: impl Into<MessageId>, kind: ReasoningChangeKind) -> Self {
+        Self {
+            index,
+            id: id.into(),
+            kind,
+        }
+    }
+}
+
 /// What happened to a reasoning message.
 ///
-/// [`Started`](Self::Started) and [`Ended`](Self::Ended) arrive **once per id**.
-/// The protocol brackets a thought twice — `REASONING_START` opens the block and
-/// `REASONING_MESSAGE_START` the message inside it, both under the same id, and
-/// the two terminators close it the same way — but that is protocol framing, not
-/// two things happening. A consumer that prints a finished thought prints it
-/// once.
+/// The message is what `REASONING_MESSAGE_START`, `_CONTENT` and `_END`
+/// assemble. The span around it, `REASONING_START` to `REASONING_END`, opens
+/// no message and reports no change, whether or not it carries the message's
+/// id. So [`Started`](Self::Started) and [`Ended`](Self::Ended) arrive once
+/// per message, and a consumer that prints a finished thought prints it once.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ReasoningChangeKind {
@@ -217,6 +299,7 @@ pub enum ReasoningChangeKind {
 /// the reusable half, for display. Key transient UI by the id; persist
 /// nothing by it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Subagent {
     /// The invocation's id, as every event it produced carries it.
     pub run_id: SubagentRunId,
@@ -269,7 +352,19 @@ pub enum SubagentStatus {
 }
 
 /// Which subagent changed, and how.
+///
+/// `#[non_exhaustive]`: read the fields, match with `..`, and build one, to
+/// compare with what [`Applier::apply`] returned, with
+/// [`SubagentChange::new`]. A struct literal does not compile outside this
+/// crate:
+///
+/// ```compile_fail,E0639
+/// use ag_ui::client::apply::{SubagentChange, SubagentChangeKind};
+///
+/// let change = SubagentChange { index: 0, run_id: "s-1".into(), kind: SubagentChangeKind::Finished };
+/// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct SubagentChange {
     /// Index into [`Applier::subagents`].
     pub index: usize,
@@ -277,6 +372,18 @@ pub struct SubagentChange {
     pub run_id: SubagentRunId,
     /// What happened to it.
     pub kind: SubagentChangeKind,
+}
+
+impl SubagentChange {
+    /// A change of `kind` to the invocation `run_id`, at `index` of
+    /// [`Applier::subagents`].
+    pub fn new(index: usize, run_id: impl Into<SubagentRunId>, kind: SubagentChangeKind) -> Self {
+        Self {
+            index,
+            run_id: run_id.into(),
+            kind,
+        }
+    }
 }
 
 /// What happened to a subagent invocation.
@@ -298,6 +405,46 @@ pub enum SubagentChangeKind {
     Failed,
 }
 
+/// The ids one kind of stream has open, in the order they opened.
+///
+/// Kept by id, so that opening and closing one costs the same however many
+/// are open: a producer that opens messages and never closes them does not
+/// make each later event slower. The order is read only when a run stops.
+#[derive(Clone, Debug, Default)]
+struct Open {
+    /// Each open id, with its place in the order of opening.
+    opened: HashMap<MessageId, u64>,
+    /// The place the next one opened takes.
+    next: u64,
+}
+
+impl Open {
+    /// Opens `id`. One that is open already moves behind the others.
+    fn open(&mut self, id: MessageId) {
+        self.opened.insert(id, self.next);
+        self.next += 1;
+    }
+
+    fn close(&mut self, id: &MessageId) {
+        self.opened.remove(id);
+    }
+
+    fn contains(&self, id: &MessageId) -> bool {
+        self.opened.contains_key(id)
+    }
+
+    fn clear(&mut self) {
+        self.opened.clear();
+    }
+
+    /// The open ids, the one opened first first.
+    fn in_order(&self) -> Vec<&MessageId> {
+        let mut ids: Vec<_> = self.opened.iter().collect();
+        ids.sort_unstable_by_key(|(_, place)| **place);
+        ids.into_iter().map(|(id, _)| id).collect()
+    }
+}
+
 /// The materialised view of a run.
 ///
 /// See the [module docs](self) for the shape of the problem this solves.
@@ -307,25 +454,21 @@ pub struct Applier {
     by_id: HashMap<MessageId, usize>,
     /// Tool call id to the index of the assistant message that owns it.
     tool_calls: HashMap<ToolCallId, usize>,
-    /// Text messages open for content, with the subagent each belongs to —
-    /// several at once under concurrent subagents. What a chunk that names
-    /// no message is resolved against.
-    open_text: Vec<(Option<SubagentRunId>, MessageId)>,
+    /// Text messages open for content, in the order they opened — several at
+    /// once under concurrent subagents. What a run that stops reports as
+    /// aborted. An id stays here when a `MESSAGES_SNAPSHOT` removes its
+    /// message: the stream is still open, and has nowhere to write.
+    open_text: Open,
+    /// The same for reasoning messages: what `REASONING_MESSAGE_START` opened
+    /// and `REASONING_MESSAGE_END` has not closed.
+    open_reasoning: Open,
+    /// The owner the first `TEXT_MESSAGE_START` for an id gave it, where the
+    /// conversation held that id as a reasoning or an activity message, so
+    /// the text went into that message or nowhere. The ordering rules keep
+    /// text apart from reasoning and record that owner for the id as a text
+    /// message's, which is whose a tool call naming the id as its parent is.
+    claimed: HashMap<MessageId, Option<SubagentRunId>>,
     state: Value,
-    reasoning: Vec<ReasoningMessage>,
-    reasoning_by_id: HashMap<MessageId, usize>,
-    /// Reasoning ids started and not yet ended. What makes a thought report one
-    /// [`ReasoningChangeKind::Started`] and one [`ReasoningChangeKind::Ended`]
-    /// however many events the protocol brackets it with.
-    open_reasoning: HashSet<MessageId>,
-    /// The reasoning message the events that carry no id belong to — the
-    /// `THINKING_*` family and a `REASONING_MESSAGE_CHUNK` after the first.
-    current_reasoning: Option<MessageId>,
-    /// `THINKING_*` carries no message id, so ids are minted for it.
-    thinking_counter: u64,
-    /// Reasoning messages open for content, with the subagent each belongs
-    /// to — the reasoning counterpart of `open_text`, for the chunk shorthand.
-    reasoning_streams: Vec<(Option<SubagentRunId>, MessageId)>,
     thread_id: Option<ThreadId>,
     run_id: Option<RunId>,
     interrupts: Vec<Interrupt>,
@@ -350,14 +493,10 @@ impl Applier {
             messages: Vec::new(),
             by_id: HashMap::new(),
             tool_calls: HashMap::new(),
-            open_text: Vec::new(),
+            open_text: Open::default(),
+            open_reasoning: Open::default(),
+            claimed: HashMap::new(),
             state: Value::Object(JsonObject::new()),
-            reasoning: Vec::new(),
-            reasoning_by_id: HashMap::new(),
-            open_reasoning: HashSet::new(),
-            current_reasoning: None,
-            thinking_counter: 0,
-            reasoning_streams: Vec::new(),
             thread_id: None,
             run_id: None,
             interrupts: Vec::new(),
@@ -380,15 +519,18 @@ impl Applier {
         self
     }
 
-    /// The assembled conversation, oldest first.
+    /// The assembled conversation, oldest first: every role, reasoning and
+    /// activity included, each message where it arrived.
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
 
-    /// Text messages whose explicit or normalized end has not been delivered.
+    /// Material already delivered for a message that is still streaming.
     #[cfg(feature = "server")]
-    pub(crate) fn open_text_messages(&self) -> impl Iterator<Item = &Message> {
-        self.open_text.iter().filter_map(|(_, id)| self.message(id))
+    pub(crate) fn open_messages(&self) -> impl Iterator<Item = &Message> {
+        self.messages.iter().filter(|message| {
+            self.open_text.contains(message.id()) || self.open_reasoning.contains(message.id())
+        })
     }
 
     /// The message with this id, if the applier has seen one.
@@ -451,7 +593,8 @@ impl Applier {
     /// assert_eq!(applier.state_as::<Ui>()?.step, 2);
     /// # Ok(())
     /// # }
-    /// # #[cfg(not(feature = "client"))] fn main() {}
+    /// # #[cfg(not(feature = "client"))]
+    /// # fn main() {}
     /// ```
     pub fn state_as<T: for<'de> Deserialize<'de>>(&self) -> Result<T> {
         T::deserialize(&self.state).map_err(Error::State)
@@ -462,21 +605,26 @@ impl Applier {
         self.state = state.into();
     }
 
-    /// The reasoning messages, oldest first.
+    /// The reasoning messages of the conversation, oldest first.
     ///
-    /// Reasoning is deliberately not in [`Applier::messages`]: a UI shows it in
-    /// a separate pane, or not at all, and folding it into the transcript would
-    /// make "the assistant's reply" ambiguous.
-    pub fn reasoning(&self) -> &[ReasoningMessage] {
-        &self.reasoning
+    /// A view over [`Applier::messages`], not a second list: a reasoning
+    /// message is held there, where it arrived, and is sent back to the agent
+    /// with the rest. This is for a UI that shows reasoning in a pane of its
+    /// own.
+    pub fn reasoning(&self) -> impl Iterator<Item = &ReasoningMessage> {
+        self.messages.iter().filter_map(|message| match message {
+            Message::Reasoning(reasoning) => Some(reasoning),
+            _ => None,
+        })
     }
 
-    /// The accumulated reasoning text for one reasoning message.
+    /// The accumulated text of one reasoning message. `None` for an id that
+    /// names no message, or a message of another role.
     pub fn reasoning_text(&self, id: &MessageId) -> Option<&str> {
-        self.reasoning_by_id
-            .get(id)
-            .and_then(|index| self.reasoning.get(*index))
-            .map(|message| message.content.as_str())
+        match self.message(id)? {
+            Message::Reasoning(message) => Some(&message.content),
+            _ => None,
+        }
     }
 
     /// The thread of the run last seen on `RUN_STARTED`.
@@ -490,7 +638,8 @@ impl Applier {
     }
 
     /// The interrupts the last `RUN_FINISHED` paused on. Empty unless the run
-    /// is waiting for human input; cleared when the next run starts.
+    /// is waiting for human input; cleared when the next run starts, and by
+    /// `RUN_ERROR` — a failed run waits for nothing.
     pub fn interrupts(&self) -> &[Interrupt] {
         &self.interrupts
     }
@@ -529,10 +678,27 @@ impl Applier {
 
     /// Applies one event and reports what it changed.
     ///
-    /// Chunk events are accepted here as well as their expanded form, so an
-    /// applier driven directly from a raw stream still assembles correctly —
-    /// but [`crate::client::chunks`] is the place that turns them into the explicit
-    /// triples the rest of the protocol is written in.
+    /// An event the conversation has no place for changes nothing and is not
+    /// an error: [`Changed::Nothing`] is returned for text, reasoning or
+    /// tool-call arguments whose message or call the conversation does not
+    /// hold, or holds as an activity message, which takes no text. That is
+    /// what follows a `MESSAGES_SNAPSHOT` that removed a message or a call
+    /// the run still had open: the snapshot is the new baseline, and nothing
+    /// is made again from the rest of the item. A
+    /// [`Thread`](crate::client::Thread) reports each such item once per run,
+    /// as a warning.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Patch`] or [`Error::InvalidPatchDocument`] for a state or
+    /// activity patch that does not apply, [`Error::Protocol`] for a
+    /// `RUN_FINISHED` whose interrupt outcome carries no interrupt, and
+    /// [`Error::Unsupported`] for a
+    /// `*_CHUNK` or a retired `THINKING_*` event, which this applies only in
+    /// their explicit form. Run a raw stream through a
+    /// [`ChunkNormalizer`](crate::client::ChunkNormalizer) first, and read
+    /// one that may carry `THINKING_*` through the compatibility boundary;
+    /// see the [module docs](self).
     pub fn apply(&mut self, event: &Event) -> Result<Changed> {
         let changed = self.apply_inner(event)?;
         // Metadata folds into whatever the event built, once the event has
@@ -555,7 +721,6 @@ impl Applier {
                 self.text_content(&e.message_id, &e.delta, &e.subagent_run_id)
             }
             Event::TextMessageEnd(e) => Ok(self.text_end(&e.message_id)),
-            Event::TextMessageChunk(e) => self.text_chunk(e),
 
             Event::ToolCallStart(e) => Ok(self.tool_call_start(
                 e.tool_call_id.clone(),
@@ -565,7 +730,6 @@ impl Applier {
             )),
             Event::ToolCallArgs(e) => self.tool_call_args(&e.tool_call_id, &e.delta),
             Event::ToolCallEnd(e) => Ok(self.tool_call_end(&e.tool_call_id)),
-            Event::ToolCallChunk(e) => self.tool_call_chunk(e),
             Event::ToolCallResult(e) => Ok(self.tool_call_result(
                 e.message_id.clone(),
                 e.tool_call_id.clone(),
@@ -589,40 +753,39 @@ impl Applier {
             Event::ActivitySnapshot(e) => Ok(self.activity_snapshot(e)),
             Event::ActivityDelta(e) => self.activity_delta(e),
 
-            Event::ReasoningStart(e) => {
-                Ok(self.reasoning_start(e.message_id.clone(), e.subagent_run_id.clone()))
-            }
+            // A span opens no message, so it leaves nothing to draw: a
+            // reasoning message is in the conversation from its own start to
+            // its own end. A caller that wants the span reads these two
+            // events where it reads the stream.
+            Event::ReasoningStart(_) | Event::ReasoningEnd(_) => Ok(Changed::Nothing),
             Event::ReasoningMessageStart(e) => {
                 Ok(self.reasoning_start(e.message_id.clone(), e.subagent_run_id.clone()))
             }
             Event::ReasoningMessageContent(e) => {
-                Ok(self.reasoning_content(&e.message_id, &e.delta, &e.subagent_run_id))
+                self.reasoning_content(&e.message_id, &e.delta, &e.subagent_run_id)
             }
             Event::ReasoningMessageEnd(e) => Ok(self.reasoning_end(&e.message_id)),
-            Event::ReasoningEnd(e) => Ok(self.reasoning_end(&e.message_id)),
-            Event::ReasoningMessageChunk(e) => self.reasoning_chunk(e),
             Event::ReasoningEncryptedValue(e) => Ok(self.encrypted_value(e)),
 
-            // The THINKING_* family predates subagents and carries no
-            // attribution, so a thought it opens is the parent's.
-            Event::ThinkingStart(_) => {
-                let id = self.mint_thinking_id();
-                Ok(self.reasoning_start(id, None))
-            }
-            Event::ThinkingTextMessageStart(_) => {
-                let id = self.thinking_id();
-                Ok(self.reasoning_start(id, None))
-            }
-            Event::ThinkingTextMessageContent(e) => {
-                let id = self.thinking_id();
-                Ok(self.reasoning_content(&id, &e.delta, &None))
-            }
-            Event::ThinkingTextMessageEnd(_) | Event::ThinkingEnd(_) => {
-                Ok(match self.current_reasoning.clone() {
-                    Some(id) => self.reasoning_end(&id),
-                    None => Changed::Nothing,
-                })
-            }
+            // The two families that stand for other events. What a chunk
+            // continues, and which reasoning message a THINKING_* event
+            // belongs to, is decided before the applier, in one place each.
+            Event::TextMessageChunk(_)
+            | Event::ToolCallChunk(_)
+            | Event::ReasoningMessageChunk(_) => Err(Error::Unsupported(format!(
+                "{} is applied in its expanded form: run the stream through a \
+                 ChunkNormalizer first",
+                event.event_type()
+            ))),
+            Event::ThinkingStart(_)
+            | Event::ThinkingEnd(_)
+            | Event::ThinkingTextMessageStart(_)
+            | Event::ThinkingTextMessageContent(_)
+            | Event::ThinkingTextMessageEnd(_) => Err(Error::Unsupported(format!(
+                "{} is retired in AG-UI 1.0 and is applied as the REASONING_* event the \
+                 compatibility boundary translates it to",
+                event.event_type()
+            ))),
 
             Event::RunStarted(e) => {
                 self.thread_id = Some(e.thread_id.clone());
@@ -642,10 +805,15 @@ impl Applier {
                     result: e.result.clone(),
                 })
             }
-            Event::RunError(e) => Ok(Changed::RunError {
-                message: e.message.clone(),
-                code: e.code.clone(),
-            }),
+            // Even after RUN_FINISHED: a late failure fails the run that
+            // paused, so what it paused on is no longer asked.
+            Event::RunError(e) => {
+                self.interrupts.clear();
+                Ok(Changed::RunError {
+                    message: e.message.clone(),
+                    code: e.code.clone(),
+                })
+            }
 
             Event::StepStarted(_) | Event::StepFinished(_) | Event::Raw(_) | Event::Custom(_) => {
                 Ok(Changed::Nothing)
@@ -660,16 +828,9 @@ impl Applier {
     /// Restore materialized auxiliary state without reopening streaming parsers.
     pub(crate) fn restore_auxiliary(
         &mut self,
-        reasoning: Vec<ReasoningMessage>,
         subagents: Vec<Subagent>,
         interrupts: Vec<Interrupt>,
     ) {
-        self.reasoning_by_id = reasoning
-            .iter()
-            .enumerate()
-            .map(|(i, message)| (message.id.clone(), i))
-            .collect();
-        self.reasoning = reasoning;
         self.subagent_by_id = subagents
             .iter()
             .enumerate()
@@ -682,17 +843,17 @@ impl Applier {
     pub(crate) fn reset_streams(&mut self) {
         self.open_text.clear();
         self.open_reasoning.clear();
-        self.current_reasoning = None;
-        self.reasoning_streams.clear();
     }
 
     pub(crate) fn abort_messages(&mut self) -> (Vec<MessageChange>, Vec<ReasoningChange>) {
+        // One a snapshot removed while it was open has no message to report.
         let messages = self
             .open_text
-            .iter()
-            .filter_map(|(_, id)| {
-                self.by_id.get(id).map(|index| MessageChange {
-                    index: *index,
+            .in_order()
+            .into_iter()
+            .filter_map(|id| {
+                self.streamable(id).map(|index| MessageChange {
+                    index,
                     id: id.clone(),
                     kind: MessageChangeKind::Aborted,
                 })
@@ -700,10 +861,14 @@ impl Applier {
             .collect();
         let reasoning = self
             .open_reasoning
-            .iter()
-            .map(|id| ReasoningChange {
-                id: id.clone(),
-                kind: ReasoningChangeKind::Aborted,
+            .in_order()
+            .into_iter()
+            .filter_map(|id| {
+                self.streamable(id).map(|index| ReasoningChange {
+                    index,
+                    id: id.clone(),
+                    kind: ReasoningChangeKind::Aborted,
+                })
             })
             .collect();
         self.reset_streams();
@@ -743,9 +908,19 @@ impl Applier {
             }
         }
         self.messages = messages;
-        // A snapshot can drop a message that was being streamed into.
-        let by_id = &self.by_id;
-        self.open_text.retain(|(_, open)| by_id.contains_key(open));
+        // What is open stays open. AG-UI 1.0 (`basic/patterns/streaming`):
+        // the standalone events, `MESSAGES_SNAPSHOT` among them, "open and
+        // close no items of their own, and MAY appear anywhere within an
+        // open run". The events that follow for an open item apply to what
+        // the conversation now holds under its id, and to nothing when the
+        // snapshot removed it.
+    }
+
+    /// The index of the message with this id, when it can take streamed
+    /// text: any message but an activity, whose content is an object.
+    fn streamable(&self, id: &MessageId) -> Option<usize> {
+        let index = *self.by_id.get(id)?;
+        (!matches!(self.messages.get(index)?, Message::Activity(_))).then_some(index)
     }
 
     /// Folds a `MESSAGES_SNAPSHOT` into the conversation.
@@ -755,66 +930,78 @@ impl Applier {
     /// rebuilds the list by filtering the local one and appending whatever the
     /// snapshot adds. Three consequences, all of them load-bearing:
     ///
-    /// - the order the client already had wins for every id the snapshot also
-    ///   carries, so a backend that reorders its own history does not reshuffle
-    ///   the transcript under the user;
+    /// - a message the snapshot carries replaces the local one with the same
+    ///   id, in the place the local one had, so a backend that reorders its
+    ///   own history does not reshuffle the transcript under the user. One
+    ///   the client has not seen is appended, in snapshot order;
     /// - messages the snapshot leaves out are dropped — that is how a
     ///   summarizing backend deletes turns;
-    /// - except `activity`, which survives a snapshot that carries none.
-    ///   Activity never travels back to the backend, so one that does not track
-    ///   it *cannot* list it, and dropping the local copies would clear a pane
-    ///   of the UI on every snapshot. A snapshot that does carry activity is
-    ///   declaring the whole set, so an activity missing from it has been
-    ///   deleted; without that half, a client-side activity would be
-    ///   undeletable.
+    /// - except `activity` and `reasoning`, each of which survives a snapshot
+    ///   that carries none of its role. Activity never travels back to the
+    ///   backend and most backends do not track reasoning, so a backend that
+    ///   does not track a role *cannot* list it. Dropping the local copies
+    ///   would clear a pane of the UI on every snapshot, and take the
+    ///   reasoning out of the next request. A snapshot that does carry a role
+    ///   is declaring the whole set of it, so a message of that role missing
+    ///   from it has been deleted. Without that half a client-side activity
+    ///   would be undeletable, and a backend that restates reasoning under
+    ///   ids of its own would leave every thought in the list twice.
     ///
-    /// Upstream's rule has a fourth clause, for `reasoning`. It needs no
-    /// equivalent here: reasoning lives in [`Applier::reasoning`], not in
-    /// [`Applier::messages`], so a snapshot of the conversation cannot drop it.
+    /// A snapshot is the new baseline for what a run has open, too. It
+    /// closes nothing, and it is not merged with what was there: a message
+    /// being streamed into is replaced by the snapshot's copy or removed,
+    /// and a tool call the snapshot's copy of its message does not list is
+    /// gone. AG-UI 1.0 (`basic/patterns/snapshots`): "A consumer MUST
+    /// replace its copy with the snapshot's content — a snapshot is not a
+    /// merge"; and of what a snapshot leaves out (`events/reasoning`): "The
+    /// consumer's duty is to return what it holds once all events have
+    /// applied, not to resurrect what a snapshot removed."
+    ///
+    /// An id names one message (1.0, `basic`: "it MUST be unique within its
+    /// thread"), so of a snapshot that carries an id more than once the last
+    /// copy is kept, where the first stood.
     fn merge_snapshot(&mut self, snapshot: Vec<Message>) {
-        let snapshot_owns_activity = snapshot.iter().any(|m| matches!(m, Message::Activity(_)));
+        let owns_activity = snapshot.iter().any(|m| matches!(m, Message::Activity(_)));
+        let owns_reasoning = snapshot.iter().any(|m| matches!(m, Message::Reasoning(_)));
 
         // `Option` slots so a message can be moved out when it is placed, and
         // whatever is left over is exactly what the snapshot added.
-        let mut incoming: Vec<Option<Message>> = snapshot.into_iter().map(Some).collect();
-        let mut position: HashMap<MessageId, usize> = HashMap::with_capacity(incoming.len());
-        for (index, message) in incoming.iter().enumerate() {
-            let id = message.as_ref().expect("every slot starts full").id();
-            position.insert(id.clone(), index);
+        let mut incoming: Vec<Option<Message>> = Vec::with_capacity(snapshot.len());
+        let mut position: HashMap<MessageId, usize> = HashMap::with_capacity(snapshot.len());
+        for message in snapshot {
+            match position.get(message.id()) {
+                Some(first) => incoming[*first] = Some(message),
+                None => {
+                    position.insert(message.id().clone(), incoming.len());
+                    incoming.push(Some(message));
+                }
+            }
         }
 
         let previous = std::mem::take(&mut self.messages);
         let mut merged = Vec::with_capacity(previous.len().max(incoming.len()));
         for message in previous {
-            let keep_local = !snapshot_owns_activity && matches!(message, Message::Activity(_));
-            if let Some(index) = position.get(message.id()).copied() {
-                if keep_local {
-                    // Claim the slot so the snapshot's copy is not appended on
-                    // top of the local one further down.
-                    incoming[index] = None;
-                } else if let Some(replacement) = incoming[index].take() {
-                    merged.push(replacement);
-                    continue;
-                }
+            let restated = position
+                .get(message.id())
+                .and_then(|index| incoming[*index].take());
+            if let Some(replacement) = restated {
+                // By id alone: the snapshot's copy takes the place, whatever
+                // role either copy has.
+                merged.push(replacement);
+                continue;
             }
-            if keep_local {
+            let survives = match message {
+                Message::Activity(_) => !owns_activity,
+                Message::Reasoning(_) => !owns_reasoning,
+                _ => false,
+            };
+            if survives {
                 merged.push(message);
             }
         }
         merged.extend(incoming.into_iter().flatten());
 
         self.replace_messages(merged);
-    }
-
-    fn message_change(&self, id: &MessageId, kind: MessageChangeKind) -> Changed {
-        match self.by_id.get(id) {
-            Some(index) => Changed::Message(MessageChange {
-                index: *index,
-                id: id.clone(),
-                kind,
-            }),
-            None => Changed::Nothing,
-        }
     }
 
     fn text_start(
@@ -824,18 +1011,27 @@ impl Applier {
         name: Option<String>,
         owner: Option<SubagentRunId>,
     ) -> Changed {
-        self.open_text.retain(|(_, open)| open != &id);
-        self.open_text.push((owner.clone(), id.clone()));
-        if let Some(index) = self.by_id.get(&id) {
+        if let Some(held) = self.message(&id) {
+            if matches!(held, Message::Reasoning(_) | Message::Activity(_)) {
+                self.claimed.entry(id.clone()).or_insert(owner);
+            }
+            // An activity message has no text to append to, so the id opens
+            // nothing: its content is left as it is, as in the reference
+            // client.
+            let Some(index) = self.streamable(&id) else {
+                return Changed::Nothing;
+            };
+            self.open_text.open(id.clone());
             // Re-opening a known id keeps the message and appends to it, which
             // is what a producer that restarts a stream means — and keeps its
             // attribution, which the opener transferred once.
             return Changed::Message(MessageChange {
-                index: *index,
+                index,
                 id,
                 kind: MessageChangeKind::Started,
             });
         }
+        self.open_text.open(id.clone());
         // Attribution transfers to the message the event creates, so a
         // renderer can group a conversation by subagent without replaying
         // the stream.
@@ -856,16 +1052,20 @@ impl Applier {
         owner: &Option<SubagentRunId>,
     ) -> Result<Changed> {
         if !self.by_id.contains_key(id) {
+            // The message was open and a `MESSAGES_SNAPSHOT` removed it.
+            // Nothing is made again from the rest of it: the snapshot said
+            // the conversation does not hold it.
+            if self.open_text.contains(id) {
+                return Ok(Changed::Nothing);
+            }
             // Tolerant: an orphan content event opens the message it names.
             self.text_start(id.clone(), TextMessageRole::Assistant, None, owner.clone());
         }
-        let Some(index) = self.by_id.get(id).copied() else {
+        // An activity message under this id takes no text.
+        let Some(index) = self.streamable(id) else {
             return Ok(Changed::Nothing);
         };
-        let Some(message) = self.messages.get_mut(index) else {
-            return Ok(Changed::Nothing);
-        };
-        append_text(message, delta)?;
+        append_text(&mut self.messages[index], delta);
         Ok(Changed::Message(MessageChange {
             index,
             id: id.clone(),
@@ -876,39 +1076,14 @@ impl Applier {
     }
 
     fn text_end(&mut self, id: &MessageId) -> Changed {
-        self.open_text.retain(|(_, open)| open != id);
-        self.message_change(id, MessageChangeKind::Ended)
-    }
-
-    /// A `TEXT_MESSAGE_CHUNK` applied directly.
-    ///
-    /// Reachable only for a caller driving the applier itself: a
-    /// [`Thread`](crate::client::Thread) puts a
-    /// [`ChunkNormalizer`](crate::client::ChunkNormalizer) in front, which expands
-    /// chunks before they get here. The difference is that the normalizer also
-    /// synthesizes the *end* of a chunk stream; this does not, because an
-    /// applier never invents an event nobody sent.
-    fn text_chunk(&mut self, event: &TextMessageChunkEvent) -> Result<Changed> {
-        let id = match &event.message_id {
-            Some(id) => id.clone(),
-            None => resolve_open(
-                &self.open_text,
-                &event.subagent_run_id,
-                "TEXT_MESSAGE_CHUNK",
-                "message",
-            )?,
-        };
-        if !self.open_text.iter().any(|(_, open)| open == &id) {
-            self.text_start(
-                id.clone(),
-                event.role.unwrap_or_default(),
-                event.name.clone(),
-                event.subagent_run_id.clone(),
-            );
-        }
-        match &event.delta {
-            Some(delta) => self.text_content(&id, delta, &event.subagent_run_id),
-            None => Ok(self.message_change(&id, MessageChangeKind::Started)),
+        self.open_text.close(id);
+        match self.streamable(id) {
+            Some(index) => Changed::Message(MessageChange {
+                index,
+                id: id.clone(),
+                kind: MessageChangeKind::Ended,
+            }),
+            None => Changed::Nothing,
         }
     }
 
@@ -921,21 +1096,55 @@ impl Applier {
         parent_message_id: Option<MessageId>,
         owner: Option<SubagentRunId>,
     ) -> Changed {
-        // A call with no parent belongs to a message of its own; the call id is
-        // the only id available to name it. A message created here takes the
-        // call's attribution; one that already exists keeps its own.
-        let parent =
-            parent_message_id.unwrap_or_else(|| MessageId::new(format!("{tool_call_id}-message")));
-        let index = match self.by_id.get(&parent) {
+        // The message the call names carries it, when that is an assistant
+        // message, or none yet, which the call then opens. A message created
+        // here takes the call's attribution; one that already exists keeps
+        // its own.
+        let named = parent_message_id
+            .as_ref()
+            .and_then(|parent| self.by_id.get(parent).copied());
+        let carries =
+            |index: usize| matches!(self.messages.get(index), Some(Message::Assistant(_)));
+        let (carrier, owner) = match (parent_message_id, named) {
+            (Some(parent), Some(index)) if carries(index) => (parent, owner),
+            (Some(parent), None) => (parent, owner),
+            // A call with no parent belongs to a message of its own; the call
+            // id is the only id available to name it. So does one whose
+            // parent is not an assistant message and cannot carry a call: a
+            // reasoning message a reply shares its id with, say. The
+            // reference client does the same.
+            //
+            // Unattributed, such a call is whoever's the ordering rules make
+            // it: the owner they record for the parent as a text message.
+            // That is the named message's own, or, for an id the
+            // conversation holds as reasoning or activity, the owner the
+            // text start that shared it claimed. None claimed it: the parent
+            // agent's.
+            (parent, named) => {
+                let inherited = || {
+                    let held = self.messages.get(named?)?;
+                    match held {
+                        Message::Reasoning(_) | Message::Activity(_) => {
+                            self.claimed.get(parent.as_ref()?).cloned().flatten()
+                        }
+                        _ => held.subagent_run_id().cloned(),
+                    }
+                };
+                let owner = owner.or_else(inherited);
+                (MessageId::new(format!("{tool_call_id}-message")), owner)
+            }
+        };
+        let index = match self.by_id.get(&carrier) {
             Some(index) => *index,
             None => self.push_message(Message::Assistant(AssistantMessage {
-                id: parent.clone(),
+                id: carrier.clone(),
                 subagent_run_id: owner,
                 ..Default::default()
             })),
         };
-        // The parent may exist and not be an assistant message, in which case
-        // there is nowhere to hang the call and nothing changes.
+        // Even the message named after the call may exist and not be an
+        // assistant message, in which case there is nowhere to hang the call
+        // and nothing changes.
         let Some(Message::Assistant(assistant)) = self.messages.get_mut(index) else {
             return Changed::Nothing;
         };
@@ -946,16 +1155,18 @@ impl Applier {
         self.tool_calls.insert(tool_call_id.clone(), index);
         Changed::Message(MessageChange {
             index,
-            id: parent,
+            id: carrier,
             kind: MessageChangeKind::ToolCallStarted { tool_call_id, name },
         })
     }
 
     fn tool_call_args(&mut self, tool_call_id: &ToolCallId, delta: &str) -> Result<Changed> {
+        // No message holds the call: it was never started, its start had
+        // nowhere to put it, or a `MESSAGES_SNAPSHOT` since restated its
+        // message without it. The fragment is dropped, as in the reference
+        // client, and a `Thread` says so.
         let Some(index) = self.tool_calls.get(tool_call_id).copied() else {
-            return Err(Error::protocol(format!(
-                "TOOL_CALL_ARGS for unknown tool call {tool_call_id:?}"
-            )));
+            return Ok(Changed::Nothing);
         };
         let Some(Message::Assistant(assistant)) = self.messages.get_mut(index) else {
             return Ok(Changed::Nothing);
@@ -991,39 +1202,6 @@ impl Applier {
                 None => Changed::Nothing,
             },
             None => Changed::Nothing,
-        }
-    }
-
-    fn tool_call_chunk(&mut self, event: &ToolCallChunkEvent) -> Result<Changed> {
-        let known = event
-            .tool_call_id
-            .as_ref()
-            .is_some_and(|id| self.tool_calls.contains_key(id));
-        match (&event.tool_call_id, known) {
-            (Some(id), false) => {
-                let Some(name) = event.tool_call_name.clone() else {
-                    return Err(Error::protocol(format!(
-                        "TOOL_CALL_CHUNK opens tool call {id:?} without a toolCallName"
-                    )));
-                };
-                let started = self.tool_call_start(
-                    id.clone(),
-                    name,
-                    event.parent_message_id.clone(),
-                    event.subagent_run_id.clone(),
-                );
-                match &event.delta {
-                    Some(delta) => self.tool_call_args(id, delta),
-                    None => Ok(started),
-                }
-            }
-            (Some(id), true) => match &event.delta {
-                Some(delta) => self.tool_call_args(id, delta),
-                None => Ok(self.tool_call_end(id)),
-            },
-            (None, _) => Err(Error::protocol(
-                "TOOL_CALL_CHUNK carries no toolCallId and no call is open",
-            )),
         }
     }
 
@@ -1063,28 +1241,37 @@ impl Applier {
     // ---- activities -----------------------------------------------------
 
     fn activity_snapshot(&mut self, event: &ActivitySnapshotEvent) -> Changed {
-        let is_new = !self.by_id.contains_key(&event.message_id);
-        let index = self.activity_index(&event.message_id, &event.activity_type);
+        let index = match self.by_id.get(&event.message_id).copied() {
+            Some(index) => index,
+            // A snapshot for an id not seen yet creates the activity, in
+            // sequence position, whatever `replace` says.
+            None => {
+                let index = self.push_message(Message::Activity(ActivityMessage {
+                    id: event.message_id.clone(),
+                    activity_type: event.activity_type.clone(),
+                    content: event.content.clone(),
+                    subagent_run_id: event.subagent_run_id.clone(),
+                    ..Default::default()
+                }));
+                return Changed::Message(MessageChange {
+                    index,
+                    id: event.message_id.clone(),
+                    kind: MessageChangeKind::Activity,
+                });
+            }
+        };
+        // `replace: false` leaves an existing activity as it stands: content,
+        // `activityType` and owner. It is not a merge.
+        if !event.replace {
+            return Changed::Nothing;
+        }
+        // A replacing snapshot re-mints the activity, attribution included:
+        // one that carries none takes the activity back for the parent.
+        // Metadata is not content, and keeps merging.
         if let Some(Message::Activity(activity)) = self.messages.get_mut(index) {
             activity.activity_type = event.activity_type.clone();
-            // A replacing snapshot re-mints the activity, attribution
-            // included: one that carries none takes the activity back for
-            // the parent. A merge leaves the message where it was, and the
-            // verifier holds a following delta to that owner.
-            if is_new || event.replace {
-                activity.subagent_run_id = event.subagent_run_id.clone();
-            }
-            if event.replace {
-                activity.content = event.content.clone();
-            } else {
-                // `replace: false` is a merge, and RFC 7396 is the merge the
-                // protocol's sibling patch format defines.
-                let mut merged = Value::Object(std::mem::take(&mut activity.content));
-                json_patch::merge(&mut merged, &Value::Object(event.content.clone()));
-                if let Value::Object(object) = merged {
-                    activity.content = object;
-                }
-            }
+            activity.subagent_run_id = event.subagent_run_id.clone();
+            activity.content = event.content.clone();
         }
         Changed::Message(MessageChange {
             index,
@@ -1093,28 +1280,43 @@ impl Applier {
         })
     }
 
+    /// Patches an activity's content and gives it the delta's `activityType`.
+    /// A delta whose target does not exist, or is not an activity, is
+    /// skipped: the error says so, nothing is created, and a `Thread` reports
+    /// it without failing the run. A patch that does not apply changes nothing.
     fn activity_delta(&mut self, event: &ActivityDeltaEvent) -> Result<Changed> {
-        let index = self.activity_index(&event.message_id, &event.activity_type);
-        if let Some(Message::Activity(activity)) = self.messages.get_mut(index) {
-            let what = format!("activity {}", event.message_id);
-            // Patched on a copy, and committed only once the result is still an
-            // object. An activity's content is an object by definition, so a
-            // whole-document operation — `{"op":"replace","path":"","value":7}`
-            // — has nowhere to land; taking the content out first would leave
-            // the activity holding nothing at all.
-            let mut content = Value::Object(activity.content.clone());
-            apply_patch(&mut content, &event.patch, &what)?;
-            let Value::Object(object) = content else {
-                return Err(Error::Patch {
-                    target: what,
-                    message: format!(
-                        "patch replaced the whole activity with {}, which is not an object",
-                        kind_of(&content)
-                    ),
-                });
-            };
-            activity.content = object;
-        }
+        let what = format!("activity {}", event.message_id);
+        let index = self.by_id.get(&event.message_id).copied();
+        let Some((index, Message::Activity(activity))) =
+            index.and_then(|index| Some((index, self.messages.get_mut(index)?)))
+        else {
+            return Err(Error::Patch {
+                target: what,
+                message: "no activity message has this id, so the delta was skipped; an \
+                          ACTIVITY_SNAPSHOT has to create it first"
+                    .to_owned(),
+            });
+        };
+        // Patched on a copy, and committed only once the result is still an
+        // object. An activity's content is an object by definition, so a
+        // whole-document operation — `{"op":"replace","path":"","value":7}`
+        // — has nowhere to land; taking the content out first would leave
+        // the activity holding nothing at all.
+        let mut content = Value::Object(activity.content.clone());
+        apply_patch(&mut content, &event.patch, &what)?;
+        let Value::Object(object) = content else {
+            return Err(Error::Patch {
+                target: what,
+                message: format!(
+                    "patch replaced the whole activity with {}, which is not an object",
+                    kind_of(&content)
+                ),
+            });
+        };
+        activity.content = object;
+        // The delta's type replaces the message's: a delta may retype the
+        // activity it amends.
+        activity.activity_type = event.activity_type.clone();
         Ok(Changed::Message(MessageChange {
             index,
             id: event.message_id.clone(),
@@ -1122,74 +1324,37 @@ impl Applier {
         }))
     }
 
-    /// The index of the activity message with this id, creating it if the
-    /// producer patched an activity it never published.
-    fn activity_index(&mut self, id: &MessageId, activity_type: &str) -> usize {
-        match self.by_id.get(id).copied() {
-            Some(index) => index,
-            None => self.push_message(Message::Activity(ActivityMessage {
-                id: id.clone(),
-                activity_type: activity_type.to_owned(),
-                content: JsonObject::new(),
-                ..Default::default()
-            })),
-        }
-    }
-
     // ---- reasoning ------------------------------------------------------
 
-    /// Opens a reasoning message, or reports nothing when it is already open.
+    /// Opens the reasoning message a `REASONING_MESSAGE_START` names: a
+    /// message of the conversation, appended where it arrives.
     ///
-    /// `REASONING_START` and `REASONING_MESSAGE_START` both land here under the
-    /// same id — the block and the message inside it — and so does the
-    /// `THINKING_*` pair. Only the first of them starts anything.
+    /// A message id is unique within its thread. So an id the conversation
+    /// already holds continues that message, whatever its role, as a
+    /// `TEXT_MESSAGE_START` for a known id does and as the reference client
+    /// does. Nothing is created beside it.
     fn reasoning_start(&mut self, id: MessageId, owner: Option<SubagentRunId>) -> Changed {
-        self.current_reasoning = Some(id.clone());
-        self.reasoning_streams.retain(|(_, open)| open != &id);
-        self.reasoning_streams.push((owner.clone(), id.clone()));
-        if !self.reasoning_by_id.contains_key(&id) {
-            self.reasoning_by_id
-                .insert(id.clone(), self.reasoning.len());
-            self.reasoning.push(ReasoningMessage {
+        let index = if self.by_id.contains_key(&id) {
+            // An activity message has no text, so the id opens nothing.
+            let Some(index) = self.streamable(&id) else {
+                return Changed::Nothing;
+            };
+            index
+        } else {
+            // Attribution transfers to the message the event creates, as it
+            // does for text.
+            self.push_message(Message::Reasoning(ReasoningMessage {
                 id: id.clone(),
                 subagent_run_id: owner,
                 ..Default::default()
-            });
-        }
-        if !self.open_reasoning.insert(id.clone()) {
-            return Changed::Nothing;
-        }
+            }))
+        };
+        self.open_reasoning.open(id.clone());
         Changed::Reasoning(ReasoningChange {
+            index,
             id,
             kind: ReasoningChangeKind::Started,
         })
-    }
-
-    /// A fresh id for a `THINKING_*` block.
-    ///
-    /// Those events carry no `messageId` at all, so the applier has to invent
-    /// one — and it has to be the same one for the whole block, which is what
-    /// [`Applier::thinking_id`] is for.
-    fn mint_thinking_id(&mut self) -> MessageId {
-        loop {
-            self.thinking_counter += 1;
-            let id = MessageId::new(format!("thinking-{}", self.thinking_counter));
-            if !self.reasoning_by_id.contains_key(&id) {
-                return id;
-            }
-        }
-    }
-
-    /// The id a `THINKING_*` event belongs to, minting one when the producer
-    /// sent content before its `THINKING_START`.
-    ///
-    /// Only resolves the id; opening it is the caller's, so that the caller can
-    /// report whether the open was the one that started the thought.
-    fn thinking_id(&mut self) -> MessageId {
-        match self.current_reasoning.clone() {
-            Some(id) => id,
-            None => self.mint_thinking_id(),
-        }
     }
 
     fn reasoning_content(
@@ -1197,67 +1362,40 @@ impl Applier {
         id: &MessageId,
         delta: &str,
         owner: &Option<SubagentRunId>,
-    ) -> Changed {
-        if !self.reasoning_by_id.contains_key(id) {
+    ) -> Result<Changed> {
+        if !self.by_id.contains_key(id) {
+            // Open, and removed by a `MESSAGES_SNAPSHOT`: as for text,
+            // nothing is made again from the rest of it.
+            if self.open_reasoning.contains(id) {
+                return Ok(Changed::Nothing);
+            }
+            // Tolerant: an orphan content event opens the message it names.
             self.reasoning_start(id.clone(), owner.clone());
         }
-        if let Some(message) = self
-            .reasoning_by_id
-            .get(id)
-            .and_then(|index| self.reasoning.get_mut(*index))
-        {
-            message.content.push_str(delta);
-        }
-        Changed::Reasoning(ReasoningChange {
+        // An activity message under this id takes no text.
+        let Some(index) = self.streamable(id) else {
+            return Ok(Changed::Nothing);
+        };
+        append_text(&mut self.messages[index], delta);
+        Ok(Changed::Reasoning(ReasoningChange {
+            index,
             id: id.clone(),
             kind: ReasoningChangeKind::Content {
                 delta: delta.to_owned(),
             },
-        })
+        }))
     }
 
-    /// A `REASONING_MESSAGE_CHUNK` applied directly. See
-    /// [`Applier::text_chunk`] for when that happens.
-    fn reasoning_chunk(&mut self, event: &ReasoningMessageChunkEvent) -> Result<Changed> {
-        let id = match &event.message_id {
-            Some(id) => id.clone(),
-            None => resolve_open(
-                &self.reasoning_streams,
-                &event.subagent_run_id,
-                "REASONING_MESSAGE_CHUNK",
-                "reasoning message",
-            )?,
-        };
-        let started = if self.open_reasoning.contains(&id) {
-            Changed::Nothing
-        } else {
-            self.reasoning_start(id.clone(), event.subagent_run_id.clone())
-        };
-        Ok(match &event.delta {
-            Some(delta) => self.reasoning_content(&id, delta, &event.subagent_run_id),
-            // A chunk with no delta only opens, so it reports whatever the open
-            // did — nothing at all when the message was already open.
-            None => started,
-        })
-    }
-
-    /// Closes a reasoning message, or reports nothing when it is already closed.
-    ///
-    /// The mirror of [`Applier::reasoning_start`]: `REASONING_MESSAGE_END` and
-    /// `REASONING_END` are two events closing one thought, and a consumer that
-    /// prints a finished thought has to see it finish once.
     fn reasoning_end(&mut self, id: &MessageId) -> Changed {
-        if self.current_reasoning.as_ref() == Some(id) {
-            self.current_reasoning = None;
+        self.open_reasoning.close(id);
+        match self.streamable(id) {
+            Some(index) => Changed::Reasoning(ReasoningChange {
+                index,
+                id: id.clone(),
+                kind: ReasoningChangeKind::Ended,
+            }),
+            None => Changed::Nothing,
         }
-        self.reasoning_streams.retain(|(_, open)| open != id);
-        if !self.open_reasoning.remove(id) {
-            return Changed::Nothing;
-        }
-        Changed::Reasoning(ReasoningChange {
-            id: id.clone(),
-            kind: ReasoningChangeKind::Ended,
-        })
     }
 
     fn encrypted_value(&mut self, event: &ReasoningEncryptedValueEvent) -> Changed {
@@ -1284,30 +1422,34 @@ impl Applier {
                     kind: MessageChangeKind::EncryptedValue,
                 })
             }
+            // Stored with the message it names, which is what carries it
+            // back: the next request sends that message as it stands.
             ReasoningEncryptedValueSubtype::Message => {
                 let id = MessageId::new(event.entity_id.clone());
-                if let Some(message) = self
-                    .reasoning_by_id
-                    .get(&id)
-                    .and_then(|index| self.reasoning.get_mut(*index))
-                {
-                    message.encrypted_value = Some(blob);
-                    return Changed::Reasoning(ReasoningChange {
-                        id,
-                        kind: ReasoningChangeKind::EncryptedValue,
-                    });
-                }
                 let Some(index) = self.by_id.get(&id).copied() else {
                     return Changed::Nothing;
                 };
-                if let Some(message) = self.messages.get_mut(index) {
-                    set_encrypted_value(message, blob);
+                let Some(message) = self.messages.get_mut(index) else {
+                    return Changed::Nothing;
+                };
+                // An activity has no field for the value, so the event names
+                // nothing that can hold it.
+                if !set_encrypted_value(message, blob) {
+                    return Changed::Nothing;
                 }
-                Changed::Message(MessageChange {
-                    index,
-                    id,
-                    kind: MessageChangeKind::EncryptedValue,
-                })
+                if matches!(message, Message::Reasoning(_)) {
+                    Changed::Reasoning(ReasoningChange {
+                        index,
+                        id,
+                        kind: ReasoningChangeKind::EncryptedValue,
+                    })
+                } else {
+                    Changed::Message(MessageChange {
+                        index,
+                        id,
+                        kind: MessageChangeKind::EncryptedValue,
+                    })
+                }
             }
         }
     }
@@ -1331,11 +1473,10 @@ impl Applier {
             if event.description.is_some() {
                 subagent.description.clone_from(&event.description);
             }
-            if event.parent_subagent_run_id.is_some() {
-                subagent
-                    .parent_subagent_run_id
-                    .clone_from(&event.parent_subagent_run_id);
+            if let Some(parent) = &event.parent_subagent_run_id {
+                self.adopt(index, parent);
             }
+            let subagent = &mut self.subagents[index];
             if event.parent_tool_call_id.is_some() {
                 subagent
                     .parent_tool_call_id
@@ -1355,7 +1496,11 @@ impl Applier {
             run_id: run_id.clone(),
             name: event.name.clone(),
             description: event.description.clone(),
-            parent_subagent_run_id: event.parent_subagent_run_id.clone(),
+            // No invocation spawned itself.
+            parent_subagent_run_id: event
+                .parent_subagent_run_id
+                .clone()
+                .filter(|parent| parent != &run_id),
             parent_tool_call_id: event.parent_tool_call_id.clone(),
             parent_message_id: event.parent_message_id.clone(),
             status: SubagentStatus::Running,
@@ -1365,6 +1510,46 @@ impl Applier {
             run_id,
             kind: SubagentChangeKind::Started,
         })
+    }
+
+    /// Gives the subagent at `index`, which is announced again, the parent
+    /// its new announcement names.
+    ///
+    /// The newest announcement stands. What the table holds may say the
+    /// opposite: a run that announces two invocations the other way round
+    /// than the run before it finds the named parent recorded *under* this
+    /// subagent, and keeping both links would make each the other's
+    /// ancestor, which no tree has and no snapshot restores. So the older
+    /// link, the one on the way up from the parent that ends at this
+    /// subagent, is dropped, and its holder stands directly under the
+    /// parent agent, where an announcement that names no parent puts it.
+    ///
+    /// Only an announcement that changes the parent of a known invocation
+    /// walks the ancestors, so a first announcement costs the same at any
+    /// depth.
+    fn adopt(&mut self, index: usize, parent: &SubagentRunId) {
+        let id = self.subagents[index].run_id.clone();
+        let unchanged = self.subagents[index].parent_subagent_run_id.as_ref() == Some(parent);
+        // No invocation spawned itself.
+        if unchanged || *parent == id {
+            return;
+        }
+        let mut at = self.subagent_by_id.get(parent).copied();
+        // A walk longer than the table has met a cycle that was there
+        // already, which only a stream nothing verified leaves.
+        for _ in 0..self.subagents.len() {
+            let Some(ancestor) = at else { break };
+            let above = self.subagents[ancestor].parent_subagent_run_id.clone();
+            match above {
+                Some(above) if above == id => {
+                    self.subagents[ancestor].parent_subagent_run_id = None;
+                    break;
+                }
+                Some(above) => at = self.subagent_by_id.get(&above).copied(),
+                None => break,
+            }
+        }
+        self.subagents[index].parent_subagent_run_id = Some(parent.clone());
     }
 
     fn subagent_finished(&mut self, event: &SubagentFinishedEvent) -> Changed {
@@ -1445,7 +1630,6 @@ impl Applier {
             Event::TextMessageStart(_)
             | Event::TextMessageContent(_)
             | Event::TextMessageEnd(_)
-            | Event::TextMessageChunk(_)
             | Event::ToolCallResult(_)
             | Event::ActivitySnapshot(_)
             | Event::ActivityDelta(_) => {
@@ -1456,10 +1640,7 @@ impl Applier {
                     merge_metadata_into(message.metadata_mut(), Some(metadata));
                 }
             }
-            Event::ToolCallStart(_)
-            | Event::ToolCallArgs(_)
-            | Event::ToolCallEnd(_)
-            | Event::ToolCallChunk(_) => {
+            Event::ToolCallStart(_) | Event::ToolCallArgs(_) | Event::ToolCallEnd(_) => {
                 let Changed::Message(change) = changed else {
                     return;
                 };
@@ -1483,62 +1664,16 @@ impl Applier {
             }
             Event::ReasoningMessageStart(_)
             | Event::ReasoningMessageContent(_)
-            | Event::ReasoningMessageEnd(_)
-            | Event::ReasoningMessageChunk(_) => {
-                let id = match (event, changed) {
-                    (Event::ReasoningMessageStart(e), _) => e.message_id.clone(),
-                    (Event::ReasoningMessageContent(e), _) => e.message_id.clone(),
-                    (Event::ReasoningMessageEnd(e), _) => e.message_id.clone(),
-                    (_, Changed::Reasoning(change)) => change.id.clone(),
-                    _ => return,
+            | Event::ReasoningMessageEnd(_) => {
+                let Changed::Reasoning(change) = changed else {
+                    return;
                 };
-                if let Some(message) = self
-                    .reasoning_by_id
-                    .get(&id)
-                    .and_then(|index| self.reasoning.get_mut(*index))
-                {
-                    merge_metadata_into(&mut message.metadata, Some(metadata));
+                if let Some(message) = self.messages.get_mut(change.index) {
+                    merge_metadata_into(message.metadata_mut(), Some(metadata));
                 }
             }
             _ => {}
         }
-    }
-}
-
-/// The stream a chunk without an id continues: the one its subagent has
-/// open; for an untagged chunk the parent's, else the sole open one — and when
-/// several subagents could claim it, an error rather than a guess.
-fn resolve_open(
-    streams: &[(Option<SubagentRunId>, MessageId)],
-    tag: &Option<SubagentRunId>,
-    kind: &str,
-    what: &str,
-) -> Result<MessageId> {
-    if tag.is_some() {
-        return streams
-            .iter()
-            .rev()
-            .find(|(owner, _)| owner == tag)
-            .map(|(_, id)| id.clone())
-            .ok_or_else(|| {
-                Error::protocol(format!(
-                    "{kind} carries no messageId and subagent {:?} has no {what} open",
-                    tag.as_deref().unwrap_or_default()
-                ))
-            });
-    }
-    if let Some((_, id)) = streams.iter().rev().find(|(owner, _)| owner.is_none()) {
-        return Ok(id.clone());
-    }
-    match streams {
-        [] => Err(Error::protocol(format!(
-            "{kind} carries no messageId and no {what} is open"
-        ))),
-        [(_, id)] => Ok(id.clone()),
-        _ => Err(Error::protocol(format!(
-            "{kind} carries no messageId and several subagents have a {what} open; \
-             attribute the chunk"
-        ))),
     }
 }
 
@@ -1601,8 +1736,9 @@ fn empty_message(id: MessageId, role: TextMessageRole, name: Option<String>) -> 
     }
 }
 
-/// Appends streamed text to whichever field of the message carries it.
-fn append_text(message: &mut Message, delta: &str) -> Result<()> {
+/// Appends streamed text to whichever field of the message carries it. An
+/// activity message has none, and is not handed here.
+fn append_text(message: &mut Message, delta: &str) {
     match message {
         Message::Assistant(m) => m.content.get_or_insert_with(String::new).push_str(delta),
         Message::System(m) => m.content.push_str(delta),
@@ -1625,26 +1761,23 @@ fn append_text(message: &mut Message, delta: &str) -> Result<()> {
                 })),
             },
         },
-        Message::Activity(m) => {
-            return Err(Error::protocol(format!(
-                "text streamed into activity message {:?}, which has no text",
-                m.id
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Attaches a provider's opaque reasoning blob to a message.
-fn set_encrypted_value(message: &mut Message, blob: String) {
-    match message {
-        Message::Assistant(m) => m.encrypted_value = Some(blob),
-        Message::System(m) => m.encrypted_value = Some(blob),
-        Message::Developer(m) => m.encrypted_value = Some(blob),
-        Message::User(m) => m.encrypted_value = Some(blob),
-        Message::Tool(m) => m.encrypted_value = Some(blob),
-        Message::Reasoning(m) => m.encrypted_value = Some(blob),
-        // An activity has no field for it.
         Message::Activity(_) => {}
     }
+}
+
+/// Attaches a provider's opaque reasoning blob to a message, and says whether
+/// the message could take it.
+fn set_encrypted_value(message: &mut Message, blob: String) -> bool {
+    let slot = match message {
+        Message::Assistant(m) => &mut m.encrypted_value,
+        Message::System(m) => &mut m.encrypted_value,
+        Message::Developer(m) => &mut m.encrypted_value,
+        Message::User(m) => &mut m.encrypted_value,
+        Message::Tool(m) => &mut m.encrypted_value,
+        Message::Reasoning(m) => &mut m.encrypted_value,
+        // An activity has no field for it.
+        Message::Activity(_) => return false,
+    };
+    *slot = Some(blob);
+    true
 }

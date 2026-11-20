@@ -9,7 +9,7 @@
 
 #![cfg(feature = "client")]
 
-use ag_ui::client::transport::{EventStream, Transport, TransportFuture};
+use ag_ui::client::transport::{Transport, TransportFuture, TransportStream};
 use ag_ui::client::{RunEnd, Thread, Update};
 use ag_ui::{Event, RunAgentInput, TextMessageRole};
 use futures_util::StreamExt;
@@ -116,7 +116,7 @@ impl Transport for StaticTransport {
         let events = self.events.clone();
         Box::pin(async move {
             let stream = futures_util::stream::iter(events.into_iter().map(Ok));
-            Ok(Box::pin(stream) as EventStream)
+            Ok(TransportStream::typed(stream))
         })
     }
 }

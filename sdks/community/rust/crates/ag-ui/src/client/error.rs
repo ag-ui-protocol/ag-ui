@@ -13,9 +13,37 @@ pub enum Error {
     #[error("request rejected: {0}")]
     Request(String),
 
+    /// A run was refused before dispatch because these tool calls have no
+    /// answer in the transcript, in call order.
+    ///
+    /// Answer each with a tool message, or give it up with
+    /// [`Thread::abandon_tool_call`](crate::client::Thread::abandon_tool_call).
+    #[error(
+        "request rejected: unanswered tool calls must be answered with tool messages, or abandoned, before another run: {}",
+        .0.iter().map(crate::ToolCallId::as_str).collect::<Vec<_>>().join(", ")
+    )]
+    UnansweredToolCalls(Vec<crate::ToolCallId>),
+
+    /// A run that answers no interrupt was refused before dispatch because
+    /// the thread is paused on the interrupts with these ids.
+    ///
+    /// Answer them with [`Thread::resume`](crate::client::Thread::resume),
+    /// [`decline`](crate::client::Thread::decline) or
+    /// [`resume_many`](crate::client::Thread::resume_many).
+    #[error("request rejected: pending interrupts must be answered with resume_many")]
+    PendingInterrupts(Vec<String>),
+
     /// A saved local conversation is invalid or unsupported.
     #[error("invalid thread snapshot: {0}")]
     Snapshot(String),
+
+    /// [`Thread::merge_messages_from`](crate::client::Thread::merge_messages_from)
+    /// refused to merge two threads, and changed neither: they are different
+    /// conversations, one of them still owes an answer or has a request in
+    /// flight, a tool call has a result on each, or the receiving thread gave
+    /// up a call the other holds a result for.
+    #[error("threads not merged: {0}")]
+    Merge(String),
 
     /// A frame's payload was not valid JSON, or not a valid [`Event`].
     ///
@@ -39,6 +67,11 @@ pub enum Error {
     /// after the run finished.
     #[error("protocol violation: {0}")]
     Protocol(String),
+
+    /// An [`Applier`](crate::client::Applier) was handed a `*_CHUNK` or
+    /// `THINKING_*` event, which it applies only in their explicit form.
+    #[error("not supported by this client: {0}")]
+    Unsupported(String),
 
     /// An RFC 6902 patch could not be applied.
     ///
@@ -88,7 +121,7 @@ pub enum Error {
         /// The status code.
         status: u16,
         /// Up to 2 KiB of response bytes, decoded as UTF-8 with invalid sequences
-        /// replaced. Reading stops at the byte limit or after one second.
+        /// replaced. Reading stops after one second or when the byte limit is reached.
         body: String,
     },
 

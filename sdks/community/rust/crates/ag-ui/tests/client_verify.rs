@@ -26,7 +26,7 @@ fn content_for_a_message_that_was_never_opened_is_rejected() {
         Event::run_started("t", "r"),
         Event::text_message_content("msg-1", "orphan"),
     ]);
-    assert!(said.contains("never opened"), "{said}");
+    assert!(said.contains("is not open"), "{said}");
     assert!(said.contains("msg-1"), "{said}");
 }
 
@@ -38,7 +38,7 @@ fn content_for_a_message_other_than_the_one_that_was_opened_is_rejected() {
         Event::text_message_content("msg-2", "wrong message"),
     ]);
     assert!(said.contains("msg-2"), "{said}");
-    assert!(said.contains("never opened"), "{said}");
+    assert!(said.contains("is not open"), "{said}");
 }
 
 #[test]
@@ -154,7 +154,63 @@ fn reasoning_content_needs_its_message_opened_first() {
         Event::run_started("t", "r"),
         Event::reasoning_message_content("r-1", "thinking"),
     ]);
-    assert!(said.contains("never opened"), "{said}");
+    assert!(said.contains("is not open"), "{said}");
+}
+
+#[test]
+fn a_reasoning_block_is_bracketed_like_every_other_streamed_entity() {
+    // AG-UI 1.0, "Spans": a producer must not open a block that is already
+    // open, close one it did not open, or leave one open at RUN_FINISHED.
+    let started = Event::run_started("t", "r");
+    let said = complaint(&[
+        started.clone(),
+        Event::reasoning_start("block-1"),
+        Event::reasoning_start("block-1"),
+    ]);
+    assert!(
+        said.contains(r#"REASONING_START for reasoning block "block-1", which is already open"#),
+        "{said}"
+    );
+
+    let said = complaint(&[started.clone(), Event::reasoning_end("block-1")]);
+    assert!(
+        said.contains(r#"REASONING_END for reasoning block "block-1", which is not open"#),
+        "{said}"
+    );
+
+    let said = complaint(&[
+        started.clone(),
+        Event::reasoning_start("block-1"),
+        Event::run_finished_success("t", "r"),
+    ]);
+    assert!(
+        said.contains(r#"RUN_FINISHED arrived while reasoning block "block-1" was still open"#),
+        "{said}"
+    );
+
+    // A block opens no message: content naming its id has nothing to land in.
+    let said = complaint(&[
+        started.clone(),
+        Event::reasoning_start("block-1"),
+        Event::reasoning_message_content("block-1", "orphan"),
+    ]);
+    assert!(said.contains("is not open"), "{said}");
+
+    // A block may hold several messages, share its id with one of them, and
+    // be opened again once it has closed.
+    verify_all(&[
+        started,
+        Event::reasoning_start("block-1"),
+        Event::reasoning_message_start("block-1"),
+        Event::reasoning_message_end("block-1"),
+        Event::reasoning_message_start("thought-2"),
+        Event::reasoning_message_end("thought-2"),
+        Event::reasoning_end("block-1"),
+        Event::reasoning_start("block-1"),
+        Event::reasoning_end("block-1"),
+        Event::run_finished_success("t", "r"),
+    ])
+    .expect("a balanced block verifies");
 }
 
 #[test]
@@ -178,16 +234,182 @@ fn nothing_may_follow_a_finished_run() {
         said.contains("after the run had already finished"),
         "{said}"
     );
+
+    // The escape hatches belong to an open run, not to a closed one.
+    for late in [Event::raw(json!({})), Event::custom("late", json!(1))] {
+        let said = complaint(&[
+            Event::run_started("t", "r"),
+            Event::run_finished_success("t", "r"),
+            late,
+        ]);
+        assert!(
+            said.contains("after the run had already finished"),
+            "{said}"
+        );
+    }
+}
+
+#[test]
+fn a_run_error_may_follow_run_finished_once() {
+    // 1.0, lifecycle: "A producer MAY emit RUN_ERROR after RUN_FINISHED,
+    // reporting a failure that surfaced after the run reported success". The
+    // upstream stream `late-run-error-after-finished-run-continues`.
+    verify_all(&[
+        Event::run_started("t", "r"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant),
+        Event::text_message_content("msg-1", "delivered before the failure"),
+        Event::text_message_end("msg-1"),
+        Event::run_finished_success("t", "r"),
+        Event::run_error("the transport failed while flushing"),
+    ])
+    .expect("a late RUN_ERROR is a run failure, not a protocol violation");
+
+    // "A producer MUST NOT emit anything after RUN_ERROR" — a late one
+    // included.
+    for after in [
+        Event::run_error("again"),
+        Event::run_finished_success("t", "r"),
+        Event::custom("late", json!(1)),
+    ] {
+        let said = complaint(&[
+            Event::run_started("t", "r"),
+            Event::run_finished_success("t", "r"),
+            Event::run_error("late"),
+            after,
+        ]);
+        assert!(
+            said.contains("after the run had already finished"),
+            "{said}"
+        );
+    }
 }
 
 #[test]
 fn a_run_starts_once() {
-    let said = complaint(&[Event::run_started("t", "r"), Event::run_started("t", "r")]);
-    assert!(said.contains("twice"), "{said}");
+    // The upstream stream `nested-run-started-fatal`: a producer closes the
+    // current run before opening the next, whatever id the next one carries.
+    for next in ["r", "r-2"] {
+        let said = complaint(&[Event::run_started("t", "r"), Event::run_started("t", next)]);
+        assert!(said.contains("while a run was still active"), "{said}");
+    }
+}
+
+#[test]
+fn a_stream_may_carry_several_runs_in_sequence() {
+    // 1.0, lifecycle, "Several runs on one stream". The upstream streams
+    // `two-sequential-runs-accumulate` and `run-error-then-new-run-continues`.
+    verify_all(&[
+        Event::run_started("t", "r-1"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant),
+        Event::text_message_end("msg-1"),
+        Event::run_finished_success("t", "r-1"),
+        Event::run_started("t", "r-2"),
+        Event::run_error("the model went away"),
+        Event::run_started("t", "r-3"),
+        Event::run_finished_success("t", "r-3"),
+        Event::run_error("the transport failed while flushing"),
+        Event::run_started("t", "r-4"),
+        Event::run_finished_success("t", "r-4"),
+    ])
+    .expect("each run closes before the next opens");
+
+    // Between two runs there is nothing: only RUN_STARTED follows RUN_ERROR,
+    // and only RUN_STARTED or one RUN_ERROR follows RUN_FINISHED.
+    for (closed, after) in [
+        (
+            Event::run_finished_success("t", "r-1"),
+            Event::custom("between", json!(1)),
+        ),
+        (
+            Event::run_finished_success("t", "r-1"),
+            Event::run_finished_success("t", "r-1"),
+        ),
+        (Event::run_error("failed"), Event::run_error("failed again")),
+        (
+            Event::run_error("failed"),
+            Event::raw(json!({ "provider": "openai" })),
+        ),
+    ] {
+        let said = complaint(&[Event::run_started("t", "r-1"), closed, after]);
+        assert!(
+            said.contains("after the run had already finished"),
+            "{said}"
+        );
+    }
+
+    // A stream that stops inside a later run was cut short like any other.
+    let truncated = verify_all(&[
+        Event::run_started("t", "r-1"),
+        Event::run_finished_success("t", "r-1"),
+        Event::run_started("t", "r-2"),
+    ])
+    .expect_err("the second run never ended");
+    assert!(
+        truncated
+            .to_string()
+            .contains("ended before RUN_FINISHED or RUN_ERROR"),
+        "{truncated}"
+    );
+}
+
+#[test]
+fn what_a_run_opened_does_not_cross_into_the_next() {
+    // "Run-scoped tracking — open messages, open tool calls, open steps,
+    // active subagents — does not cross the boundary ... A new run starts
+    // with nothing open."
+    let failed_run = [
+        Event::run_started("t", "r-1"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant),
+        Event::tool_call_start("call-1", "search"),
+        Event::step_started("plan"),
+        Event::subagent_started("sub-1", "researcher"),
+        Event::run_error("the model went away"),
+        Event::run_started("t", "r-2"),
+    ];
+    for (continues, expected) in [
+        (Event::text_message_content("msg-1", "x"), "is not open"),
+        (Event::tool_call_args("call-1", "{}"), "is not open"),
+        (Event::step_finished("plan"), "never started"),
+        (Event::subagent_finished_success("sub-1"), "is not active"),
+    ] {
+        let mut events = failed_run.to_vec();
+        events.push(continues);
+        let said = complaint(&events);
+        assert!(said.contains(expected), "{said}");
+    }
+
+    // So the next run may open the same step, and announce again the
+    // subagent the run before it closed: the run that resumes a suspended
+    // subagent does.
+    let mut events = failed_run.to_vec();
+    events.extend([
+        Event::step_started("plan"),
+        Event::step_finished("plan"),
+        Event::subagent_started("sub-1", "researcher"),
+        Event::subagent_finished_success("sub-1"),
+        Event::run_finished_success("t", "r-2"),
+        Event::run_started("t", "r-3"),
+        Event::subagent_started("sub-1", "researcher"),
+        Event::subagent_finished_success("sub-1"),
+        Event::run_finished_success("t", "r-3"),
+    ]);
+    verify_all(&events).expect("each run tracks its own");
+
+    // Who owns a message does cross: messages accumulate across runs.
+    let said = complaint(&[
+        Event::run_started("t", "r-1"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant).with_subagent_run_id("a"),
+        Event::text_message_end("msg-1").with_subagent_run_id("a"),
+        Event::run_finished_success("t", "r-1"),
+        Event::run_started("t", "r-2"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant).with_subagent_run_id("b"),
+    ]);
+    assert!(said.contains("belongs to"), "{said}");
 }
 
 #[test]
 fn the_stream_opens_with_run_started() {
+    // The upstream stream `first-event-not-run-started-fatal`.
     let said = complaint(&[Event::text_message_start(
         "msg-1",
         TextMessageRole::Assistant,
@@ -196,18 +418,50 @@ fn the_stream_opens_with_run_started() {
 }
 
 #[test]
-fn raw_and_custom_events_are_outside_the_ordering_rules() {
-    // Both are escape hatches by definition, including before the run starts.
-    let mut verifier = Verifier::new();
-    verifier
-        .verify(&Event::custom("hello", json!(1)))
-        .expect("custom is allowed anywhere");
-    verifier
-        .verify(&Event::raw(json!({ "provider": "openai" })))
-        .expect("raw is allowed anywhere");
-    verifier
-        .verify(&Event::run_started("t", "r"))
-        .expect("and the run still starts cleanly");
+fn a_stream_may_open_with_run_error() {
+    // 1.0, lifecycle: "A stream MUST begin with RUN_STARTED or RUN_ERROR" — a
+    // run can fail before it begins. The upstream stream
+    // `run-error-first-run-continues`.
+    verify_all(&[Event::RunError(
+        ag_ui::RunErrorEvent::new("the agent was unreachable").with_code("UNAVAILABLE"),
+    )])
+    .expect("a run that failed before it began is a complete stream");
+
+    // And that closes it like any other RUN_ERROR.
+    let said = complaint(&[
+        Event::run_error("unreachable"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant),
+    ]);
+    assert!(
+        said.contains("after the run had already finished"),
+        "{said}"
+    );
+}
+
+#[test]
+fn raw_and_custom_events_may_not_open_the_stream() {
+    // Escape hatches "MAY appear anywhere within an open run" — and only there:
+    // nothing but RUN_STARTED or RUN_ERROR may come first.
+    for first in [
+        Event::custom("hello", json!(1)),
+        Event::raw(json!({ "provider": "openai" })),
+    ] {
+        let said = complaint(&[first, Event::run_started("t", "r")]);
+        assert!(said.contains("before RUN_STARTED"), "{said}");
+    }
+
+    // Inside the run they are outside the ordering rules, even mid-message.
+    verify_all(&[
+        Event::run_started("t", "r"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant),
+        Event::text_message_content("msg-1", "before"),
+        Event::raw(json!({ "provider": "openai" })),
+        Event::text_message_content("msg-1", " and after"),
+        Event::text_message_end("msg-1"),
+        Event::custom("com.example.cart-updated", json!({ "items": 3 })),
+        Event::run_finished_success("t", "r"),
+    ])
+    .expect("raw and custom pass through an open run");
 }
 
 #[test]
@@ -312,15 +566,38 @@ fn a_stream_that_stops_early_is_a_violation_of_its_own() {
 }
 
 #[test]
-fn chunk_events_are_left_to_the_normalizer() {
-    // The verifier runs after normalization, so chunks it does see are opaque
-    // rather than violations.
+fn a_chunk_that_reaches_the_verifier_is_judged_as_the_events_it_stands_for() {
+    // A `Thread` expands chunks first, so its verifier never sees one. A
+    // verifier handed a raw stream expands each chunk itself, by the same
+    // model, so the stream gets the verdict it would get through a `Thread`.
     verify_all(&[
         Event::run_started("t", "r"),
         Event::text_message_chunk(Some("msg-1".into()), Some("hi".into())),
+        Event::text_message_chunk(None, Some(" there".into())),
         Event::run_finished_success("t", "r"),
     ])
-    .expect("chunks are not an ordering violation");
+    .expect("a chunk stream is closed by the event that ends it");
+
+    // 1.0: "whichever stage meets a malformed chunk first rejects it".
+    let said = complaint(&[
+        Event::run_started("t", "r"),
+        Event::text_message_chunk(None, Some("orphan".into())),
+    ]);
+    assert!(
+        said.contains("TEXT_MESSAGE_CHUNK carries no messageId and no message is open"),
+        "{said}"
+    );
+
+    // And the two spellings do not mix here either.
+    let said = complaint(&[
+        Event::run_started("t", "r"),
+        Event::text_message_start("msg-1", TextMessageRole::Assistant),
+        Event::text_message_chunk(Some("msg-1".into()), Some("hi".into())),
+    ]);
+    assert!(
+        said.contains(r#"TEXT_MESSAGE_CHUNK for message "msg-1", which is already open"#),
+        "{said}"
+    );
 }
 
 #[tokio::test]
@@ -344,7 +621,7 @@ async fn a_thread_reports_a_malformed_stream_and_does_not_apply_it() {
         .collect();
 
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].contains("never opened"), "{}", errors[0]);
+    assert!(errors[0].contains("is not open"), "{}", errors[0]);
     // Only the user's own message: the rejected event was not applied.
     assert_eq!(thread.messages().len(), 1);
 }

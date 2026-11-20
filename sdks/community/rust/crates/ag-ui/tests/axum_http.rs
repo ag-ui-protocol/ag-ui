@@ -95,7 +95,7 @@ impl Agent for Endless {
     type State = ();
 
     async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
-        let _ = self.token.send(ctx.cancel_token());
+        let _ = self.token.send(ctx.cancellation_token());
 
         let mut message = ctx.assistant_message()?;
         for index in 0..10_000 {
@@ -117,7 +117,7 @@ impl Agent for Prompt {
     type State = ();
 
     async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
-        let _ = self.token.send(ctx.cancel_token());
+        let _ = self.token.send(ctx.cancellation_token());
         ctx.say("done")?;
         Ok(RunOutcome::Success)
     }
@@ -147,7 +147,7 @@ impl Agent for Waiting {
     type State = ();
 
     async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
-        let _ = self.token.send(ctx.cancel_token());
+        let _ = self.token.send(ctx.cancellation_token());
         ctx.say("thinking…")?;
         sleep(Duration::from_secs(60)).await;
         Ok(RunOutcome::Success)
@@ -482,23 +482,54 @@ async fn a_body_that_is_not_json_is_a_415() {
         message_of(&body).contains("x-www-form-urlencoded"),
         "{body}"
     );
+
+    // The other two media types an HTML form can send.
+    for content_type in ["multipart/form-data; boundary=x", "text/plain"] {
+        let (head, body) = request(addr, &[("content-type", content_type)], &input()).await;
+        assert_eq!(head.status, 415, "{content_type}: {body}");
+    }
+}
+
+/// A JSON body is only recognised by saying so. A request that carries no
+/// `Content-Type` is refused before the agent runs, from the router and from
+/// the extractor alike.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_with_no_content_type_is_a_415() {
+    let routed = serve(Router::new().route_agui("/agent", Chatty)).await;
+    let extracted = serve(Router::new().route(
+        "/agent",
+        axum::routing::post(|ag_ui::axum::AgUiInput(input)| async move { axum::Json(input) }),
+    ))
+    .await;
+
+    for addr in [routed, extracted] {
+        let (head, body) = request_without_content_type(addr, &input()).await;
+        assert_eq!(head.status, 415, "{body}");
+        assert_eq!(code_of(&body), "UNSUPPORTED_MEDIA_TYPE");
+        assert!(message_of(&body).contains("Content-Type"), "{body}");
+    }
+}
+
+/// The opt-out is explicit and narrow: an unlabelled body is read as JSON,
+/// and a body labelled as something else is still refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_endpoint_can_opt_in_to_bodies_with_no_content_type() {
+    let endpoint = AgentEndpoint::new(Chatty).allow_missing_content_type();
+    let addr = serve(Router::new().route_agui_with("/agent", endpoint)).await;
+
+    let (head, body) = request_without_content_type(addr, &input()).await;
+    assert_eq!(head.status, 200, "{body}");
+    assert_eq!(
+        events(&body).last().map(Event::event_type),
+        Some(EventType::RunFinished)
+    );
+
+    let (head, body) = request(addr, &[("content-type", "text/plain")], &input()).await;
+    assert_eq!(head.status, 415, "{body}");
 }
 
 /// The endpoint inherits axum's body limit rather than inventing one, and a
 /// caller's `DefaultBodyLimit` layer still governs it.
-#[cfg(feature = "http")]
-#[tokio::test]
-async fn a_json_run_without_content_type_is_a_415() {
-    let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
-    let response = reqwest::Client::new()
-        .post(format!("http://{addr}/agent"))
-        .body(input())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status().as_u16(), 415);
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn an_oversized_body_is_a_413() {
     let app = Router::new()
@@ -617,7 +648,7 @@ async fn an_input_may_omit_the_free_form_fields() {
 #[tokio::test(flavor = "multi_thread")]
 async fn explicit_null_request_values_are_rejected() {
     let addr = serve(Router::new().route_agui("/agent", Chatty)).await;
-    for field in ["state", "forwardedProps", "protocolVersion", "resume"] {
+    for field in ["state", "protocolVersion", "resume"] {
         let mut body = serde_json::json!({
             "threadId": "t",
             "runId": "r",
@@ -631,6 +662,11 @@ async fn explicit_null_request_values_are_rejected() {
             "{field}: {response}"
         );
     }
+    // The one exception: AG-UI 1.0 registers `forwardedProps: null` as an
+    // older client's spelling of the omitted field.
+    let body = br#"{"threadId":"t","runId":"r","messages":[],"forwardedProps":null}"#;
+    let (head, response) = request(addr, &[], body).await;
+    assert_eq!(head.status, 200, "forwardedProps: {response}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1040,6 +1076,18 @@ async fn request(addr: SocketAddr, headers: &[(&str, &str)], body: &[u8]) -> (He
     )
 }
 
+/// One request that carries no `Content-Type` at all.
+async fn request_without_content_type(addr: SocketAddr, body: &[u8]) -> (Head, String) {
+    let mut client = Client::connect(addr).await;
+    client.post_exactly("/agent", &[], body).await;
+    let head = client.read_head().await;
+    let body = client.read_body(&head).await;
+    (
+        head,
+        String::from_utf8(body).expect("a utf-8 response body"),
+    )
+}
+
 /// The `message` field of this crate's JSON error body.
 fn message_of(body: &str) -> String {
     let value: serde_json::Value = serde_json::from_str(body).expect("a JSON error body");
@@ -1047,6 +1095,12 @@ fn message_of(body: &str) -> String {
         .as_str()
         .expect("a message field")
         .to_owned()
+}
+
+/// The `code` field of this crate's JSON error body.
+fn code_of(body: &str) -> String {
+    let value: serde_json::Value = serde_json::from_str(body).expect("a JSON error body");
+    value["code"].as_str().expect("a code field").to_owned()
 }
 
 /// Decodes an SSE body into the events it carries.
@@ -1099,14 +1153,21 @@ impl Client {
         }
     }
 
+    /// Posts `body` as JSON unless `headers` name another `content-type`.
     async fn post(&mut self, path: &str, headers: &[(&str, &str)], body: &[u8]) {
+        let mut all = headers.to_vec();
+        if !headers.iter().any(|(name, _)| *name == "content-type") {
+            all.push(("content-type", "application/json"));
+        }
+        self.post_exactly(path, &all, body).await;
+    }
+
+    /// Posts `body` with exactly `headers`, plus the two HTTP/1.1 needs.
+    async fn post_exactly(&mut self, path: &str, headers: &[(&str, &str)], body: &[u8]) {
         let mut request = format!(
             "POST {path} HTTP/1.1\r\nhost: localhost\r\ncontent-length: {}\r\n",
             body.len()
         );
-        if !headers.iter().any(|(name, _)| *name == "content-type") {
-            request.push_str("content-type: application/json\r\n");
-        }
         for (name, value) in headers {
             request.push_str(&format!("{name}: {value}\r\n"));
         }

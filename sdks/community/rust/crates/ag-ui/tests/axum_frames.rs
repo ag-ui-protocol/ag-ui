@@ -81,7 +81,7 @@ async fn native_and_framed_event_paths_produce_identical_bytes() {
     let event = Event::text_message_content("m", "one\ntwo\rthree");
     let native = SseResponse::negotiate(None)
         .unwrap()
-        .stream(stream::iter([Ok(event.clone())]));
+        .stream(stream::iter([event.clone()]));
     let framed = SseResponse::negotiate(None)
         .unwrap()
         .stream_frames(stream::iter([Ok::<_, ag_ui::server::Error>(
@@ -274,7 +274,7 @@ async fn producer_supplied_run_failure_is_transmitted_without_reinterpretation()
 async fn native_run_owned_stream_preserves_run_failure_mapping() {
     let response = SseResponse::negotiate(None)
         .unwrap()
-        .stream(stream::iter([Err(ag_ui::server::Error::agent(
+        .try_stream(stream::iter([Err(ag_ui::server::Error::agent(
             "run failed",
         ))]));
     let actual = body(response).await;
@@ -378,7 +378,7 @@ async fn native_source_error_cancels_owned_work_and_drops_source_before_terminal
     let response = SseResponse::negotiate(None)
         .unwrap()
         .cancellation(token.clone())
-        .stream(source);
+        .try_stream(source);
     let mut frames = response.into_body().into_data_stream();
     let frame = frames.next().await.unwrap().unwrap();
     assert!(std::str::from_utf8(&frame).unwrap().contains("RUN_ERROR"));

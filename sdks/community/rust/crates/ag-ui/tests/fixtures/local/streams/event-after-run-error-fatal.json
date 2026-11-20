@@ -1,0 +1,42 @@
+{
+  "name": "event-after-run-error-fatal",
+  "area": "lifecycle",
+  "description": "nothing follows RUN_ERROR except the RUN_STARTED of the next run: an ordinary event after a failed run is fatal, a second RUN_ERROR included, even though a run follows it on the same stream. Local to this repository: the upstream corpus has no stream for what may follow RUN_ERROR other than a new run",
+  "specPage": "/spec/1.0/events/lifecycle",
+  "kill": "admit after RUN_ERROR what is admitted after RUN_FINISHED, a late RUN_ERROR, or keep the failed run open for further events until the next RUN_STARTED",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-event-after-run-error",
+      "runId": "event-after-run-error-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "RUN_ERROR",
+      "message": "event-after-run-error: the first run failed"
+    },
+    {
+      "type": "RUN_ERROR",
+      "message": "event-after-run-error: and failed again"
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-event-after-run-error",
+      "runId": "event-after-run-error-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-event-after-run-error",
+      "runId": "event-after-run-error-r-2"
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "The run has already errored with 'RUN_ERROR'",
+    "runError": "event-after-run-error: the first run failed",
+    "messageCount": 0,
+    "runs": [{ "runId": "event-after-run-error-r-1", "requested": false, "end": "Failed" }],
+    "pendingInterrupts": []
+  }
+}

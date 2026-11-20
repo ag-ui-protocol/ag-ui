@@ -2,7 +2,6 @@
 
 use crate::{Event, MessageId, ReasoningEncryptedValueSubtype};
 
-use crate::server::agent::AgentState;
 use crate::server::emit::EventSink;
 use crate::server::error::Result;
 use crate::server::state::RunState;
@@ -40,18 +39,19 @@ impl<'a, S> ReasoningHandle<'a, S> {
         id: MessageId,
     ) -> Result<Self> {
         sink.emit(Event::reasoning_start(id.clone()))?;
-        // The block is open now, so from here on a failure must still leave a
-        // handle behind to close it.
-        let handle = Self {
+        // The block is open now and the message inside it is not, so a failure
+        // here closes the block alone: a cancellation landing between the two
+        // must not send an end for a message that never started.
+        if let Err(error) = sink.emit(Event::reasoning_message_start(id.clone())) {
+            let _ = sink.emit_forced(Event::reasoning_end(id));
+            return Err(error);
+        }
+        Ok(Self {
             sink,
             state,
             id,
             ended: false,
-        };
-        handle
-            .sink
-            .emit(Event::reasoning_message_start(handle.id.clone()))?;
-        Ok(handle)
+        })
     }
 
     /// The id every event of this block carries.
@@ -92,39 +92,22 @@ impl<'a, S> ReasoningHandle<'a, S> {
         self.close()
     }
 
-    /// Closes both halves. The block terminator is attempted even when the
-    /// message terminator failed, so a half-open block cannot outlive the
-    /// handle.
+    /// Closes both halves, after cancellation too. The block terminator is
+    /// attempted even when the message terminator failed, so a half-open block
+    /// cannot outlive the handle.
     fn close(&mut self) -> Result<()> {
         let message = self
             .sink
-            .emit(Event::reasoning_message_end(self.id.clone()));
-        let block = self.sink.emit(Event::reasoning_end(self.id.clone()));
+            .emit_forced(Event::reasoning_message_end(self.id.clone()));
+        let block = self.sink.emit_forced(Event::reasoning_end(self.id.clone()));
         message.and(block)
     }
 }
 
-/// The run's state, reachable while the block is open. See
-/// [`ToolCallHandle`](crate::server::ToolCallHandle), where this matters most.
-impl<S: AgentState> ReasoningHandle<'_, S> {
-    /// The typed state, as of the last publish.
-    pub fn state(&self) -> &S {
-        self.state.get()
-    }
-
-    /// The typed state, mutably. Nothing is emitted until you call
-    /// [`publish_state`](Self::publish_state).
-    pub fn state_mut(&mut self) -> &mut S {
-        self.state.get_mut()
-    }
-
-    /// Publishes whatever [`state_mut`](Self::state_mut) left behind, as a
-    /// `STATE_SNAPSHOT` or a `STATE_DELTA` inside this block's brackets.
-    ///
-    /// A no-op when nothing changed since the last publish.
-    pub fn publish_state(&mut self) -> Result<()> {
-        self.state.publish(self.sink)
-    }
+state_access! {
+    /// The run's state, reachable while the block is open. See
+    /// [`ToolCallHandle`](crate::server::ToolCallHandle), where this matters most.
+    ReasoningHandle, published "inside this block's brackets"
 }
 
 impl<S> Drop for ReasoningHandle<'_, S> {

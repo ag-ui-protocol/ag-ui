@@ -3,7 +3,7 @@
 //! Nothing between the two halves of the SDK is mocked here. `server` binds a
 //! loopback socket, mounts the agent with the real
 //! [`route_agui`](ag_ui::axum::RouterExt::route_agui), and hands back a URL that
-//! `ag-ui-client`'s own HTTP transport connects to. Everything a test asserts on
+//! `ag_ui::client`'s own HTTP transport connects to. Everything a test asserts on
 //! has therefore been through SSE framing, content negotiation, chunk
 //! normalization and delta application for real.
 

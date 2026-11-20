@@ -1,0 +1,149 @@
+{
+  "name": "three-sequential-runs-accumulate",
+  "area": "lifecycle",
+  "description": "a stream may carry more than two runs: each closes before the next opens, messages accumulate, a reasoning message among them, and state persists across every boundary, and the last run is the one the request asked for. Local to this repository: the upstream corpus stops at two runs",
+  "specPage": "/spec/1.0/events/lifecycle",
+  "kill": "admit one RUN_STARTED after a terminal event and no more, or clear the messages or the state at a run boundary",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-three-sequential-runs",
+      "runId": "three-sequential-runs-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": { "step": 1, "notes": [] }
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "three-sequential-runs-m-a",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "three-sequential-runs-m-a",
+      "delta": "first run"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "three-sequential-runs-m-a" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-three-sequential-runs",
+      "runId": "three-sequential-runs-r-1"
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-three-sequential-runs",
+      "runId": "three-sequential-runs-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "STATE_DELTA",
+      "delta": [{ "op": "replace", "path": "/step", "value": 2 }]
+    },
+    {
+      "type": "REASONING_MESSAGE_START",
+      "messageId": "three-sequential-runs-think",
+      "role": "reasoning"
+    },
+    {
+      "type": "REASONING_MESSAGE_CONTENT",
+      "messageId": "three-sequential-runs-think",
+      "delta": "weighing the second run"
+    },
+    { "type": "REASONING_MESSAGE_END", "messageId": "three-sequential-runs-think" },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "three-sequential-runs-m-b",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "three-sequential-runs-m-b",
+      "delta": "second run"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "three-sequential-runs-m-b" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-three-sequential-runs",
+      "runId": "three-sequential-runs-r-2"
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-three-sequential-runs",
+      "runId": "three-sequential-runs-r-3",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "STATE_DELTA",
+      "delta": [{ "op": "add", "path": "/notes/-", "value": "third" }]
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "three-sequential-runs-m-c",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "three-sequential-runs-m-c",
+      "delta": "third run"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "three-sequential-runs-m-c" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-three-sequential-runs",
+      "runId": "three-sequential-runs-r-3",
+      "outcome": { "type": "success" }
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "eventTypes": [
+      "RUN_STARTED",
+      "STATE_SNAPSHOT",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED",
+      "RUN_STARTED",
+      "STATE_DELTA",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED",
+      "RUN_STARTED",
+      "STATE_DELTA",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED"
+    ],
+    "eventPaths": {
+      "6.runId": "three-sequential-runs-r-2",
+      "15.runId": "three-sequential-runs-r-3"
+    },
+    "messageCount": 4,
+    "messages": [
+      { "id": "three-sequential-runs-m-a", "role": "assistant", "content": "first run" },
+      {
+        "id": "three-sequential-runs-think",
+        "role": "reasoning",
+        "content": "weighing the second run"
+      },
+      { "id": "three-sequential-runs-m-b", "role": "assistant", "content": "second run" },
+      { "id": "three-sequential-runs-m-c", "role": "assistant", "content": "third run" }
+    ],
+    "state": { "step": 2, "notes": ["third"] },
+    "end": { "Success": { "result": null } },
+    "runs": [
+      { "runId": "three-sequential-runs-r-1", "requested": false, "end": "Success" },
+      { "runId": "three-sequential-runs-r-2", "requested": false, "end": "Success" },
+      { "runId": "three-sequential-runs-r-3", "requested": true, "end": "Success" }
+    ],
+    "pendingInterrupts": []
+  }
+}

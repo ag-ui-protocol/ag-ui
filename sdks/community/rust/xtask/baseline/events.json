@@ -6,7 +6,7 @@
     "path": "spec/1.0/schema.json",
     "commit": "fdbca490dc90fd8fbce2b342df79383bd70559af",
     "commit_date": "2026-09-17",
-    "fetched_at": "2026-09-23"
+    "fetched_at": "2026-11-20"
   },
   "base_event_fields": [
     {
@@ -764,7 +764,7 @@
     "BaseEvent": "fnv1a64:ec8ab8cce53810cb",
     "BaseMessage": "fnv1a64:4e3408eadc2009f9",
     "ContentPart": "fnv1a64:e690173bc769f8ab",
-    "Context": "fnv1a64:b05ba35a3ca4fcc1",
+    "Context": "fnv1a64:32cd5c45e1269abe",
     "CopyOperation": "fnv1a64:5f0dc6b0d5ab2158",
     "CustomEvent": "fnv1a64:9db0359759a013af",
     "DataSource": "fnv1a64:5df941e04ab4ff6c",
@@ -776,7 +776,7 @@
     "FileSource": "fnv1a64:8b8cfb4ebbc7b0f7",
     "FunctionCall": "fnv1a64:8275435e0f524a24",
     "HumanInTheLoopCapabilities": "fnv1a64:c0d6a8e3f73afd5e",
-    "IdentityCapabilities": "fnv1a64:9bbf15f5ce712f03",
+    "IdentityCapabilities": "fnv1a64:b4617c98af8185f0",
     "ImagePart": "fnv1a64:938925aca5bc6f17",
     "Interrupt": "fnv1a64:2326d3a3a5f4585e",
     "JsonPatch": "fnv1a64:73af12946599e6ad",
@@ -826,9 +826,9 @@
     "SubagentFinishedOutcome": "fnv1a64:79442dde9be4af86",
     "SubagentFinishedSuccessOutcome": "fnv1a64:816a906435039fdc",
     "SubagentFinishedSuspendedOutcome": "fnv1a64:a6e391d82367c3f1",
-    "SubagentInfo": "fnv1a64:e124677cf9074705",
+    "SubagentInfo": "fnv1a64:07ec3f463bf9c242",
     "SubagentRunId": "fnv1a64:37140e51efa8b132",
-    "SubagentStartedEvent": "fnv1a64:eb2857f25f2c7ef0",
+    "SubagentStartedEvent": "fnv1a64:9f079cbc1028ba5b",
     "SystemMessage": "fnv1a64:56fe8eba35e6d764",
     "TestOperation": "fnv1a64:2c8e523c7c7c0540",
     "TextMessageChunkEvent": "fnv1a64:ecf7ca0ace92d03a",
@@ -838,7 +838,7 @@
     "TextMessageStartEvent": "fnv1a64:acbab1625d83d6e9",
     "TextPart": "fnv1a64:c8ef87065fe931ba",
     "TokenUsage": "fnv1a64:9bc7f001c16a74ab",
-    "Tool": "fnv1a64:a123695f6a51e0f7",
+    "Tool": "fnv1a64:0b4c639c082d6b94",
     "ToolCall": "fnv1a64:9cef9431ab3650b2",
     "ToolCallArgsEvent": "fnv1a64:317f43c5058b859c",
     "ToolCallChunkEvent": "fnv1a64:3923745d13b5ab70",

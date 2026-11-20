@@ -54,14 +54,15 @@ JSON object member order is not a protocol contract; array order remains intact.
 ## Compatibility corrections
 
 The inbound 1.0 boundary translates the retired `THINKING_*` event family before
-validation. Outgoing upgrade of the old `binary` user content part is not yet
-implemented. Applications sending 1.0 requests should use the typed `image`,
-`audio`, `video` or `document` parts with a supported `source` instead.
+validation. The compatibility layer upgrades legacy binary attachments carrying
+inline data or a URL to the corresponding typed media part. Requests and incoming
+events use the AG-UI 1.0 schema for the remaining fields.
 
 `TEXT_MESSAGE_START.role = null` is rejected instead of being treated as omitted;
 only a missing role defaults to `assistant`. Run and subagent outcomes reject
 unknown fields, including the success variant. Absent input state and forwarded
-properties are serialized as omitted; explicit null is rejected on receipt.
+properties are serialized as omitted. The compatibility layer accepts registered
+legacy optional nulls according to `DEPRECATIONS.md`.
 Empty text/reasoning deltas remain valid; applications may choose to suppress
 them at their publication layer.
 

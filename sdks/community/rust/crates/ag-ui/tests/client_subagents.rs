@@ -6,9 +6,9 @@
 
 use ag_ui::client::apply::{Applier, Changed, SubagentChange, SubagentChangeKind, SubagentStatus};
 use ag_ui::client::transport::ReplayTransport;
-use ag_ui::client::{RunEnd, Thread, Update, verify_all};
+use ag_ui::client::{ChunkNormalizer, RunEnd, Thread, Update, verify_all};
 use ag_ui::{
-    Event, Interrupt, JsonObject, SubagentErrorEvent, SubagentFinishedEvent, SubagentOutcome,
+    Event, Interrupt, JsonObject, Role, SubagentErrorEvent, SubagentFinishedEvent, SubagentOutcome,
     SubagentRunId, SubagentStartedEvent, TextMessageRole,
 };
 use futures_util::StreamExt;
@@ -23,11 +23,7 @@ fn tagged(event: Event, id: &str) -> Event {
 }
 
 fn change(index: usize, id: &str, kind: SubagentChangeKind) -> Changed {
-    Changed::Subagent(SubagentChange {
-        index,
-        run_id: SubagentRunId::new(id),
-        kind,
-    })
+    Changed::Subagent(SubagentChange::new(index, id, kind))
 }
 
 #[test]
@@ -187,9 +183,11 @@ fn attribution_transfers_to_the_messages_events_create() {
     assert_eq!(owner("m2"), None);
     assert_eq!(owner("m3"), Some("sub-1"));
     assert_eq!(owner("m4"), None);
+    // The reasoning message is in the same list, so one lookup covers it.
+    assert_eq!(owner("r1"), Some("sub-1"));
     assert_eq!(
-        applier.reasoning()[0].subagent_run_id.as_deref(),
-        Some("sub-1")
+        applier.message(&"r1".into()).unwrap().role(),
+        Role::Reasoning
     );
 
     // A snapshot restates the activity, attribution included.
@@ -281,8 +279,8 @@ fn metadata_merges_into_what_each_event_builds() {
         .apply(&Event::reasoning_message_content("r1", "hm").with_metadata(meta(json!({ "b": 2 }))))
         .unwrap();
     assert_eq!(
-        applier.reasoning()[0].metadata,
-        Some(meta(json!({ "a": 1, "b": 2 })))
+        applier.message(&"r1".into()).unwrap().metadata(),
+        Some(&meta(json!({ "a": 1, "b": 2 })))
     );
 
     // Activities: the activity message.
@@ -308,9 +306,24 @@ fn metadata_merges_into_what_each_event_builds() {
 
 #[test]
 fn a_chunk_without_an_id_continues_its_own_subagents_stream() {
+    // The applier takes the explicit form, so the chunks go through the
+    // normalizer first, as they do in a `Thread`.
+    fn feed(
+        normalizer: &mut ChunkNormalizer,
+        applier: &mut Applier,
+        event: Event,
+    ) -> ag_ui::client::Result<()> {
+        let mut expanded = Vec::new();
+        normalizer.normalize(event, &mut expanded)?;
+        for event in &expanded {
+            applier.apply(event)?;
+        }
+        Ok(())
+    }
+    let mut normalizer = ChunkNormalizer::new();
     let mut applier = Applier::new();
-    applier.apply(&Event::run_started("t", "r")).unwrap();
     for event in [
+        Event::run_started("t", "r"),
         tagged(
             Event::text_message_chunk(Some("m1".into()), Some("A ".into())),
             "s1",
@@ -322,28 +335,21 @@ fn a_chunk_without_an_id_continues_its_own_subagents_stream() {
         tagged(Event::text_message_chunk(None, Some("one".into())), "s1"),
         tagged(Event::text_message_chunk(None, Some("two".into())), "s2"),
     ] {
-        applier.apply(&event).unwrap();
+        feed(&mut normalizer, &mut applier, event).unwrap();
     }
     assert_eq!(applier.text_of("m1"), Some("A one"));
     assert_eq!(applier.text_of("m2"), Some("B two"));
 
     // Two subagents' streams open and no parent's: nothing to resolve
     // against, so an untagged chunk is refused rather than guessed at.
-    let error = applier
-        .apply(&Event::text_message_chunk(None, Some("?".into())))
-        .unwrap_err();
+    let bare = |delta: &str| Event::text_message_chunk(None, Some(delta.into()));
+    let error = feed(&mut normalizer, &mut applier, bare("?")).unwrap_err();
     assert!(error.to_string().contains("several"), "{error}");
 
     // The parent's own stream is what an untagged chunk continues.
-    applier
-        .apply(&Event::text_message_chunk(
-            Some("m3".into()),
-            Some("P ".into()),
-        ))
-        .unwrap();
-    applier
-        .apply(&Event::text_message_chunk(None, Some("arent".into())))
-        .unwrap();
+    let opening = Event::text_message_chunk(Some("m3".into()), Some("P ".into()));
+    feed(&mut normalizer, &mut applier, opening).unwrap();
+    feed(&mut normalizer, &mut applier, bare("arent")).unwrap();
     assert_eq!(applier.text_of("m3"), Some("P arent"));
     assert_eq!(
         applier
@@ -465,8 +471,8 @@ fn a_merging_activity_snapshot_keeps_the_activitys_owner() {
     };
     assert_eq!(owner(&applier).as_deref(), Some("s1"));
 
-    // `replace: false` merges content into the message where it is; only a
-    // replacing snapshot re-mints it, attribution included.
+    // `replace: false` leaves the message as it stands; only a replacing
+    // snapshot re-mints it, attribution included.
     let mut step = JsonObject::new();
     step.insert("step".to_owned(), serde_json::json!(2));
     applier

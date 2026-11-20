@@ -109,7 +109,10 @@ pub fn extract(text: &str) -> Result<Upstream, String> {
 /// not a security hash: changed field types and union variants must demand
 /// review even when their names and requiredness did not change.
 fn signature(shape: &Value) -> String {
-    let canonical = canonical(shape);
+    let mut shape = shape.clone();
+    remove_annotations(&mut shape);
+    shape.sort_all_objects();
+    let canonical = serde_json::to_string(&shape).expect("a schema is JSON");
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in canonical.bytes() {
         hash ^= u64::from(byte);
@@ -118,36 +121,40 @@ fn signature(shape: &Value) -> String {
     format!("fnv1a64:{hash:016x}")
 }
 
-fn canonical(value: &Value) -> String {
-    match value {
-        Value::Object(object) => {
-            let mut fields = BTreeMap::new();
-            for (key, value) in object {
-                if !matches!(
-                    key.as_str(),
-                    "description" | "$anchor" | "title" | "examples"
-                ) {
-                    fields.insert(key, value);
+/// Only schema nodes carry annotations. Keys in a property map and values
+/// inside literals such as `const` or `enum` are part of the wire contract.
+fn remove_annotations(schema: &mut Value) {
+    let Some(fields) = schema.as_object_mut() else {
+        return;
+    };
+    for annotation in ["description", "$anchor", "title", "examples"] {
+        fields.remove(annotation);
+    }
+    for (key, value) in fields {
+        match key.as_str() {
+            "properties" | "patternProperties" | "$defs" | "definitions" | "dependentSchemas" => {
+                if let Some(schemas) = value.as_object_mut() {
+                    schemas.values_mut().for_each(remove_annotations);
                 }
             }
-            let pairs = fields
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}:{}",
-                        serde_json::to_string(key).unwrap(),
-                        canonical(value)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{{{pairs}}}")
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                if let Some(schemas) = value.as_array_mut() {
+                    schemas.iter_mut().for_each(remove_annotations);
+                }
+            }
+            "items"
+            | "additionalProperties"
+            | "unevaluatedProperties"
+            | "unevaluatedItems"
+            | "contains"
+            | "propertyNames"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "contentSchema" => remove_annotations(value),
+            _ => {}
         }
-        Value::Array(array) => {
-            let items = array.iter().map(canonical).collect::<Vec<_>>().join(",");
-            format!("[{items}]")
-        }
-        _ => serde_json::to_string(value).expect("JSON Value serializes"),
     }
 }
 
@@ -272,6 +279,17 @@ mod tests {
                 .any(|field| field.name == "protocolVersion" && !field.required)
         );
         assert!(!started.fields.iter().any(|field| field.name == "timestamp"));
+    }
+
+    #[test]
+    fn a_property_named_description_is_part_of_the_wire_contract() {
+        let original =
+            serde_json::json!({"properties":{"description":{"type":"string","description":"old"}}});
+        let mut changed = original.clone();
+        changed["properties"]["description"]["description"] = Value::from("new annotation");
+        assert_eq!(signature(&original), signature(&changed));
+        changed["properties"]["description"]["type"] = Value::from("integer");
+        assert_ne!(signature(&original), signature(&changed));
     }
 
     #[test]

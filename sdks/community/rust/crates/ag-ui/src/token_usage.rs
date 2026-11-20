@@ -23,24 +23,48 @@ pub struct TokenUsage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Tokens consumed by the prompt.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_safe_integer"
+    )]
     pub input_tokens: Option<u64>,
     /// Tokens produced by the model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_safe_integer"
+    )]
     pub output_tokens: Option<u64>,
     /// Input plus output tokens under the protocol's accounting. Cache and
     /// reasoning counts are already included in those totals.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_safe_integer"
+    )]
     pub total_tokens: Option<u64>,
     /// Output tokens spent on reasoning.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_safe_integer"
+    )]
     pub reasoning_tokens: Option<u64>,
     /// Input tokens served from the provider's prompt cache.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_safe_integer"
+    )]
     pub cached_input_tokens: Option<u64>,
     /// Input tokens written to the provider's prompt cache. Part of
     /// `input_tokens`, disjoint from `cached_input_tokens`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_util::serialize_safe_integer"
+    )]
     pub cache_write_input_tokens: Option<u64>,
 }
 

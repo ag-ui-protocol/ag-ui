@@ -42,11 +42,11 @@ pub use chunks::{ChunkNormalizer, normalize_all};
 pub use error::{Error, Result};
 pub use interrupts::{InterruptExt, ResumeBuilder, interrupts_of, resume_run};
 pub use thread::{
-    AbortHandle, MessageUpdate, ReasoningUpdate, ResumeSubmission, RunDiagnostic, RunEnd,
-    RunReport, RunStream, StateViewError, SubagentUpdate, SubmissionStatus, Thread, ThreadBuilder,
-    ThreadSnapshot, Update,
+    AbortHandle, MergeReport, MessageUpdate, ReasoningUpdate, ResumeSubmission, RunDiagnostic,
+    RunEnd, RunReport, RunStream, RunSummary, StateViewError, SubagentUpdate, SubmissionStatus,
+    Thread, ThreadBuilder, ThreadSnapshot, Update, merge_messages,
 };
-pub use transport::{EventStream, Transport};
+pub use transport::{EventStream, Transport, TransportStream};
 pub use verify::{Verifier, verify_all};
 
 #[cfg(feature = "http")]

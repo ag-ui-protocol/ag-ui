@@ -216,9 +216,9 @@ impl BinaryInputContent {
         };
         let modality = self.mime_type.split_once('/').map(|(kind, _)| kind);
         Some(match modality {
-            Some("image") => InputContent::Image(media),
-            Some("audio") => InputContent::Audio(media),
-            Some("video") => InputContent::Video(media),
+            Some(kind) if kind.eq_ignore_ascii_case("image") => InputContent::Image(media),
+            Some(kind) if kind.eq_ignore_ascii_case("audio") => InputContent::Audio(media),
+            Some(kind) if kind.eq_ignore_ascii_case("video") => InputContent::Video(media),
             _ => InputContent::Document(media),
         })
     }
@@ -229,7 +229,7 @@ impl BinaryInputContent {
 /// translates it rather than send what a 1.0 producer strips.
 ///
 /// A legacy part that merely mirrors a media part already in the same message
-/// is dropped; one that carries only an `id` stays as it is.
+/// is dropped. An id-only part is left for schema enforcement to remove with a warning.
 #[cfg(feature = "client")]
 pub(crate) fn upgrade_legacy_content(messages: &mut [Message]) {
     for message in messages {
@@ -272,10 +272,14 @@ pub(crate) fn upgrade_legacy_content(messages: &mut [Message]) {
 /// messages `MESSAGES_SNAPSHOT` and the `RUN_STARTED` input echo carry, and of
 /// a `TOOL_CALL_RESULT`. Each translation is a warning naming the part.
 #[cfg(feature = "client")]
-pub(crate) fn upgrade_legacy_event_content(event: &mut Value, tag: &str) {
+pub(crate) fn upgrade_legacy_event_content(
+    event: &mut Value,
+    tag: &str,
+    warnings: &mut Vec<String>,
+) {
     let (messages, at) = match tag {
         "TOOL_CALL_RESULT" => {
-            return upgrade_wire_parts(event.get_mut("content"), "/content");
+            return upgrade_wire_parts(event.get_mut("content"), "/content", warnings);
         }
         "MESSAGES_SNAPSHOT" => (event.get_mut("messages"), "/messages"),
         "RUN_STARTED" => (event.pointer_mut("/input/messages"), "/input/messages"),
@@ -288,14 +292,14 @@ pub(crate) fn upgrade_legacy_event_content(event: &mut Value, tag: &str) {
         .enumerate()
     {
         let at = format!("{at}/{index}/content");
-        upgrade_wire_parts(message.get_mut("content"), &at);
+        upgrade_wire_parts(message.get_mut("content"), &at, warnings);
     }
 }
 
 /// One content list on the wire. A part that is not a well-formed legacy
 /// part is left for enforcement to judge.
 #[cfg(feature = "client")]
-fn upgrade_wire_parts(content: Option<&mut Value>, at: &str) {
+fn upgrade_wire_parts(content: Option<&mut Value>, at: &str, warnings: &mut Vec<String>) {
     let Some(parts) = content.and_then(Value::as_array_mut) else {
         return;
     };
@@ -325,12 +329,14 @@ fn upgrade_wire_parts(content: Option<&mut Value>, at: &str) {
         };
         let modality = wire.get("type").and_then(Value::as_str).unwrap_or("media");
         if modern.iter().any(|other| mirrors(other, &media, &binary)) {
-            eprintln!(
+            warnings.push(format!(
                 "dropped retired binary content part at {at}/{index}: the {modality} part \
                  beside it carries the same payload"
-            );
+            ));
         } else {
-            eprintln!("translated retired binary content part at {at}/{index} to {modality}");
+            warnings.push(format!(
+                "translated retired binary content part at {at}/{index} to {modality}"
+            ));
             parts.push(wire);
         }
     }
@@ -352,7 +358,27 @@ fn mirrors(part: &InputContent, media: &InputContent, legacy: &BinaryInputConten
         .as_ref()
         .and_then(|metadata| metadata.get("filename"))
         .and_then(Value::as_str);
-    part.source == media.source
+    let same_source = match (&part.source, &media.source) {
+        (
+            InputContentSource::Url {
+                value: a,
+                mime_type: mime_a,
+            },
+            InputContentSource::Url {
+                value: b,
+                mime_type: mime_b,
+            },
+        ) => {
+            a == b
+                && mime_a.as_ref().zip(mime_b.as_ref()).is_none_or(|(a, b)| {
+                    let (a, params_a) = a.split_once(';').unwrap_or((a, ""));
+                    let (b, params_b) = b.split_once(';').unwrap_or((b, ""));
+                    a.eq_ignore_ascii_case(b) && params_a == params_b
+                })
+        }
+        _ => part.source == media.source,
+    };
+    same_source
         && legacy
             .filename
             .as_deref()

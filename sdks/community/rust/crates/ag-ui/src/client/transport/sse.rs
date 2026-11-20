@@ -90,6 +90,8 @@ pub struct SseDecoder {
     /// is taken: shifting the remainder once per read instead of once per line
     /// is what keeps a chunk carrying a thousand frames linear.
     consumed: usize,
+    /// First byte of the pending line not yet checked for a terminator.
+    scan_from: usize,
     data: String,
     event: Option<String>,
     id: Option<String>,
@@ -111,6 +113,7 @@ impl SseDecoder {
         Self {
             buffer: Vec::new(),
             consumed: 0,
+            scan_from: 0,
             data: String::new(),
             event: None,
             id: None,
@@ -144,10 +147,16 @@ impl SseDecoder {
     pub fn push(&mut self, bytes: &[u8]) -> Result<()> {
         if self.consumed > 0 {
             self.buffer.drain(..self.consumed);
+            self.scan_from -= self.consumed;
             self.consumed = 0;
         }
         self.buffer.extend_from_slice(bytes);
-        self.check_frame_size()
+        // A complete line may dispatch an earlier frame. Leave later lines
+        // for next_frame so network chunking cannot hide a valid prefix.
+        if self.line_end().is_none() {
+            self.check_partial_line()?;
+        }
+        Ok(())
     }
 
     /// The bytes pushed but not yet handed out as lines.
@@ -155,15 +164,20 @@ impl SseDecoder {
         &self.buffer[self.consumed..]
     }
 
-    /// Bounds an incomplete line without combining different frames. Complete
-    /// lines are accounted for as they are consumed by `checked_process`.
-    fn check_frame_size(&self) -> Result<()> {
-        let pending = self.without_initial_bom(self.pending());
-        let unterminated = pending
+    fn line_end(&mut self) -> Option<usize> {
+        let rest = &self.buffer[self.scan_from..];
+        let scanned = rest
             .iter()
-            .rposition(|b| *b == b'\n' || *b == b'\r')
-            .map_or(pending.len(), |position| pending.len() - position - 1);
-        self.check_size(unterminated)
+            .position(|b| matches!(b, b'\n' | b'\r'))
+            .unwrap_or(rest.len());
+        self.scan_from += scanned;
+        (self.scan_from < self.buffer.len()).then_some(self.scan_from)
+    }
+
+    fn check_partial_line(&self) -> Result<()> {
+        let pending = self.without_initial_bom(self.pending());
+        let partial = pending.strip_suffix(b"\r").unwrap_or(pending);
+        self.check_size(self.frame_bytes.saturating_add(partial.len()))
     }
 
     fn without_initial_bom<'a>(&self, pending: &'a [u8]) -> &'a [u8] {
@@ -208,10 +222,7 @@ impl SseDecoder {
                 return Ok(Some(frame));
             }
         }
-        // No complete line remains, so these bytes belong to the current frame.
-        let pending = self.without_initial_bom(self.pending());
-        let partial = pending.strip_suffix(b"\r").unwrap_or(pending);
-        self.check_size(self.frame_bytes.saturating_add(partial.len()))?;
+        self.check_partial_line()?;
         Ok(None)
     }
 
@@ -244,8 +255,9 @@ impl SseDecoder {
     /// Otherwise a `\r` at the very end of the buffer is held back: it may yet
     /// turn out to be the first half of a `\r\n` split across two chunks.
     fn take_line(&mut self, eof: bool) -> Result<Option<String>> {
+        let position = self.line_end().map(|end| end - self.consumed);
         let pending = self.pending();
-        let Some(position) = pending.iter().position(|b| *b == b'\n' || *b == b'\r') else {
+        let Some(position) = position else {
             if eof && !pending.is_empty() {
                 let line = pending.to_vec();
                 self.consumed = self.buffer.len();
@@ -266,6 +278,7 @@ impl SseDecoder {
         };
         let line = pending[..position].to_vec();
         self.consumed += position + width;
+        self.scan_from = self.consumed;
         self.decode_line(line).map(Some)
     }
 
@@ -356,9 +369,9 @@ where
     crate::client::enforce::stream(decode_raw_events(chunks))
 }
 
-/// Decodes SSE frames into raw JSON values. A transport should expose these
-/// through [`super::Transport::run_raw`] so the common compatibility boundary
-/// can run before enforcement.
+/// Decodes SSE frames into raw JSON values. A transport hands these on as
+/// [`TransportStream::json`](super::TransportStream::json), so the common
+/// compatibility boundary runs on what the peer actually sent.
 pub fn decode_raw_events<S, B, E>(chunks: S) -> impl Stream<Item = Result<Value>>
 where
     S: Stream<Item = core::result::Result<B, E>>,

@@ -1,0 +1,63 @@
+{
+  "name": "run-after-requested-run-fails",
+  "area": "lifecycle",
+  "description": "the requested run pauses on an interrupt, and a run after it on the same stream fails: RUN_ERROR leaves what was pending, so the thread is still paused on the requested run's interrupt, and the request went as the failed run did. Local to this repository: 1.0 makes the requested run the last of its exchange and says nothing of a consumer that meets one after it; `input.runId` names the run asked for, and `end`, `runs` and `pendingInterrupts` are read on the thread lane only",
+  "specPage": "/spec/1.0/basic/patterns/interrupt-resume",
+  "kill": "clear the pending interrupts when a run fails, or report the request as the requested run ended rather than as the run after it did",
+  "input": { "runId": "run-after-requested-fails-r-1" },
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-run-after-requested-fails",
+      "runId": "run-after-requested-fails-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-run-after-requested-fails",
+      "runId": "run-after-requested-fails-r-1",
+      "outcome": {
+        "type": "interrupt",
+        "interrupts": [{ "id": "run-after-requested-fails-i-1", "reason": "approval" }]
+      }
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-run-after-requested-fails",
+      "runId": "run-after-requested-fails-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "run-after-requested-fails-m-1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "run-after-requested-fails-m-1",
+      "delta": "half a sen"
+    },
+    {
+      "type": "RUN_ERROR",
+      "message": "run-after-requested-fails: the run after the requested one failed"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "runError": "run-after-requested-fails: the run after the requested one failed",
+    "messageCount": 1,
+    "messages": [{ "id": "run-after-requested-fails-m-1", "content": "half a sen" }],
+    "end": {
+      "Failed": {
+        "message": "run-after-requested-fails: the run after the requested one failed",
+        "code": null
+      }
+    },
+    "runs": [
+      { "runId": "run-after-requested-fails-r-1", "requested": true, "end": "Interrupted" },
+      { "runId": "run-after-requested-fails-r-2", "requested": false, "end": "Failed" }
+    ],
+    "pendingInterrupts": ["run-after-requested-fails-i-1"]
+  }
+}

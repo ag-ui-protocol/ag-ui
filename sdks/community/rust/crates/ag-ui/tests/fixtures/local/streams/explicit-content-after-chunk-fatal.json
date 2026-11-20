@@ -1,0 +1,42 @@
+{
+  "name": "explicit-content-after-chunk-fatal",
+  "area": "streaming",
+  "description": "the two spellings do not mix within one item: an explicit TEXT_MESSAGE_CONTENT carrying the id a chunk stream is assembling is not a continuation of it. It ends the shorthand, so the message's end is synthesized, and is then judged by the triad rules, where it names a message that is not open and is fatal. What the chunk delivered is kept. Local to this repository: the specification states the rule and the upstream corpus has no stream for it",
+  "specPage": "/spec/1.0/basic/patterns/streaming",
+  "kill": "let an explicit event for the id a chunk stream is assembling join that stream instead of ending it",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-content-after-chunk",
+      "runId": "content-after-chunk-r1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "content-after-chunk-m1",
+      "delta": "a"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "content-after-chunk-m1",
+      "delta": "b"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-content-after-chunk",
+      "runId": "content-after-chunk-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "No active text message found with ID 'content-after-chunk-m1'",
+    "messageCount": 1,
+    "messages": [
+      {
+        "id": "content-after-chunk-m1",
+        "role": "assistant",
+        "content": "a"
+      }
+    ]
+  }
+}

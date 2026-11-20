@@ -51,14 +51,17 @@ impl Agent for Awkward {
         // fragments land wherever the socket happens to split them.
         let text = multibyte();
         let mut message = ctx.assistant_message()?;
-        for fragment in split_evenly(&text, 64) {
-            message.delta(fragment)?;
+        let fragments = split_evenly(&text, 64);
+        let (last, prefix) = fragments.split_last().unwrap();
+        for fragment in prefix {
+            message.delta(*fragment)?;
         }
         // An unordered event mid-message: legal, and a real producer pattern.
         message.emit(Event::state_snapshot(json!({"body": "", "lines": 0})))?;
         message.emit(Event::state_delta(vec![PatchOperation::replace(
             "/lines", 3,
         )]))?;
+        message.delta(*last)?;
         message.end()?;
 
         // A state document nothing will fit in one chunk.
@@ -176,4 +179,7 @@ async fn state_events_may_interleave_with_an_open_message() {
     assert_eq!(states, [0, 3, 4_000]);
     // …and the message they interleaved with is still one message.
     assert_eq!(thread.messages().len(), 3, "{:?}", thread.messages());
+    assert!(
+        matches!(thread.messages().last(), Some(Message::Assistant(message)) if message.content.as_deref() == Some(&multibyte()))
+    );
 }

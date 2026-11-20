@@ -8,10 +8,7 @@ use ag_ui::{Event, EventType, Interrupt, RunAgentInput, RunOutcome};
 use futures_util::StreamExt as _;
 
 async fn collect(agent: impl Agent, input: RunAgentInput) -> Vec<Event> {
-    run(agent, input)
-        .map(|event| event.expect("the run stream should not break"))
-        .collect()
-        .await
+    run(agent, input).collect().await
 }
 
 fn input() -> RunAgentInput {
@@ -270,4 +267,112 @@ async fn a_shared_agent_runs_like_any_other() {
     assert_eq!(events.len(), 2);
     // …and the original is still usable.
     assert_eq!(collect(agent, input()).await.len(), 2);
+}
+
+fn usage(model: &str, input_tokens: u64, output_tokens: u64) -> ag_ui::TokenUsage {
+    ag_ui::TokenUsage {
+        model: Some(model.to_owned()),
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn the_result_and_usage_an_agent_reports_ride_on_run_finished() {
+    struct Reports;
+
+    impl Agent for Reports {
+        type State = ();
+
+        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+            ctx.add_usage(usage("small", 10, 2));
+            ctx.add_usage(usage("large", 100, 20));
+            ctx.add_usage(usage("small", 5, 1));
+            // Labels without counts report nothing.
+            ctx.add_usage(ag_ui::TokenUsage {
+                model: Some("idle".to_owned()),
+                ..Default::default()
+            });
+            ctx.set_result(serde_json::json!({"answer": 42}));
+            Ok(RunOutcome::Success)
+        }
+    }
+
+    let events = collect(Reports, input()).await;
+    let Some(Event::RunFinished(finished)) = events.last() else {
+        panic!("{events:?}");
+    };
+    assert_eq!(finished.result, Some(serde_json::json!({"answer": 42})));
+    // One entry per model, in order of first appearance.
+    assert_eq!(
+        finished.usage,
+        Some(vec![usage("small", 15, 3), usage("large", 100, 20)])
+    );
+}
+
+#[tokio::test]
+async fn a_failed_run_reports_its_usage_and_no_result() {
+    struct SpendsThenFails;
+
+    impl Agent for SpendsThenFails {
+        type State = ();
+
+        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+            ctx.add_usage(usage("small", 10, 2));
+            ctx.set_result("never sent");
+            Err(Error::agent("the model stopped answering"))
+        }
+    }
+
+    let events = collect(SpendsThenFails, input()).await;
+    let Some(Event::RunError(error)) = events.last() else {
+        panic!("{events:?}");
+    };
+    assert_eq!(error.usage, Some(vec![usage("small", 10, 2)]));
+}
+
+#[tokio::test]
+async fn a_run_that_reports_nothing_writes_neither_field() {
+    let events = collect(Idle, input()).await;
+    let json = serde_json::to_value(events.last().unwrap()).unwrap();
+    assert!(json.get("result").is_none(), "{json}");
+    assert!(json.get("usage").is_none(), "{json}");
+}
+
+#[tokio::test]
+async fn a_tool_call_can_name_the_message_that_requested_it() {
+    struct Calls;
+
+    impl Agent for Calls {
+        type State = ();
+
+        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+            let message_id = ctx.say("Checking.")?;
+            let start = ag_ui::ToolCallStartEvent::new("call-1", "lookup")
+                .with_parent_message_id(message_id);
+            let mut call = ctx.tool_call_with(start)?;
+            assert_eq!(call.id().as_str(), "call-1");
+            call.args("{}")?;
+            call.result("done")?;
+            Ok(RunOutcome::Success)
+        }
+    }
+
+    let events = collect(Calls, input()).await;
+    let start = events
+        .iter()
+        .find_map(|event| match event {
+            Event::ToolCallStart(start) => Some(start),
+            _ => None,
+        })
+        .expect("a tool call");
+    assert_eq!(
+        start.parent_message_id.as_ref().map(|id| id.as_str()),
+        Some("run-1-msg-1")
+    );
+    assert_eq!(
+        events.last().map(Event::event_type),
+        Some(EventType::RunFinished)
+    );
 }

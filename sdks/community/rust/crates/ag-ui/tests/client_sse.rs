@@ -500,3 +500,26 @@ fn small_budget_is_enforced_on_normal_fields_and_at_eof() {
         }
     }
 }
+
+#[test]
+fn a_valid_prefix_is_delivered_before_an_oversized_line_at_every_split() {
+    let bytes = b"data: {}\n\n0123456789abcdefg";
+    for split in 0..=bytes.len() {
+        let mut decoder = SseDecoder::new().with_max_frame_size(16);
+        let mut delivered = Vec::new();
+        let decoded = (|| {
+            for chunk in [&bytes[..split], &bytes[split..]] {
+                decoder.push(chunk)?;
+                while let Some(frame) = decoder.next_frame()? {
+                    delivered.push(frame.data);
+                }
+            }
+            Ok::<_, ag_ui::client::Error>(())
+        })();
+        assert_eq!(delivered, ["{}"], "split at {split}");
+        assert!(
+            matches!(decoded, Err(ag_ui::client::Error::Decode(_))),
+            "split at {split}"
+        );
+    }
+}

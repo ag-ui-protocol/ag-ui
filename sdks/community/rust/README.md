@@ -1,10 +1,10 @@
 # Rust SDK migration proposal
 
-This branch adds the feature-based `ag-ui` crate alongside the existing community
-Rust SDK for review. The `ag-ui-core` and `ag-ui-client` source, public APIs and
-packaging checks remain in place. Whether to adopt the new implementation and
-remove the existing source is a separate decision for the upstream team and
-maintainers.
+This branch proposes `ag-ui` 1.0.0 as a community SDK for the frozen AG-UI
+1.0 protocol. It adds the feature-based crate alongside the existing
+`ag-ui-core` and `ag-ui-client` crates. Their AG-UI 1.0 implementation is
+under review in [#3214](https://github.com/ag-ui-protocol/ag-ui/pull/3214).
+The upstream team and maintainers decide adoption and review responsibilities.
 
 | Package | Role |
 | --- | --- |
@@ -16,7 +16,7 @@ maintainers.
 See [MIGRATION.md](MIGRATION.md) for API differences and transition decisions,
 and [PROVENANCE.md](PROVENANCE.md) for the source revision and scope of this import.
 The [transition checklist](docs/transition.md) separates this source change from
-the ownership, final legacy releases, and upstream approval still to be agreed.
+the open ownership, maintenance and publishing decisions.
 
 ## Try the candidate
 
@@ -27,8 +27,8 @@ Use a local dependency while reviewing this branch:
 ag-ui = { path = "path/to/ag-ui/sdks/community/rust/crates/ag-ui", features = ["http"] }
 ```
 
-The published standalone `ag-ui` crate is separate from this proposal; installing
-it from crates.io does not select the changes in this branch.
+The standalone release uses the same `ag-ui` name and SDK version. The protocol
+declaration sent on requests and `RUN_STARTED` is `1.0`.
 
 ### Client
 
@@ -142,12 +142,13 @@ that need review. The five retired `THINKING_*` variants are recorded separately
 for historical input compatibility. The gate fails when its source is unavailable
 or cannot be compared. It does not by itself prove every Rust value conforms;
 wire, stream-conformance and cross-language tests complement it.
-The pinned semantic suite compares 44 historical boundary cases against
-`@ag-ui/core@0.0.59`. Separately, `interop/` checks all 31 normative 1.0 event
-variants against the TypeScript source in this checkout and exercises the five
-retired thinking fixtures through Rust's compatibility codec.
-The remaining typed representation difference is an explicit fixture expectation,
-not a claim of lossless equivalence. See [protocol boundaries](docs/protocol-boundary.md).
+The semantic suite checks 44 cases against `@ag-ui/core@1.0.4`. Each
+intentional representation or acceptance difference is recorded in its fixture.
+The independent `interop/` suite checks the 31 canonical event types against the
+TypeScript source in this checkout and the five retired thinking fixtures through
+Rust's compatibility codec. The Rust tests run the frozen schema fixtures and
+conformance streams from `spec/1.0/`, including the documented Rust replacement
+for the reference client's unknown-role exception.
 
 The import excludes A2UI, live model tests, the standalone documentation site and
 standalone publishing workflows. JSON/SSE is implemented; the `protobuf` feature only exposes

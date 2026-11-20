@@ -11,7 +11,10 @@ mod common;
 
 use ag_ui::client::{RemoteAgent, RunParams, Thread, Update};
 use ag_ui::server::{Agent, Result, RunContext};
-use ag_ui::{AssistantMessage, Event, EventType, Message, MessageId, RunOutcome, ToolCallId};
+use ag_ui::{
+    AssistantMessage, Event, EventType, Message, MessageId, ReasoningMessage, RunOutcome,
+    ToolCallId,
+};
 use common::{serve, transport};
 use futures_util::StreamExt as _;
 
@@ -170,6 +173,11 @@ async fn interleaved_chunk_streams_reassemble_into_separate_messages() {
 
     let expected = vec![
         Message::user("chunky-msg-1", "say two things"),
+        Message::Reasoning(ReasoningMessage {
+            id: "think-1".into(),
+            content: "Two things to say, then a lookup.".to_owned(),
+            ..Default::default()
+        }),
         Message::assistant("say-1", "Hello, world!"),
         Message::assistant("say-2", "Goodbye"),
         Message::Assistant(AssistantMessage {
@@ -231,8 +239,9 @@ async fn a_chunk_streamed_call_answered_by_the_agent_survives_the_round_trip() {
     assert_eq!(thread.messages(), expected.as_slice());
 }
 
-/// Reasoning chunks land in the reasoning pane, not the transcript, and the
-/// stream that opened first is not closed by the ones that follow it.
+/// Reasoning chunks assemble into a reasoning message of their own, apart
+/// from the reply's text, and the stream that opened first is not closed by
+/// the ones that follow it.
 #[tokio::test(flavor = "multi_thread")]
 async fn reasoning_chunks_reassemble_separately_from_the_reply() {
     let url = serve(Chunky).await;
@@ -249,7 +258,7 @@ async fn reasoning_chunks_reassemble_separately_from_the_reply() {
         }
     }
 
-    let reasoning = thread.reasoning();
+    let reasoning: Vec<_> = thread.reasoning().collect();
     assert_eq!(reasoning.len(), 1, "{reasoning:?}");
     assert_eq!(reasoning[0].id.as_str(), "think-1");
     assert_eq!(reasoning[0].content, "Two things to say, then a lookup.");

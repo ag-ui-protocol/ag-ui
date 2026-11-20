@@ -8,8 +8,9 @@ stream of events: the agent opens messages, streams text and reasoning, calls to
 publishes state, reports subagent activity, and finishes — or pauses for human input.
 
 This is a proposed unified community SDK, imported for review alongside
-`ag-ui-core` and `ag-ui-client`. The existing packages remain unchanged while
-adoption and the transition plan are discussed.
+`ag-ui-core` and `ag-ui-client`. Their 1.0 parity work is proposed in
+[#3214](https://github.com/ag-ui-protocol/ag-ui/pull/3214). This version of `ag-ui`
+targets AG-UI 1.0 and shares its runtime with the standalone 1.0.0 SDK.
 See the [migration proposal](../../MIGRATION.md) and [provenance](../../PROVENANCE.md).
 
 To host an agent behind axum:
@@ -75,7 +76,7 @@ valid traffic.
 | `client` | no | Consume a remote agent, transport-agnostic. |
 | `http` | no | Adds the reqwest-backed transport to `client`. What most consumers want; leave it off for wasm. |
 | `axum` | no | Mount a hosted agent on an axum router. Implies `server` and `sse`, and is the one feature that pulls in tokio. |
-| `protobuf` | no | The binary transport's media type and a documented stub. `events.proto` covers only 21 of the 36 event types, so there is no encoder. |
+| `protobuf` | no | The binary transport's media type. The implemented HTTP binding uses JSON/SSE. |
 | `schemars` | no | Derives `schemars::JsonSchema` on the public types. |
 | `utoipa` | no | Derives `utoipa::ToSchema` on the public types. |
 
@@ -87,7 +88,7 @@ feature pulls in.
 
 MIT
 
-## Conversations in 0.4
+## Conversations
 
 `HttpAgent::new(url)` configures a connection. `agent.thread(id)` creates a local
 conversation; `thread.send(text)?` returns a run stream. `collect_report().await`

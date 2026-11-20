@@ -13,13 +13,17 @@ use crate::tool::Tool;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
-pub struct SubAgentInfo {
+pub struct SubagentInfo {
     /// Unique name or identifier of the sub-agent.
     pub name: String,
     /// What this sub-agent specializes in. Helps clients build selection UIs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
+
+/// The old spelling of [`SubagentInfo`], which is the AG-UI 1.0 name.
+#[deprecated(since = "0.5.0", note = "renamed to `SubagentInfo`")]
+pub type SubAgentInfo = SubagentInfo;
 
 /// Agent identity and metadata.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -150,9 +154,10 @@ pub struct MultiAgentCapabilities {
     /// The agent can hand the conversation over entirely.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoffs: Option<bool>,
-    /// Sub-agents this agent can invoke.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sub_agents: Option<Vec<SubAgentInfo>>,
+    /// Sub-agents this agent can invoke. AG-UI 1.0 spells the key `subagents`;
+    /// the earlier `subAgents` is not read.
+    #[serde(rename = "subagents", default, skip_serializing_if = "Option::is_none")]
+    pub sub_agents: Option<Vec<SubagentInfo>>,
 }
 
 /// Visibility into the agent's reasoning.
@@ -248,11 +253,24 @@ pub struct ExecutionCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandboxed: Option<bool>,
     /// Cap on tool-call / reasoning iterations per run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_iterations: Option<i64>,
-    /// Wall-clock cap per run, in milliseconds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_execution_time: Option<i64>,
+    ///
+    /// The schema says `minimum: 0`. A negative number, which some frameworks
+    /// send for "no limit", reads as `None`: no cap declared.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::non_negative",
+        serialize_with = "crate::serde_util::serialize_safe_integer",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_iterations: Option<u64>,
+    /// Wall-clock cap per run, in milliseconds. Read like `max_iterations`.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_util::non_negative",
+        serialize_with = "crate::serde_util::serialize_safe_integer",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_execution_time: Option<u64>,
 }
 
 /// Human-in-the-loop support.

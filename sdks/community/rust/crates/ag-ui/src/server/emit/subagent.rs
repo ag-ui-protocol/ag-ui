@@ -53,6 +53,9 @@ use crate::server::error::Result;
 /// emitting. A parent error may terminate with the child still open. A successful
 /// or interrupted parent must explicitly close every announced child; otherwise
 /// the run driver reports a protocol error, including when `verify` is disabled.
+/// A cancelled run is the exception: every method here still works after
+/// cancellation, and the driver closes each child left active with
+/// `SUBAGENT_ERROR`, code `CANCELLED`, before `RUN_FINISHED`.
 /// This handle records events; the application executes the work.
 #[derive(Debug)]
 pub struct SubagentHandle<'a, S> {
@@ -115,14 +118,14 @@ impl<'a, S> SubagentHandle<'a, S> {
     pub fn finish(mut self) -> Result<()> {
         self.leave();
         self.ctx
-            .emit(Event::subagent_finished_success(self.id.clone()))
+            .emit_forced(Event::subagent_finished_success(self.id.clone()))
     }
 
     /// Emits `SUBAGENT_FINISHED` carrying a completion payload — the
     /// subagent's counterpart of `RUN_FINISHED.result`.
     pub fn finish_with(mut self, result: impl Into<Value>) -> Result<()> {
         self.leave();
-        self.ctx.emit(
+        self.ctx.emit_forced(
             SubagentFinishedEvent::new(self.id.clone())
                 .with_result(result)
                 .with_outcome(SubagentOutcome::Success)
@@ -140,7 +143,7 @@ impl<'a, S> SubagentHandle<'a, S> {
     /// the same id again on the resuming run to continue the invocation.
     pub fn suspend(mut self, interrupt_ids: impl Into<Vec<String>>) -> Result<()> {
         self.leave();
-        self.ctx.emit(Event::subagent_finished_suspended(
+        self.ctx.emit_forced(Event::subagent_finished_suspended(
             self.id.clone(),
             interrupt_ids,
         ))
@@ -150,7 +153,7 @@ impl<'a, S> SubagentHandle<'a, S> {
     pub fn fail(mut self, message: impl Into<String>) -> Result<()> {
         self.leave();
         self.ctx
-            .emit(Event::subagent_error(self.id.clone(), message))
+            .emit_forced(Event::subagent_error(self.id.clone(), message))
     }
 
     /// Emits `SUBAGENT_ERROR` with a machine-readable code.
@@ -160,7 +163,7 @@ impl<'a, S> SubagentHandle<'a, S> {
         code: impl Into<String>,
     ) -> Result<()> {
         self.leave();
-        self.ctx.emit(
+        self.ctx.emit_forced(
             crate::SubagentErrorEvent::new(self.id.clone(), message)
                 .with_code(code)
                 .into(),

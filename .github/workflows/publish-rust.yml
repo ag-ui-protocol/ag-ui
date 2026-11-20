@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commit: ${{ steps.version.outputs.commit }}
+      published: ${{ steps.registry.outputs.published }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,10 +81,21 @@ jobs:
       - name: Package and verify without uploading
         run: cargo package --locked -p ag-ui
 
+      - name: Compare an existing crates.io version
+        id: registry
+        env:
+          SDK_VERSION: ${{ inputs.version }}
+        run: |
+          published=$(python3 scripts/published_package.py "$SDK_VERSION" "target/package/ag-ui-$SDK_VERSION.crate")
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+          if [[ "$published" == true ]]; then
+            echo "::notice::ag-ui $SDK_VERSION is already published with identical runtime source and build declarations."
+          fi
+
   publish:
     name: Publish ag-ui to crates.io
     needs: verify
-    if: ${{ !inputs.dry_run && github.repository == 'ag-ui-protocol/ag-ui' && github.ref == 'refs/heads/main' }}
+    if: ${{ !inputs.dry_run && needs.verify.outputs.published != 'true' && github.repository == 'ag-ui-protocol/ag-ui' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: rust-crates-publish
     permissions:

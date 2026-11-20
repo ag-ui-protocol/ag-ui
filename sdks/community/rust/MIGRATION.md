@@ -102,7 +102,7 @@ The old client's `is_retryable()` helper is absent. HTTP failures expose
 `client::Error::Http { status, body }`; classify them using your application's
 retry policy. Reissuing a run can duplicate effects unless the application
 can prove that its run ID and operation are idempotent. A custom client middleware
-can wrap `Transport` and override `run_raw` to translate wire JSON before the
+can implement `Transport::run` and return `TransportStream::json` to translate wire JSON before the
 SDK's shared enforcement step. When filtering tool calls, normalize chunks first
 or retain their per-owner open-call identity so ID-less continuations cannot
 escape the filter.
@@ -142,8 +142,7 @@ with a typed media part and a `Data`, `Url` or `File` source. `RemoteAgent` and
 inline data (preferred over a URL), MIME type, and filename metadata. Incoming
 snapshots, input echoes, and tool results use the same translation before schema
 enforcement. A matching modern media part avoids a duplicate; an ID-only legacy
-part has no 1.0 source, so it remains unchanged on requests and is removed by
-incoming schema enforcement. Low-level transport requests are passed as supplied.
+part has no registered 1.0 translation and is dropped at the compatibility boundary.
 
 Axum run endpoints require a JSON `Content-Type`. Send `application/json`,
 `text/json`, or a media type with a `+json` suffix. A missing or unsupported
@@ -168,6 +167,7 @@ normalization details.
 
 The `ag-ui-core` and `ag-ui-client` source remains in this workspace, and their
 previously published versions remain available.
-The proposed final releases would preserve their existing APIs and link to this
-guide. Release and ownership arrangements are tracked in the
-[transition checklist](docs/transition.md).
+The existing crates have an active 1.0 parity proposal in
+[#3214](https://github.com/ag-ui-protocol/ag-ui/pull/3214). Upstream maintainers
+decide how both implementations will be maintained. The
+[coordination notes](docs/transition.md) record the separate publishing and ownership questions.

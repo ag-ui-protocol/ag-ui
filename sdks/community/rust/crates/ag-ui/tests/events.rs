@@ -115,9 +115,29 @@ fn sample_events() -> Vec<Event> {
 }
 
 #[test]
-fn protocol_defines_thirty_six_event_types() {
+fn thirty_one_of_the_thirty_six_event_types_are_1_0_and_five_are_retired() {
     assert_eq!(EventType::ALL.len(), 36);
     assert_eq!(CANONICAL_TAGS.len(), 36);
+
+    let schema: Value =
+        serde_json::from_str(include_str!("../src/protocol/schema-1.0.json")).unwrap();
+    let in_schema: Vec<&str> = schema["$defs"]["EventType"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    assert_eq!(in_schema.len(), 31);
+    let retired: Vec<&str> = CANONICAL_TAGS
+        .iter()
+        .copied()
+        .filter(|tag| !in_schema.contains(tag))
+        .collect();
+    assert_eq!(retired.len(), 5, "{retired:?}");
+    assert!(
+        retired.iter().all(|tag| tag.starts_with("THINKING_")),
+        "{retired:?}"
+    );
 }
 
 #[test]

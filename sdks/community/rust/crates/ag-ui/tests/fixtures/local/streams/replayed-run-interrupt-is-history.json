@@ -1,0 +1,65 @@
+{
+  "name": "replayed-run-interrupt-is-history",
+  "area": "lifecycle",
+  "description": "a run replayed ahead of the requested one is history: its interrupt outcome is reported with the run and is not something the thread is paused on, so when the requested run then fails, which leaves what was pending as it was, nothing is pending. Local to this repository: the reference client keeps the interrupts of the last RUN_FINISHED on the stream whichever run sent it; `end`, `runs` and `pendingInterrupts` are read on the thread lane only",
+  "specPage": "/spec/1.0/basic/patterns/interrupt-resume",
+  "kill": "let every RUN_FINISHED on the stream replace the pending interrupts, so a replayed run's interrupt outlives the failure of the requested run",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-replayed-interrupt",
+      "runId": "replayed-interrupt-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "replayed-interrupt-m-1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "replayed-interrupt-m-1",
+      "delta": "May I proceed?"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "replayed-interrupt-m-1" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-replayed-interrupt",
+      "runId": "replayed-interrupt-r-1",
+      "outcome": {
+        "type": "interrupt",
+        "interrupts": [{ "id": "replayed-interrupt-i-1", "reason": "approval" }]
+      }
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-replayed-interrupt",
+      "runId": "replayed-interrupt-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "RUN_ERROR",
+      "message": "replayed-interrupt: the requested run failed"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "runError": "replayed-interrupt: the requested run failed",
+    "messageCount": 1,
+    "messages": [{ "id": "replayed-interrupt-m-1", "content": "May I proceed?" }],
+    "end": {
+      "Failed": { "message": "replayed-interrupt: the requested run failed", "code": null }
+    },
+    "runs": [
+      {
+        "runId": "replayed-interrupt-r-1",
+        "requested": false,
+        "end": "Interrupted",
+        "detail": { "Interrupted": { "interrupts": [{ "id": "replayed-interrupt-i-1" }] } }
+      },
+      { "runId": "replayed-interrupt-r-2", "requested": true, "end": "Failed" }
+    ],
+    "pendingInterrupts": []
+  }
+}

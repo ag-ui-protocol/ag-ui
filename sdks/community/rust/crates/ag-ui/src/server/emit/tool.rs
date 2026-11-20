@@ -1,17 +1,18 @@
 //! Streaming one tool call.
 
-use crate::{Event, MessageId, ReasoningEncryptedValueSubtype, ToolCallId};
+use crate::{Event, MessageId, ReasoningEncryptedValueSubtype, ToolCallId, ToolContent};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::server::agent::AgentState;
 use crate::server::emit::EventSink;
 use crate::server::error::Result;
 use crate::server::state::RunState;
 
 /// One open tool call.
 ///
-/// Created by [`RunContext::tool_call`](crate::server::RunContext::tool_call).
+/// Created by [`RunContext::tool_call`](crate::server::RunContext::tool_call), or by
+/// [`tool_call_with`](crate::server::RunContext::tool_call_with) when the call
+/// names the message that requested it.
 /// `TOOL_CALL_START` has already gone out; `Drop` emits `TOOL_CALL_END`.
 ///
 /// Arguments stream as text because providers stream them as text — a partial
@@ -86,13 +87,10 @@ impl<'a, S> ToolCallHandle<'a, S> {
     pub(crate) fn start(
         sink: &'a mut EventSink,
         state: &'a mut RunState<S>,
-        id: ToolCallId,
-        name: &str,
-        parent_message_id: Option<MessageId>,
+        start: crate::ToolCallStartEvent,
         result_message_id: MessageId,
     ) -> Result<Self> {
-        let mut start = crate::ToolCallStartEvent::new(id.clone(), name);
-        start.parent_message_id = parent_message_id;
+        let id = start.tool_call_id.clone();
         sink.emit(start.into())?;
         Ok(Self {
             sink,
@@ -160,22 +158,40 @@ impl<'a, S> ToolCallHandle<'a, S> {
     /// unanswered.
     ///
     /// Use it when the client executes the tool — a front-end tool's result
-    /// arrives as a message on the next request, not from here.
+    /// arrives as a message on the next request, not from here. Like `Drop`,
+    /// it still closes the call after the run was cancelled.
     pub fn end(mut self) -> Result<()> {
         self.ended = true;
-        self.sink.emit(Event::tool_call_end(self.id.clone()))
+        self.sink.emit_forced(Event::tool_call_end(self.id.clone()))
     }
 
     /// Emits `TOOL_CALL_END` then `TOOL_CALL_RESULT`, and consumes the handle.
     ///
-    /// Returns the id of the tool message carrying the result.
-    pub fn result(mut self, content: impl Into<String>) -> Result<MessageId> {
+    /// Returns the id of the tool message carrying the result. After the run
+    /// was cancelled the call is still closed, but the result is new output
+    /// and fails like any other emit.
+    ///
+    /// `content` is text, or the ordered parts of a multimodal result:
+    ///
+    /// ```
+    /// # use ag_ui::{Event, InputContent, RunAgentInput, ToolContent};
+    /// # use ag_ui::server::RunContext;
+    /// # let (mut ctx, mut events) = RunContext::<()>::new(RunAgentInput::new("t", "r"))?;
+    /// let call = ctx.tool_call("render_chart")?;
+    /// call.result(vec![InputContent::text("Q3 revenue"), InputContent::text("up 4%")])?;
+    ///
+    /// let Some(Event::ToolCallResult(result)) = events.drain().pop() else { unreachable!() };
+    /// assert!(matches!(result.content, ToolContent::Parts(parts) if parts.len() == 2));
+    /// # Ok::<(), ag_ui::server::Error>(())
+    /// ```
+    pub fn result(mut self, content: impl Into<ToolContent>) -> Result<MessageId> {
         self.ended = true;
-        self.sink.emit(Event::tool_call_end(self.id.clone()))?;
+        self.sink
+            .emit_forced(Event::tool_call_end(self.id.clone()))?;
         let mut result = crate::ToolCallResultEvent::new(
             self.result_message_id.clone(),
             self.id.clone(),
-            content.into(),
+            content,
         );
         result.role = Some(crate::ToolResultRole::Tool);
         self.sink.emit(result.into())?;
@@ -189,35 +205,17 @@ impl<'a, S> ToolCallHandle<'a, S> {
     }
 }
 
-/// The run's state, reachable while the call is open. Same three methods as on
-/// [`RunContext`](crate::server::RunContext), forwarded — a tool that changes the state
-/// is the ordinary case, and it changes it in the middle of the call.
-impl<S: AgentState> ToolCallHandle<'_, S> {
-    /// The typed state, as of the last publish.
-    pub fn state(&self) -> &S {
-        self.state.get()
-    }
-
-    /// The typed state, mutably. Nothing is emitted until you call
-    /// [`publish_state`](Self::publish_state).
-    pub fn state_mut(&mut self) -> &mut S {
-        self.state.get_mut()
-    }
-
-    /// Publishes whatever [`state_mut`](Self::state_mut) left behind, as a
-    /// `STATE_SNAPSHOT` or a `STATE_DELTA` between this call's `TOOL_CALL_START`
-    /// and its `TOOL_CALL_END`.
-    ///
-    /// A no-op when nothing changed since the last publish.
-    pub fn publish_state(&mut self) -> Result<()> {
-        self.state.publish(self.sink)
-    }
+state_access! {
+    /// The run's state, reachable while the call is open. Same three methods as on
+    /// [`RunContext`](crate::server::RunContext), forwarded — a tool that changes the state
+    /// is the ordinary case, and it changes it in the middle of the call.
+    ToolCallHandle, published "between this call's `TOOL_CALL_START` and its `TOOL_CALL_END`"
 }
 
 impl<S> Drop for ToolCallHandle<'_, S> {
     fn drop(&mut self) {
         if !self.ended {
-            let _ = self.sink.emit(Event::tool_call_end(self.id.clone()));
+            let _ = self.sink.emit_forced(Event::tool_call_end(self.id.clone()));
         }
     }
 }
