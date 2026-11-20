@@ -708,7 +708,8 @@ class PreparedStream(TypedDict):
     events_to_dispatch: NotRequired[Optional[List[ProcessedEvents]]]
 
 class LangGraphAgent:
-    def __init__(self, *, name: str, graph: CompiledStateGraph, description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
+    # Bare CompiledStateGraph defaults ContextT to None (PEP 696).
+    def __init__(self, *, name: str, graph: CompiledStateGraph[Any, Any, Any, Any], description: Optional[str] = None, config:  Union[Optional[RunnableConfig], dict] = None, enable_legacy_on_interrupt_event: bool = True, emit_interrupt_outcome: bool = False, emit_raw_events: bool = True, emit_subagent_events: Optional[bool] = None, subagent_visibility: Optional[str] = None):
         self.name = name
         self.description = description
         self.graph = graph
