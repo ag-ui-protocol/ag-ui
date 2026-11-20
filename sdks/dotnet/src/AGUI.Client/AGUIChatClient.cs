@@ -82,20 +82,208 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
         }
 
-        if (approvalResponses is { Count: > 0 })
+        // Completed approval-wrapped calls are normalized on every turn, not
+        // only after a fresh approval response: on an ordinary turn the history
+        // still carries the ToolApprovalRequestContent wrapper, and MEAI's
+        // FunctionInvokingChatClient strips it downstream while keeping the
+        // FunctionResultContent — leaving an orphaned tool result that
+        // providers reject with HTTP 400 on each later turn that replays it
+        // (CodeRabbit review 2026-11-19T13:14:36Z, Major).
+        //
+        // A request whose call already completed must be preserved: dropping
+        // it while its FunctionResultContent survives leaves an orphaned tool
+        // result that providers reject.
+        //
+        // The completed call is preserved as a plain FunctionCallContent,
+        // not as the original ToolApprovalRequestContent: MEAI 10.9.0's
+        // FunctionInvokingChatClient strips approval request/response contents
+        // from the history it forwards, so keeping the wrapper would still
+        // drop the call downstream. Unwrapping keeps the call visible to the
+        // server, and FunctionInvokingChatClient never invokes function calls
+        // found in request history — it only invokes calls from the response
+        // stream and approval responses without a matching
+        // FunctionResultContent (which it skips via its functionResultCallIds
+        // set) — so a completed call is not re-executed locally.
+        //
+        // Pending requests are dropped only when a fresh approval response
+        // arrived in the last message (its resume payload is carried in
+        // AdditionalProperties instead); on an ordinary turn they pass
+        // through untouched, as before.
         {
-            var filtered = new List<ChatMessage>();
+            var completedCallIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var message in messagesList)
             {
-                if (message.Contents.Any(c => c is ToolApprovalRequestContent || c is ToolApprovalResponseContent))
+                foreach (var result in message.Contents.OfType<FunctionResultContent>())
                 {
+                    if (result.CallId is not null)
+                    {
+                        completedCallIds.Add(result.CallId);
+                    }
+                }
+            }
+
+            var filtered = new List<ChatMessage>();
+            // Residual content from a user message that also carries a
+            // ToolApprovalResponseContent must not stay between the restored
+            // assistant tool call and its tool result: providers reject a
+            // tool result that does not immediately follow its call. Defer
+            // such content and re-emit it as its own user message right
+            // after the tool result for the call the response answers.
+            // Nothing is dropped: a deferred message with no matching
+            // result in the history is appended at the end.
+            var deferred = new List<(ChatMessage Message, HashSet<string> AnsweredCallIds)>();
+            foreach (var message in messagesList)
+            {
+                if (!message.Contents.Any(c => c is ToolApprovalRequestContent or ToolApprovalResponseContent))
+                {
+                    filtered.Add(message);
                     continue;
                 }
 
-                filtered.Add(message);
+                var hasApprovalResponse = message.Role == ChatRole.User
+                    && message.Contents.Any(c => c is ToolApprovalResponseContent);
+                var newContents = new List<AIContent>();
+                var residualContents = new List<AIContent>();
+                var answeredCallIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var content in message.Contents)
+                {
+                    if (content is ToolApprovalRequestContent request)
+                    {
+                        if (request.ToolCall is FunctionCallContent call
+                            && call.CallId is not null
+                            && completedCallIds.Contains(call.CallId))
+                        {
+                            // Completed: unwrap to the plain call so it survives
+                            // downstream and stays adjacent to its result.
+                            newContents.Add(call);
+                        }
+
+                        else if (approvalResponses is not { Count: > 0 })
+                        {
+                            // No fresh response: keep the pending request
+                            // untouched, as on an ordinary turn before.
+                            newContents.Add(content);
+                        }
+
+                        // Otherwise the pending request is dropped: the fresh
+                        // response travels via AdditionalProperties as the
+                        // resume payload.
+                    }
+                    else if (content is ToolApprovalResponseContent response)
+                    {
+                        if (response.ToolCall is FunctionCallContent answered
+                            && answered.CallId is not null)
+                        {
+                            answeredCallIds.Add(answered.CallId);
+                        }
+
+                        // ToolApprovalResponseContent is dropped: fresh responses
+                        // travel via AdditionalProperties, and completed ones are
+                        // redundant once their call is unwrapped above.
+                    }
+                    else if (hasApprovalResponse)
+                    {
+                        // Residual user content: defer it past the tool result
+                        // instead of leaving it between the call and its result.
+                        residualContents.Add(content);
+                    }
+                    else
+                    {
+                        newContents.Add(content);
+                    }
+                }
+
+                if (residualContents.Count > 0)
+                {
+                    // Clone before rewriting contents: the caller's history
+                    // objects must not be mutated.
+                    var deferredMessage = message.Clone();
+                    deferredMessage.Contents = residualContents;
+                    deferred.Add((deferredMessage, answeredCallIds));
+                }
+
+                // A message left empty by the rewrite is dropped entirely.
+                if (newContents.Count > 0)
+                {
+                    // Clone before rewriting contents: the caller's history
+                    // objects must not be mutated.
+                    var rewrittenMessage = message.Clone();
+                    rewrittenMessage.Contents = newContents;
+                    filtered.Add(rewrittenMessage);
+                }
+            }
+
+            // Re-emit each deferred user message only after every result
+            // in its owning assistant batch has been emitted, in original
+            // order; anything with no matching result is appended at the
+            // end so no user input is lost.
+            if (deferred.Count > 0)
+            {
+                // Batches are read from the rewritten history: pending
+                // calls are dropped from it, so only completed calls in
+                // the same rewritten assistant message gate the release.
+                var assistantCallBatches = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+                foreach (var message in filtered)
+                {
+                    if (message.Role != ChatRole.Assistant)
+                    {
+                        continue;
+                    }
+
+                    var callIds = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var call in message.Contents.OfType<FunctionCallContent>())
+                    {
+                        if (call.CallId is not null)
+                        {
+                            callIds.Add(call.CallId);
+                        }
+                    }
+
+                    foreach (var callId in callIds)
+                    {
+                        assistantCallBatches[callId] = callIds;
+                    }
+                }
+
+                var seenResultCallIds = new HashSet<string>(StringComparer.Ordinal);
+                var reordered = new List<ChatMessage>(filtered.Count + deferred.Count);
+                foreach (var message in filtered)
+                {
+                    reordered.Add(message);
+                    foreach (var result in message.Contents.OfType<FunctionResultContent>())
+                    {
+                        if (result.CallId is not null)
+                        {
+                            seenResultCallIds.Add(result.CallId);
+                        }
+                    }
+
+                    for (var i = 0; i < deferred.Count;)
+                    {
+                        var (deferredMessage, answeredIds) = deferred[i];
+                        if (IsAnsweredBatchComplete(answeredIds, assistantCallBatches, seenResultCallIds))
+                        {
+                            reordered.Add(deferredMessage);
+                            deferred.RemoveAt(i);
+                        }
+                        else
+                        {
+                            i++;
+                        }
+                    }
+                }
+
+                reordered.AddRange(deferred.Select(d => d.Message));
+                filtered = reordered;
             }
 
             messagesList = filtered;
+        }
+
+        if (approvalResponses is { Count: > 0 })
+        {
+            // A fresh approval response arrived in the last message: its
+            // resume payload travels via AdditionalProperties.
             innerOptions = (innerOptions ?? options)?.Clone() ?? new ChatOptions();
             innerOptions.AdditionalProperties ??= [];
             innerOptions.AdditionalProperties[AGUIClientInternalKeys.ApprovalResponses] = approvalResponses;
@@ -163,6 +351,41 @@ public sealed class AGUIChatClient : DelegatingChatClient
         ArgumentNullThrowHelper.ThrowIfNull(options);
 
         return options.Transport;
+    }
+
+    // True when every result in the owning assistant batch of the
+    // answered calls has been seen. An empty answered set still waits
+    // for the first result; a call with no recorded batch waits for
+    // its own result.
+    private static bool IsAnsweredBatchComplete(
+        HashSet<string> answeredCallIds,
+        Dictionary<string, HashSet<string>> assistantCallBatches,
+        HashSet<string> seenResultCallIds)
+    {
+        if (seenResultCallIds.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var answeredId in answeredCallIds)
+        {
+            if (assistantCallBatches.TryGetValue(answeredId, out var batch))
+            {
+                foreach (var batchId in batch)
+                {
+                    if (!seenResultCallIds.Contains(batchId))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!seenResultCallIds.Contains(answeredId))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static FunctionInvokingChatClient CreateInnerClient(

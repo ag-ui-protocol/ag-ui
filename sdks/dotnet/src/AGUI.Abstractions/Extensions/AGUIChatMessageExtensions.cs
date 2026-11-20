@@ -270,17 +270,78 @@ public static class AGUIChatMessageExtensions
         }
 #endif
 
-        foreach (var message in chatMessages)
+        // Residual user content that shared a message with a
+        // ToolApprovalResponseContent must not sit between the restored
+        // assistant tool call and its tool result: providers reject a
+        // tool result that does not immediately follow its call. Defer
+        // it and emit it as its own user message right after the tool
+        // result for the call the response answers; anything with no
+        // matching result is emitted at the end so no user input is lost.
+        var deferredUserMessages = new List<(AGUIUserMessage Message, HashSet<string> AnsweredCallIds)>();
+        var seenResultCallIds = new HashSet<string>(StringComparer.Ordinal);
+
+        // Calls issued by the same assistant message form one batch: a
+        // deferred user message is released only after every result in
+        // its batch has been emitted, so it never lands between two
+        // results of the same assistant turn.
+        var messageList = chatMessages.ToList();
+        var assistantCallBatches = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var message in messageList)
+        {
+            if (message.Role != ChatRole.Assistant)
+            {
+                continue;
+            }
+
+            var callIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionCallContent functionCall && functionCall.CallId is not null)
+                {
+                    callIds.Add(functionCall.CallId);
+                }
+                else if (content is ToolApprovalRequestContent { ToolCall: FunctionCallContent wrappedCall }
+                    && wrappedCall.CallId is not null)
+                {
+                    callIds.Add(wrappedCall.CallId);
+                }
+            }
+
+            foreach (var callId in callIds)
+            {
+                assistantCallBatches[callId] = callIds;
+            }
+        }
+
+        foreach (var message in messageList)
         {
             AGUIMessage aguiMessage;
+            var deferUserMessage = false;
+            var answeredCallIds = new HashSet<string>(StringComparer.Ordinal);
             if (message.Role == ChatRole.User)
             {
                 var userMsg = new AGUIUserMessage { Name = message.AuthorName };
                 var parts = new List<AGUIInputContent>();
+                var sawApprovalResponse = false;
                 foreach (var content in message.Contents)
                 {
                     switch (content)
                     {
+                        case ToolApprovalResponseContent response:
+                            // An approval response is not user input: it is consumed
+                            // by the approval flow (resume payload) and must not
+                            // surface as a text part. Leaving it in place emits a
+                            // user message between the assistant tool-call message
+                            // and its tool result, which providers reject — a tool
+                            // result must immediately follow its call.
+                            sawApprovalResponse = true;
+                            if (response.ToolCall is FunctionCallContent answered
+                                && answered.CallId is not null)
+                            {
+                                answeredCallIds.Add(answered.CallId);
+                            }
+
+                            break;
                         case TextContent textContent:
                             parts.Add(new AGUITextInputContent { Text = textContent.Text ?? string.Empty });
                             break;
@@ -327,12 +388,44 @@ public static class AGUIChatMessageExtensions
                     }
                 }
 
+                if (parts.Count == 0 && sawApprovalResponse)
+                {
+                    // The message carried only approval responses: skip it
+                    // entirely rather than emitting an empty user message into
+                    // the history.
+                    continue;
+                }
+
                 userMsg.Content = parts;
+                if (sawApprovalResponse)
+                {
+                    // Residual user content: defer it past the tool result
+                    // instead of leaving it between the call and its result.
+                    deferUserMessage = true;
+                }
+
                 aguiMessage = userMsg;
             }
             else if (message.Role == ChatRole.Assistant)
             {
-                var functionCalls = message.Contents.OfType<FunctionCallContent>().ToList();
+                // Collect tool calls in content order. A call wrapped in a
+                // ToolApprovalRequestContent (issue #3364) must be preserved
+                // the same way as a plain FunctionCallContent: dropping it
+                // while its FunctionResultContent survives leaves an orphaned
+                // tool result that providers reject.
+                var functionCalls = new List<FunctionCallContent>();
+                foreach (var content in message.Contents)
+                {
+                    if (content is FunctionCallContent functionCall)
+                    {
+                        functionCalls.Add(functionCall);
+                    }
+                    else if (content is ToolApprovalRequestContent { ToolCall: FunctionCallContent wrappedCall })
+                    {
+                        functionCalls.Add(wrappedCall);
+                    }
+                }
+
                 var assistantMsg = new AGUIAssistantMessage
                 {
                     Content = string.IsNullOrEmpty(message.Text) ? null : message.Text
@@ -379,6 +472,14 @@ public static class AGUIChatMessageExtensions
                 // rather than synthesizing a message with an empty toolCallId.
                 foreach (var functionResult in message.Contents.OfType<FunctionResultContent>())
                 {
+                    if (functionResult.CallId is null)
+                    {
+                        // A result without a call id has no call to attach to;
+                        // skip it rather than synthesizing a message with an
+                        // empty toolCallId.
+                        continue;
+                    }
+
                     yield return new AGUIToolMessage
                     {
                         Id = functionResult.CallId,
@@ -392,6 +493,23 @@ public static class AGUIChatMessageExtensions
                                 ? toolSubagentRunId
                                 : null,
                     };
+                    seenResultCallIds.Add(functionResult.CallId);
+                }
+
+                // Release deferred user messages whose entire owning
+                // batch now has results, in their original order.
+                for (var i = 0; i < deferredUserMessages.Count;)
+                {
+                    var (deferredMessage, answeredIds) = deferredUserMessages[i];
+                    if (IsAnsweredBatchComplete(answeredIds, assistantCallBatches, seenResultCallIds))
+                    {
+                        yield return deferredMessage;
+                        deferredUserMessages.RemoveAt(i);
+                    }
+                    else
+                    {
+                        i++;
+                    }
                 }
 
                 continue;
@@ -414,8 +532,56 @@ public static class AGUIChatMessageExtensions
                 aguiMessage.SubagentRunId = subagentRunId;
             }
 
+            if (deferUserMessage)
+            {
+                deferredUserMessages.Add(((AGUIUserMessage)aguiMessage, answeredCallIds));
+                continue;
+            }
+
             yield return aguiMessage;
         }
+
+        // Any deferred user message with no matching tool result in the
+        // history is emitted at the end so no user input is lost.
+        foreach (var (deferredMessage, _) in deferredUserMessages)
+        {
+            yield return deferredMessage;
+        }
+    }
+
+    // True when every result in the owning assistant batch of the
+    // answered calls has been seen. An empty answered set still waits
+    // for the first result; a call with no recorded batch waits for
+    // its own result.
+    private static bool IsAnsweredBatchComplete(
+        HashSet<string> answeredCallIds,
+        Dictionary<string, HashSet<string>> assistantCallBatches,
+        HashSet<string> seenResultCallIds)
+    {
+        if (seenResultCallIds.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var answeredId in answeredCallIds)
+        {
+            if (assistantCallBatches.TryGetValue(answeredId, out var batch))
+            {
+                foreach (var batchId in batch)
+                {
+                    if (!seenResultCallIds.Contains(batchId))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else if (!seenResultCallIds.Contains(answeredId))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static AGUIMediaInputContent ConvertMediaContent(
