@@ -277,8 +277,9 @@ async function renderSubagent(
   });
 
   // Fresh render call id per attempt so the middleware treats each attempt as a
-  // distinct render (building -> retrying -> painted / failed).
-  const callId = `a2ui-render-${attempt}-${RENDER_A2UI_TOOL_NAME}`;
+  // distinct render (building -> retrying -> painted / failed). The random part
+  // keeps the ids of two `generate_a2ui` calls in one thread apart.
+  const callId = `a2ui-render-${globalThis.crypto.randomUUID().slice(0, 8)}-${attempt}`;
   let liveOpen = false;
   const push = async (payload: Record<string, unknown>) => {
     if (writer?.custom) {

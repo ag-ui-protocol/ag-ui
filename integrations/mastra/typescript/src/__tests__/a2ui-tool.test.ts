@@ -25,10 +25,17 @@ vi.mock("@mastra/core/agent", () => ({
         const tool = this.tools[Object.keys(this.tools)[0]];
         await tool.execute(args, {});
       }
-      // renderSubagent iterates `.fullStream`; the streamed render deltas go to
-      // the writer (not asserted here), so an empty stream is enough.
+      // renderSubagent iterates `.fullStream` and pushes the render call onto
+      // the writer: a start when the call starts, an end with the call.
       return {
-        fullStream: (async function* () {})(),
+        fullStream: (async function* () {
+          if (args == null) return;
+          yield {
+            type: "tool-call-input-streaming-start",
+            payload: { toolName: "render_a2ui" },
+          };
+          yield { type: "tool-call", payload: {} };
+        })(),
       };
     }
   },
@@ -59,6 +66,7 @@ function renderArgs(components: unknown, data: Record<string, unknown> = {}) {
 
 interface FakeCtx {
   agent?: { messages?: unknown[] };
+  writer?: { custom: (chunk: any) => Promise<void> };
   requestContext?: { get?: (key: string) => unknown };
 }
 
@@ -128,6 +136,37 @@ describe("getA2UITools (Mastra)", () => {
 
     // The retry prompt was augmented with the prior attempt's errors.
     expect(agentRuns[1].instructions).toContain("Previous attempt was invalid");
+  });
+
+  it("gives each render attempt a call id of its own, in every generate_a2ui call", async () => {
+    const starts: string[] = [];
+    const ctx: FakeCtx = {
+      ...makeCtx(),
+      writer: {
+        custom: async (chunk) => {
+          if (chunk.payload.phase === "start") {
+            starts.push(chunk.payload.toolCallId);
+          }
+        },
+      },
+    };
+    const tool = getA2UITools({
+      model: "openai/gpt-4.1",
+      recovery: { maxAttempts: 3 },
+    });
+
+    // Two generate_a2ui calls in one thread: the first one retries once.
+    renderQueue.push(
+      renderArgs(INVALID_COMPONENTS),
+      renderArgs(VALID_COMPONENTS),
+    );
+    await runTool(tool, { intent: "create" }, ctx);
+    renderQueue.push(renderArgs(VALID_COMPONENTS));
+    await runTool(tool, { intent: "create" }, ctx);
+
+    expect(starts).toHaveLength(3);
+    expect(new Set(starts).size).toBe(3);
+    for (const id of starts) expect(id).toMatch(/^a2ui-render-/);
   });
 
   it("exhausts: every attempt invalid -> structured recovery-exhausted envelope", async () => {

@@ -853,6 +853,12 @@ interface MastraAgentStreamOptions {
   onToolCallStart?: (streamPart: {
     toolCallId: string;
     toolName: string;
+    /**
+     * The message of a call that runs inside another call (the A2UI render
+     * subagent's call inside `generate_a2ui`). Left out, the call belongs to
+     * the current assistant message.
+     */
+    parentMessageId?: string;
   }) => void;
   /**
    * Emit a TOOL_CALL_ARGS delta. The bridge streams these incrementally as
@@ -2498,9 +2504,10 @@ export class MastraAgent extends AbstractAgent {
         closeReasoning();
         const baseId = getMessageId();
         const parentMessageId =
-          lastTextSegment?.baseId === baseId
+          streamPart.parentMessageId ??
+          (lastTextSegment?.baseId === baseId
             ? lastTextSegment.segmentId
-            : baseId;
+            : baseId);
         openToolCallBoundary(baseId);
         subscriber.next({
           type: EventType.TOOL_CALL_START,
@@ -3632,9 +3639,15 @@ export class MastraAgent extends AbstractAgent {
             // surface (single paint) instead of duplicating it — and lets the
             // envelope be intercepted (no residual generate_a2ui tool card).
             flush();
+            // The render call is the subagent's, not the assistant message's:
+            // it gets a message of its own, as a LangGraph subagent call does.
+            // The A2UIMiddleware reads a call in the same message as a sibling
+            // of `generate_a2ui`, and then reports each failed attempt as a
+            // failed render even when a later attempt paints the surface.
             callbacks.onToolCallStart?.({
               toolCallId: p.toolCallId,
               toolName: p.toolName ?? "render_a2ui",
+              parentMessageId: `${p.toolCallId}-message`,
             });
           } else if (p.phase === "delta") {
             if (p.argsTextDelta != null) {
