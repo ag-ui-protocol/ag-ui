@@ -2622,6 +2622,34 @@ class LangGraphAgent:
         else:
             procs[lane] = value
 
+    def _close_reasoning_process(self, lane: Optional[str] = None) -> Generator[ProcessedEvents, None, None]:
+        reasoning_process = self._get_reasoning_process(lane)
+        if reasoning_process is None:
+            return
+        reasoning_message_id = reasoning_process["message_id"]
+        if reasoning_process.get("signature"):
+            yield self._dispatch_event(
+                ReasoningEncryptedValueEvent(
+                    type=EventType.REASONING_ENCRYPTED_VALUE,
+                    subtype="message",
+                    entity_id=reasoning_message_id,
+                    encrypted_value=reasoning_process["signature"],
+                )
+            )
+        yield self._dispatch_event(
+            ReasoningMessageEndEvent(
+                type=EventType.REASONING_MESSAGE_END,
+                message_id=reasoning_message_id,
+            )
+        )
+        yield self._dispatch_event(
+            ReasoningEndEvent(
+                type=EventType.REASONING_END,
+                message_id=reasoning_message_id,
+            )
+        )
+        self._set_reasoning_process(None, lane)
+
     def get_message_in_progress(self, run_id: str, lane: Optional[str] = None) -> Optional[MessageInProgress]:
         lane = lane if lane is not None else self._current_lane()
         return (self.messages_in_process.get(run_id) or {}).get(lane)
@@ -3321,8 +3349,47 @@ class LangGraphAgent:
             if _is_internal_model_call(event):
                 return
 
+            chunk = (event.get("data") or {}).get("chunk")
+            chunk_content = _chunk_get(chunk, "content", None) if chunk else None
+            chunk_id = _chunk_get(chunk, "id", None) if chunk else None
+            reasoning_data = resolve_reasoning_content(chunk) if chunk else None
+            encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
+            # Use an explicit ``is not None`` check so empty-string deltas
+            # (``chunk.content == ""``) still reach resolve_message_content.
+            # The prior truthy check ``if chunk and chunk.content`` treated
+            # "" the same as None and silently dropped zero-length deltas
+            # that some providers emit during tool-call / structured-output
+            # transitions.
+            message_content = (
+                resolve_message_content(chunk_content)
+                if chunk is not None and chunk_content is not None
+                else None
+            )
+
+            # Most providers send an empty final chunk carrying only
+            # ``finish_reason`` (and optionally ``usage_metadata``, already
+            # recorded above); skip that bookkeeping-only chunk so stream
+            # closure stays with OnChatModelEnd. Some providers (e.g.
+            # OpenAI-compatible endpoints like zai.glm-5) attach trailing
+            # text, tool-call fragments, or reasoning on the ``finish_reason``
+            # chunk itself — let those chunks flow through instead of dropping
+            # their payload.
             if response_metadata.get('finish_reason', None):
-                return
+                first_tool_call = tool_call_chunks_list[0] if tool_call_chunks_list else None
+                has_tool_call_payload = bool(
+                    isinstance(first_tool_call, dict)
+                    and (first_tool_call.get("name") or first_tool_call.get("args"))
+                )
+                has_encrypted_reasoning_payload = bool(
+                    encrypted_reasoning_data and self._get_reasoning_process() is not None
+                )
+                if not (
+                    has_tool_call_payload
+                    or message_content
+                    or reasoning_data
+                    or has_encrypted_reasoning_payload
+                ):
+                    return
 
             current_stream = self.get_message_in_progress(self.active_run["id"])
             has_current_stream = bool(current_stream and current_stream.get("id"))
@@ -3376,10 +3443,6 @@ class LangGraphAgent:
             if is_tool_call_start_event or is_tool_call_end_event or is_tool_call_args_event:
                 self.active_run["has_function_streaming"] = True
 
-            chunk = event["data"]["chunk"]
-            chunk_content = _chunk_get(chunk, "content", None) if chunk else None
-            chunk_id = _chunk_get(chunk, "id", None) if chunk else None
-
             # Capture EVERY `task` delegation call in this chunk (with its
             # tool_call_id and the assistant chunk id as parent_message_id) so
             # each spawned subagent can carry parentToolCallId / parentMessageId
@@ -3418,19 +3481,6 @@ class LangGraphAgent:
                             ),
                         })
 
-            reasoning_data = resolve_reasoning_content(chunk) if chunk else None
-            encrypted_reasoning_data = resolve_encrypted_reasoning_content(chunk) if chunk else None
-            # Use an explicit ``is not None`` check so empty-string deltas
-            # (``chunk.content == ""``) still reach resolve_message_content.
-            # The prior truthy check ``if chunk and chunk.content`` treated
-            # "" the same as None and silently dropped zero-length deltas
-            # that some providers emit during tool-call / structured-output
-            # transitions.
-            message_content = (
-                resolve_message_content(chunk_content)
-                if chunk is not None and chunk_content is not None
-                else None
-            )
             # Use ``is not None`` rather than truthy: an empty-string delta
             # (``""``) is a legitimate streaming chunk some providers emit
             # during tool-call / structured-output transitions, and the
@@ -3438,10 +3488,19 @@ class LangGraphAgent:
             is_message_content_event = tool_call_data is None and message_content is not None
             is_message_end_event = has_current_stream and not current_stream.get("tool_call_id") and not is_message_content_event
 
+            has_tool_call_event = bool(
+                is_tool_call_start_event
+                or is_tool_call_args_event
+                or (tool_call_data and tool_call_data.get("name"))
+            )
+
             if reasoning_data:
                 for event_str in self.handle_reasoning_event(reasoning_data):
                     yield event_str
-                return
+                if not message_content and not has_tool_call_event:
+                    return
+                for event_str in self._close_reasoning_process():
+                    yield event_str
 
             # Handle redacted_thinking blocks (encrypted reasoning content)
             reasoning_process = self._get_reasoning_process()
@@ -3455,33 +3514,13 @@ class LangGraphAgent:
                         encrypted_value=encrypted_reasoning_data,
                     )
                 )
-                return
-
-            if reasoning_data is None and reasoning_process is not None:
-                reasoning_message_id = reasoning_process["message_id"]
-                # Emit signature as encrypted value if accumulated during reasoning
-                if reasoning_process.get("signature"):
-                    yield self._dispatch_event(
-                        ReasoningEncryptedValueEvent(
-                            type=EventType.REASONING_ENCRYPTED_VALUE,
-                            subtype="message",
-                            entity_id=reasoning_message_id,
-                            encrypted_value=reasoning_process["signature"],
-                        )
-                    )
-                yield self._dispatch_event(
-                    ReasoningMessageEndEvent(
-                        type=EventType.REASONING_MESSAGE_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                yield self._dispatch_event(
-                    ReasoningEndEvent(
-                        type=EventType.REASONING_END,
-                        message_id=reasoning_message_id,
-                    )
-                )
-                self._set_reasoning_process(None)
+                if not message_content and not has_tool_call_event:
+                    return
+                for event_str in self._close_reasoning_process():
+                    yield event_str
+            elif reasoning_data is None and reasoning_process is not None:
+                for event_str in self._close_reasoning_process():
+                    yield event_str
 
             if tool_call_used_to_predict_state:
                 yield self._dispatch_event(
@@ -3553,7 +3592,10 @@ class LangGraphAgent:
                     ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=current_stream["tool_call_id"], raw_event=event)
                 )
                 self.clear_message_in_progress(self.active_run["id"])
-                return
+                if not message_content:
+                    return
+                current_stream = None
+                has_current_stream = False
 
 
             if is_message_end_event:
@@ -3676,6 +3718,9 @@ class LangGraphAgent:
             if _is_internal_model_call(event):
                 return
             self._record_tool_call_owners(output_message)
+
+            for event_str in self._close_reasoning_process():
+                yield event_str
 
             if self.get_message_in_progress(self.active_run["id"]) and self.get_message_in_progress(self.active_run["id"]).get("tool_call_id"):
                 resolved = self._dispatch_event(
