@@ -705,3 +705,60 @@ describe("MCPMiddleware — protocolVersion passthrough", () => {
     expect(next.runCalls[1].threadId).toBe(THREAD);
   });
 });
+
+// --- Token usage across the loop ----------------------------------------------
+// The loop is presented as one run, so its terminal event is the only place a
+// consumer reads usage from. Each iteration is a separate model run with its
+// own usage; reporting only the last iteration's under-counts the run.
+describe("MCPMiddleware — token usage across iterations", () => {
+  const withUsage = (event: BaseEvent, inputTokens: number, outputTokens: number) =>
+    ({
+      ...event,
+      usage: [{ provider: "openai", model: "gpt-4o", inputTokens, outputTokens }],
+    }) as BaseEvent;
+
+  it("sums every iteration's usage onto the single RUN_FINISHED", async () => {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    const next = new BatchMockAgent([
+      [runStarted(), ...toolCall("c1", "mcp__s__weather"), withUsage(runFinished(), 100, 10)],
+      [runStarted("r2"), ...textMessage("m2", "done"), withUsage(runFinished("r2"), 150, 20)],
+    ]);
+    const received = await collectEvents(
+      new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next),
+    );
+
+    const finished = received.filter((e) => e.type === EventType.RUN_FINISHED);
+    expect(finished).toHaveLength(1);
+    expect((finished[0] as { usage?: unknown }).usage).toEqual([
+      { provider: "openai", model: "gpt-4o", inputTokens: 250, outputTokens: 30 },
+    ]);
+  });
+
+  it("carries earlier iterations' usage onto a continuation's RUN_ERROR", async () => {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    const next = new BatchMockAgent([
+      [runStarted(), ...toolCall("c1", "mcp__s__weather"), withUsage(runFinished(), 100, 10)],
+      [runStarted("r2"), withUsage(runError(), 40, 0)],
+    ]);
+    const received = await collectEvents(
+      new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next),
+    );
+
+    const errored = received.filter((e) => e.type === EventType.RUN_ERROR);
+    expect(errored).toHaveLength(1);
+    expect((errored[0] as { usage?: unknown }).usage).toEqual([
+      { provider: "openai", model: "gpt-4o", inputTokens: 140, outputTokens: 10 },
+    ]);
+  });
+
+  it("leaves a single-iteration run's RUN_FINISHED untouched", async () => {
+    mockListTools.mockResolvedValue({ tools: [{ name: "weather", inputSchema: {} }] });
+    const finishedEvent = withUsage(runFinished(), 100, 10);
+    const next = new BatchMockAgent([[runStarted(), ...textMessage("m1", "hi"), finishedEvent]]);
+    const received = await collectEvents(
+      new MCPMiddleware([weatherServer()]).run(createRunAgentInput(), next),
+    );
+
+    expect(received[received.length - 1]).toBe(finishedEvent);
+  });
+});
