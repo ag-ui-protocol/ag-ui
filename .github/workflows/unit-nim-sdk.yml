@@ -1,0 +1,62 @@
+name: unit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/community/nim/**"
+      # The Nim tests read spec/1.0/fixtures and sdks/fixtures at runtime, so
+      # a schema or fixture change must re-run them even when no Nim file moved.
+      - "spec/1.0/**"
+      - "sdks/fixtures/**"
+      - ".github/workflows/unit-nim-sdk.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdks/community/nim/**"
+      - "spec/1.0/**"
+      - "sdks/fixtures/**"
+      - ".github/workflows/unit-nim-sdk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unit-nim-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nim:
+    name: nim
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sdks/community/nim
+
+    env:
+      # The official release tarball, pinned by version and checksum
+      # (https://nim-lang.org/download/nim-2.2.12-linux_x64.tar.xz.sha256).
+      NIM_VERSION: "2.2.12"
+      NIM_SHA256: "7df1611449a6842af69322aa2c1206942982650a5f6bc0d37bc8ec109932f638"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nim
+        run: |
+          archive="$RUNNER_TEMP/nim-${NIM_VERSION}-linux_x64.tar.xz"
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$archive" \
+            "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz"
+          echo "${NIM_SHA256}  ${archive}" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nim-${NIM_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Show Nim version
+        run: nim -v
+
+      - name: Run tests
+        run: nimble test
