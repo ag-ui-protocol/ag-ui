@@ -20,8 +20,20 @@ yarn add @ag-ui/mastra
 Install the required peer dependencies:
 
 ```bash
-npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
+npm install @mastra/core @ag-ui/core @ag-ui/client
 ```
+
+Remote agents (`MastraAgent.getRemoteAgents`) take a `MastraClient`, so they
+also need `@mastra/client-js`. Install it only when you connect to remote
+agents: local agents don't use it.
+
+```bash
+npm install @mastra/client-js
+```
+
+The type declarations of `@ag-ui/mastra` still import `MastraClient` from
+`@mastra/client-js`. TypeScript projects that don't install it need
+`"skipLibCheck": true` in their `tsconfig.json`.
 
 The optional CopilotKit integration exports `registerCopilotKit`. Import it
 from the entry point for your CopilotKit version, and install its peer
