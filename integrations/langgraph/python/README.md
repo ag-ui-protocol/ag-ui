@@ -23,18 +23,47 @@ Provider file handles remain unsupported and are skipped with a warning.
 
 ## Run errors
 
-Graph/provider and stream failures are delivered by the public `run()` async
-iterator as a terminal `RUN_ERROR` event, followed by stream completion without
-`RUN_FINISHED`. This also applies to text-only runs. Inspect the yielded error
-event instead of relying on these producer exceptions escaping the iterator.
-Cancellation still propagates, and private stream helpers retain their exception
-behavior.
+By default, graph/provider and stream failures are delivered by the public `run()`
+async iterator as a terminal `RUN_ERROR` event, followed by stream completion
+without `RUN_FINISHED`. This also applies to text-only runs. Inspect the yielded
+error event instead of relying on these producer exceptions escaping the
+iterator. Cancellation still propagates, and private stream helpers retain their
+exception behavior.
 
 For TypeScript AG-UI clients consuming this stream, handle producer failures in
 `onRunErrorEvent` when using `runAgent()`, or inspect the emitted `RUN_ERROR` when
 subscribing to `run()`. These producer failures no longer reject the `runAgent()`
 promise or invoke the Observable's `error` callback. Consumer and client-side
 validation failures retain their existing error behavior.
+
+### Customizing run errors
+
+The default error message is `str(exc)`. Pass `on_error` to customize error handling.
+It receives the exception and returns the `RunErrorEvent` to emit.
+
+If `on_error` raises, the exception escapes `run()` and no `RUN_ERROR` is
+emitted. Only do this when you iterate `run()` yourself and handle the
+exception there. Behind `add_langgraph_fastapi_endpoint` it aborts the SSE
+response mid-stream.
+
+```python
+from ag_ui.core import EventType, RunErrorEvent
+from ag_ui_langgraph import LangGraphAgent, default_on_error
+
+def on_error(exc: Exception) -> RunErrorEvent:
+    if isinstance(exc, RateLimitError):
+        return RunErrorEvent(
+            type=EventType.RUN_ERROR,
+            message="The model is busy, try again shortly.",
+            code="rate_limited",
+        )
+    return default_on_error(exc)
+
+agent = LangGraphAgent(name="agent", graph=graph, on_error=on_error)
+```
+
+Errors that LangGraph reports as `error` stream events, not as exceptions, are
+not passed to `on_error`.
 
 ## Installation
 
