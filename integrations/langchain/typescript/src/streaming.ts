@@ -269,6 +269,7 @@ export async function* streamLangChainResponse(
             } as ToolCallEndEvent;
 
             currentToolCallId = toolCallId;
+            currentToolCallName = toolCallName;
             yield {
               type: EventType.TOOL_CALL_START,
               parentMessageId: currentMessageId,
