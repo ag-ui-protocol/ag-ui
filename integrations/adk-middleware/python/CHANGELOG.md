@@ -322,6 +322,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
 
+## 0.14.0 — 2026-11-21
+
+- `add_adk_fastapi_endpoint()` now forwards `dependencies` to `/agents/state` and `/capabilities`, closing an auth bypass (GHSA-jhvp-j8pf-5vh5).
+- Request headers now take precedence over client `state.headers` in `extract_headers`, preventing identity spoofing.
+- Run state that is not a JSON object or null is rejected with HTTP 422.
+- `ADKAgent.run()` accepts any `collections.abc.Mapping` as run state.
+- `HTTPException` from the state extractor is now re-raised on `/capabilities` and `/agents/state`, preserving status, detail and headers.
+- Removed dead `_NonObjectStateError` 422 handlers on `/capabilities` and `/agents/state`.
+- Docs updated to read identity from the authenticated request and fail closed (HTTP 401) when absent.
+
+### Breaking changes
+
+- `/agents/state` and `/capabilities` now enforce the `dependencies` passed to `add_adk_fastapi_endpoint()`; previously-open routes may now require authentication.
+- Non-object run state (e.g. arrays) is now rejected with HTTP 422.
+- Client-supplied `state.headers` values no longer override request headers; clients relying on that behavior must change.
+- `/agents/state` uses the first registration's dependencies per app; all calls on one app must pass the same dependencies.
+- Re-raised `HTTPException` changes responses on these routes from 500 to the raised status.
+
 ## 0.13.0 — 2026-11-12
 
 - Express update activities now include creation state.
