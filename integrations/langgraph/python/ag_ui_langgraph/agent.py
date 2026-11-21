@@ -46,7 +46,8 @@ from .utils import (
     camel_to_snake,
     json_safe_stringify,
     make_json_safe,
-    normalize_tool_content
+    normalize_tool_content,
+    tool_message_metadata
 )
 
 from ag_ui.core import (
@@ -167,7 +168,8 @@ def _command_update_tool_messages(messages: Any) -> List[ToolMessage]:
               and (entry.get("type") == "tool" or entry.get("role") == "tool")):
             tool_messages.append(ToolMessage(content=entry.get("content") or "",
                                              tool_call_id=entry["tool_call_id"],
-                                             name=entry.get("name"), id=entry.get("id")))
+                                             name=entry.get("name"), id=entry.get("id"),
+                                             artifact=entry.get("artifact")))
     return tool_messages
 
 
@@ -4022,7 +4024,8 @@ class LangGraphAgent:
                 # Resolved through the same lane map as the START above.
                 message_id=self._resolve_public_message_id(result_message_id),
                 content=normalize_tool_content(tool_msg.content),
-                role="tool"
+                role="tool",
+                metadata=tool_message_metadata(tool_msg)
             )
         )
 

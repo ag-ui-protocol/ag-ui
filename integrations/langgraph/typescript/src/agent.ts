@@ -84,6 +84,7 @@ import {
   resolveMessageContent,
   resolveReasoningContent,
   resolveEncryptedReasoningContent,
+  toolMessageMetadata,
 } from "@/utils";
 import { ToolMessage } from "@langchain/core/messages";
 
@@ -1888,6 +1889,7 @@ export class LangGraphAgent extends AbstractAgent {
                 messageId: randomUUID(),
                 rawEvent: event,
                 role: "tool",
+                ...toolMessageMetadata(message),
               });
             });
 
@@ -1963,6 +1965,7 @@ export class LangGraphAgent extends AbstractAgent {
           messageId: randomUUID(),
           role: "tool",
           rawEvent: event,
+          ...toolMessageMetadata(toolCallOutput),
         });
         // Tool has completed — reset so the next snapshot reflects real state.
         this.activeRun!.modelMadeToolCall = false;

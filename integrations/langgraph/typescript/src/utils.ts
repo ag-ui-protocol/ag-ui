@@ -1411,6 +1411,19 @@ function aguiReasoningMessageToBlock(
   return block;
 }
 
+// Only `artifact` is exposed; `additional_kwargs` and `response_metadata` can
+// carry provider internals and are never forwarded. Used by both the
+// TOOL_CALL_RESULT event and the snapshot conversion so a later snapshot does
+// not drop metadata that arrived while streaming.
+export function toolMessageMetadata(
+  message: any,
+): { metadata?: { langgraph: { artifact: unknown } } } {
+  const artifact = message?.artifact;
+  return artifact === undefined || artifact === null
+    ? {}
+    : { metadata: { langgraph: { artifact } } };
+}
+
 export function langchainMessagesToAgui(
   messages: LangGraphMessage[],
 ): Message[] {
@@ -1492,6 +1505,7 @@ export function langchainMessagesToAgui(
           // trip; the value is a fixed sentinel (#2305) because the original text is
           // not recoverable from the flag alone.
           ...(message.status === "error" ? { error: "error" } : {}),
+          ...toolMessageMetadata(message),
         });
         break;
       default:
