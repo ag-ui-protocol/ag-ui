@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `add_adk_fastapi_endpoint()` and `create_adk_app()` now apply route
+  `dependencies` to the `/capabilities` and `/agents/state` routes as well as
+  the agent route (GHSA-jhvp-j8pf-5vh5). Before, an application that used
+  `dependencies` for authentication left `/agents/state` open, so an
+  unauthenticated caller could read a thread's session state and message
+  history. Other route kwargs, such as `name` and `operation_id`, still apply
+  to the agent route only.
 - The run endpoint now rejects run state that is not a JSON object or null
   with a 422.
   `RunAgentInput.state` is typed `Any`, so an array of `[key, value]` pairs

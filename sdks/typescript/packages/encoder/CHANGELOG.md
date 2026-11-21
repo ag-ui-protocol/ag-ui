@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.5 — 2026-11-17
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
 ## 1.0.4 — 2026-11-05
 
 - `zod` moved from a direct dependency to a required peer dependency (`^3.25.18 || ^4.0.0`) so the application's zod is used.

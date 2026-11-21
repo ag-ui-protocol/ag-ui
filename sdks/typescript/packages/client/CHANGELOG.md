@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.5 — 2026-11-17
+
+- `compactEvents` now preserves message order and snapshot boundaries across overlapping streams, fixing swapped parallel tool calls and deltas overwritten by mid-stream snapshots.
+- Events arriving between overlapping streams now keep their arrival order, avoiding `STEP_STARTED`/`STEP_FINISHED` sequences rejected by `verifyEvents`.
+- Reasoning message deltas (`REASONING_MESSAGE_CONTENT`) are now compacted like text messages, greatly reducing stored history size.
+- Large replayed threads apply much faster via a `MessageLookup` index replacing full-list scans by message and tool call id.
+- `AbstractAgent.clone()` now copies `resolvingPeerCeiling`, so clones retain all own fields.
+- Enforcement now rejects missing, non-string, or inherited union discriminators.
+
+### Breaking changes
+
+- Event enforcement rejects missing, non-string, or inherited union discriminators that were previously accepted; verify emitted events conform.
+- `compactEvents` output ordering and reasoning-delta compaction changed; re-verify any code depending on prior event ordering or raw reasoning deltas.
+
 ## 1.0.4 — 2026-11-05
 
 - Stopped deep-cloning the entire thread per event; each update now copies only changed messages, removing quadratic cost on long threads.

@@ -97,7 +97,11 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: npm
+    # DEVOPS_BOT_PRIVATE_KEY lives in this environment, not in repo secrets,
+    # so only jobs bound to it can read the key. Its branch rules allow main only.
+    # SLACK_WEBHOOK_ENGR and ANTHROPIC_API_KEY, read below, are still repo
+    # secrets; the binding does not protect them.
+    environment: devops-bot-release
     permissions:
       contents: write
       pull-requests: write
@@ -240,7 +244,7 @@ jobs:
         if: inputs.dry_run != true && steps.bump.outputs.changed_count != '0'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: "3877599"
+          client-id: "Iv23liBNyieHVFKABrJ3"
           private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
           # Scope the app token to only what this workflow uses, instead of
           # inheriting the app installation's blanket permissions (zizmor
