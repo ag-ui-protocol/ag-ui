@@ -338,8 +338,10 @@ def test_to_agui_options_pass_through(patched_runner, monkeypatch):
             "end_custom_event": end,
             "emit_run_error": False,
             "run_error_message": "safe error",
+            "approvals": wrapper.approvals,
         }
     ]
+    assert wrapper.approvals.scope == "assistant"
 
 
 def test_custom_event_value_factories_run_once_per_request(patched_runner):
