@@ -1,25 +1,9 @@
 """Regression tests for chunks carrying payload alongside ``finish_reason`` (#3428).
 
-Some OpenAI-compatible providers (e.g. ``zai.glm-5``) attach trailing text,
-tool-call fragments, or reasoning on the same final ``AIMessageChunk`` that
-carries ``response_metadata["finish_reason"]``. Previously, ``OnChatModelStream``
-returned as soon as ``finish_reason`` was truthy, dropping any content on that
-chunk while still recording ``usage_metadata``.
-
-These tests drive the full ``_handle_stream_events`` pipeline (including
-``on_chat_model_end``) and verify:
-
-1. Trailing text on a ``finish_reason`` chunk (continuation of an open text
-   stream, single-chunk text response, list-block text content, and raw dict
-   chunk) is streamed in order and ``usage_metadata`` is still recorded.
-2. Tool-call data on a ``finish_reason="tool_calls"`` chunk (argument
-   continuation and single-chunk tool start) is streamed in order and closed
-   cleanly at ``on_chat_model_end``.
-3. Reasoning content on a ``finish_reason`` chunk is streamed rather than
-   dropped.
-4. Standard empty ``finish_reason`` chunks (``content=""`` or ``content=[]``,
-   no tool-call payload) preserve existing behavior: no spurious events and no
-   premature stream closure before ``on_chat_model_end``.
+Drives ``_handle_stream_events`` (including ``on_chat_model_end``) to verify that
+trailing text, tool-call fragments, and reasoning on ``finish_reason`` chunks are
+streamed in order with ``usage_metadata`` recorded, while empty ``finish_reason``
+chunks keep existing no-premature-close behavior.
 """
 
 import unittest
@@ -32,58 +16,16 @@ from ag_ui.core import EventType, RunAgentInput
 
 from tests._helpers import make_agent
 
-
-def _stream_event(
-    chunk: Any,
-    *,
-    node: str = "model",
-    run_id: str = "run1",
-    emit_messages: Optional[bool] = None,
-    emit_tool_calls: Optional[bool] = None,
-    provider: str = "openai",
-    model: str = "zai.glm-5",
-) -> dict:
-    metadata: dict[str, Any] = {
-        "langgraph_node": node,
-        "ls_provider": provider,
-        "ls_model_name": model,
-    }
-    if emit_messages is not None:
-        metadata["emit-messages"] = emit_messages
-    if emit_tool_calls is not None:
-        metadata["emit-tool-calls"] = emit_tool_calls
-    return {
-        "event": "on_chat_model_stream",
-        "run_id": run_id,
-        "metadata": metadata,
-        "data": {"chunk": chunk},
-        "name": node,
-        "parent_ids": [],
-        "tags": [],
-    }
-
-
-def _model_end_event(
-    *,
-    content: str = "",
-    node: str = "model",
-    run_id: str = "run1",
-    provider: str = "openai",
-    model: str = "zai.glm-5",
-) -> dict:
-    return {
-        "event": "on_chat_model_end",
-        "run_id": run_id,
-        "metadata": {
-            "langgraph_node": node,
-            "ls_provider": provider,
-            "ls_model_name": model,
-        },
-        "data": {"output": AIMessage(content=content)},
-        "name": node,
-        "parent_ids": [],
-        "tags": [],
-    }
+TEXT_EVENTS = (
+    EventType.TEXT_MESSAGE_START,
+    EventType.TEXT_MESSAGE_CONTENT,
+    EventType.TEXT_MESSAGE_END,
+)
+TOOL_EVENTS = (
+    EventType.TOOL_CALL_START,
+    EventType.TOOL_CALL_ARGS,
+    EventType.TOOL_CALL_END,
+)
 
 
 def _text_chunk(
@@ -92,13 +34,10 @@ def _text_chunk(
     chunk_id: str = "ai-msg-1",
     finish_reason: Optional[str] = None,
     usage_metadata: Any = None,
-    additional_kwargs: Optional[dict] = None,
+    reasoning: Optional[str] = None,
 ) -> AIMessageChunk:
-    chunk = AIMessageChunk(
-        content=content,
-        id=chunk_id,
-        additional_kwargs=additional_kwargs or {},
-    )
+    extra = {"reasoning_content": reasoning} if reasoning is not None else {}
+    chunk = AIMessageChunk(content=content, id=chunk_id, additional_kwargs=extra)
     chunk.response_metadata = {"finish_reason": finish_reason} if finish_reason else {}
     chunk.tool_call_chunks = []
     chunk.usage_metadata = usage_metadata
@@ -110,42 +49,66 @@ def _tool_chunk(
     name: Optional[str] = None,
     args: str = "",
     tool_call_id: Optional[str] = None,
-    chunk_id: str = "ai-tool-1",
     finish_reason: Optional[str] = None,
     usage_metadata: Any = None,
+    reasoning: Optional[str] = None,
 ) -> AIMessageChunk:
-    chunk = AIMessageChunk(content="", id=chunk_id)
+    extra = {"reasoning_content": reasoning} if reasoning is not None else {}
+    chunk = AIMessageChunk(content="", id="ai-tool-1", additional_kwargs=extra)
     chunk.response_metadata = {"finish_reason": finish_reason} if finish_reason else {}
-    if name is not None or args or tool_call_id is not None:
-        chunk.tool_call_chunks = [
-            {"name": name, "args": args, "id": tool_call_id, "index": 0}
-        ]
-    else:
-        chunk.tool_call_chunks = []
+    has_tc = name is not None or bool(args) or tool_call_id is not None
+    chunk.tool_call_chunks = [{"name": name, "args": args, "id": tool_call_id, "index": 0}] if has_tc else []
     chunk.usage_metadata = usage_metadata
     return chunk
 
 
-async def _run_pipeline(events: List[dict]) -> List[Any]:
-    agent = make_agent()
+def _of_types(events: List[Any], *types: EventType) -> List[Any]:
+    return [ev for ev in events if ev.type in types]
 
-    initial_state = MagicMock()
-    initial_state.values = {"messages": [], "copilotkit": {}}
-    initial_state.tasks = []
-    initial_state.next = []
-    initial_state.metadata = {"writes": {}}
+
+async def _run_chunks(
+    *chunks: Any,
+    end_content: str = "",
+    emit_messages: Optional[bool] = None,
+) -> List[Any]:
+    meta: dict[str, Any] = {
+        "langgraph_node": "model",
+        "ls_provider": "openai",
+        "ls_model_name": "zai.glm-5",
+    }
+    stream_meta = {**meta, **({"emit-messages": emit_messages} if emit_messages is not None else {})}
+    events = [
+        {
+            "event": "on_chat_model_stream",
+            "run_id": "run1",
+            "metadata": stream_meta,
+            "data": {"chunk": chunk},
+            "name": "model",
+            "parent_ids": [],
+            "tags": [],
+        }
+        for chunk in chunks
+    ] + [
+        {
+            "event": "on_chat_model_end",
+            "run_id": "run1",
+            "metadata": meta,
+            "data": {"output": AIMessage(content=end_content)},
+            "name": "model",
+            "parent_ids": [],
+            "tags": [],
+        }
+    ]
+
+    agent = make_agent()
+    initial_state = MagicMock(values={"messages": [], "copilotkit": {}}, tasks=[], next=[], metadata={"writes": {}})
     agent.graph.aget_state = AsyncMock(return_value=initial_state)
 
     async def fake_stream():
         for ev in events:
             yield ev
 
-    prepared = {
-        "stream": fake_stream(),
-        "state": initial_state,
-        "config": {"configurable": {"thread_id": "t1"}},
-    }
-
+    prepared = {"stream": fake_stream(), "state": initial_state, "config": {"configurable": {"thread_id": "t1"}}}
     dispatched: List[Any] = []
     original_dispatch = agent._dispatch_event
 
@@ -156,649 +119,294 @@ async def _run_pipeline(events: List[dict]) -> List[Any]:
         return res
 
     run_input = RunAgentInput(
-        thread_id="t1",
-        run_id="r1",
-        state={},
-        messages=[],
-        tools=[],
-        context=[],
-        forwarded_props={},
+        thread_id="t1", run_id="r1", state={}, messages=[], tools=[], context=[], forwarded_props={}
     )
+    schema_keys = {"input": ["messages"], "output": ["messages"], "config": [], "context": []}
 
     with (
         patch.object(agent, "prepare_stream", new=AsyncMock(return_value=prepared)),
-        patch.object(agent, "get_schema_keys", return_value={
-            "input": ["messages"],
-            "output": ["messages"],
-            "config": [],
-            "context": [],
-        }),
+        patch.object(agent, "get_schema_keys", return_value=schema_keys),
         patch.object(agent, "_dispatch_event", side_effect=record),
     ):
         async for _ in agent._handle_stream_events(run_input):
             pass
-
     return dispatched
 
 
 class TestFinishReasonTextContent(unittest.IsolatedAsyncioTestCase):
     """Text attached to the ``finish_reason`` chunk must be streamed."""
 
-    async def test_trailing_text_on_finish_reason_chunk_is_emitted_and_usage_recorded(self):
-        usage = {"input_tokens": 12, "output_tokens": 5, "total_tokens": 17}
-        events = [
-            _stream_event(_text_chunk("Hello ")),
-            _stream_event(
-                _text_chunk("world!", finish_reason="stop", usage_metadata=usage)
+    async def test_text_payload_on_finish_reason_chunk_is_emitted(self):
+        cases = [
+            (
+                "trailing_text_with_usage",
+                (
+                    _text_chunk("Hello "),
+                    _text_chunk("world!", finish_reason="stop", usage_metadata={"input_tokens": 12, "output_tokens": 5, "total_tokens": 17}),
+                ),
+                "Hello world!",
+                ["Hello ", "world!"],
+                "ai-msg-1",
+                (12, 5, 17),
             ),
-            _model_end_event(content="Hello world!"),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        text_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            )
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in text_events],
-            [
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            ],
-        )
-        self.assertEqual(
-            [ev.delta for ev in text_events if ev.type == EventType.TEXT_MESSAGE_CONTENT],
-            ["Hello ", "world!"],
-        )
-        # All events belong to the same message and close at on_chat_model_end.
-        self.assertEqual({ev.message_id for ev in text_events}, {"ai-msg-1"})
-        self.assertEqual(text_events[-1].raw_event["event"], "on_chat_model_end")
-
-        finished = next(ev for ev in dispatched if ev.type == EventType.RUN_FINISHED)
-        self.assertIsNotNone(finished.usage)
-        self.assertEqual(len(finished.usage), 1)
-        self.assertEqual(
-            (finished.usage[0].input_tokens, finished.usage[0].output_tokens, finished.usage[0].total_tokens),
-            (12, 5, 17),
-        )
-
-    async def test_single_chunk_text_with_finish_reason_starts_streams_and_ends(self):
-        usage = {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10}
-        events = [
-            _stream_event(
-                _text_chunk("Done.", chunk_id="ai-single-1", finish_reason="stop", usage_metadata=usage)
+            (
+                "single_chunk_with_usage",
+                (_text_chunk("Done.", chunk_id="ai-single-1", finish_reason="stop", usage_metadata={"input_tokens": 8, "output_tokens": 2, "total_tokens": 10}),),
+                "Done.",
+                ["Done."],
+                "ai-single-1",
+                (8, 2, 10),
             ),
-            _model_end_event(content="Done."),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        text_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            )
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in text_events],
-            [
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            ],
-        )
-        self.assertEqual(text_events[1].delta, "Done.")
-        self.assertEqual({ev.message_id for ev in text_events}, {"ai-single-1"})
-
-        finished = next(ev for ev in dispatched if ev.type == EventType.RUN_FINISHED)
-        self.assertEqual(finished.usage[0].total_tokens, 10)
-
-    async def test_list_block_text_on_finish_reason_chunk_is_emitted(self):
-        events = [
-            _stream_event(_text_chunk([{"type": "text", "text": "Part 1 "}])),
-            _stream_event(
-                _text_chunk([{"type": "text", "text": "Part 2"}], finish_reason="stop")
+            (
+                "list_block_text",
+                (
+                    _text_chunk([{"type": "text", "text": "Part 1 "}]),
+                    _text_chunk([{"type": "text", "text": "Part 2"}], finish_reason="stop"),
+                ),
+                "Part 1 Part 2",
+                ["Part 1 ", "Part 2"],
+                "ai-msg-1",
+                None,
             ),
-            _model_end_event(content="Part 1 Part 2"),
+            (
+                "dict_chunk",
+                ({"id": "ai-dict-1", "content": "Final dict text", "response_metadata": {"finish_reason": "stop"}, "tool_call_chunks": []},),
+                "Final dict text",
+                ["Final dict text"],
+                "ai-dict-1",
+                None,
+            ),
         ]
 
-        dispatched = await _run_pipeline(events)
-        deltas = [
-            ev.delta for ev in dispatched
-            if ev.type == EventType.TEXT_MESSAGE_CONTENT
-        ]
-        self.assertEqual(deltas, ["Part 1 ", "Part 2"])
-
-    async def test_dict_chunk_text_on_finish_reason_is_emitted(self):
-        dict_chunk = {
-            "id": "ai-dict-1",
-            "content": "Final dict text",
-            "response_metadata": {"finish_reason": "stop"},
-            "tool_call_chunks": [],
-        }
-        events = [
-            _stream_event(dict_chunk),
-            _model_end_event(content="Final dict text"),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        deltas = [
-            ev.delta for ev in dispatched
-            if ev.type == EventType.TEXT_MESSAGE_CONTENT
-        ]
-        self.assertEqual(deltas, ["Final dict text"])
+        for name, chunks, end_content, expected_deltas, expected_id, expected_usage in cases:
+            with self.subTest(case=name):
+                dispatched = await _run_chunks(*chunks, end_content=end_content)
+                text_events = _of_types(dispatched, *TEXT_EVENTS)
+                self.assertEqual(
+                    [ev.type for ev in text_events],
+                    [EventType.TEXT_MESSAGE_START]
+                    + [EventType.TEXT_MESSAGE_CONTENT] * len(expected_deltas)
+                    + [EventType.TEXT_MESSAGE_END],
+                )
+                self.assertEqual(
+                    [ev.delta for ev in text_events if ev.type == EventType.TEXT_MESSAGE_CONTENT],
+                    expected_deltas,
+                )
+                self.assertEqual({ev.message_id for ev in text_events}, {expected_id})
+                self.assertEqual(text_events[-1].raw_event["event"], "on_chat_model_end")
+                if expected_usage is not None:
+                    finished = next(ev for ev in dispatched if ev.type == EventType.RUN_FINISHED)
+                    self.assertEqual(len(finished.usage), 1)
+                    u = finished.usage[0]
+                    self.assertEqual((u.input_tokens, u.output_tokens, u.total_tokens), expected_usage)
 
     async def test_emit_messages_false_still_suppresses_finish_reason_text(self):
-        events = [
-            _stream_event(
-                _text_chunk("Hidden", finish_reason="stop"),
-                emit_messages=False,
-            ),
-            _model_end_event(content="Hidden"),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        text_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            )
-        ]
-        self.assertEqual(text_events, [])
+        dispatched = await _run_chunks(
+            _text_chunk("Hidden", finish_reason="stop"), end_content="Hidden", emit_messages=False
+        )
+        self.assertEqual(_of_types(dispatched, *TEXT_EVENTS), [])
 
 
 class TestFinishReasonToolCallChunks(unittest.IsolatedAsyncioTestCase):
     """Tool-call fragments attached to ``finish_reason="tool_calls"`` chunks must stream."""
 
-    async def test_tool_call_args_continuation_on_finish_reason_chunk_is_emitted(self):
+    async def test_tool_call_on_finish_reason_chunk_is_emitted(self):
         usage = {"input_tokens": 20, "output_tokens": 11, "total_tokens": 31}
-        events = [
-            _stream_event(_tool_chunk(name="get_weather", args="", tool_call_id="tc-1")),
-            _stream_event(_tool_chunk(args='{"city":')),
-            _stream_event(
-                _tool_chunk(args='"Tokyo"}', finish_reason="tool_calls", usage_metadata=usage)
+        cases = [
+            (
+                "args_continuation",
+                (
+                    _tool_chunk(name="get_weather", tool_call_id="tc-1"),
+                    _tool_chunk(args='{"city":'),
+                    _tool_chunk(args='"Tokyo"}', finish_reason="tool_calls", usage_metadata=usage),
+                ),
+                "tc-1",
+                "get_weather",
+                ['{"city":', '"Tokyo"}'],
+                31,
             ),
-            _model_end_event(),
+            (
+                "single_chunk_start",
+                (_tool_chunk(name="ping", tool_call_id="tc-ping", finish_reason="tool_calls"),),
+                "tc-ping",
+                "ping",
+                [],
+                None,
+            ),
         ]
 
-        dispatched = await _run_pipeline(events)
-        tool_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-            )
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in tool_events],
-            [
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-            ],
-        )
-        self.assertEqual({ev.tool_call_id for ev in tool_events}, {"tc-1"})
-        args_deltas = [ev.delta for ev in tool_events if ev.type == EventType.TOOL_CALL_ARGS]
-        self.assertEqual(args_deltas, ['{"city":', '"Tokyo"}'])
-        self.assertEqual("".join(args_deltas), '{"city":"Tokyo"}')
-        self.assertEqual(tool_events[-1].raw_event["event"], "on_chat_model_end")
-
-        finished = next(ev for ev in dispatched if ev.type == EventType.RUN_FINISHED)
-        self.assertEqual(finished.usage[0].total_tokens, 31)
-
-    async def test_single_chunk_tool_call_start_on_finish_reason_chunk_is_emitted(self):
-        events = [
-            _stream_event(
-                _tool_chunk(
-                    name="ping",
-                    args="",
-                    tool_call_id="tc-ping",
-                    finish_reason="tool_calls",
+        for name, chunks, expected_id, expected_tool, expected_args, expected_total in cases:
+            with self.subTest(case=name):
+                dispatched = await _run_chunks(*chunks)
+                tool_events = _of_types(dispatched, *TOOL_EVENTS)
+                self.assertEqual(
+                    [ev.type for ev in tool_events],
+                    [EventType.TOOL_CALL_START]
+                    + [EventType.TOOL_CALL_ARGS] * len(expected_args)
+                    + [EventType.TOOL_CALL_END],
                 )
-            ),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        tool_events = [
-            ev for ev in dispatched
-            if ev.type in (EventType.TOOL_CALL_START, EventType.TOOL_CALL_END)
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in tool_events],
-            [EventType.TOOL_CALL_START, EventType.TOOL_CALL_END],
-        )
-        self.assertEqual(tool_events[0].tool_call_id, "tc-ping")
-        self.assertEqual(tool_events[0].tool_call_name, "ping")
-        self.assertEqual(tool_events[1].tool_call_id, "tc-ping")
+                self.assertEqual({ev.tool_call_id for ev in tool_events}, {expected_id})
+                self.assertEqual(tool_events[0].tool_call_name, expected_tool)
+                self.assertEqual(
+                    [ev.delta for ev in tool_events if ev.type == EventType.TOOL_CALL_ARGS],
+                    expected_args,
+                )
+                self.assertEqual(tool_events[-1].raw_event["event"], "on_chat_model_end")
+                if expected_total is not None:
+                    finished = next(ev for ev in dispatched if ev.type == EventType.RUN_FINISHED)
+                    self.assertEqual(finished.usage[0].total_tokens, expected_total)
 
 
 class TestFinishReasonReasoningContent(unittest.IsolatedAsyncioTestCase):
-    """Reasoning content on the ``finish_reason`` chunk must not be dropped."""
+    """Reasoning content and mixed-payload chunks must emit every payload cleanly."""
 
-    async def test_trailing_reasoning_on_finish_reason_chunk_is_emitted(self):
-        events = [
-            _stream_event(
-                _text_chunk("", additional_kwargs={"reasoning_content": "Step 1. "})
-            ),
-            _stream_event(
-                _text_chunk(
-                    "",
-                    additional_kwargs={"reasoning_content": "Step 2."},
-                    finish_reason="length",
-                )
-            ),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        reasoning_deltas = [
-            ev.delta for ev in dispatched
-            if ev.type == EventType.REASONING_MESSAGE_CONTENT
-        ]
-        self.assertEqual(reasoning_deltas, ["Step 1. ", "Step 2."])
-
-    async def test_single_chunk_reasoning_with_finish_reason_closes_on_model_end(self):
-        events = [
-            _stream_event(
-                _text_chunk(
-                    "",
-                    additional_kwargs={"reasoning_content": "Only thought."},
-                    finish_reason="length",
-                )
-            ),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        types = [ev.type for ev in dispatched]
-        self.assertIn(EventType.REASONING_MESSAGE_END, types)
-        self.assertIn(EventType.REASONING_END, types)
-        self.assertLess(
-            types.index(EventType.REASONING_MESSAGE_END),
-            types.index(EventType.REASONING_END),
-        )
-        self.assertLess(
-            types.index(EventType.REASONING_END),
-            types.index(EventType.RUN_FINISHED),
-        )
-
-    async def test_reasoning_and_text_on_same_finish_chunk_emits_both(self):
-        events = [
-            _stream_event(
-                _text_chunk(
-                    "Final answer.",
-                    additional_kwargs={"reasoning_content": "Quick thought."},
-                    finish_reason="stop",
-                )
-            ),
-            _model_end_event(content="Final answer."),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        types = [ev.type for ev in dispatched]
-        self.assertIn(EventType.REASONING_MESSAGE_CONTENT, types)
-        self.assertIn(EventType.REASONING_END, types)
-        self.assertIn(EventType.TEXT_MESSAGE_START, types)
-        self.assertLess(
-            types.index(EventType.REASONING_END),
-            types.index(EventType.TEXT_MESSAGE_START),
-        )
-        text_deltas = [
-            ev.delta for ev in dispatched
-            if ev.type == EventType.TEXT_MESSAGE_CONTENT
-        ]
-        self.assertEqual(text_deltas, ["Final answer."])
-
-    async def test_reasoning_and_text_on_same_non_finish_chunk_emits_both(self):
-        events = [
-            _stream_event(
-                _text_chunk(
-                    "Hello ",
-                    additional_kwargs={"reasoning_content": "Thinking."},
-                )
-            ),
-            _stream_event(_text_chunk("world", finish_reason="stop")),
-            _model_end_event(content="Hello world"),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        types = [ev.type for ev in dispatched]
-        self.assertLess(
-            types.index(EventType.REASONING_END),
-            types.index(EventType.TEXT_MESSAGE_START),
-        )
-        text_deltas = [
-            ev.delta for ev in dispatched
-            if ev.type == EventType.TEXT_MESSAGE_CONTENT
-        ]
-        self.assertEqual(text_deltas, ["Hello ", "world"])
-
-    async def test_trailing_text_after_open_tool_call_on_finish_chunk_emits_both(self):
-        events = [
-            _stream_event(_tool_chunk(name="search", args="", tool_call_id="tc-1")),
-            _stream_event(_tool_chunk(args='{"q":"ag-ui"}')),
-            _stream_event(_text_chunk("Done.", finish_reason="stop")),
-            _model_end_event(content="Done."),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        relevant = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            )
-        ]
-        self.assertEqual(
-            [ev.type for ev in relevant],
-            [
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            ],
-        )
-        self.assertEqual(relevant[4].delta, "Done.")
-
-    async def test_reasoning_and_tool_call_args_on_finish_chunk_emits_both(self):
-        final_chunk = _tool_chunk(args="}", finish_reason="tool_calls")
-        final_chunk.additional_kwargs = {"reasoning_content": "Ready."}
-        events = [
-            _stream_event(_tool_chunk(name="search", args="", tool_call_id="tc-1")),
-            _stream_event(_tool_chunk(args='{"q":"ag-ui"')),
-            _stream_event(final_chunk),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        types = [ev.type for ev in dispatched]
-        self.assertIn(EventType.REASONING_MESSAGE_CONTENT, types)
-        self.assertIn(EventType.REASONING_END, types)
-        arg_deltas = [
-            ev.delta for ev in dispatched if ev.type == EventType.TOOL_CALL_ARGS
-        ]
-        self.assertEqual("".join(arg_deltas), '{"q":"ag-ui"}')
-        self.assertLess(
-            types.index(EventType.REASONING_END),
-            types.index(EventType.TOOL_CALL_END),
-        )
-
-    async def test_redacted_thinking_and_text_on_finish_chunk_emits_both(self):
-        events = [
-            _stream_event(
-                _text_chunk("", additional_kwargs={"reasoning_content": "Step 1."})
-            ),
-            _stream_event(
-                _text_chunk(
-                    [
-                        {"type": "redacted_thinking", "data": "encrypted-blob"},
-                        {"type": "text", "text": "Visible answer."},
-                    ],
-                    finish_reason="stop",
-                )
-            ),
-            _model_end_event(content="Visible answer."),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        types = [ev.type for ev in dispatched]
-        self.assertIn(EventType.REASONING_ENCRYPTED_VALUE, types)
-        self.assertIn(EventType.REASONING_END, types)
-        self.assertIn(EventType.TEXT_MESSAGE_START, types)
-        self.assertLess(
-            types.index(EventType.REASONING_ENCRYPTED_VALUE),
-            types.index(EventType.REASONING_END),
-        )
-        self.assertLess(
-            types.index(EventType.REASONING_END),
-            types.index(EventType.TEXT_MESSAGE_START),
-        )
-        text_deltas = [
-            ev.delta for ev in dispatched
-            if ev.type == EventType.TEXT_MESSAGE_CONTENT
-        ]
-        self.assertEqual(text_deltas, ["Visible answer."])
-
-    async def test_named_tool_opener_with_reasoning_closes_open_text_stream(self):
-        opener = _tool_chunk(name="search", args="", tool_call_id="tc-open")
-        opener.additional_kwargs = {"reasoning_content": "Need a lookup."}
-        events = [
-            _stream_event(_text_chunk("Let me check.")),
-            _stream_event(opener),
-            _stream_event(_tool_chunk(args='{"q":"ag-ui"}', finish_reason="tool_calls")),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        relevant = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-                EventType.REASONING_END,
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-            )
-        ]
-        types = [ev.type for ev in relevant]
-        self.assertIn(EventType.TEXT_MESSAGE_END, types)
-        self.assertIn(EventType.REASONING_END, types)
-        self.assertIn(EventType.TOOL_CALL_START, types)
-        self.assertIn(EventType.TOOL_CALL_ARGS, types)
-        self.assertLess(
-            types.index(EventType.TEXT_MESSAGE_END),
-            types.index(EventType.TOOL_CALL_START),
-        )
-        self.assertLess(
-            types.index(EventType.TOOL_CALL_START),
-            types.index(EventType.TOOL_CALL_ARGS),
+    async def test_reasoning_on_finish_reason_chunk_streams_and_closes(self):
+        dispatched = await _run_chunks(
+            _text_chunk("", reasoning="Step 1. "),
+            _text_chunk("", reasoning="Step 2.", finish_reason="length"),
         )
         self.assertEqual(
-            [ev.delta for ev in relevant if ev.type == EventType.TOOL_CALL_ARGS],
-            ['{"q":"ag-ui"}'],
+            [ev.delta for ev in dispatched if ev.type == EventType.REASONING_MESSAGE_CONTENT],
+            ["Step 1. ", "Step 2."],
         )
 
-    async def test_redacted_thinking_on_finish_reason_with_active_reasoning_emits_encrypted_value(self):
-        events = [
-            _stream_event(
-                _text_chunk("", additional_kwargs={"reasoning_content": "Step 1. "})
+        single = await _run_chunks(_text_chunk("", reasoning="Only thought.", finish_reason="length"))
+        types = [ev.type for ev in single]
+        self.assertLess(types.index(EventType.REASONING_MESSAGE_END), types.index(EventType.REASONING_END))
+        self.assertLess(types.index(EventType.REASONING_END), types.index(EventType.RUN_FINISHED))
+
+    async def test_combined_payload_chunks_emit_both_payloads_in_order(self):
+        cases = [
+            (
+                "reasoning_and_text_on_finish",
+                (_text_chunk("Final answer.", reasoning="Quick thought.", finish_reason="stop"),),
+                "Final answer.",
+                [(EventType.REASONING_MESSAGE_CONTENT, EventType.REASONING_END), (EventType.REASONING_END, EventType.TEXT_MESSAGE_START)],
+                ["Final answer."],
+                None,
             ),
-            _stream_event(
-                _text_chunk(
-                    [{"type": "redacted_thinking", "data": "encrypted-blob"}],
-                    finish_reason="length",
-                )
+            (
+                "reasoning_and_text_on_non_finish",
+                (_text_chunk("Hello ", reasoning="Thinking."), _text_chunk("world", finish_reason="stop")),
+                "Hello world",
+                [(EventType.REASONING_END, EventType.TEXT_MESSAGE_START)],
+                ["Hello ", "world"],
+                None,
             ),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        reasoning_start = next(
-            ev for ev in dispatched if ev.type == EventType.REASONING_MESSAGE_START
-        )
-        encrypted_events = [
-            ev for ev in dispatched
-            if ev.type == EventType.REASONING_ENCRYPTED_VALUE
-        ]
-        self.assertEqual(len(encrypted_events), 1)
-        self.assertEqual(encrypted_events[0].subtype, "message")
-        self.assertEqual(encrypted_events[0].entity_id, reasoning_start.message_id)
-        self.assertEqual(encrypted_events[0].encrypted_value, "encrypted-blob")
-
-    async def test_redacted_thinking_on_finish_reason_without_active_reasoning_leaves_text_stream_open(self):
-        events = [
-            _stream_event(_text_chunk("Hello")),
-            _stream_event(
-                _text_chunk(
-                    [{"type": "redacted_thinking", "data": "orphan-blob"}],
-                    finish_reason="stop",
-                )
+            (
+                "trailing_text_after_open_tool_call",
+                (_tool_chunk(name="search", tool_call_id="tc-1"), _tool_chunk(args='{"q":"ag-ui"}'), _text_chunk("Done.", finish_reason="stop")),
+                "Done.",
+                [(EventType.TOOL_CALL_ARGS, EventType.TOOL_CALL_END), (EventType.TOOL_CALL_END, EventType.TEXT_MESSAGE_START)],
+                ["Done."],
+                '{"q":"ag-ui"}',
             ),
-            _model_end_event(content="Hello"),
+            (
+                "reasoning_and_tool_args_on_finish",
+                (_tool_chunk(name="search", tool_call_id="tc-1"), _tool_chunk(args='{"q":"ag-ui"'), _tool_chunk(args="}", finish_reason="tool_calls", reasoning="Ready.")),
+                "",
+                [(EventType.REASONING_MESSAGE_CONTENT, EventType.REASONING_END), (EventType.REASONING_END, EventType.TOOL_CALL_END)],
+                None,
+                '{"q":"ag-ui"}',
+            ),
+            (
+                "redacted_thinking_and_text_on_finish",
+                (
+                    _text_chunk("", reasoning="Step 1."),
+                    _text_chunk([{"type": "redacted_thinking", "data": "encrypted-blob"}, {"type": "text", "text": "Visible answer."}], finish_reason="stop"),
+                ),
+                "Visible answer.",
+                [(EventType.REASONING_ENCRYPTED_VALUE, EventType.REASONING_END), (EventType.REASONING_END, EventType.TEXT_MESSAGE_START)],
+                ["Visible answer."],
+                None,
+            ),
+            (
+                "named_tool_opener_with_reasoning_closes_open_text",
+                (
+                    _text_chunk("Let me check."),
+                    _tool_chunk(name="search", tool_call_id="tc-open", reasoning="Need a lookup."),
+                    _tool_chunk(args='{"q":"ag-ui"}', finish_reason="tool_calls"),
+                ),
+                "",
+                [(EventType.TEXT_MESSAGE_END, EventType.TOOL_CALL_START), (EventType.REASONING_END, EventType.TOOL_CALL_END), (EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS)],
+                ["Let me check."],
+                '{"q":"ag-ui"}',
+            ),
         ]
 
-        dispatched = await _run_pipeline(events)
-        encrypted_events = [
-            ev for ev in dispatched
-            if ev.type == EventType.REASONING_ENCRYPTED_VALUE
-        ]
-        self.assertEqual(encrypted_events, [])
+        for name, chunks, end_content, ordering_pairs, expected_text, expected_tool_args in cases:
+            with self.subTest(case=name):
+                dispatched = await _run_chunks(*chunks, end_content=end_content)
+                types = [ev.type for ev in dispatched]
+                for earlier, later in ordering_pairs:
+                    self.assertIn(earlier, types)
+                    self.assertIn(later, types)
+                    self.assertLess(types.index(earlier), types.index(later))
+                if expected_text is not None:
+                    self.assertEqual(
+                        [ev.delta for ev in dispatched if ev.type == EventType.TEXT_MESSAGE_CONTENT],
+                        expected_text,
+                    )
+                if expected_tool_args is not None:
+                    self.assertEqual(
+                        "".join(ev.delta for ev in dispatched if ev.type == EventType.TOOL_CALL_ARGS),
+                        expected_tool_args,
+                    )
 
-        text_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
+    async def test_redacted_thinking_on_finish_reason_with_and_without_active_reasoning(self):
+        with self.subTest(active_reasoning=True):
+            dispatched = await _run_chunks(
+                _text_chunk("", reasoning="Step 1. "),
+                _text_chunk([{"type": "redacted_thinking", "data": "encrypted-blob"}], finish_reason="length"),
             )
-        ]
-        self.assertEqual(
-            [ev.type for ev in text_events],
-            [
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            ],
-        )
-        self.assertEqual(text_events[1].delta, "Hello")
-        self.assertEqual(text_events[2].raw_event["event"], "on_chat_model_end")
+            reasoning_start = next(ev for ev in dispatched if ev.type == EventType.REASONING_MESSAGE_START)
+            encrypted = _of_types(dispatched, EventType.REASONING_ENCRYPTED_VALUE)
+            self.assertEqual(len(encrypted), 1)
+            self.assertEqual(
+                (encrypted[0].subtype, encrypted[0].entity_id, encrypted[0].encrypted_value),
+                ("message", reasoning_start.message_id, "encrypted-blob"),
+            )
+
+        with self.subTest(active_reasoning=False):
+            dispatched = await _run_chunks(
+                _text_chunk("Hello"),
+                _text_chunk([{"type": "redacted_thinking", "data": "orphan-blob"}], finish_reason="stop"),
+                end_content="Hello",
+            )
+            self.assertEqual(_of_types(dispatched, EventType.REASONING_ENCRYPTED_VALUE), [])
+            text_events = _of_types(dispatched, *TEXT_EVENTS)
+            self.assertEqual([ev.type for ev in text_events], list(TEXT_EVENTS))
+            self.assertEqual(text_events[1].delta, "Hello")
+            self.assertEqual(text_events[2].raw_event["event"], "on_chat_model_end")
 
 
 class TestEmptyFinishReasonChunkPreservesBehavior(unittest.IsolatedAsyncioTestCase):
     """Standard empty ``finish_reason`` chunks must remain no-ops (no premature close)."""
 
-    async def test_empty_string_finish_reason_chunk_after_text_does_not_prematurely_close(self):
-        events = [
-            _stream_event(_text_chunk("Hello")),
-            _stream_event(_text_chunk("", finish_reason="stop")),
-            _model_end_event(content="Hello"),
+    async def test_empty_finish_reason_chunk_does_not_prematurely_close(self):
+        cases = [
+            ("empty_string_after_text", (_text_chunk("Hello"), _text_chunk("", finish_reason="stop")), "Hello", TEXT_EVENTS),
+            ("empty_list_after_text", (_text_chunk([{"type": "text", "text": "Hello"}]), _text_chunk([], finish_reason="stop")), "Hello", TEXT_EVENTS),
+            (
+                "empty_tool_chunk_after_tool_call",
+                (_tool_chunk(name="search", tool_call_id="tc-1"), _tool_chunk(args='{"q":"ag-ui"}'), _tool_chunk(finish_reason="tool_calls")),
+                "",
+                TOOL_EVENTS,
+            ),
         ]
 
-        dispatched = await _run_pipeline(events)
-        text_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            )
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in text_events],
-            [
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            ],
-        )
-        self.assertEqual(text_events[1].delta, "Hello")
-        self.assertEqual(text_events[2].raw_event["event"], "on_chat_model_end")
-
-    async def test_empty_list_finish_reason_chunk_after_text_does_not_prematurely_close(self):
-        """Anthropic/Bedrock-style empty list content on the finish_reason chunk
-        must not prematurely emit TEXT_MESSAGE_END before on_chat_model_end."""
-        events = [
-            _stream_event(_text_chunk([{"type": "text", "text": "Hello"}])),
-            _stream_event(_text_chunk([], finish_reason="stop")),
-            _model_end_event(content="Hello"),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        text_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            )
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in text_events],
-            [
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-            ],
-        )
-        self.assertEqual(text_events[2].raw_event["event"], "on_chat_model_end")
-
-    async def test_empty_finish_reason_chunk_after_tool_call_does_not_prematurely_close(self):
-        """OpenAI/Anthropic-style empty finish_reason chunk after streaming tool
-        call args must leave TOOL_CALL_END to on_chat_model_end."""
-        events = [
-            _stream_event(_tool_chunk(name="search", args="", tool_call_id="tc-1")),
-            _stream_event(_tool_chunk(args='{"q":"ag-ui"}')),
-            _stream_event(_tool_chunk(finish_reason="tool_calls")),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        tool_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-            )
-        ]
-
-        self.assertEqual(
-            [ev.type for ev in tool_events],
-            [
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-            ],
-        )
-        self.assertEqual(tool_events[2].raw_event["event"], "on_chat_model_end")
+        for name, chunks, end_content, expected_types in cases:
+            with self.subTest(case=name):
+                dispatched = await _run_chunks(*chunks, end_content=end_content)
+                relevant = _of_types(dispatched, *expected_types)
+                self.assertEqual([ev.type for ev in relevant], list(expected_types))
+                self.assertEqual(relevant[-1].raw_event["event"], "on_chat_model_end")
 
     async def test_empty_finish_reason_chunk_with_no_open_stream_emits_no_content_events(self):
-        usage = {"input_tokens": 4, "output_tokens": 0, "total_tokens": 4}
-        events = [
-            _stream_event(_text_chunk("", finish_reason="stop", usage_metadata=usage)),
-            _model_end_event(),
-        ]
-
-        dispatched = await _run_pipeline(events)
-        stream_content_events = [
-            ev for ev in dispatched
-            if ev.type in (
-                EventType.TEXT_MESSAGE_START,
-                EventType.TEXT_MESSAGE_CONTENT,
-                EventType.TEXT_MESSAGE_END,
-                EventType.TOOL_CALL_START,
-                EventType.TOOL_CALL_ARGS,
-                EventType.TOOL_CALL_END,
-            )
-        ]
-        self.assertEqual(stream_content_events, [])
-
+        dispatched = await _run_chunks(
+            _text_chunk("", finish_reason="stop", usage_metadata={"input_tokens": 4, "output_tokens": 0, "total_tokens": 4})
+        )
+        self.assertEqual(_of_types(dispatched, *TEXT_EVENTS, *TOOL_EVENTS), [])
         finished = next(ev for ev in dispatched if ev.type == EventType.RUN_FINISHED)
         self.assertEqual(finished.usage[0].input_tokens, 4)
 
