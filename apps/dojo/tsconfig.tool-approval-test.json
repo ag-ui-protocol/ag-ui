@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "jsx": "react-jsx", "noEmit": true },
+  "include": [
+    "src/tool-approval.test.ts",
+    "src/tool-approval.cao-contract.test.ts",
+    "src/tool-approval-panel.test.tsx"
+  ]
+}

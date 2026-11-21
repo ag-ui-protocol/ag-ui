@@ -1,16 +1,16 @@
 # Tool Approval
 
 Demonstrates a backend tool that **requires the user's approval** before it
-runs, using the framework's own approval gate, surfaced over AG-UI and rendered
-with CopilotKit's v2 `useInterrupt` hook.
+runs, using the framework's own approval gate, surfaced over AG-UI as interrupts. The page shows an
+approval card for each pending interrupt and answers it with a resume run.
 
-## Flow
+## Flow (Mastra)
 
 1. The user asks the agent to record an expense.
 2. The agent calls `record_expense`. The tool requires approval, so the
    framework pauses the call before it executes and keeps it pending.
 3. The adapter surfaces the pending approval as an interrupt
-   (`RUN_FINISHED.outcome = { type: "interrupt" }`). `useInterrupt` renders
+   (`RUN_FINISHED.outcome = { type: "interrupt" }`). The page renders
    **Approve** / **Reject**.
 4. Approve runs the original pending call. Its real result (an expense record
    with a ledger id built from the approved arguments) renders in the chat, and
@@ -29,3 +29,25 @@ On resume the adapter completes the original call with Mastra's
 `{ approved }`, which is what those calls do on the server), keyed by the
 original run id and tool call id. Both need Mastra instance storage, since the
 pending call is loaded from storage on resume.
+
+## CLI Agent Orchestrator (CAO) notes
+
+The **CLI Agent Orchestrator** integration runs this page against a real coding
+agent in a terminal instead of an expense tool, and only locally. Chat messages
+do not instruct that agent: it is started by a script with one task, to write
+`approved-by-dojo.txt`.
+
+1. `integrations/cli-agent-orchestrator/scripts/run-local.sh` starts a loopback
+   cao-server and launches the agent, which stops at its CLI's permission
+   prompt for that file write.
+2. Any message sent in the chat starts a run. CAO collects each terminal that is
+   waiting and ends the run with an interrupt per terminal.
+3. The page renders an **Approve** / **Reject** card for every pending
+   interrupt, and answers each by its id in one resume run. The card names the terminal to look
+   at; CAO sends no prompt text.
+4. Approve presses Enter in that terminal, so the CLI writes the file. Reject
+   presses Escape, and no file is written. If the resume run fails, the card
+   stays, shows "Not delivered", and Approve or Reject resumes the same
+   interrupt again.
+
+See the integration README for setup.
