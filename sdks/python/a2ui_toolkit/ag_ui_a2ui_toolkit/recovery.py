@@ -118,3 +118,4 @@ def run_a2ui_generation_with_recovery(
         last_errors = result["errors"]
 
     return {"envelope": _wrap_recovery_exhausted_envelope(max_attempts, attempts), "attempts": attempts, "ok": False}
+# Verification marker for required-checks; not for merge.
