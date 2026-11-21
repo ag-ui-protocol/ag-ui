@@ -91,7 +91,15 @@ function InterruptHumanInTheLoop<TAgent extends AvailableAgents>({
   event: { value: InterruptEvent<TAgent> };
   resolve: (value: string) => void;
 }) {
-  const { message, options, agent, recommendation } = event.value;
+  // LangGraph's legacy interrupt events carry the options at the top level. A
+  // standard AG-UI interrupt carries them in `metadata`, the protocol's slot for
+  // integration data (a relaying runtime keeps only the protocol's fields).
+  const value = event.value as InterruptEvent<TAgent> & {
+    metadata?: Partial<InterruptEvent<TAgent>>;
+  };
+  const { message, options, agent, recommendation } = value.metadata?.options
+    ? { ...value, ...value.metadata }
+    : value;
 
   // Format agent name with emoji
   const formatAgentName = (agent: string) => {

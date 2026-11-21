@@ -59,6 +59,28 @@ public sealed class NullOmissionFixtureTest
             JsonNode.DeepEquals(JsonNode.Parse(produced), JsonNode.Parse(fixtureCase.Expected.GetRawText())),
             $"case '{caseName}'\nexpected: {fixtureCase.Expected.GetRawText()}\nproduced: {produced}");
     }
+
+    [Theory]
+    [MemberData(nameof(CaseNames))]
+    public void CaseReserializesToItsExpectedJsonThroughHostOptionsWithTheBareContext(string caseName)
+    {
+        // The same cases, written the way Microsoft Agent Framework's SSE endpoint writes them:
+        // through host-owned options holding only the bare context, which do not carry the
+        // context's DefaultIgnoreCondition. Every omission and every null that is a value must
+        // come out exactly as through the context itself.
+        var fixtureCase = NullOmissionFixture.Case(caseName);
+        var host = NullOmissionTest.HostOptionsWithTheBareContext();
+
+        var @event = JsonSerializer.Deserialize(
+            fixtureCase.Input.GetRawText(),
+            AGUIJsonSerializerContext.Default.BaseEvent)!;
+
+        var produced = JsonSerializer.Serialize(@event, host.GetTypeInfo(typeof(BaseEvent)));
+
+        Assert.True(
+            JsonNode.DeepEquals(JsonNode.Parse(produced), JsonNode.Parse(fixtureCase.Expected.GetRawText())),
+            $"case '{caseName}'\nexpected: {fixtureCase.Expected.GetRawText()}\nproduced: {produced}");
+    }
 }
 
 internal sealed record NullOmissionFixtureCase(string Name, JsonElement Input, JsonElement Expected);

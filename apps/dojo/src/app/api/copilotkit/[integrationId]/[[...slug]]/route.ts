@@ -15,6 +15,7 @@ import {
 } from "@/agents";
 import { IntegrationId } from "@/menu";
 import { getPostHogClient } from "@/lib/posthog-server";
+import { ensureSseUtf8 } from "@/lib/ensure-sse-utf8";
 
 type RouteParams = {
   params: Promise<{
@@ -78,12 +79,18 @@ async function getHandler(integrationId: string) {
           ? CREWAI_A2UI_INJECT_AGENTS
           : [];
   const a2uiAgents = allA2UIAgents.filter(
-    (id) => !perAgentInjectIds.includes(id),
+    (id) =>
+      !perAgentInjectIds.includes(id) &&
+      // This journey explicitly exercises the workspace A2UI middleware.
+      !(integrationId === "langgraph-typescript" && id === "a2ui_recovery"),
   );
 
   const runtime = new CopilotRuntime({
     agents: agents as Record<string, AbstractAgent>,
     runner: new InMemoryAgentRunner(),
+    // The generative UI tool demo gets the render_ui tool; the markdown demo
+    // needs none (the agent writes ```a2ui fences).
+    generativeUI: { agents: ["generative_ui_tool"] },
     a2ui: {
       agents: a2uiAgents,
       // Catalog used when creating a surface from a STREAMED render_a2ui call.
@@ -92,6 +99,11 @@ async function getHandler(integrationId: string) {
       // catalog id here is correct for every streaming agent.
       defaultCatalogId: "https://a2ui.org/demos/dojo/dynamic_catalog.json",
       ...(injectsA2UITool ? { injectA2UITool: true } : {}),
+      // Antigravity's harness parks every client-side tool until a later run
+      // answers it, so an injected render_a2ui would never resolve. Its A2UI
+      // demos render from a backend generate_a2ui tool instead. Explicit,
+      // because a page that provides a catalog turns injection on by default.
+      ...(integrationId === "antigravity" ? { injectA2UITool: false } : {}),
     },
   });
 
@@ -121,5 +133,5 @@ export async function POST(request: NextRequest, context: RouteParams) {
       integration_id: integrationId,
     },
   });
-  return handler(request);
+  return ensureSseUtf8(await handler(request));
 }

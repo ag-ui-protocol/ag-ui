@@ -21,7 +21,11 @@
       // copy (0.0.57), whose AbstractAgent is nominally different from the
       // workspace package (private members). Point every import at the
       // workspace build so agents typecheck against a single declaration.
-      "@ag-ui/client": ["./node_modules/@ag-ui/client/dist/index.d.ts"]
+      "@ag-ui/client": ["./node_modules/@ag-ui/client/dist/index.d.ts"],
+      // src/copilotkit-2.ts is for CopilotKit 2.x, which exports the runtime
+      // from the package root. Type it against the 2.x dev copy; the 1.x
+      // devDependency stays for src/copilotkit.ts (`@copilotkit/runtime/v2`).
+      "@copilotkit/runtime": ["./node_modules/@copilotkit/runtime-2"]
     },
     "stripInternal": true
   },

@@ -1,9 +1,11 @@
 import type { menuIntegrations } from "../menu";
 
 export type Feature =
+  | "ag_ui_docs_copilot"
   | "agentic_chat"
   | "agentic_generative_ui"
   | "human_in_the_loop"
+  | "human_in_the_loop_approval"
   | "interrupt"
   | "predictive_state_updates"
   | "shared_state"
@@ -23,14 +25,26 @@ export type Feature =
   | "a2ui_advanced"
   | "a2ui_recovery"
   | "crew_chat"
+  | "subagents"
+  | "custom_lifecycle_events"
+  | "dynamic_system_prompt"
   | "error_flow"
   | "background_agents"
-  | "observational_memory";
+  | "observational_memory"
+  | "tool_approval"
+  | "generative_ui_markdown"
+  | "generative_ui_tool";
 
 export interface MenuIntegrationConfig {
   id: string;
   name: string;
   features: Feature[];
+  /**
+   * No hosted backend serves this integration, so production builds (the
+   * hosted Dojo) leave it out of the integration picker. Its routes still
+   * work, for local runs and the e2e lanes.
+   */
+  localOnly?: boolean;
 }
 
 /**

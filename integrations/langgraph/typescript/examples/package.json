@@ -12,9 +12,9 @@
   "dependencies": {
     "@ag-ui/langgraph": "0.0.41",
     "@copilotkit/sdk-js": "1.57.1",
-    "@langchain/core": "^1.1.44",
+    "@langchain/core": "^1.2.17",
     "@langchain/anthropic": "^0.3.0",
-    "@langchain/google-genai": "^0.2.0",
+    "@langchain/google": "0.2.10",
     "@langchain/openai": "^1.2.0",
     "@langchain/langgraph": "^1.1.0",
     "dotenv": "^16.4.5",

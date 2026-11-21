@@ -1,4 +1,5 @@
-import { test, expect } from "../../test-isolation-helper";
+import { interruptPageEventTrace } from "./interruptPage.event-trace";
+import { test, expect } from "../../event-trace-test";
 import { CopilotSelectors } from "../../utils/copilot-selectors";
 import {
   sendChatMessage,
@@ -24,10 +25,18 @@ const BOOK_REQUEST =
   "Book an intro call with the sales team to discuss pricing.";
 
 test.describe("Interrupt Feature", () => {
+  test.use({ timezoneId: "UTC", locale: "en-US" });
+  test.beforeEach(async ({ page }) => {
+    // Meeting choices are derived from the browser date. Fix the input clock
+    // so the captured tool result stays comparable without erasing its payload.
+    await page.clock.setFixedTime(new Date("2026-09-11T09:00:00Z"));
+  });
+
   test("[Strands] pauses the tool and offers the user a time", async ({
     page,
+    eventTrace,
   }) => {
-    await page.goto(PAGE_URL);
+    await page.goto(PAGE_URL, { waitUntil: "networkidle" });
     await expect(page.getByText(DEFAULT_WELCOME_MESSAGE)).toBeVisible();
 
     // Captured before sending: the run starts on the click.
@@ -71,12 +80,17 @@ test.describe("Interrupt Feature", () => {
     await awaitResponseAfterAction(page, () =>
       picker.getByTestId("interrupt-cancel").click(),
     );
+
+    await eventTrace.expectJourney(
+      interruptPageEventTrace.pausesTheToolAndOffersTheUserATime,
+    );
   });
 
   test("[Strands] resuming carries the chosen time into the tool", async ({
     page,
+    eventTrace,
   }) => {
-    await page.goto(PAGE_URL);
+    await page.goto(PAGE_URL, { waitUntil: "networkidle" });
     await expect(page.getByText(DEFAULT_WELCOME_MESSAGE)).toBeVisible();
 
     await sendChatMessage(page, BOOK_REQUEST);
@@ -111,10 +125,17 @@ test.describe("Interrupt Feature", () => {
       chosen,
       { timeout: 30_000 },
     );
+
+    await eventTrace.expectJourney(
+      interruptPageEventTrace.resumingCarriesTheChosenTimeIntoTheTool,
+    );
   });
 
-  test("[Strands] cancelling leaves nothing scheduled", async ({ page }) => {
-    await page.goto(PAGE_URL);
+  test("[Strands] cancelling leaves nothing scheduled", async ({
+    page,
+    eventTrace,
+  }) => {
+    await page.goto(PAGE_URL, { waitUntil: "networkidle" });
     await expect(page.getByText(DEFAULT_WELCOME_MESSAGE)).toBeVisible();
 
     await sendChatMessage(page, BOOK_REQUEST);
@@ -134,5 +155,9 @@ test.describe("Interrupt Feature", () => {
       timeout: 30_000,
     });
     await expect(reply).not.toContainText(/scheduled for/i);
+
+    await eventTrace.expectJourney(
+      interruptPageEventTrace.cancellingLeavesNothingScheduled,
+    );
   });
 });

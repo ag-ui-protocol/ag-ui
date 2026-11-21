@@ -174,94 +174,110 @@ Represents a message from a user.
 type UserMessage = {
   id: string
   role: "user"
-  content: string | InputContent[]
+  content: string | ContentPart[]
   name?: string
 }
 ```
 
-| Property  | Type                       | Description                                                           |
-| --------- | -------------------------- | --------------------------------------------------------------------- |
-| `id`      | `string`                   | Unique identifier for the message                                     |
-| `role`    | `"user"`                   | Role of the message sender, fixed as "user"                           |
-| `content` | `string \| InputContent[]` | Either plain text or an ordered array of multimodal content fragments |
-| `name`    | `string`                   | Optional name of the sender                                           |
+| Property  | Type                      | Description                                                           |
+| --------- | ------------------------- | --------------------------------------------------------------------- |
+| `id`      | `string`                  | Unique identifier for the message                                     |
+| `role`    | `"user"`                  | Role of the message sender, fixed as "user"                           |
+| `content` | `string \| ContentPart[]` | Either plain text or an ordered array of multimodal content fragments |
+| `name`    | `string`                  | Optional name of the sender                                           |
 
-### InputContent
+### ContentPart
 
-Union of supported multimodal fragments.
+Union of supported content parts. The same parts appear on a `UserMessage`
+and on a `ToolMessage`: a tool result is a string or a list of them. Every part
+may carry an optional `id`; `metadata` is unconstrained and is where a text
+search hit keeps its source and title.
 
 ```typescript
-type InputContent =
-  | TextInputContent
-  | ImageInputContent
-  | AudioInputContent
-  | VideoInputContent
-  | DocumentInputContent
+type ContentPart = TextPart | ImagePart | AudioPart | VideoPart | DocumentPart
 ```
 
-### InputContentSource
+### PartSource
 
 ```typescript
-type InputContentSource = InputContentDataSource | InputContentUrlSource
+type PartSource = DataSource | UrlSource | FileSource
 
-type InputContentDataSource = {
+type DataSource = {
   type: "data"
   value: string
   mimeType: string
 }
 
-type InputContentUrlSource = {
+type UrlSource = {
   type: "url"
   value: string
   mimeType?: string
 }
+
+type FileSource = {
+  type: "file"
+  value: string // the handle, exactly as the provider issued it
+  provider?: string // who issued it, e.g. "openai", "anthropic", "google"
+  mimeType?: string
+}
 ```
 
-### TextInputContent
+A `FileSource` names bytes that already live at the model provider — an
+OpenAI or Anthropic file id, a Gemini file URI. Nothing is fetched and `value`
+is opaque: an agent hands it to its provider or drops the part, and never
+treats it as a URL.
+
+### TextPart
 
 ```typescript
-type TextInputContent = {
+type TextPart = {
   type: "text"
+  id?: string
   text: string
+  metadata?: unknown
 }
 ```
 
-### ImageInputContent
+### ImagePart
 
 ```typescript
-type ImageInputContent = {
+type ImagePart = {
   type: "image"
-  source: InputContentSource
+  id?: string
+  source: PartSource
   metadata?: unknown
 }
 ```
 
-### AudioInputContent
+### AudioPart
 
 ```typescript
-type AudioInputContent = {
+type AudioPart = {
   type: "audio"
-  source: InputContentSource
+  id?: string
+  source: PartSource
   metadata?: unknown
 }
 ```
 
-### VideoInputContent
+### VideoPart
 
 ```typescript
-type VideoInputContent = {
+type VideoPart = {
   type: "video"
-  source: InputContentSource
+  id?: string
+  source: PartSource
   metadata?: unknown
 }
 ```
 
-### DocumentInputContent
+### DocumentPart
 
 ```typescript
-type DocumentInputContent = {
+type DocumentPart = {
   type: "document"
-  source: InputContentSource
+  id?: string
+  source: PartSource
   metadata?: unknown
 }
 ```
@@ -273,7 +289,7 @@ Represents a message from a tool.
 ```typescript
 type ToolMessage = {
   id: string
-  content: string
+  content: string | ContentPart[]
   role: "tool"
   toolCallId: string
   error?: string

@@ -109,26 +109,33 @@ async function runExample() {
 
   const events: BaseEvent[] = [];
   await new Promise<void>((resolve, reject) => {
-    agent.runAgent({}, {
-      onRunFinalized: ({ messages }) => {
-        console.log("Final messages:", messages);
-      },
-      onRunFinishedEvent: (params) => {
-        if (params.outcome === "success") {
-          console.log("Run finished result:", params.result);
-        } else {
-          console.log("Run finished with interrupts:", params.interrupts);
-        }
-      },
-    }).then(({ newMessages, result }) => {
-      console.log("New messages:", newMessages);
-      console.log("Final result:", result);
-      resolve();
-    }).catch(reject);
+    agent
+      .runAgent(
+        {},
+        {
+          onRunFinalized: ({ messages }) => {
+            console.log("Final messages:", messages);
+          },
+          onRunFinishedEvent: (params) => {
+            if (params.outcome === "success") {
+              console.log("Run finished result:", params.result);
+            } else if (params.outcome === "interrupt") {
+              console.log("Run finished with interrupts:", params.interrupts);
+            } else {
+              console.log("Run was cancelled");
+            }
+          },
+        },
+      )
+      .then(({ newMessages, result }) => {
+        console.log("New messages:", newMessages);
+        console.log("Final result:", result);
+        resolve();
+      })
+      .catch(reject);
   });
 
   return events;
 }
 
- 
 runExample();

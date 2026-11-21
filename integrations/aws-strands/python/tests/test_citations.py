@@ -13,13 +13,13 @@ Strands actually produces rather than one hand-built to match the adapter. The
 orchestrator tests at the bottom use a fake Graph instead, because a real
 ``strands.multiagent`` Graph would need real node agents to script.
 
-``CitationStreamEvent`` has two envelopes across the declared range
-(``strands-agents>=1.15.0``): ``{"callback": {"citation": ..., "delta": ...}}``
-on 1.15.0-1.20.0 and ``{"citation": ..., "delta": ...}`` from 1.21.0, verified
-by reading each published wheel. Only the first is exercised by a real Agent
-here, because that is what the lockfile resolves, so
-``test_both_citation_envelopes_are_read`` pins the other one directly against
-``citation_from_event``.
+``CitationStreamEvent`` historically used ``{"callback": {"citation": ...,
+"delta": ...}}`` on 1.15.0-1.20.0 and uses ``{"citation": ..., "delta": ...}``
+from 1.21.0, verified by reading the published wheels. The declared floor and
+lockfile are now 1.55.0, so the real Agent exercises the newer envelope.
+``test_both_citation_envelopes_are_read`` directly covers both shapes against
+``citation_from_event``; the older shape is historical coverage, not a claim
+that pre-1.55 SDK releases remain supported.
 """
 
 from __future__ import annotations
@@ -738,10 +738,10 @@ async def test_the_quoted_passage_and_source_reach_the_wire():
 
 
 def test_both_citation_envelopes_are_read():
-    """The declared range spans both, and only one is installed here.
+    """Cover the current envelope and the historical pre-1.21 shape directly.
 
-    Verified against the published wheels: 1.15.0 through 1.20.0 nest the
-    citation under ``callback``, 1.21.0 onward put it at the top level.
+    The real Agent tests exercise the top-level envelope at the 1.55 floor.
+    The callback envelope below does not imply support for older SDK versions.
     """
     citation = {"title": "x.pdf"}
     assert (

@@ -9,6 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="../../../tests/result_provider.py" Link="result_provider.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../fixtures/child-results.json" Link="child-results.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 

@@ -1,0 +1,59 @@
+[
+  {
+    "type": "RUN_STARTED",
+    "runId": "[\"original-parallel\",\"pni486-rich\",\"agent\",\"pni486-rich-agent\"]:snapshot-view",
+    "input": {
+      "messages": []
+    },
+    "threadId": "probe"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "pni486-tool-2",
+    "toolCallName": "search_flights",
+    "parentMessageId": "native:\"aa2e0038-3228-4d37-a172-bd857172f426\":segment:0"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "pni486-tool-2",
+    "delta": "{\"flights\":[{\"airline\":\"Delta Airlines\",\"airlineLogo\":\"https://example.com/delta-logo.png\",\"flightNumber\":\"DL123\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"08:00 AM\",\"arrivalTime\":\"04:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$350\"},{\"airline\":\"American Airlines\",\"airlineLogo\":\"https://example.com/aa-logo.png\",\"flightNumber\":\"AA456\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"09:00 AM\",\"arrivalTime\":\"05:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$340\"}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "pni486-tool-2"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "pni486-tool-3",
+    "toolCallName": "render_a2ui",
+    "parentMessageId": "native:\"aa2e0038-3228-4d37-a172-bd857172f426\":segment:0"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "pni486-tool-3",
+    "delta": "{\"surfaceId\":\"canary-dashboard\",\"components\":[{\"id\":\"root\",\"component\":\"Column\",\"children\":[\"title\",\"revenue\",\"growth\"]},{\"id\":\"title\",\"component\":\"Title\",\"text\":\"Canary dashboard\"},{\"id\":\"revenue\",\"component\":\"Metric\",\"label\":\"Revenue\",\"value\":\"$125000\"},{\"id\":\"growth\",\"component\":\"Metric\",\"label\":\"Growth\",\"value\":\"12%\"}]}"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "pni486-tool-3"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "native:\"bea84cce-ac09-47fe-a947-3fdd9ab37510\":segment:2",
+    "toolCallId": "pni486-tool-2",
+    "content": "{\"a2ui_operations\":[{\"version\":\"v0.9\",\"createSurface\":{\"surfaceId\":\"flight-search-results\",\"catalogId\":\"copilotkit://app-dashboard-catalog\"}},{\"version\":\"v0.9\",\"updateComponents\":{\"surfaceId\":\"flight-search-results\",\"components\":[{\"id\":\"root\",\"component\":\"Row\",\"children\":{\"componentId\":\"flight-card\",\"path\":\"/flights\"},\"gap\":16},{\"id\":\"flight-card\",\"component\":\"FlightCard\",\"airline\":{\"path\":\"airline\"},\"airlineLogo\":{\"path\":\"airlineLogo\"},\"flightNumber\":{\"path\":\"flightNumber\"},\"origin\":{\"path\":\"origin\"},\"destination\":{\"path\":\"destination\"},\"date\":{\"path\":\"date\"},\"departureTime\":{\"path\":\"departureTime\"},\"arrivalTime\":{\"path\":\"arrivalTime\"},\"duration\":{\"path\":\"duration\"},\"status\":{\"path\":\"status\"},\"price\":{\"path\":\"price\"},\"action\":{\"event\":{\"name\":\"book_flight\",\"context\":{\"flightNumber\":{\"path\":\"flightNumber\"},\"origin\":{\"path\":\"origin\"},\"destination\":{\"path\":\"destination\"},\"price\":{\"path\":\"price\"}}}}}]}},{\"version\":\"v0.9\",\"updateDataModel\":{\"surfaceId\":\"flight-search-results\",\"path\":\"/\",\"value\":{\"flights\":[{\"airline\":\"Delta Airlines\",\"airlineLogo\":\"https://example.com/delta-logo.png\",\"flightNumber\":\"DL123\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"08:00 AM\",\"arrivalTime\":\"04:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$350\"},{\"airline\":\"American Airlines\",\"airlineLogo\":\"https://example.com/aa-logo.png\",\"flightNumber\":\"AA456\",\"origin\":\"SFO\",\"destination\":\"JFK\",\"date\":\"Next Tuesday\",\"departureTime\":\"09:00 AM\",\"arrivalTime\":\"05:00 PM\",\"duration\":\"8h\",\"status\":\"On Time\",\"price\":\"$340\"}]}}}]}"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "native:\"bea84cce-ac09-47fe-a947-3fdd9ab37510\":segment:3",
+    "toolCallId": "pni486-tool-3",
+    "content": "{\"status\":\"rendered\"}"
+  },
+  {
+    "type": "RUN_FINISHED",
+    "runId": "[\"original-parallel\",\"pni486-rich\",\"agent\",\"pni486-rich-agent\"]:snapshot-view",
+    "status": "finished",
+    "nativeOutcome": "unknown",
+    "replayBoundary": true
+  }
+]

@@ -1,4 +1,5 @@
 import type { Message } from "@ag-ui/client";
+import { PROTOCOL_VERSION } from "@ag-ui/client";
 import { A2AAgent } from "../agent";
 import type { MessageSendParams } from "@a2a-js/sdk";
 
@@ -88,6 +89,39 @@ describe("A2AAgent", () => {
         expect.objectContaining({ role: "assistant" }),
       ]),
     );
+  });
+
+  it("declares the protocol version on RUN_STARTED", async () => {
+    const fakeClient = new FakeA2AClient({
+      stream: async function* () {
+        yield { kind: "message", messageId: "resp-1", role: "agent", parts: [{ kind: "text", text: "Hi" }] };
+      },
+    });
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as any,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "Hi there" })],
+    });
+
+    const events: any[] = [];
+    await agent.runAgent(undefined, { onEvent: ({ event }) => void events.push(event) });
+
+    const runStarted = events.find((event) => event.type === "RUN_STARTED");
+    expect(runStarted?.protocolVersion).toBe(PROTOCOL_VERSION);
+  });
+
+  it("clones without wrapping the shared client again", () => {
+    const fakeClient = new FakeA2AClient();
+    const agent = new A2AAgent({
+      a2aClient: fakeClient as any,
+      initialMessages: [createMessage({ id: "user-1", role: "user", content: "Hi there" })],
+    });
+    const wrappedSend = fakeClient.sendMessage;
+
+    const cloned = agent.clone();
+    cloned.clone();
+
+    expect(fakeClient.sendMessage).toBe(wrappedSend);
+    expect(cloned.messages).toEqual(agent.messages);
   });
 
   it("falls back to blocking when streaming fails", async () => {

@@ -66,7 +66,9 @@ def test_active_proxy_placeholder_requires_exact_reserved_result_shape():
         agent = SimpleNamespace(
             _interrupt_state=SimpleNamespace(
                 activated=activated,
-                context={"tool_results": [result]},
+                pending_tool_execution=PendingToolExecutionStub(
+                    completed_tool_results=[result]
+                ),
             )
         )
         return bool(session_reconcile.active_proxy_placeholder_ids(agent))
@@ -77,7 +79,9 @@ def test_active_proxy_placeholder_requires_exact_reserved_result_shape():
         {**exact_result, "content": [{"text": f"prefix {PLACEHOLDER} suffix"}]}
     )
     assert not detected({**exact_result, "status": "error"})
-    assert not detected({**exact_result, "content": [{"text": PLACEHOLDER}, {"text": "extra"}]})
+    assert not detected(
+        {**exact_result, "content": [{"text": PLACEHOLDER}, {"text": "extra"}]}
+    )
     assert not detected({**exact_result, "unexpected": True})
     assert not session_reconcile.active_proxy_placeholder_ids(SimpleNamespace())
 
@@ -105,6 +109,105 @@ def test_repository_capability_requires_public_repository_api_and_stable_agent_i
     assert not session_reconcile._supports_repository_reconciliation(
         manager, SimpleNamespace(agent_id="")
     )
+
+
+def test_snapshot_capability_requires_a_real_snapshot_manager_and_stable_ids(
+    tmp_path,
+):
+    snapshot = pytest.importorskip("strands.session.snapshot_session_manager")
+    storage = pytest.importorskip("strands.storage")
+    manager = snapshot.SnapshotSessionManager(
+        session_id="session-1", storage=storage.LocalFileStorage(str(tmp_path))
+    )
+    stable = SimpleNamespace(agent_id="stable-agent")
+
+    assert session_reconcile.session_reconciliation_kind(manager, stable) == "snapshot"
+    assert (
+        session_reconcile.session_reconciliation_kind(
+            manager, SimpleNamespace(agent_id="")
+        )
+        is None
+    )
+    # Only the SDK's own snapshot manager: a look-alike's save may not persist
+    # the agent the way restore reads it back.
+    assert (
+        session_reconcile.session_reconciliation_kind(
+            SimpleNamespace(session_id="session-1", save_snapshot=lambda *a, **k: None),
+            stable,
+        )
+        is None
+    )
+    assert (
+        session_reconcile.session_reconciliation_kind(
+            _make_session(tmp_path / "file"), stable
+        )
+        == "repository"
+    )
+
+
+class _FailingSnapshotSave:
+    """The two things the snapshot reconcile reads off its manager."""
+
+    _save_latest_on = "invocation"
+
+    async def save_snapshot(self, agent, *, is_latest):
+        raise RuntimeError("storage down")
+
+
+def _snapshot_agent(tool_result, call_ids=None):
+    from strands.agent.state import AgentState
+
+    state = AgentState()
+    if call_ids is not None:
+        state.set(AG_UI_FRONTEND_CALL_IDS_STATE_KEY, call_ids)
+    return SimpleNamespace(
+        messages=[{"role": "user", "content": [{"toolResult": tool_result}]}],
+        state=state,
+        _interrupt_state=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_snapshot_save_restores_the_exact_shape_it_found():
+    # No ``status`` key: the rollback must not leave ``status: None`` behind.
+    placeholder = {"toolUseId": "native-1", "content": [{"text": PLACEHOLDER}]}
+    agent = _snapshot_agent(dict(placeholder))
+
+    with pytest.raises(RuntimeError, match="storage down"):
+        await session_reconcile.reconcile_snapshot_tool_results(
+            _FailingSnapshotSave(), agent, {"native-1": ("real", True)}, []
+        )
+
+    assert agent.messages[0]["content"][0]["toolResult"] == placeholder
+    assert AG_UI_FRONTEND_CALL_IDS_STATE_KEY not in agent.state.get()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_snapshot_save_undoes_the_call_id_prune():
+    agent = _snapshot_agent(
+        {
+            "toolUseId": "native-1",
+            "status": "success",
+            "content": [{"text": PLACEHOLDER}],
+        },
+        call_ids=["native-0", "native-1"],
+    )
+
+    with pytest.raises(RuntimeError, match="storage down"):
+        await session_reconcile.reconcile_snapshot_tool_results(
+            _FailingSnapshotSave(),
+            agent,
+            {"native-1": ("real", False)},
+            ["native-0", "native-1"],
+        )
+
+    assert agent.state.get(AG_UI_FRONTEND_CALL_IDS_STATE_KEY) == [
+        "native-0",
+        "native-1",
+    ]
+    assert agent.messages[0]["content"][0]["toolResult"]["content"] == [
+        {"text": PLACEHOLDER}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -274,7 +377,9 @@ def test_active_interrupt_context_reconciliation_error_is_not_swallowed(tmp_path
     )
     interrupt_state = SimpleNamespace(
         activated=True,
-        context={"tool_results": parked_results},
+        pending_tool_execution=PendingToolExecutionStub(
+            completed_tool_results=parked_results
+        ),
     )
     agent = SimpleNamespace(
         agent_id="default",
@@ -288,7 +393,9 @@ def test_active_interrupt_context_reconciliation_error_is_not_swallowed(tmp_path
         )
 
     assert interrupt_state.activated
-    assert interrupt_state.context["tool_results"] is parked_results
+    assert (
+        interrupt_state.pending_tool_execution.completed_tool_results is parked_results
+    )
 
 
 def test_reconcile_stamps_error_status_on_active_interrupt_context(tmp_path):
@@ -297,9 +404,11 @@ def test_reconcile_stamps_error_status_on_active_interrupt_context(tmp_path):
     agent = SimpleNamespace(
         agent_id="default",
         messages=[],
-        _interrupt_state=SimpleNamespace(
+        _interrupt_state=InterruptStateStub(
             activated=True,
-            context={"tool_results": [parked_result]},
+            pending_tool_execution=PendingToolExecutionStub(
+                completed_tool_results=[parked_result]
+            ),
         ),
     )
 
@@ -552,8 +661,8 @@ def test_recorded_call_ids_accepts_only_ids_this_adapter_wrote(stored):
 # key is migrated out of ``context``. Reading only the older shape is how a
 # frontend tool's real answer silently stopped reaching the model on 1.55: the
 # parked placeholder was never corrected and the model was handed "Forwarded to
-# client" in place of the user's answer. Both shapes are driven here, on every
-# release, because only one of them exists on the installed SDK at a time.
+# client" in place of the user's answer. Both a new live checkpoint and an old save restored through the SDK
+# are driven here; both expose the unified runtime layout.
 
 
 def _typed_checkpoint(*results):
@@ -568,9 +677,18 @@ def _typed_checkpoint(*results):
 
 
 def _legacy_checkpoint(*results):
-    """An activated checkpoint parking *results* the way 1.54 and earlier did."""
-    return InterruptStateStub(
-        activated=True, context={"tool_results": list(results)}
+    """Restore a pre-1.55 save through the SDK's migration boundary."""
+    from strands.interrupt import _InterruptState
+
+    return _InterruptState.from_dict(
+        {
+            "activated": True,
+            "interrupts": {},
+            "context": {
+                "tool_use_message": {"role": "assistant", "content": []},
+                "tool_results": list(results),
+            },
+        }
     )
 
 
@@ -737,25 +855,3 @@ def test_a_batch_that_needed_no_correction_is_not_republished(tmp_path):
 
     assert corrected == {"native-proxy"}
     assert checkpoint._version == version_before
-
-
-def test_republishing_is_a_no_op_on_a_release_that_offers_no_setter():
-    """The declared floor has no ``set_pending_tool_results`` to call.
-
-    On those releases the in-place correction is the whole mechanism, and the
-    writer has to stay silent rather than fail the run trying to reach an API
-    that does not exist.
-    """
-    parked = {
-        "toolUseId": "native-proxy",
-        "status": "success",
-        "content": [{"text": '{"approved": true}'}],
-    }
-    older_sdk_state = SimpleNamespace(
-        activated=True, context={"tool_results": [parked]}
-    )
-    assert not hasattr(older_sdk_state, "set_pending_tool_results")
-
-    publish_parked_tool_results(older_sdk_state, parked_tool_results(older_sdk_state))
-
-    assert older_sdk_state.context["tool_results"] == [parked]

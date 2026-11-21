@@ -1,11 +1,15 @@
 apps/dojo/next.config.ts
 integrations/a2a/typescript/tsdown.config.ts
+integrations/adk-middleware/js/examples/tsdown.config.mts
+integrations/adk-middleware/js/tsdown.config.mts
 integrations/adk-middleware/typescript/tsdown.config.ts
 integrations/ag2/typescript/tsdown.config.ts
 integrations/agno/typescript/tsdown.config.ts
+integrations/antigravity/typescript/tsdown.config.ts
 integrations/aws-strands/typescript/tsdown.config.ts
 integrations/claude-agent-sdk/typescript/tsup.config.ts
 integrations/claude-managed-agents/typescript/tsdown.config.ts
+integrations/community/omnara/typescript/tsdown.config.ts
 integrations/community/spring-ai/typescript/tsdown.config.ts
 integrations/crew-ai/typescript/tsdown.config.ts
 integrations/langchain/typescript/tsdown.config.ts
@@ -13,6 +17,7 @@ integrations/langgraph/typescript/tsdown.config.ts
 integrations/langroid/typescript/tsup.config.ts
 integrations/llama-index/typescript/tsdown.config.ts
 integrations/mastra/typescript/tsdown.config.ts
+integrations/openai-agents/typescript/tsdown.config.ts
 integrations/pydantic-ai/typescript/tsdown.config.ts
 integrations/server-starter-all-features/typescript/tsdown.config.ts
 integrations/server-starter/typescript/tsdown.config.ts

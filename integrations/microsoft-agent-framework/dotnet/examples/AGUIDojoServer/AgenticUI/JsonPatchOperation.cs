@@ -14,5 +14,6 @@ internal sealed class JsonPatchOperation
     public object? Value { get; set; }
 
     [JsonPropertyName("from")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? From { get; set; }
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AgentsToAGUIAdapter } from "./adapter";
-import { EventType } from "@ag-ui/client";
+import { EventType, PROTOCOL_VERSION } from "@ag-ui/client";
 import type { BaseEvent, Message } from "@ag-ui/client";
 
 async function collectEvents(gen: AsyncGenerator<BaseEvent>): Promise<BaseEvent[]> {
@@ -32,6 +32,12 @@ describe("AgentsToAGUIAdapter", () => {
     const events = await collectEvents(adapter.adaptStreamToAGUI(makeMockStream({ textChunks: ["Hi"] }) as any, "t1", "r1", msgs, undefined, undefined, { temp: 0.5 }));
     const rs = events.find((e) => e.type === EventType.RUN_STARTED) as any;
     expect(rs.input.forwardedProps).toEqual({ temp: 0.5 });
+  });
+
+  it("RUN_STARTED declares the AG-UI protocol version", async () => {
+    const events = await collectEvents(adapter.adaptStreamToAGUI(makeMockStream({ textChunks: ["Hi"] }) as any, "t1", "r1", msgs));
+    const rs = events.find((e) => e.type === EventType.RUN_STARTED) as any;
+    expect(rs.protocolVersion).toBe(PROTOCOL_VERSION);
   });
 
   it("uses TEXT_MESSAGE_START/CONTENT/END — not CHUNK", async () => {
@@ -138,6 +144,33 @@ describe("AgentsToAGUIAdapter", () => {
     // The tool message ID in the snapshot must match the messageId from the TOOL_CALL_RESULT event
     const toolResultEvent = events.find((e) => e.type === EventType.TOOL_CALL_RESULT) as any;
     expect(toolMsg.id).toBe(toolResultEvent.messageId);
+  });
+
+  // Guards against a multi-step run collapsing into one assistant message: the
+  // snapshot kept only the last text message's id, concatenated every step's
+  // text into it, and put the tool result after the final answer, so the client
+  // lost the first message and the next turn sent the model a garbled history.
+  it("MESSAGES_SNAPSHOT keeps each step's assistant message in stream order", async () => {
+    async function* multiStep() {
+      yield { type: "text-delta" as const, text: "Let me check." };
+      yield { type: "tool-call" as const, toolCallId: "tc1", toolName: "weather", input: { city: "Paris" } };
+      yield { type: "tool-result" as const, toolCallId: "tc1", output: { sky: "clear" } };
+      yield { type: "text-delta" as const, text: "It is sunny." };
+      yield { type: "finish" as const, finishReason: "stop" };
+    }
+    const stream = { fullStream: multiStep(), text: Promise.resolve("It is sunny."), toolCalls: Promise.resolve([]), toolResults: Promise.resolve([]) };
+    const events = await collectEvents(adapter.adaptStreamToAGUI(stream as any, "t1", "r1", msgs));
+    const textStarts = events.filter((e) => e.type === EventType.TEXT_MESSAGE_START) as any[];
+    const result = events.find((e) => e.type === EventType.TOOL_CALL_RESULT) as any;
+    const snap = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as any;
+
+    expect(snap.messages).toMatchObject([
+      { id: "m1", role: "user" },
+      { id: textStarts[0].messageId, role: "assistant", content: "Let me check.", toolCalls: [{ id: "tc1" }] },
+      { id: result.messageId, role: "tool", toolCallId: "tc1" },
+      { id: textStarts[1].messageId, role: "assistant", content: "It is sunny." },
+    ]);
+    expect(snap.messages).toHaveLength(4);
   });
 
   it("emits RUN_ERROR on stream failure", async () => {

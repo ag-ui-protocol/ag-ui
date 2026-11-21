@@ -31,13 +31,23 @@ export const getWeather = tool({
   inputSchema: z.object({
     location: z.string().describe("The location to get weather for."),
   }),
-  callback: () => ({
-    temperature: randomInt(60, 85),
-    conditions: CONDITIONS[randomInt(0, CONDITIONS.length - 1)],
-    humidity: randomInt(30, 80),
-    wind_speed: randomInt(5, 20),
-    feels_like: randomInt(58, 88),
-  }),
+  callback: () =>
+    process.env.STRANDS_DEMO_FIXED_WEATHER === "1"
+      ? {
+          // Stable tool input for captured event tests; keep the result fully visible.
+          temperature: 72,
+          conditions: "sunny",
+          humidity: 45,
+          wind_speed: 8,
+          feels_like: 74,
+        }
+      : {
+          temperature: randomInt(60, 85),
+          conditions: CONDITIONS[randomInt(0, CONDITIONS.length - 1)],
+          humidity: randomInt(30, 80),
+          wind_speed: randomInt(5, 20),
+          feels_like: randomInt(58, 88),
+        },
 });
 
 export const renderChart = tool({

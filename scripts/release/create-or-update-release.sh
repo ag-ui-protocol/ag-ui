@@ -170,7 +170,7 @@ elif [ "$ECOSYSTEM" = "dotnet" ]; then
 elif [ "$ECOSYSTEM" = "maven" ]; then
   # Gradle-style coordinates rather than a <dependency> block: the install cell
   # has to stay on one line inside the table.
-  SECTION="### Java (Maven Central) - published at ${TIMESTAMP} UTC${NL}"
+  SECTION="### Maven Central - published at ${TIMESTAMP} UTC${NL}"
   SECTION+="| Package | Version | Install |${NL}"
   SECTION+="|---------|---------|--------|${NL}"
   while read -r pkg; do
@@ -310,7 +310,7 @@ for i in $(seq 1 $MAX_RETRIES); do
       typescript) HEADER="### TypeScript (npm) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
       python) HEADER="### Python (PyPI) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
       dotnet) HEADER="### .NET (NuGet) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
-      maven) HEADER="### Java (Maven Central) - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
+      maven) HEADER="### Maven Central - published at ${TIMESTAMP} UTC${NL}| Package | Version | Install |${NL}|---------|---------|--------|${NL}" ;;
     esac
     UPDATED_BODY="${EXISTING_BODY}${NL}${HEADER}${APPEND_SECTION}${NL}${APPEND_NOTES}"
     echo "$UPDATED_BODY" | gh release edit "$TAG" --notes-file -

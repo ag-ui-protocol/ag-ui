@@ -37,6 +37,13 @@ export interface AgentConfig {
   initialMessages?: Message[];
   initialState?: State;
   debug?: AgentDebugConfig;
+  /**
+   * Most container entries (array elements, object and record keys) the
+   * enforcement stage will walk for one event or one outgoing input before
+   * failing the run with an AGUIEnforcementLimitError. Defaults to
+   * DEFAULT_MAX_ENFORCED_ENTRIES (1,000,000); `Infinity` disables the limit.
+   */
+  maxEnforcedEntries?: number;
 }
 
 export type HttpAgentFetchFn = (url: string, requestInit: RequestInit) => Promise<Response>;

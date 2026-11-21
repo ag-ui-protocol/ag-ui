@@ -499,3 +499,88 @@ class TestClientProxyToolsetPredictStateTracking:
         first_event = mock_queue.put.call_args_list[0][0][0]
         assert isinstance(first_event, CustomEvent)
         assert first_event.name == "PredictState"
+
+
+class TestUndeclaredFrontendToolsWarning:
+    """Frontend tools reach the model only through an AGUIToolset placeholder;
+    a run that sends tools to an agent tree without one warns about it."""
+
+    @staticmethod
+    def _input(tool_names):
+        from ag_ui.core import RunAgentInput, UserMessage
+
+        return RunAgentInput(
+            thread_id="thread-warn",
+            run_id="run-warn",
+            messages=[UserMessage(id="m1", role="user", content="hi")],
+            context=[],
+            state={},
+            tools=[
+                AGUITool(
+                    name=name,
+                    description=f"the {name} tool",
+                    parameters={"type": "object", "properties": {}},
+                )
+                for name in tool_names
+            ],
+            forwarded_props={},
+        )
+
+    @staticmethod
+    async def _start(agent, input_):
+        from ag_ui_adk import ADKAgent
+
+        captured = []
+
+        async def _noop(self, **kwargs):
+            captured.append(kwargs)
+
+        with patch.object(ADKAgent, "_run_adk_in_background", _noop):
+            execution = await agent._start_background_execution(input_)
+            await execution.task
+        return captured[0]
+
+    @staticmethod
+    def _agent(tools):
+        from google.adk.agents import LlmAgent
+        from ag_ui_adk import ADKAgent
+
+        return ADKAgent(
+            adk_agent=LlmAgent(name="root", instruction="be helpful", tools=tools),
+            app_name="warn_app",
+            user_id="user",
+            use_in_memory_services=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_warns_when_no_agui_toolset_placeholder(self, caplog):
+        agent = self._agent([])
+
+        with caplog.at_level("WARNING", logger="ag_ui_adk.adk_agent"):
+            kwargs = await self._start(agent, self._input(["pick_color"]))
+
+        assert kwargs["client_proxy_toolsets"] == []
+        warnings = [r for r in caplog.records if r.levelname == "WARNING" and "AGUIToolset" in r.getMessage()]
+        assert len(warnings) == 1
+        assert "pick_color" in warnings[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_placeholder_exists(self, caplog):
+        from ag_ui_adk import AGUIToolset
+
+        agent = self._agent([AGUIToolset()])
+
+        with caplog.at_level("WARNING", logger="ag_ui_adk.adk_agent"):
+            kwargs = await self._start(agent, self._input(["pick_color"]))
+
+        assert len(kwargs["client_proxy_toolsets"]) == 1
+        assert not [r for r in caplog.records if r.levelname == "WARNING" and "AGUIToolset" in r.getMessage()]
+
+    @pytest.mark.asyncio
+    async def test_no_warning_without_frontend_tools(self, caplog):
+        agent = self._agent([])
+
+        with caplog.at_level("WARNING", logger="ag_ui_adk.adk_agent"):
+            await self._start(agent, self._input([]))
+
+        assert not [r for r in caplog.records if r.levelname == "WARNING" and "AGUIToolset" in r.getMessage()]

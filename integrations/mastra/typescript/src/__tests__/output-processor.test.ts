@@ -1,4 +1,4 @@
-import type { CustomEvent, TextMessageChunkEvent } from "@ag-ui/client";
+import type { RunFinishedEvent, TextMessageChunkEvent } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
 import { MastraAgent } from "../mastra";
 import {
@@ -283,11 +283,11 @@ describe("useProcessedFinalText", () => {
       );
       const events = await collectEvents(agent, makeInput());
       expect(textEventDeltas(events)).toEqual(["thinking out loud"]);
-      // The interrupt itself must still be emitted (legacy on_interrupt path).
-      const custom = events.find(
-        (e): e is CustomEvent => e.type === EventType.CUSTOM,
+      // The interrupt itself must still be emitted.
+      const finished = events.find(
+        (e): e is RunFinishedEvent => e.type === EventType.RUN_FINISHED,
       );
-      expect(custom?.name).toBe("on_interrupt");
+      expect(finished?.outcome?.type).toBe("interrupt");
     });
   });
 

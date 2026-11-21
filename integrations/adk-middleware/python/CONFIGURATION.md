@@ -37,7 +37,7 @@ agent = ADKAgent(
     user_id="user123",               # Required: User identifier
     session_timeout_seconds=1200,    # Optional: Session timeout (default: 20 minutes)
     cleanup_interval_seconds=300,    # Optional: Cleanup interval (default: 5 minutes)
-    max_sessions_per_user=10,        # Optional: Max sessions per user (default: 10)
+    max_sessions_per_user=10,        # Optional: Max sessions per user (default: None, unlimited)
     use_in_memory_services=True,     # Optional: Use in-memory services (default: True)
     execution_timeout_seconds=600,   # Optional: Execution timeout (default: 10 minutes)
     tool_timeout_seconds=300,        # Optional: Tool timeout (default: 5 minutes)
@@ -128,17 +128,51 @@ agent = ADKAgent(
 
 ### Session Lifecycle
 
-1. **Creation**: New session created on first request from a user
+1. **Creation**: New session created on the first request for a thread, unless an existing mapped or native session is found (see [Continuing native ADK sessions](USAGE.md#continuing-native-adk-sessions))
 2. **Maintenance**: Session kept alive with each interaction
 3. **Timeout**: Session marked for cleanup after timeout period
 4. **Cleanup**: Expired sessions removed during cleanup intervals
-5. **Memory**: If memory service configured, expired sessions saved before deletion
+5. **Memory**: If memory service configured, expired sessions saved to memory before cleanup deletes or untracks them
+
+Cleanup and eviction never delete a session without the `_ag_ui_thread_id` stamp (one created outside the middleware, or by a version before the 0.4.1 release of 2026-01-06); they only stop tracking it. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, unless the run found it after the session cached for the thread was gone.
+
+### Disabling Cleanup and Session Tracking
+
+The cleanup task reads every tracked session from the session service on each
+interval. With a persistent session service (for example `DatabaseSessionService`)
+where sessions should be kept, that is load on the database for nothing. Two
+options turn it off:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    session_service=DatabaseSessionService(db_url="postgresql://..."),
+
+    # Sessions never expire: the cleanup task is never started.
+    # Sessions are still tracked in memory, so max_sessions_per_user keeps working.
+    session_timeout_seconds=None,
+
+    # Or go further: no in-memory session index and no cleanup task.
+    track_sessions=False,
+)
+```
+
+With `track_sessions=False`, `max_sessions_per_user` cannot be set (a `ValueError`
+is raised), and `SessionManager.get_session_count()`, `get_user_session_count()`
+and `bulk_update_user_state()` see no sessions. Sessions stay in the session
+service until something else deletes them. Per-run behaviour is unchanged:
+session lookup, state updates and processed-message tracking still work.
+
+If you pass your own `session_manager=`, set these options on the `SessionManager`
+instead; `ADKAgent` ignores its own session-cleanup arguments in that case.
 
 ### State and Session Mapping
 
 #### Thread ID → Session ID
 
-The `threadId` from `RunAgentInput` maps directly to the ADK `session_id`. Each unique `threadId` corresponds to a unique ADK session, maintaining conversation continuity across multiple runs.
+Each `threadId` from `RunAgentInput` corresponds to one ADK session within an app and user, maintaining conversation continuity across multiple runs. By default, a session the middleware creates gets a backend-generated `session_id` and records the thread in its `_ag_ui_thread_id` state. With `use_thread_id_as_session_id=True`, the `session_id` is the `threadId` when the backend accepts it and no other thread's session has that ID. When no session is mapped to the thread, an existing native session whose `session_id` is the `threadId` is continued, unless it is mapped to another thread or stamped by another app. On a backend that can list sessions, it is continued only when `list_sessions` returns it for the current user, in the default mode and on Vertex AI in both modes. A backend that cannot list sessions reads it directly, except on Vertex AI, where it is not found. See [Continuing native ADK sessions](USAGE.md#continuing-native-adk-sessions) and [Thread ID vs Session ID Mapping](USAGE.md#thread-id-vs-session-id-mapping).
 
 #### Initial State
 
@@ -148,6 +182,17 @@ The `state` field in `RunAgentInput` initializes and synchronizes session state:
 - **Existing Session**: `state` is merged with existing session state on each request
 
 This enables passing frontend context (user preferences, selected items, UI state) to the backend agent before execution begins.
+
+#### Initial History
+
+`RunAgentInput.messages` is the complete history the client shows. On the first run of a thread that has no ADK session yet, the messages before the latest user message are written into the new session, so the model sees them and later runs keep them. This covers a conversation started from something that happened elsewhere, such as a greeting or earlier turns imported from another system.
+
+- Assistant turns are attributed to the root agent.
+- A tool call is kept only together with its result, since Gemini rejects one without the other.
+- ADK protocol calls (`adk_request_confirmation`, `adk_request_credential`, `adk_request_input`) and the middleware's `confirm_changes` are left out, as are system, developer, reasoning and activity messages.
+- An existing session is the source of truth: history sent for a thread that already has a session is not written into it.
+
+Set `seed_first_run_history=False` to start a new session from the latest user message only.
 
 ## Service Configuration
 
@@ -226,10 +271,12 @@ agent = ADKAgent(
     use_in_memory_services=False
 )
 
-# Session preservation flow:
+# Session preservation flow (for sessions this process tracks):
 # 1. Session expires after timeout
 # 2. Session data added to memory via memory_service.add_session_to_memory()
-# 3. Session removed from active storage
+# 3. Session deleted from the session service, if the middleware created it
+#    (it has the _ag_ui_thread_id stamp) and delete_session_on_cleanup=True;
+#    otherwise kept and only untracked
 # 4. Historical context available for future conversations
 ```
 
@@ -314,7 +361,7 @@ agent = ADKAgent(
 
     # Concurrency settings
     max_concurrent_executions=5,     # Max concurrent agent executions (default: 5)
-    max_sessions_per_user=10         # Max sessions per user (default: 10)
+    max_sessions_per_user=10         # Max sessions per user (default: None, unlimited)
 )
 ```
 

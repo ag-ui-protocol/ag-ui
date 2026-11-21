@@ -4,7 +4,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { format } from "prettier";
-import type { TraceEvent } from "./event-trace-events";
+import { normalizeEventTrace, type TraceEvent } from "./event-trace-events";
 import { getEventTraceDestination } from "./event-trace-golden";
 
 export type EventTraceUpdateCandidate = {
@@ -209,8 +209,11 @@ export class EventTraceAssertionError extends Error {
   constructor(options: {
     actual: readonly TraceEvent[];
     expected: readonly TraceEvent[];
+    expectedSource?: readonly TraceEvent[];
   }) {
-    const destination = getEventTraceDestination(options.expected);
+    const destination = getEventTraceDestination(
+      options.expectedSource ?? options.expected,
+    );
     const label = destination
       ? `${formatDestination(destination.sourceUrl)}#${destination.journeyKey}`
       : "<event trace>";
@@ -252,8 +255,15 @@ export function assertEventTraceMatches(
   actual: readonly TraceEvent[],
   expected: readonly TraceEvent[],
 ) {
-  if (!isDeepStrictEqual(actual, expected)) {
-    throw new EventTraceAssertionError({ actual, expected });
+  const contractualActual = normalizeEventTrace(actual);
+  const contractualExpected = normalizeEventTrace(expected);
+
+  if (!isDeepStrictEqual(contractualActual, contractualExpected)) {
+    throw new EventTraceAssertionError({
+      actual: contractualActual,
+      expected: contractualExpected,
+      expectedSource: expected,
+    });
   }
 }
 
@@ -273,7 +283,7 @@ export function createEventTraceUpdateCandidate(options: {
     lane: options.lane,
     sourceUrl: destination.sourceUrl,
     journeyKey: destination.journeyKey,
-    events: options.actual,
+    events: normalizeEventTrace(options.actual),
   };
 }
 

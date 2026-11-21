@@ -7,10 +7,14 @@ Protocol Buffer encoding/decoding for **Agent-User Interaction (AG-UI) Protocol*
 ## Installation
 
 ```bash
-npm install @ag-ui/proto
-pnpm add @ag-ui/proto
-yarn add @ag-ui/proto
+npm install @ag-ui/proto zod
+pnpm add @ag-ui/proto zod
+yarn add @ag-ui/proto zod
 ```
+
+zod (3.25.18+ or 4.x) is a peer dependency. `encode` validates each event with
+the schemas on `@ag-ui/core/schemas`, using the zod your application installs
+rather than a bundled copy.
 
 ## Features
 
