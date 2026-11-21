@@ -52,7 +52,7 @@ describe("handlers — raw model stream events", () => {
     expect(e2[0]).toMatchObject({ type: EventType.TOOL_CALL_START, toolCallId: "call_a", toolCallName: "get_weather" });
     // buffered args flushed as one ARGS delta
     expect(e2[1]).toMatchObject({ type: EventType.TOOL_CALL_ARGS, toolCallId: "call_a", delta: '{"city":' });
-    expect(e2[2]).toMatchObject({ type: EventType.TOOL_CALL_END, toolCallId: "call_a" });
+    expect(e2).toHaveLength(2);
 
     // subsequent arg deltas stream through
     const e3 = handleRawModelStreamEvent(
@@ -62,6 +62,105 @@ describe("handlers — raw model stream events", () => {
     expect(e3).toEqual([
       { type: EventType.TOOL_CALL_ARGS, toolCallId: "call_a", delta: '"SF"}' },
     ]);
+    expect(handleRawModelStreamEvent(
+      { type: "model", event: { type: "response.function_call_arguments.done", item_id: "call_a", arguments: '{"city":"SF"}' } },
+      ctx,
+    )).toEqual([{ type: EventType.TOOL_CALL_END, toolCallId: "call_a" }]);
+    handleRunItemStreamEvent("tool_output", { rawItem: { callId: "call_a" }, output: "sunny" }, ctx);
+    expect(ctx.messages[0]).toMatchObject({
+      toolCalls: [{ id: "call_a", function: { arguments: '{"city":"SF"}' } }],
+    });
+  });
+
+  it("maps SDK item ids to call ids and uses completed arguments", () => {
+    const ctx = new StreamContext("run-1");
+    const raw = (event: object) => handleRawModelStreamEvent({ type: "model", event }, ctx);
+    raw({ type: "response.output_item.added", item: { type: "function_call", id: "fc_1", call_id: "call_1" } });
+    raw({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '{"q":' });
+    raw({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '"x"}' });
+    raw({ type: "response.function_call_arguments.done", item_id: "fc_1", arguments: '{"q":"x"}' });
+    expect(handleRunItemStreamEvent("tool_called", {
+      rawItem: { callId: "call_1", name: "search", arguments: '{"q":"x"}' },
+    }, ctx)).toEqual([
+      { type: EventType.TOOL_CALL_START, toolCallId: "call_1", toolCallName: "search" },
+      { type: EventType.TOOL_CALL_ARGS, toolCallId: "call_1", delta: '{"q":"x"}' },
+      { type: EventType.TOOL_CALL_END, toolCallId: "call_1" },
+    ]);
+    expect(raw({ type: "response.function_call_arguments.delta", item_id: "fc_1", delta: "late" })).toEqual([]);
+  });
+
+  it("ends incomplete tool calls before their result or stream cleanup", () => {
+    const ctx = new StreamContext("run-1");
+    for (const id of ["a", "b"]) {
+      handleRunItemStreamEvent("tool_called", { rawItem: { callId: id, name: "tool", arguments: "" } }, ctx);
+    }
+    expect(handleRunItemStreamEvent("tool_output", { rawItem: { callId: "a" }, output: "ok" }, ctx)).toEqual([
+      { type: EventType.TOOL_CALL_END, toolCallId: "a" },
+      { type: EventType.TOOL_CALL_RESULT, messageId: "a", toolCallId: "a", content: "ok", role: "tool" },
+    ]);
+    expect(closeOpenBlocks(ctx)).toEqual([{ type: EventType.TOOL_CALL_END, toolCallId: "b" }]);
+    expect(closeOpenBlocks(ctx)).toEqual([]);
+  });
+
+  it("emits remaining arguments from done before ending a call", () => {
+    const ctx = new StreamContext("run-1");
+    handleRunItemStreamEvent("tool_called", { rawItem: { callId: "c", name: "tool", arguments: "" } }, ctx);
+    handleRawModelStreamEvent({ type: "model", event: {
+      type: "response.function_call_arguments.delta", item_id: "c", delta: '{"x":',
+    } }, ctx);
+    expect(handleRawModelStreamEvent({ type: "model", event: {
+      type: "response.function_call_arguments.done", item_id: "c", arguments: '{"x":1}',
+    } }, ctx)).toEqual([
+      { type: EventType.TOOL_CALL_ARGS, toolCallId: "c", delta: "1}" },
+      { type: EventType.TOOL_CALL_END, toolCallId: "c" },
+    ]);
+    closeOpenBlocks(ctx);
+    expect(ctx.messages[0]).toMatchObject({ toolCalls: [{ function: { arguments: '{"x":1}' } }] });
+  });
+
+  it("allows additional deltas after nonempty initial arguments", () => {
+    const ctx = new StreamContext("run-1");
+    const start = handleRunItemStreamEvent("tool_called", {
+      rawItem: { callId: "c", name: "tool", arguments: '{"x":' },
+    }, ctx);
+    expect(start.map((event) => event.type)).toEqual([EventType.TOOL_CALL_START, EventType.TOOL_CALL_ARGS]);
+    expect(handleRawModelStreamEvent({ type: "model", event: {
+      type: "response.function_call_arguments.delta", item_id: "c", delta: "1}",
+    } }, ctx)).toEqual([{ type: EventType.TOOL_CALL_ARGS, toolCallId: "c", delta: "1}" }]);
+    expect(handleRunItemStreamEvent("tool_output", { rawItem: { callId: "c" }, output: "ok" }, ctx)[0])
+      .toEqual({ type: EventType.TOOL_CALL_END, toolCallId: "c" });
+    expect(ctx.messages[0]).toMatchObject({ toolCalls: [{ function: { arguments: '{"x":1}' } }] });
+  });
+
+  it("uses complete raw arguments over buffered fragments and ends immediately without a done event", () => {
+    const ctx = new StreamContext("run-1");
+    handleRawModelStreamEvent({ type: "model", event: {
+      type: "response.function_call_arguments.delta", item_id: "c", delta: '{"x":',
+    } }, ctx);
+    expect(handleRunItemStreamEvent("tool_called", {
+      rawItem: { callId: "c", name: "tool", arguments: '{"x":1}' },
+    }, ctx)).toEqual([
+      { type: EventType.TOOL_CALL_START, toolCallId: "c", toolCallName: "tool" },
+      { type: EventType.TOOL_CALL_ARGS, toolCallId: "c", delta: '{"x":1}' },
+      { type: EventType.TOOL_CALL_END, toolCallId: "c" },
+    ]);
+    expect(handleRunItemStreamEvent("tool_output", { rawItem: { callId: "c" }, output: "ok" }, ctx))
+      .toEqual([{ type: EventType.TOOL_CALL_RESULT, messageId: "c", toolCallId: "c", content: "ok", role: "tool" }]);
+    expect(ctx.messages[0]).toMatchObject({ toolCalls: [{ function: { arguments: '{"x":1}' } }] });
+  });
+
+  it("does not treat a parseable buffered fragment as complete without raw arguments", () => {
+    const ctx = new StreamContext("run-1");
+    handleRawModelStreamEvent({ type: "model", event: {
+      type: "response.function_call_arguments.delta", item_id: "c", delta: "{}",
+    } }, ctx);
+    expect(handleRunItemStreamEvent("tool_called", {
+      rawItem: { callId: "c", name: "tool" },
+    }, ctx)).toEqual([
+      { type: EventType.TOOL_CALL_START, toolCallId: "c", toolCallName: "tool" },
+      { type: EventType.TOOL_CALL_ARGS, toolCallId: "c", delta: "{}" },
+    ]);
+    expect(closeOpenBlocks(ctx)).toEqual([{ type: EventType.TOOL_CALL_END, toolCallId: "c" }]);
   });
 
   it("emits REASONING_MESSAGE_START + CONTENT for reasoning summary deltas", () => {
@@ -78,6 +177,20 @@ describe("handlers — raw model stream events", () => {
     expect(ctx.currentReasoningId).toBe("rsn_1");
   });
 
+  it("closes a previous reasoning block before starting another", () => {
+    const ctx = new StreamContext("run-1");
+    const delta = (id: string) => handleRawModelStreamEvent(
+      { type: "model", event: { type: "response.reasoning_text.delta", item_id: id, delta: "x" } }, ctx,
+    );
+    delta("r1");
+    expect(delta("r2")).toEqual([
+      { type: EventType.REASONING_MESSAGE_END, messageId: "r1" },
+      { type: EventType.REASONING_MESSAGE_START, messageId: "r2", role: "reasoning" },
+      { type: EventType.REASONING_MESSAGE_CONTENT, messageId: "r2", delta: "x" },
+    ]);
+    expect(closeOpenBlocks(ctx)).toEqual([{ type: EventType.REASONING_MESSAGE_END, messageId: "r2" }]);
+  });
+
   it("ignores unknown raw event types", () => {
     const ctx = new StreamContext("run-1");
     expect(handleRawModelStreamEvent({ type: "model", event: { type: "response.refusal.delta" } }, ctx)).toEqual([]);
@@ -87,7 +200,7 @@ describe("handlers — raw model stream events", () => {
 });
 
 describe("handlers — run item events", () => {
-  it("tool_called emits START / ARGS(full) / END when no streamed deltas", () => {
+  it("tool_called emits START / ARGS / END for complete arguments", () => {
     const ctx = new StreamContext("run-1");
     const e = handleRunItemStreamEvent("tool_called", {
       rawItem: { callId: "call_b", name: "search", arguments: '{"q":"x"}' },
@@ -100,14 +213,13 @@ describe("handlers — run item events", () => {
     expect(ctx.openToolCalls.has("call_b")).toBe(true);
   });
 
-  it("tool_called with no args emits START + END only", () => {
+  it("tool_called with no args waits for completion", () => {
     const ctx = new StreamContext("run-1");
     const e = handleRunItemStreamEvent("tool_called", {
       rawItem: { callId: "call_c", name: "noop", arguments: "" },
     }, ctx);
     expect(e).toEqual([
       { type: EventType.TOOL_CALL_START, toolCallId: "call_c", toolCallName: "noop" },
-      { type: EventType.TOOL_CALL_END, toolCallId: "call_c" },
     ]);
   });
 
@@ -134,7 +246,7 @@ describe("handlers — run item events", () => {
     ]);
   });
 
-  it("retains a backend tool call when final assistant text follows its result", () => {
+  it("orders final assistant text after the backend tool result with a distinct id", () => {
     const ctx = new StreamContext("run-1");
     handleRunItemStreamEvent("tool_called", {
       rawItem: { callId: "call_d", name: "get_weather", arguments: '{"location":"SF"}' },
@@ -143,17 +255,19 @@ describe("handlers — run item events", () => {
       rawItem: { callId: "call_d" },
       output: "sunny",
     }, ctx);
-    handleRawModelStreamEvent({ type: "output_text_delta", delta: "It is sunny." }, ctx);
+    const text = handleRawModelStreamEvent({ type: "output_text_delta", delta: "It is sunny." }, ctx);
     ctx.flushPendingAssistant();
 
     expect(ctx.messages).toMatchObject([
       {
+        id: "run-1",
         role: "assistant",
-        content: "It is sunny.",
         toolCalls: [{ id: "call_d", function: { name: "get_weather" } }],
       },
       { role: "tool", toolCallId: "call_d", content: "sunny" },
+      { id: "run-1-1", role: "assistant", content: "It is sunny." },
     ]);
+    expect(text[0]).toMatchObject({ type: EventType.TEXT_MESSAGE_START, messageId: "run-1-1" });
   });
 
   it("tool_output with string output passes it through unchanged", () => {
@@ -354,6 +468,27 @@ describe("handlers — state interception (Phase 4)", () => {
 });
 
 describe("handlers — message snapshot merging (Phase 4)", () => {
+  it("keeps multiple tool results between their assistant call and later assistant text", () => {
+    const ctx = new StreamContext("run-1");
+    handleRawModelStreamEvent({ type: "output_text_delta", delta: "Checking." }, ctx);
+    handleRunItemStreamEvent("message_output_created", { rawItem: {} }, ctx);
+    for (const id of ["a", "b"]) {
+      handleRunItemStreamEvent("tool_called", { rawItem: { callId: id, name: "tool", arguments: "{}" } }, ctx);
+    }
+    for (const id of ["b", "a"]) {
+      handleRunItemStreamEvent("tool_output", { rawItem: { callId: id }, output: id }, ctx);
+    }
+    const text = handleRawModelStreamEvent({ type: "output_text_delta", delta: "Done." }, ctx);
+    closeOpenBlocks(ctx);
+    expect(ctx.messages).toMatchObject([
+      { id: "run-1", role: "assistant", content: "Checking.", toolCalls: [{ id: "a" }, { id: "b" }] },
+      { role: "tool", toolCallId: "b" },
+      { role: "tool", toolCallId: "a" },
+      { id: "run-1-1", role: "assistant", content: "Done." },
+    ]);
+    expect(text[0]).toMatchObject({ messageId: "run-1-1" });
+  });
+
   it("accumulates assistant text into ctx.messages on close", () => {
     const ctx = new StreamContext("run-1");
     handleRawModelStreamEvent({ type: "output_text_delta", delta: "Hello " }, ctx);
@@ -420,6 +555,34 @@ describe("handlers — message snapshot merging (Phase 4)", () => {
 });
 
 describe("handlers — frontend-tool HITL halt (Phase 5)", () => {
+  it("accumulates successive frontend calls on the same assistant message", () => {
+    const ctx = new StreamContext("run-1");
+    ctx.frontendToolNames = new Set(["tool"]);
+    for (const id of ["a", "b"]) {
+      handleRunItemStreamEvent("tool_called", {
+        rawItem: { callId: id, name: "tool", arguments: "{}" },
+      }, ctx);
+    }
+    expect(ctx.messages).toMatchObject([
+      { id: "run-1", role: "assistant", toolCalls: [{ id: "a" }, { id: "b" }] },
+    ]);
+  });
+
+  it("starts a new assistant message after a backend result following a frontend flush", () => {
+    const ctx = new StreamContext("run-1");
+    ctx.frontendToolNames = new Set(["frontend"]);
+    handleRunItemStreamEvent("tool_called", { rawItem: { callId: "a", name: "backend", arguments: "{}" } }, ctx);
+    handleRunItemStreamEvent("tool_called", { rawItem: { callId: "b", name: "frontend", arguments: "{}" } }, ctx);
+    handleRunItemStreamEvent("tool_output", { rawItem: { callId: "a" }, output: "ok" }, ctx);
+    handleRawModelStreamEvent({ type: "output_text_delta", delta: "Done." }, ctx);
+    closeOpenBlocks(ctx);
+    expect(ctx.messages).toMatchObject([
+      { id: "run-1", role: "assistant", toolCalls: [{ id: "a" }, { id: "b" }] },
+      { role: "tool", toolCallId: "a" },
+      { id: "run-1-1", role: "assistant", content: "Done." },
+    ]);
+  });
+
   it("halts on a frontend tool: emits START/ARGS/END, sets halt, pushes interrupt, no RESULT", () => {
     const ctx = new StreamContext("run-1");
     ctx.frontendToolNames = new Set(["get_weather"]);

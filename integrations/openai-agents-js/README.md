@@ -110,6 +110,7 @@ flowchart TD
 - **Transport-agnostic** — the adapter emits AG-UI events; the server (see [examples](#examples)) encodes them as SSE, WebSocket, etc. via `@ag-ui/encoder`.
 - **LiteLLM-first** — when `baseURL` is set, the adapter wires an OpenAI-compatible client, switches the SDK to `chat_completions` mode (most proxies don't support the Responses API), and disables tracing.
 - **Reconstructive resume** — pause/resume does not depend on the SDK's `RunState` serialization (Responses-API-only / couples to SDK internals). The frontend resends the conversation, and `messagesToSdkInput` turns `tool`-role result messages into `function_call_result` items, so the run continues. This works against any backend, including LiteLLM.
+- **Shared state and cancellation** — the effective shared state is included in the model instructions, so only provide state appropriate to send to the model provider. Unsubscribing aborts the SDK run. Clones share the original adapter's state store.
 
 ## Tools
 
@@ -268,30 +269,19 @@ The easiest E2E demo uses the **AG-UI Dojo** — a Next.js demo viewer (`apps/do
 
 ### Option A — against a LiteLLM proxy
 
-1. **Start the example server** (port `8032`):
-
-   ```bash
-   cd integrations/openai-agents-js
-   pnpm install
-   OPENAI_API_KEY=<litellm-key> \
-   OPENAI_BASE_URL=https://litellm.example.com/v1 \
-   OPENAI_MODEL=openai/gpt-4o \
-     pnpm dev:examples
-   ```
-
-   You should see:
-   ```
-   OpenAI Agents JS server running on http://localhost:8032
-     → inference endpoint: https://litellm.example.com/v1
-     POST http://localhost:8032/agentic_chat
-     ...
-   ```
-
-2. **Start the Dojo** from the repository root. This integration is already registered in the repository's Dojo configuration:
+1. **Prepare the Dojo and OpenAI Agents JS integration** from the repository root:
 
    ```bash
    node apps/dojo/scripts/prep-dojo-everything.js --only dojo,openai-agents-js
-   node apps/dojo/scripts/run-dojo-everything.js --only dojo,openai-agents-js
+   ```
+
+2. **Start both services together** (the launcher starts the example server; do not also run `pnpm dev:examples`):
+
+   ```bash
+   OPENAI_API_KEY=your-litellm-key \
+   OPENAI_BASE_URL=https://litellm.example.com/v1 \
+   OPENAI_MODEL=openai/gpt-4o \
+     node apps/dojo/scripts/run-dojo-everything.js --only dojo,openai-agents-js
    ```
 
    Visit **http://localhost:9999/openai-agents-js/feature/agentic_chat**. For `human_in_the_loop`, ask it to plan a task — the run halts on `generate_task_steps`, you select steps in the UI, and the conversation resumes.
@@ -301,7 +291,8 @@ The easiest E2E demo uses the **AG-UI Dojo** — a Next.js demo viewer (`apps/do
 Same as Option A, but omit `OPENAI_BASE_URL`/`OPENAI_MODEL`:
 
 ```bash
-OPENAI_API_KEY=sk-xxx pnpm dev:examples
+OPENAI_API_KEY=sk-xxx \
+  node apps/dojo/scripts/run-dojo-everything.js --only dojo,openai-agents-js
 ```
 
 ### Option C — no UI, just curl (smoke test)
@@ -333,8 +324,12 @@ OPENAI_API_KEY=<key> OPENAI_BASE_URL=<litellm-url> pnpm test
 pnpm install
 pnpm build        # tsup build (CJS + ESM + dts)
 pnpm test         # vitest
-pnpm typecheck    # tsc --noEmit
-pnpm dev:examples # tsx --watch examples/server.ts
+pnpm check-types  # tsc --noEmit
+
+# The dev:examples script uses tsx --env-file=.env; create it before launching.
+# Inline variables override values from .env.
+touch .env
+OPENAI_API_KEY=sk-xxx pnpm dev:examples
 ```
 
 ## Links

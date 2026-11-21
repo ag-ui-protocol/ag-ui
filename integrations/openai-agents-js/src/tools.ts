@@ -41,6 +41,7 @@ export interface ToolModule {
  * `additionalProperties: true` (non-strict always allows extra props).
  */
 export interface NormalizedJsonSchema {
+  [keyword: string]: unknown;
   type: "object";
   properties: Record<string, unknown>;
   required: string[];
@@ -67,6 +68,7 @@ export function normalizeParameters(
       : {};
 
   const schema: NormalizedJsonSchema = {
+    ...p,
     type: "object",
     properties: (p.properties as Record<string, unknown> | undefined) ?? {},
     required: Array.isArray(p.required)

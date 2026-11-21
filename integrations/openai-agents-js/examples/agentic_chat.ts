@@ -5,7 +5,7 @@
  * that streams text responses. No tools, no shared state.
  */
 
-import { OpenAIAgentsAdapter } from "@ag-ui/openai-agents-js";
+import { OpenAIAgentsAdapter } from "../src";
 import { baseConfig } from "./constants";
 
 /**

@@ -91,6 +91,15 @@ describe("normalizeParameters", () => {
     expect(schema.description).toBe("weather lookup");
     expect(schema.required).toEqual(["q"]);
   });
+
+  it("preserves root definitions used by property references", () => {
+    const schema = normalizeParameters({
+      properties: { city: { $ref: "#/$defs/City" } },
+      $defs: { City: { type: "string" } },
+    });
+    expect(schema.$defs).toEqual({ City: { type: "string" } });
+    expect(schema.properties.city).toEqual({ $ref: "#/$defs/City" });
+  });
 });
 
 describe("convertAguiToolToOpenAi", () => {

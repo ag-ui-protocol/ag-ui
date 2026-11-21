@@ -2,7 +2,8 @@
  * Multi-agent server for the OpenAI Agents JS integration (TypeScript).
  *
  * The adapter manages the SDK lifecycle internally — the server just calls
- * `adapter.run(input)` and streams the resulting AG-UI events as SSE.
+ * `adapter.run(input)` and streams events in the negotiated SSE or protobuf
+ * format.
  *
  * Usage (against a LiteLLM-compatible proxy):
  *   OPENAI_API_KEY=sk-xxx OPENAI_BASE_URL=https://litellm.example.com/v1 \
@@ -13,8 +14,10 @@
  */
 
 import http from "node:http";
+import { pathToFileURL } from "node:url";
 import { EventEncoder } from "@ag-ui/encoder";
 import type { RunAgentInput } from "@ag-ui/core";
+import { RunAgentInputSchema } from "@ag-ui/core/schemas";
 import type { OpenAIAgentsAdapter } from "../src";
 
 import { createAgenticChatAdapter } from "./agentic_chat";
@@ -23,7 +26,9 @@ import { createSharedStateAdapter } from "./shared_state";
 import { createHumanInTheLoopAdapter } from "./human_in_the_loop";
 import { createToolBasedGenerativeUiAdapter } from "./tool_based_generative_ui";
 
-const adapters: Record<string, OpenAIAgentsAdapter> = {
+type AgentRunner = Pick<OpenAIAgentsAdapter, "run">;
+
+const adapters: Record<string, AgentRunner> = {
   agentic_chat: createAgenticChatAdapter(),
   backend_tool_rendering: createBackendToolAdapter(),
   shared_state: createSharedStateAdapter(),
@@ -34,6 +39,7 @@ const adapters: Record<string, OpenAIAgentsAdapter> = {
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
+  agentAdapters: Record<string, AgentRunner>,
 ): Promise<void> {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -53,28 +59,36 @@ async function handleRequest(
     res.end(
       JSON.stringify({
         status: "healthy",
-        agents: Object.keys(adapters).length,
+        agents: Object.keys(agentAdapters).length,
       }),
     );
     return;
   }
 
-  if (req.method === "POST" && adapters[path]) {
-    const adapter = adapters[path];
+  if (req.method === "POST" && agentAdapters[path]) {
+    const adapter = agentAdapters[path];
 
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const body = Buffer.concat(chunks).toString("utf-8");
 
-    let inputData: RunAgentInput;
+    let parsedInput: unknown;
     try {
-      inputData = JSON.parse(body) as RunAgentInput;
+      parsedInput = JSON.parse(body);
     } catch {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Invalid JSON body" }));
       return;
     }
 
+    const validation = RunAgentInputSchema.safeParse(parsedInput);
+    if (!validation.success) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid RunAgentInput" }));
+      return;
+    }
+
+    const inputData: RunAgentInput = validation.data;
     const encoder = new EventEncoder({
       accept: req.headers.accept ?? "text/event-stream",
     });
@@ -86,13 +100,16 @@ async function handleRequest(
       "X-Accel-Buffering": "no",
     });
 
-    adapter.run(inputData).subscribe({
+    let subscription: { unsubscribe(): void } | undefined;
+    res.on("close", () => subscription?.unsubscribe());
+
+    subscription = adapter.run(inputData).subscribe({
       next: (event) => {
-        res.write(encoder.encode(event));
+        res.write(encoder.encodeBinary(event));
       },
       error: (err) => {
         res.write(
-          encoder.encode({
+          encoder.encodeBinary({
             type: "RUN_ERROR",
             threadId: inputData.threadId ?? "unknown",
             runId: inputData.runId ?? "unknown",
@@ -110,8 +127,27 @@ async function handleRequest(
 
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(
-    JSON.stringify({ error: "Not found", availableRoutes: Object.keys(adapters) }),
+    JSON.stringify({
+      error: "Not found",
+      availableRoutes: Object.keys(agentAdapters),
+    }),
   );
+}
+
+export function createServer(
+  agentAdapters: Record<string, AgentRunner> = adapters,
+): http.Server {
+  return http.createServer((req, res) => {
+    void handleRequest(req, res, agentAdapters).catch((error: unknown) => {
+      console.error("Example server request failed:", error);
+      if (res.destroyed) return;
+      if (res.headersSent) res.destroy();
+      else {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      }
+    });
+  });
 }
 
 function main(): void {
@@ -123,7 +159,7 @@ function main(): void {
   }
 
   const port = parseInt(process.env.PORT ?? "8032", 10);
-  const server = http.createServer(handleRequest);
+  const server = createServer();
 
   server.listen(port, "0.0.0.0", () => {
     const endpoint = process.env.OPENAI_BASE_URL ?? "https://api.openai.com";
@@ -138,4 +174,9 @@ function main(): void {
   });
 }
 
-main();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  main();
+}

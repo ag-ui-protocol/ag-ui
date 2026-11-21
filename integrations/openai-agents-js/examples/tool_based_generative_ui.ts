@@ -6,7 +6,7 @@
  * and the frontend renders the component without an explicit resume.
  */
 
-import { OpenAIAgentsAdapter } from "@ag-ui/openai-agents-js";
+import { OpenAIAgentsAdapter } from "../src";
 import { baseConfig } from "./constants";
 
 const instructions = `You are a creative writing assistant that renders content using beautiful UI components.

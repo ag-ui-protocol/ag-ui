@@ -10,7 +10,7 @@
 
 import { tool } from "@openai/agents";
 import { z } from "zod";
-import { OpenAIAgentsAdapter } from "@ag-ui/openai-agents-js";
+import { OpenAIAgentsAdapter } from "../src";
 import { baseConfig } from "./constants";
 
 /**

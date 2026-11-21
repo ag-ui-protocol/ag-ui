@@ -143,11 +143,12 @@ export function registerLLMockFixtures(mockServer: LLMock): void {
         !!req.tools?.some(
           (tool) => tool.function.name === "ag_ui_update_state",
         ) &&
-        req.messages.some(
-          (message) =>
-            message.role === "user" &&
-            textOf(message.content).toLowerCase().includes("pasta recipe"),
-        ),
+        textOf(
+          req.messages.filter((message) => message.role === "user").at(-1)
+            ?.content,
+        )
+          .toLowerCase()
+          .includes("pasta recipe"),
     },
     response: {
       toolCalls: [

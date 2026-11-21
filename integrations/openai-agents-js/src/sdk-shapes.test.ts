@@ -107,6 +107,8 @@ const _runItemNames: RunItemName[] = [
  */
 type AgentsStreamEvent = ResponseStreamEvent;
 type HasOutputTextDelta = Extract<AgentsStreamEvent, { type: "output_text_delta" }>;
+type Assert<T extends true> = T;
+type _OutputTextExists = Assert<[HasOutputTextDelta] extends [never] ? false : true>;
 const _outputTextShape: { type: "output_text_delta"; delta: string } =
   null as unknown as HasOutputTextDelta;
 
@@ -121,6 +123,8 @@ const _outputTextShape: { type: "output_text_delta"; delta: string } =
  * the assignment below fails to compile.
  */
 type HasModelPassthrough = Extract<AgentsStreamEvent, { type: "model" }>;
+type _ModelWrapperExists = Assert<[HasModelPassthrough] extends [never] ? false : true>;
+type _ModelWrapperHasEvent = Assert<"event" extends keyof HasModelPassthrough ? true : false>;
 const _modelWrapperShape: { type: "model"; event?: unknown } =
   null as unknown as HasModelPassthrough;
 

@@ -11,7 +11,7 @@
  * The prompt therefore tells the model to return the full recipe each time.
  */
 
-import { OpenAIAgentsAdapter } from "@ag-ui/openai-agents-js";
+import { OpenAIAgentsAdapter } from "../src";
 import { baseConfig } from "./constants";
 
 const instructions = `You are a helpful recipe assistant that collaborates with users to create amazing recipes.

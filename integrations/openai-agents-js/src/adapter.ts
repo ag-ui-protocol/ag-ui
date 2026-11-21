@@ -44,7 +44,7 @@ interface OpenAIAgentsModule {
   run: (
     agent: unknown,
     input: unknown,
-    options: { stream: true },
+    options: { stream: true; signal: AbortSignal },
   ) => Promise<AsyncIterable<unknown>>;
   setDefaultOpenAIClient?: (client: unknown) => void;
   setDefaultOpenAIKey?: (key: string) => void;
@@ -73,7 +73,7 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
    * Defaults to an in-memory store; users can inject a durable backend
    * (DynamoDB / S3 / Redis / etc.) via `config.runStateStore`.
    */
-  private readonly runStateStore: RunStateStore;
+  private runStateStore: RunStateStore;
 
   constructor(config: OpenAIAgentsAdapterConfig = {}) {
     super(config);
@@ -89,6 +89,8 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
   public clone(): OpenAIAgentsAdapter {
     const cloned = super.clone() as OpenAIAgentsAdapter;
     cloned.config = { ...this.config };
+    cloned.runStateStore = this.runStateStore;
+    cloned.providerConfigured = false;
     return cloned;
   }
 
@@ -199,10 +201,13 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
    * (halt on `tool_called`, resume with the frontend result) lands in Phase 5.
    */
   protected buildAgent(mod: OpenAIAgentsModule, input: RunAgentInput): unknown {
-    const instructions =
+    const baseInstructions =
       this.config.instructions ??
       input.context?.find((c) => typeof c === "object" && c)?.description ??
       "You are a helpful assistant.";
+    const instructions = hasState(input.state)
+      ? `${baseInstructions}\n\n## Current Shared State\n${JSON.stringify(input.state)}`
+      : baseInstructions;
 
     const tools = mod.tool ? buildTools(input, { tool: mod.tool }) : [];
 
@@ -224,15 +229,18 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
 
   run(input: RunAgentInput): Observable<BaseEvent> {
     return new Observable<ProcessedEvent>((subscriber) => {
-      void this.runAsync(input, subscriber).catch((error) => {
+      const controller = new AbortController();
+      void this.runAsync(input, subscriber, controller.signal).catch((error) => {
         if (!subscriber.closed) subscriber.error(error);
       });
+      return () => controller.abort();
     });
   }
 
   private async runAsync(
     input: RunAgentInput,
     subscriber: Subscriber<ProcessedEvent>,
+    signal: AbortSignal,
   ): Promise<void> {
     const threadId = input.threadId ?? this.threadId;
     const runId = input.runId ?? this.config.agentId ?? "run";
@@ -241,9 +249,9 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
     if (!this.config.openAIClient) this.resolveApiKey();
 
     const mod = (await import("@openai/agents")) as unknown as OpenAIAgentsModule;
+    if (signal.aborted) return;
     await this.configureProvider(mod);
-
-    const agent = this.buildAgent(mod, input);
+    if (signal.aborted) return;
     const sdkInput = messagesToSdkInput(input.messages ?? []);
 
     // Names of AG-UI frontend tools — a `tool_called` for one of these halts
@@ -261,6 +269,9 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
       const stashed = await this.runStateStore.get(threadId);
       if (stashed !== undefined) effectiveState = stashed;
     }
+    if (signal.aborted) return;
+
+    const agent = this.buildAgent(mod, { ...input, state: effectiveState });
 
     const ctx = new StreamContext(runId, effectiveState);
     ctx.frontendToolNames = frontendToolNames;
@@ -289,16 +300,37 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
         });
       }
 
-      const stream = (await mod.run(agent, sdkInput, { stream: true })) as AsyncIterable<any>;
+      if (signal.aborted) return;
+      const stream = (await mod.run(agent, sdkInput, { stream: true, signal })) as AsyncIterable<any>;
+      if (signal.aborted) return;
+      let pendingFrontendCalls: Set<string> | undefined;
 
       for await (const ev of stream) {
         if (subscriber.closed) break;
+        // The SDK emits response_done before its run-item events; use its
+        // output to retain every frontend call from the same model response.
+        if (ev?.type === "raw_model_stream_event" && ev.data?.type === "response_done") {
+          const output = ev.data.response?.output;
+          if (Array.isArray(output)) {
+            pendingFrontendCalls = new Set(
+              output
+                .filter((item) => item?.type === "function_call" && frontendToolNames.has(item.name))
+                .map((item) => item.callId ?? item.call_id)
+                .filter((id): id is string => typeof id === "string"),
+            );
+          }
+        }
+        if (ctx.halt && !pendingFrontendCalls?.size &&
+            !(ev?.type === "run_item_stream_event" && ev.name === "tool_called")) break;
         const emitted = dispatchStreamEvent(ev, ctx);
         for (const e of emitted) subscriber.next(e as ProcessedEvent);
-        // A frontend tool was called: stop consuming the SDK stream so the
-        // frontend can execute it and resume in a subsequent run. (Phase 5.)
-        if (ctx.halt) break;
+        if (ev?.type === "run_item_stream_event" && ev.name === "tool_called") {
+          const raw = ev.item?.rawItem;
+          pendingFrontendCalls?.delete(raw?.callId ?? raw?.call_id);
+        }
+        if (ctx.halt && pendingFrontendCalls && pendingFrontendCalls.size === 0) break;
       }
+      if (signal.aborted) return;
 
       // Close any open message / reasoning blocks at end-of-stream.
       for (const e of closeOpenBlocks(ctx)) subscriber.next(e as ProcessedEvent);
@@ -310,6 +342,7 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
 
       // Persist the evolved shared state for this thread so a resumed run can
       // hydrate it even if the frontend doesn't resend `state`. (Phase 5.)
+      if (signal.aborted) return;
       if (hasState(ctx.currentState)) {
         await this.runStateStore.set(threadId, ctx.currentState);
       }

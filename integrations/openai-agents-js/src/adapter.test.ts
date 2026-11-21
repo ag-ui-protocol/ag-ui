@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest";
-import { EventType, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
+import { EventType, type BaseEvent, type MessagesSnapshotEvent, type RunAgentInput, type RunFinishedEvent } from "@ag-ui/core";
 
 import { OpenAIAgentsAdapter } from "./adapter";
 
@@ -9,14 +9,16 @@ import { OpenAIAgentsAdapter } from "./adapter";
  */
 async function collectEvents(adapter: OpenAIAgentsAdapter, input: RunAgentInput): Promise<BaseEvent[]> {
   const events: BaseEvent[] = [];
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      sub.unsubscribe();
+      reject(new Error("Timed out collecting adapter events"));
+    }, 500);
     const sub = adapter.run(input).subscribe({
       next: (e) => events.push(e as BaseEvent),
-      error: () => resolve(),
-      complete: () => resolve(),
+      error: (error) => { clearTimeout(timer); reject(error); },
+      complete: () => { clearTimeout(timer); resolve(); },
     });
-    // Safety timeout: resolve after a short delay if the stream never completes.
-    setTimeout(() => { if (!sub.closed) sub.unsubscribe(); resolve(); }, 500);
   });
   return events;
 }
@@ -40,6 +42,7 @@ let lastRun: {
   setKeyCalledWith?: string;
   apiMode?: string;
   tracingDisabled?: boolean;
+  signal?: AbortSignal;
 };
 
 function baseInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
@@ -58,7 +61,7 @@ function baseInput(overrides: Partial<RunAgentInput> = {}): RunAgentInput {
 // We install the mock per-test by overriding the dynamic import. Because the
 // adapter imports `@openai/agents` dynamically inside runAsync, we use
 // vi.mock with a factory that reads a mutable events ref.
-const eventsRef: { events: StreamEvent[]; throwErr?: Error } = {
+const eventsRef: { events: StreamEvent[]; throwErr?: Error; hold?: Promise<void> } = {
   events: [],
 };
 vi.mock("@openai/agents", () => {
@@ -78,11 +81,13 @@ vi.mock("@openai/agents", () => {
       execute: options.execute,
       __mockTool: true,
     }),
-    run: async (_agent: unknown, input: unknown, _opts: { stream: true }) => {
+    run: async (_agent: unknown, input: unknown, opts: { stream: true; signal: AbortSignal }) => {
       lastRun.input = input;
+      lastRun.signal = opts.signal;
       if (eventsRef.throwErr) throw eventsRef.throwErr;
       return {
         async *[Symbol.asyncIterator]() {
+          if (eventsRef.hold) await eventsRef.hold;
           for (const ev of eventsRef.events) yield ev;
         },
       };
@@ -131,6 +136,7 @@ describe("OpenAIAgentsAdapter — run lifecycle", () => {
     delete process.env.OPENAI_MODEL;
     eventsRef.events = [];
     eventsRef.throwErr = undefined;
+    eventsRef.hold = undefined;
     lastRun = { agentConfig: {}, input: undefined, providerCalls: {} } as any;
   });
   afterEach(() => {
@@ -326,7 +332,7 @@ describe("OpenAIAgentsAdapter — run lifecycle", () => {
       instructions: "You are a pirate",
       agentId: "pirate-agent",
     });
-    await collectEvents(adapter, baseInput());
+    await collectEvents(adapter, baseInput({ state: null }));
 
     expect(lastRun.agentConfig).toMatchObject({
       name: "pirate-agent",
@@ -384,6 +390,7 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
     delete process.env.OPENAI_MODEL;
     eventsRef.events = [];
     eventsRef.throwErr = undefined;
+    eventsRef.hold = undefined;
     lastRun = { agentConfig: {}, input: undefined, providerCalls: {} } as any;
   });
   afterEach(() => {
@@ -572,6 +579,89 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
     const snapshots = events.filter((e) => e.type === EventType.STATE_SNAPSHOT) as any[];
     expect(snapshots.length).toBeGreaterThan(0);
     expect(snapshots[0].snapshot).toEqual({ count: 42 });
+    expect(lastRun.agentConfig.instructions).toContain('"count":42');
+    expect(lastRun.agentConfig.tools).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "ag_ui_update_state" })]),
+    );
+  });
+
+  it("shares the state store with a clone across runs", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const adapter = new OpenAIAgentsAdapter();
+    await collectEvents(adapter, baseInput({ state: { count: 42 } }));
+    const events = await collectEvents(adapter.clone(), baseInput({ state: null }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: { count: 42 },
+    }));
+    expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
+  });
+
+  it.each([true, false])("preserves all frontend calls in a model response (interrupt=%s)", async (interrupt) => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    eventsRef.events = [
+      { type: "raw_model_stream_event", data: { type: "response_done", response: { output: [
+        { type: "function_call", callId: "a", name: "first" },
+        { type: "function_call", callId: "b", name: "second" },
+      ] } } },
+      { type: "run_item_stream_event", name: "tool_called", item: { rawItem: { callId: "a", name: "first", arguments: "{}" } } },
+      { type: "run_item_stream_event", name: "tool_called", item: { rawItem: { callId: "b", name: "second", arguments: "{}" } } },
+      { type: "raw_model_stream_event", data: { type: "output_text_delta", delta: "AFTER HALT" } },
+    ];
+    const adapter = new OpenAIAgentsAdapter({ interruptOnFrontendToolCall: interrupt });
+    const events = await collectEvents(adapter, baseInput({
+      state: null,
+      tools: [
+        { name: "first", description: "", parameters: {} },
+        { name: "second", description: "", parameters: {} },
+      ],
+    }));
+    expect(events.filter((e) => e.type === EventType.TOOL_CALL_START).map((e) => e.toolCallId)).toEqual(["a", "b"]);
+    expect(events.some((e) => e.type === EventType.TEXT_MESSAGE_CONTENT)).toBe(false);
+    const snapshot = events.find((e) => e.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent | undefined;
+    expect(snapshot?.messages.find((m) => m.role === "assistant")?.toolCalls?.map((t) => t.id)).toEqual(["a", "b"]);
+    const finished = events.find((e) => e.type === EventType.RUN_FINISHED) as RunFinishedEvent | undefined;
+    expect(finished?.outcome?.type).toBe(interrupt ? "interrupt" : "success");
+  });
+
+  it("aborts the SDK signal when the subscriber unsubscribes", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const set = vi.fn(async () => {});
+    const adapter = new OpenAIAgentsAdapter({
+      runStateStore: { get: async () => undefined, set, delete: async () => {} },
+    });
+    let release!: () => void;
+    eventsRef.hold = new Promise<void>((resolve) => { release = resolve; });
+    const subscription = adapter.run(baseInput()).subscribe();
+    await vi.waitFor(() => expect(lastRun.signal).toBeDefined());
+    expect(lastRun.signal).toBeDefined();
+    expect(lastRun.signal?.aborted).toBe(false);
+    subscription.unsubscribe();
+    expect(lastRun.signal?.aborted).toBe(true);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it("does not start model work when unsubscribed during state hydration", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    let release!: () => void;
+    let started!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const hydrationStarted = new Promise<void>((resolve) => { started = resolve; });
+    const adapter = new OpenAIAgentsAdapter({
+      runStateStore: {
+        get: async () => { started(); await wait; return undefined; },
+        set: async () => {},
+        delete: async () => {},
+      },
+    });
+    const sub = adapter.run(baseInput({ state: null })).subscribe();
+    await hydrationStarted;
+    sub.unsubscribe();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(lastRun.signal).toBeUndefined();
   });
 
   it("talks to an injected custom RunStateStore (the DDB/S3 extension seam)", async () => {

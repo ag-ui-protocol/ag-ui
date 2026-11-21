@@ -18,7 +18,7 @@
  *    item (via messagesToSdkInput) and the model continues.
  */
 
-import { OpenAIAgentsAdapter } from "@ag-ui/openai-agents-js";
+import { OpenAIAgentsAdapter } from "../src";
 import { baseConfig } from "./constants";
 
 const instructions = `You are a task planning assistant specialized in creating clear, actionable step-by-step plans.
