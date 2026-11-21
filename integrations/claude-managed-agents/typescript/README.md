@@ -91,7 +91,7 @@ The tool call and its result stream to the UI, and the result is returned to the
 | `managedAgentId`, `environmentId` | required            | The managed agent (`agent_...`) and environment behind each session.                                                                                                                                                                                                                                        |
 | `agentVersion`                    | latest              | Pin an agent version.                                                                                                                                                                                                                                                                                       |
 | `client`                          | `new Anthropic()`   | Bring your own Anthropic client.                                                                                                                                                                                                                                                                            |
-| `sessionStore`                    | in-memory           | Thread↔session mapping, keyed by `managedAgentId:threadId`. Provide your own to survive restarts.                                                                                                                                                                                                          |
+| `sessionStore`                    | in-memory           | Thread-to-session mapping, keyed by `managedAgentId:threadId`. Provide your own to survive restarts.                                                                                                                                                                                                          |
 | `backendTools`                    | `[]`                | Server-executed custom tools.                                                                                                                                                                                                                                                                               |
 | `sessionTitle`                    | `AG-UI thread <id>` | Title for created sessions.                                                                                                                                                                                                                                                                                 |
 | `vaultIds`                        | `[]`                | Vault IDs (`vlt_...`) for stored credentials the agent may use, e.g. for MCP servers that authenticate. Applied at session creation.                                                                                                                                                                        |
@@ -102,7 +102,7 @@ The tool call and its result stream to the UI, and the result is returned to the
 
 ## Security: authenticate and bind threads to callers
 
-AG-UI thread IDs are supplied by the client and this agent keys thread↔session state by `managedAgentId:threadId`, so a thread ID is effectively a bearer identifier: **any caller who presents a thread ID resumes that thread's session.** The AG-UI protocol carries no user identity of its own, so authorization is your host's responsibility:
+AG-UI thread IDs are supplied by the client and this agent keys thread-to-session state by `managedAgentId:threadId`, so a thread ID is effectively a bearer identifier: **any caller who presents a thread ID resumes that thread's session.** The AG-UI protocol carries no user identity of its own, so authorization is your host's responsibility:
 
 - Put the endpoint behind your own authentication. Never expose it unauthenticated.
 - `RUN_ERROR` never relays the text of a failure this integration did not author. An SDK, session-store or API exception can carry session ids, request paths or credentials, so its message goes to `onError` and the client gets a stable message plus the machine-readable `code`. Two things are deliberately still verbatim, because they are the point of the event: a `session.error` from the API (a structured field with its own `type` code, and the only account of why a session broke) and a backend tool's own exception message (your code, and what the agent needs to recover).
@@ -203,6 +203,16 @@ stream before listing history, recovers pending calls by their original IDs,
 and replays activity after the saved event cursor without executing old tools.
 Terminated or unavailable sessions return an explicit run error and retain their
 binding; start a new AG-UI thread to create a replacement.
+
+The first recovery of a root session reads its native history. Subsequent
+recoveries list events from the last verified `processed_at` timestamp,
+including all events at that timestamp. The session store saves this checkpoint
+together with the pending calls, IDs needed to recognize earlier answers and
+state writes, and the recovered context and shared state. Live delivery can
+advance independently while a tool is running. A reconnect reconciles events
+since the checkpoint and replays only activity the caller missed. A missing
+or inconsistent boundary triggers a full read. Child threads use their own
+history endpoint and cursor.
 
 Custom-tool answers use ordinary `role: "tool"` messages with the original
 `toolCallId`. Native tool permissions appear as `RUN_FINISHED.outcome`

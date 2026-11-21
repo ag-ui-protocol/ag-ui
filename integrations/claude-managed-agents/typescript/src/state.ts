@@ -212,11 +212,13 @@ export async function restoreStateHistory(
   record: SessionRecord,
   events: readonly import("@anthropic-ai/sdk/resources/beta/sessions/events").BetaManagedAgentsSessionEvent[],
   signal: AbortSignal,
+  checkpoint?: { sharedState?: StateCommit; stateToolIds: string[] },
 ) {
-  if (record.sessionThreadId) return;
-  // A persisted binding is a cache, never evidence of a native commit.
-  delete record.sharedState;
-  const calls = new Set<string>();
+  // Only a previous native history fold can seed a commit or attest to a state call.
+  const calls = new Set(checkpoint?.stateToolIds);
+  if (record.sessionThreadId) return calls;
+  if (checkpoint?.sharedState) record.sharedState = checkpoint.sharedState;
+  else delete record.sharedState;
   for (const event of events) {
     if (
       "session_id" in event &&
@@ -255,4 +257,5 @@ export async function restoreStateHistory(
     const commit = parseState(event.content, record);
     if (commit) acceptState(record, commit);
   }
+  return calls;
 }
