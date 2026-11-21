@@ -87,6 +87,8 @@ class SessionRecord:
     state_revision: int = 0
     runtime_context: str | None = None
     """Last successfully delivered context snapshot; persist across restarts."""
+    clean_end_event_id: str | None = None
+    """The last root end_turn completed by this adapter, if known."""
 
 
 @runtime_checkable

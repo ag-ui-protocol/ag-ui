@@ -61,17 +61,102 @@ def finish(input: Any, emit: Any, confirmations: list[dict[str, Any]]) -> None:
     )
 
 
-async def history_list(api: Any, identity: str, **kwargs: Any) -> list[Any]:
+def is_root_end(event):
+    return (
+        get(event, "type") == "session.status_idle"
+        and get(get(event, "stop_reason"), "type") == "end_turn"
+    )
+
+
+class TurnCursor:
+    """Persist handled event IDs and remember whether a root end_turn is safe to reuse."""
+
+    def __init__(self, record, outbound, persist):
+        self.record = record
+        self.persist = persist
+        self.sent_system = next((e for e in outbound if e["type"] == "system.message"), None)
+        self.can_checkpoint = record.session_thread_id is None
+        self.clean_end_event_id = None
+
+    async def handled(self, event):
+        kind = get(event, "type")
+        event_id = get(event, "id")
+        if not event_id or kind in ("event_start", "event_delta"):
+            return
+        if kind == "user.custom_tool_result" or (
+            kind == "system.message"
+            and (not self.sent_system or plain(get(event, "content")) != self.sent_system["content"])
+        ):
+            self.can_checkpoint = False
+        if self.can_checkpoint and is_root_end(event):
+            self.clean_end_event_id = event_id
+        self.record.last_event_id = event_id
+        await maybe_await(self.persist())
+
+
+async def history_events(api: Any, identity: str, **kwargs: Any):
     page = await maybe_await(api.list(identity, **kwargs))
     if hasattr(page, "__aiter__"):
-        return [event async for event in page]
-    if isinstance(page, list):
-        return page
-    result = list(get(page, "data") or [])
-    while getattr(page, "has_next_page", lambda: False)():
-        page = await page.get_next_page()
-        result.extend(get(page, "data") or [])
-    return result
+        async for event in page:
+            yield event
+    else:
+        while True:
+            items = page if isinstance(page, list) else (get(page, "data") or [])
+            for event in items:
+                yield event
+            if not getattr(page, "has_next_page", lambda: False)():
+                break
+            page = await page.get_next_page()
+
+
+async def history_list(api: Any, identity: str, **kwargs: Any) -> list[Any]:
+    return [event async for event in history_events(api, identity, **kwargs)]
+
+
+async def verified_end(sessions, record, input, end_id):
+    last = input.messages[-1] if input.messages else None
+    if (
+        not end_id
+        or end_id != record.last_event_id
+        or record.session_thread_id
+        or get(last, "role") != "user"
+        or get(last, "id") == record.last_user_message_id
+        or getattr(input, "resume", None)
+        or record.pending_client_tool_use_ids
+        or record.pending_confirmations
+    ):
+        return None
+    retrieve = getattr(sessions, "retrieve", None)
+    if retrieve is None or get(await retrieve(record.session_id), "status") != "idle":
+        return None
+    async for event in history_events(sessions.events, record.session_id, order="desc", limit=1):
+        return event if get(event, "id") == end_id and is_root_end(event) else None
+    return None
+
+
+def answered_call_id(event):
+    if get(event, "type") in (
+        "user.custom_tool_result", "user.tool_confirmation", "agent.tool_result",
+        "agent.mcp_tool_result", "user.tool_result",
+    ):
+        return get(event, "tool_use_id") or get(event, "custom_tool_use_id") or get(event, "mcp_tool_use_id")
+    return None
+
+
+async def answers_before_end(api, session_id, end_id):
+    """An end_turn settles earlier calls, including ones without a result event."""
+    answered = set()
+    async for event in history_events(api, session_id):
+        if get(event, "id") == end_id:
+            return answered
+        kind = get(event, "type")
+        if kind == "agent.custom_tool_use" or (
+            kind in ("agent.tool_use", "agent.mcp_tool_use") and get(event, "evaluated_permission") == "ask"
+        ):
+            answered.add(get(event, "id"))
+        if call_id := answered_call_id(event):
+            answered.add(call_id)
+    raise RuntimeError("The verified end event is no longer available in native history.")
 
 
 async def track_child_results(
@@ -124,10 +209,20 @@ async def recover_turn(
         kwargs = {"session_id": record.session_id}
     stream = None
     try:
+        end_id = record.clean_end_event_id
+        if end_id is not None:
+            # An interrupted or failed follow-up must recover from native history.
+            record.clean_end_event_id = None
+            await maybe_await(agent.store.set(key, record))
         stream = await api.stream(identity, **kwargs)
-        history = await history_list(api, identity, **kwargs)
-        await shared.discover_primary(agent.client, record, history)
-        shared.restore(history, record, emit)
+        end = await verified_end(agent.client.beta.sessions, record, input, end_id)
+        if end is None:
+            history = await history_list(api, identity, **kwargs)
+            await shared.discover_primary(agent.client, record, history)
+            shared.restore(history, record, emit)
+        else:
+            history = [end]
+            shared.emit_snapshot(record, emit)
         for event in history:
             if (
                 not record.session_thread_id
@@ -172,18 +267,7 @@ async def recover_turn(
                 and get(event, "evaluated_permission") == "ask"
             ):
                 pending[event_id] = event
-            if kind in (
-                "user.custom_tool_result",
-                "user.tool_confirmation",
-                "agent.tool_result",
-                "agent.mcp_tool_result",
-                "user.tool_result",
-            ):
-                answered = (
-                    get(event, "custom_tool_use_id")
-                    or get(event, "tool_use_id")
-                    or get(event, "mcp_tool_use_id")
-                )
+            if answered := answered_call_id(event):
                 pending.pop(answered, None)
         if record.ended:
             await maybe_await(agent.store.set(key, record))
@@ -200,20 +284,7 @@ async def recover_turn(
             if get(stop, "type") == "requires_action"
             else set()
         )
-        answered_ids = {
-            get(e, "tool_use_id")
-            or get(e, "custom_tool_use_id")
-            or get(e, "mcp_tool_use_id")
-            for e in history
-            if get(e, "type")
-            in (
-                "user.custom_tool_result",
-                "user.tool_confirmation",
-                "agent.tool_result",
-                "agent.mcp_tool_result",
-                "user.tool_result",
-            )
-        }
+        answered_ids = {call_id for event in history if (call_id := answered_call_id(event))}
         for event in history:
             if get(event, "id") in blocking - answered_ids and get(event, "type") in (
                 "agent.custom_tool_use",
@@ -314,14 +385,6 @@ async def recover_turn(
                 },
             )
         )
-
-        async def persist_event(event):
-            if get(event, "id") and get(event, "type") not in (
-                "event_start",
-                "event_delta",
-            ):
-                record.last_event_id = get(event, "id")
-                await maybe_await(agent.store.set(key, record))
 
         client_tools = agent._client_tools(input.tools or [])
 
@@ -461,8 +524,12 @@ async def recover_turn(
                 emit(ToolCallArgsEvent(tool_call_id=call_id, delta=json.dumps(get(call, "input") or {})))
                 emit(ToolCallEndEvent(tool_call_id=call_id))
             emit(result)
-        if history:
-            await persist_event(history[-1])
+        if (
+            history and get(history[-1], "id")
+            and get(history[-1], "type") not in ("event_start", "event_delta")
+        ):
+            record.last_event_id = get(history[-1], "id")
+            await maybe_await(agent.store.set(key, record))
 
         outbound = agent._outbound_events(record, input.messages)
         followups = [e for e in outbound.events if e["type"] == "user.message"]
@@ -533,6 +600,7 @@ async def recover_turn(
             return
 
         async def deduped():
+            earlier_answers = None
             async for event in stream:
                 id = get(event, "id")
                 if id and id in seen:
@@ -540,6 +608,16 @@ async def recover_turn(
                 if id:
                     seen.add(id)
                 kind = get(event, "type")
+                if end is not None and kind == "session.status_idle":
+                    stop = get(event, "stop_reason")
+                    ids = get(stop, "event_ids") or []
+                    if get(stop, "type") == "requires_action" and any(i not in seen for i in ids):
+                        if earlier_answers is None:
+                            earlier_answers = await answers_before_end(api, identity, end_id)
+                        event = {
+                            **plain(event),
+                            "stop_reason": {**plain(stop), "event_ids": [i for i in ids if i not in earlier_answers]},
+                        }
                 if record.session_thread_id and kind == "session.thread_status_idle":
                     event = {
                         "type": "session.status_idle",
@@ -557,6 +635,7 @@ async def recover_turn(
             record.pending_client_tool_use_ids.append(id)
             await maybe_await(agent.store.set(key, record))
 
+        cursor = TurnCursor(record, sends, lambda: agent.store.set(key, record))
         outcome = await _consume(
             client=agent.client,
             session_id=record.session_id,
@@ -578,10 +657,10 @@ async def recover_turn(
             emit=emit,
             on_client_park=park,
             on_error=agent.on_error,
-            on_event=persist_event,
+            on_event=cursor.handled,
         )
         record.pending_confirmations = outcome.confirmations
-        await agent._record_outcome(key, record, outcome)
+        await agent._record_outcome(key, record, outcome, cursor.clean_end_event_id)
         await maybe_await(agent.store.set(key, record))
         if outcome.status != "errored":
             await reconcile_children()
