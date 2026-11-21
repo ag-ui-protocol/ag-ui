@@ -431,6 +431,14 @@ add_adk_fastapi_endpoint(app, general_agent, path="/agents/general")
 add_adk_fastapi_endpoint(app, technical_agent, path="/agents/technical")
 ```
 
+> **Note:** If you call `add_adk_fastapi_endpoint` several times on one app,
+> give every call the same `dependencies`. The helper registers
+> `POST /agents/state` at a fixed path, and FastAPI uses only the first
+> registration of a path. If the calls pass different `dependencies`, the guard
+> of the first call (or the absence of a guard) applies to `/agents/state` for
+> all agents. The same applies to `/capabilities` when two calls use the same
+> `path`.
+
 ### Endpoint Agent Resolver
 
 Configure `agent_resolver` when one endpoint needs to dispatch to different

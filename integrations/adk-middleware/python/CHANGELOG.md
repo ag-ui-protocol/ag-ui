@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `add_adk_fastapi_endpoint()` and `create_adk_app()` now apply route
+  `dependencies` to the `/capabilities` and `/agents/state` routes as well as
+  the agent route (GHSA-jhvp-j8pf-5vh5). Before, an application that used
+  `dependencies` for authentication left `/agents/state` open, so an
+  unauthenticated caller could read a thread's session state and message
+  history. Other route kwargs, such as `name` and `operation_id`, still apply
+  to the agent route only.
+- The run endpoint now rejects run state that is not a JSON object or null
+  with a 422.
+  `RunAgentInput.state` is typed `Any`, so an array of `[key, value]` pairs
+  passed validation. The endpoint's `app:`/`user:` scope check only read
+  object keys, and `ADKAgent.run()` then turned the pairs back into keys. With
+  `allow_scoped_state_keys=True`, a client could write app-wide and user-wide
+  state this way. `ADKAgent.run()` now also ignores non-mapping state from
+  direct callers. `/capabilities` and `/agents/state` take no client state,
+  so the 422 does not apply to them.
+- `/agents/state` no longer returns backend error text when the session read
+  fails for a thread already in the session lookup cache. It returns the same
+  fixed message as the uncached path.
 - `extract_headers` / `make_extract_headers`: the real request header now
   decides the `state.headers` key of every configured header. Before, a value
   the client sent under the same key in the run body (`state.headers`) replaced

@@ -110,6 +110,21 @@ def _session_read_error_response(thread_id: str) -> JSONResponse:
     )
 
 
+_NON_OBJECT_STATE_MESSAGE = "state must be a JSON object or null."
+
+
+class _NonObjectStateError(ValueError):
+    """``RunAgentInput.state`` is neither a JSON object nor null."""
+
+
+def _non_object_state_response() -> JSONResponse:
+    """Reject run state that is not a JSON object with a 422."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _NON_OBJECT_STATE_MESSAGE},
+    )
+
+
 def _build_run_error(message: str, code: str) -> RunErrorEvent:
     """Construct a ``RunErrorEvent`` with the given message and code.
 
@@ -135,7 +150,19 @@ async def _merge_extractor_state(
     extractor at all, and a removal placed after those returns would never run
     for them. It also means any prefixed key still present once this returns
     came from ``extract_state_from_request``, which is server-side.
+
+    Raises:
+        _NonObjectStateError: ``state`` is not a JSON object or null.
+            ``RunAgentInput.state`` is typed ``Any``, so an array of
+            ``[key, value]`` pairs passes validation. The prefix check below
+            only reads object keys, and ``dict()`` on the array would rebuild
+            the prefixed keys later, so only an object (or null, for no
+            state) is accepted. Only the run endpoint can raise this:
+            ``/capabilities`` and ``/agents/state`` build their input with
+            ``state={}``.
     """
+    if input_data.state is not None and not isinstance(input_data.state, dict):
+        raise _NonObjectStateError(_NON_OBJECT_STATE_MESSAGE)
     existing_state = input_data.state if isinstance(input_data.state, dict) else {}
     scoped_key_count = sum(
         1
@@ -444,9 +471,17 @@ def add_adk_fastapi_endpoint(
             the default agent.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
             ``tags``, ``operation_id``, ``dependencies``, ``include_in_schema``,
-            ...). They do not apply to the other routes this helper registers,
+            ...). ``dependencies`` also guards ``/capabilities`` and
+            ``/agents/state``. The other kwargs apply to the agent route only,
             because values such as ``operation_id`` and ``name`` must stay
             unique per operation.
+
+            ``/agents/state`` is registered at a fixed path, and FastAPI uses
+            only the first registration of a path. If you call this helper
+            several times on one app, give every call the same
+            ``dependencies``. Otherwise the guard of the first call (or the
+            absence of a guard) applies to ``/agents/state`` for all agents.
+            The same applies to ``/capabilities`` when calls share a ``path``.
 
     Note:
         This function also adds an experimental POST /agents/state endpoint for
@@ -501,6 +536,14 @@ def add_adk_fastapi_endpoint(
 
     default_agent = agent
 
+    # Route dependencies are how applications attach authentication, so they
+    # must guard every route this helper registers, not only the agent route.
+    # Identity kwargs such as ``name`` and ``operation_id`` stay on the agent
+    # route because they must be unique per operation.
+    guard_kwargs: dict[str, Any] = {}
+    if "dependencies" in kwargs:
+        guard_kwargs["dependencies"] = kwargs["dependencies"]
+
     @app.post(path, **kwargs)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
         """ADK middleware endpoint.
@@ -520,7 +563,12 @@ def add_adk_fastapi_endpoint(
           continue to work without keep-alive pings (which are SSE-specific).
         """
 
-        input_data = await _merge_extractor_state(input_data, request, extract_state_fn)
+        try:
+            input_data = await _merge_extractor_state(
+                input_data, request, extract_state_fn
+            )
+        except _NonObjectStateError:
+            return _non_object_state_response()
         agent = await _resolve_agent(
             default_agent, request, input_data, agent_resolver
         )
@@ -541,7 +589,7 @@ def add_adk_fastapi_endpoint(
 
     capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
 
-    @app.get(capabilities_path)
+    @app.get(capabilities_path, **guard_kwargs)
     async def capabilities_endpoint(request: Request):
         """Return the agent's declared capabilities.
 
@@ -581,7 +629,7 @@ def add_adk_fastapi_endpoint(
                 content={"error": f"Failed to retrieve capabilities: {str(e)}"}
             )
 
-    @app.post("/agents/state")
+    @app.post("/agents/state", **guard_kwargs)
     async def agents_state_endpoint(request_data: AgentStateRequest, request: Request):
         """EXPERIMENTAL: Retrieve thread state and message history.
 
@@ -685,11 +733,20 @@ def add_adk_fastapi_endpoint(
             metadata = agent._get_session_metadata(thread_id, user_id, app_name=app_name)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
-                session = await agent._session_manager._session_service.get_session(
-                    session_id=session_id,
-                    app_name=cached_app_name,
-                    user_id=cached_user_id
-                )
+                try:
+                    service = agent._session_manager._session_service
+                    session = await service.get_session(
+                        session_id=session_id,
+                        app_name=cached_app_name,
+                        user_id=cached_user_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Cached session read failed in /agents/state "
+                        "for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
                 # Use cached values for subsequent operations
                 app_name = cached_app_name
                 user_id = cached_user_id
@@ -788,7 +845,9 @@ def create_adk_app(
             the default agent.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
             ``tags``, ``operation_id``, ``dependencies``, ``include_in_schema``,
-            ...). They do not apply to the other routes this helper registers,
+            ...). ``dependencies`` also guards ``/capabilities`` and
+            ``/agents/state``, so authentication applies to every route this
+            helper registers. The other kwargs apply to the agent route only,
             because values such as ``operation_id`` and ``name`` must stay
             unique per operation.
 

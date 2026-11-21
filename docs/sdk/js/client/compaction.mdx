@@ -26,11 +26,19 @@ function compactEvents(events: BaseEvent[]): BaseEvent[]
 - Text messages: Groups `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT*` →
   `TEXT_MESSAGE_END` for the same `messageId`, concatenating all `delta`
   chunks into a single `TEXT_MESSAGE_CONTENT` event.
+- Reasoning messages: Groups `REASONING_MESSAGE_START` →
+  `REASONING_MESSAGE_CONTENT*` → `REASONING_MESSAGE_END` for the same
+  `messageId` the same way, into a single `REASONING_MESSAGE_CONTENT` event.
+  `REASONING_START`, `REASONING_END` and `REASONING_ENCRYPTED_VALUE` pass
+  through unchanged.
 - Tool calls: Groups `TOOL_CALL_START` → `TOOL_CALL_ARGS*` → `TOOL_CALL_END`
   for the same `toolCallId`, concatenating all `delta` chunks into a single
   `TOOL_CALL_ARGS` event.
 - Interleaved events: Any events that occur between a start/end pair are moved
-  after that sequence so the streaming block remains contiguous.
+  after that sequence so the streaming block remains contiguous. Each block
+  stays where its stream started, so overlapping streams keep the order they
+  opened in. Deltas are not combined across a `MESSAGES_SNAPSHOT`, which stays
+  where it arrived.
 - Pass‑through: All other events (state, custom, etc.) are preserved unchanged.
 
 ## Example
@@ -59,7 +67,8 @@ After:
 ]
 ```
 
-Tool call compaction works analogously for `TOOL_CALL_ARGS` chunks.
+Reasoning message and tool call compaction work analogously for
+`REASONING_MESSAGE_CONTENT` and `TOOL_CALL_ARGS` chunks.
 
 ## When to use
 
@@ -76,15 +85,14 @@ arrives after the first delta — from later deltas and from a replayed start
 alike — rides the collapsed event in arrival order, because compaction emits
 the start ahead of it.
 
-Compaction reorders events so each stream's events stay together, and that
-reordering is not semantics-preserving in general. Two parallel tool calls
-whose ends arrive in the opposite order to their starts end up swapped in the
-assistant message's `toolCalls` array, each still carrying its own metadata.
-More significantly, an event that interrupts a stream is emitted after it, so a
-`MESSAGES_SNAPSHOT` arriving mid-message is replayed after that message's own
-events and overwrites what they produced — the appended content as much as the
-merged metadata. Avoid interleaving snapshots with an open stream if you rely
-on exact replay equivalence.
+Compaction moves events so each stream's events stay together, at the point
+where the stream started, so a replay creates messages in the original order.
+Two parallel tool calls whose ends arrive in the opposite order to their starts
+keep their order in the assistant message's `toolCalls` array, each carrying its
+own metadata. An event that interrupts a stream is emitted after it, except a
+`MESSAGES_SNAPSHOT`: it restates the messages, so what each open stream
+delivered before it is emitted ahead of it and the rest after it, and no delta
+is combined across it.
 
 ## Notes & limitations
 
