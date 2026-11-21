@@ -88,4 +88,3 @@ With AG‑UI, these become deliberate, well‑typed interactions rather than ad�
 - **Observability hooks**: Surface interaction timelines for debugging & learning.
 
 *(Include a simple diagram later: Agent(s) ⇄ AG‑UI Boundary ⇄ App UI/State)*
-
