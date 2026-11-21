@@ -25,7 +25,111 @@ export type SessionStream =
     controller: AbortController;
   };
 
-/** Open first, then enumerate every history page; only unseen live events reach the turn. */
+/** Inspect just the first event of the newest page, even when more pages exist. */
+async function historyEndsAt(
+  client: Anthropic,
+  sessionId: string,
+  eventId: string,
+  signal: AbortSignal,
+) {
+  for await (const event of client.beta.sessions.events.list(
+    sessionId,
+    { order: "desc", limit: 1 },
+    { signal },
+  )) {
+    return (
+      event.id === eventId &&
+      event.type === "session.status_idle" &&
+      event.stop_reason.type === "end_turn"
+    );
+  }
+  return false;
+}
+
+// A root end_turn closes all earlier calls. Only look up their IDs if the
+// service later repeats requires_action for a call absent from the live stream.
+async function answeredBeforeEnd(
+  client: Anthropic,
+  sessionId: string,
+  endId: string,
+  signal: AbortSignal,
+) {
+  const answered = new Set<string>();
+  for await (const event of client.beta.sessions.events.list(
+    sessionId,
+    {},
+    { signal },
+  )) {
+    if (event.id === endId) return answered;
+    if (
+      event.type === "agent.custom_tool_use" ||
+      ((event.type === "agent.tool_use" ||
+        event.type === "agent.mcp_tool_use") &&
+        event.evaluated_permission === "ask")
+    ) {
+      answered.add(event.id);
+    }
+    const result = answeredCallId(event);
+    if (result) answered.add(result);
+  }
+  throw new RecoveryError(
+    "history_cursor_unavailable",
+    "The saved event position is no longer available in native history.",
+  );
+}
+
+function answeredCallId(event: BetaManagedAgentsSessionEvent) {
+  switch (event.type) {
+    case "user.custom_tool_result":
+      return event.custom_tool_use_id;
+    case "agent.mcp_tool_result":
+      return event.mcp_tool_use_id;
+    case "user.tool_confirmation":
+    case "agent.tool_result":
+      return event.tool_use_id;
+  }
+}
+
+function unseenEvents(
+  stream: SessionStream,
+  seen: Set<string>,
+  loadEarlierAnswers?: () => Promise<Set<string>>,
+): SessionStream {
+  return {
+    controller: stream.controller,
+    async *[Symbol.asyncIterator]() {
+      let earlierAnswers: Set<string> | undefined;
+      for await (const event of stream) {
+        if (
+          event.type === "event_start" ||
+          event.type === "event_delta" ||
+          seen.has(event.id)
+        )
+          continue;
+        seen.add(event.id);
+        if (
+          loadEarlierAnswers &&
+          event.type === "session.status_idle" &&
+          event.stop_reason.type === "requires_action" &&
+          event.stop_reason.event_ids?.some((id) => !seen.has(id))
+        ) {
+          const answered = (earlierAnswers ??= await loadEarlierAnswers());
+          const outstanding = event.stop_reason.event_ids.filter(
+            (id) => !answered.has(id),
+          );
+          yield {
+            ...event,
+            stop_reason: { ...event.stop_reason, event_ids: outstanding },
+          };
+        } else {
+          yield event;
+        }
+      }
+    },
+  };
+}
+
+/** Open first, then reconcile history; only unseen live events reach the turn. */
 export async function recoverSession(
   client: Anthropic,
   record: SessionRecord,
@@ -34,6 +138,7 @@ export async function recoverSession(
   knownToolCalls: Set<string> = new Set(),
   clientTools: Map<string, string> = new Map(),
   knownMessages: Map<string, unknown> = new Map(),
+  cleanEndEventId?: string,
 ) {
   if (record.ended)
     throw new RecoveryError(
@@ -63,6 +168,25 @@ export async function recoverSession(
           {},
           { signal },
         );
+    if (
+      cleanEndEventId !== undefined &&
+      cleanEndEventId === record.lastEventId &&
+      !record.sessionThreadId &&
+      session.status === "idle" &&
+      record.pendingClientToolUseIds.length === 0 &&
+      !record.pendingConfirmations?.length &&
+      (await historyEndsAt(client, record.sessionId, cleanEndEventId, signal))
+    ) {
+      return {
+        pending: [],
+        answeredIds: new Set<string>(),
+        replayedIds: new Set<string>(),
+        running: false,
+        stream: unseenEvents(stream, new Set([cleanEndEventId]), () =>
+          answeredBeforeEnd(client, record.sessionId, cleanEndEventId, signal),
+        ),
+      };
+    }
     const history = record.sessionThreadId
       ? client.beta.sessions.threads.events.list(
           record.sessionThreadId,
@@ -84,6 +208,8 @@ export async function recoverSession(
       ordered.push(event);
       if (event.type === "system.message")
         restoreContext(event.content, record);
+      const result = answeredCallId(event);
+      if (result) answered.add(result);
       switch (event.type) {
         case "session.status_running":
           if (!record.sessionThreadId) running = true;
@@ -98,18 +224,6 @@ export async function recoverSession(
         case "agent.tool_use":
         case "agent.mcp_tool_use":
           if (event.evaluated_permission === "ask") calls.set(event.id, event);
-          break;
-        case "user.custom_tool_result":
-          answered.add(event.custom_tool_use_id);
-          break;
-        case "user.tool_confirmation":
-          answered.add(event.tool_use_id);
-          break;
-        case "agent.tool_result":
-          answered.add(event.tool_use_id);
-          break;
-        case "agent.mcp_tool_result":
-          answered.add(event.mcp_tool_use_id);
           break;
         case "session.status_idle":
         case "session.thread_status_idle":
@@ -208,24 +322,12 @@ export async function recoverSession(
           : [],
       );
     }
-    const opened = stream;
     return {
       pending,
       answeredIds: answered,
       replayedIds: new Set(missed.map((event) => event.id)),
       running,
-      stream: {
-        controller: opened.controller,
-        async *[Symbol.asyncIterator]() {
-          for await (const event of opened) {
-            if (event.type === "event_start" || event.type === "event_delta")
-              continue;
-            if (seen.has(event.id)) continue;
-            seen.add(event.id);
-            yield event;
-          }
-        },
-      } satisfies SessionStream,
+      stream: unseenEvents(stream, seen),
     };
   } catch (error) {
     stream?.controller.abort();

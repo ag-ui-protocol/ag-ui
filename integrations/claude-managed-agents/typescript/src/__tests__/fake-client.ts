@@ -58,7 +58,11 @@ export function createFakeClient(options: FakeClientOptions = {}) {
   const histories = [...(options.histories ?? [])];
   const list = vi.fn((_id?: string, _params?: unknown, _options?: unknown) => ({
     async *[Symbol.asyncIterator]() {
-      yield* histories.shift() ?? [];
+      if ((_params as { order?: string })?.order === "desc") {
+        yield* (histories[0] ?? []).slice(-1);
+      } else {
+        yield* histories.shift() ?? [];
+      }
     },
   }));
   const retrieveSession = vi.fn(async () => {

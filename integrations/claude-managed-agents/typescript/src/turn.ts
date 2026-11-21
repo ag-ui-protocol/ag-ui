@@ -5,6 +5,7 @@ import type { PendingConfirmation } from "./types";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   BetaManagedAgentsEventParams,
+  BetaManagedAgentsSessionEvent,
   BetaManagedAgentsStreamSessionEvents,
 } from "@anthropic-ai/sdk/resources/beta/sessions/events";
 import { accumulateManagedAgentsEvent } from "@anthropic-ai/sdk/lib/sessions/accumulate";
@@ -37,7 +38,10 @@ export interface TurnOptions {
     text: string,
     isError: boolean,
   ) => void | Promise<void>;
-  onNativeEvent?: (id: string) => void | Promise<void>;
+  onNativeEvent?: (
+    id: string,
+    event?: BetaManagedAgentsSessionEvent,
+  ) => void | Promise<void>;
   onConfirmationPark?: (call: PendingConfirmation) => void | Promise<void>;
   /** Events posted into the session once the stream is open (user message, tool results). */
   outbound: BetaManagedAgentsEventParams[];
@@ -718,7 +722,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
         }
       } finally {
         if (event.type !== "event_start" && event.type !== "event_delta")
-          await opts.onNativeEvent?.(event.id);
+          await opts.onNativeEvent?.(event.id, event);
       }
     }
     closeAll();

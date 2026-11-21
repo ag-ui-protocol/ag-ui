@@ -47,6 +47,8 @@ export interface SessionRecord {
   sharedState?: import("./state").StateCommit;
   sessionThreadId?: string;
   lastEventId?: string;
+  /** Root end_turn observed with no outstanding native history to reconcile. */
+  cleanEndEventId?: string;
   /** Adopted sessions retain the tools configured by their owner. */
   preserveTools?: boolean;
   ended?: boolean;
@@ -68,7 +70,7 @@ export interface SessionRecord {
 }
 
 /**
- * Where thread↔session mappings live. The default is in-memory (lost on
+ * Where thread-to-session mappings live. The default is in-memory (lost on
  * restart, in which case a fresh session is created). Provide your own to
  * survive restarts or run multiple replicas.
  *
@@ -106,7 +108,7 @@ export interface ManagedAgentsAgentConfig extends AgentConfig {
   /** Anthropic client. Defaults to `new Anthropic()`, which reads `ANTHROPIC_API_KEY`. */
   client?: Anthropic;
   /**
-   * Thread↔session store. Defaults to an in-memory store. Records are keyed by
+   * Thread-to-session store. Defaults to an in-memory store. Records are keyed by
    * `managedAgentId:threadId`; see {@link SessionStore}.
    */
   sessionStore?: SessionStore;
