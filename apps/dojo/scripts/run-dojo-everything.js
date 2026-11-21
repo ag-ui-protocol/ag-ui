@@ -324,6 +324,20 @@ const ALL_SERVICES = {
       env: { PORT: 8031 },
     },
   ],
+  "openai-agents-js": [
+    {
+      command: "pnpm exec tsx examples/server.ts",
+      name: "OpenAI Agents SDK (JavaScript)",
+      cwd: path.join(integrationsRoot, "openai-agents-js"),
+      env: {
+        PORT: 8032,
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY ||
+          (process.env.OPENAI_BASE_URL ? "" : "sk-mock"),
+        OPENAI_BASE_URL: process.env.OPENAI_BASE_URL ||
+          (process.env.OPENAI_API_KEY ? "" : `http://localhost:${AIMOCK_PORT}/v1`),
+      },
+    },
+  ],
   "claude-agent-sdk-python": [
     {
       command: "uv run dev",

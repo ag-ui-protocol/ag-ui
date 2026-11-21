@@ -108,6 +108,12 @@
     "notice": "integrations/openai-agents/typescript/LICENSE"
   },
   {
+    "directory": "integrations/openai-agents-js",
+    "names": ["@ag-ui/openai-agents-js"],
+    "license": "MIT",
+    "notice": "integrations/openai-agents-js/LICENSE"
+  },
+  {
     "directory": "integrations/pydantic-ai/typescript",
     "names": ["@ag-ui/pydantic-ai"],
     "license": "MIT",

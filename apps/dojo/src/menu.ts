@@ -572,4 +572,18 @@ export const menuIntegrations = [
     // the hosted Dojo yet.
     localOnly: true,
   },
+  {
+    id: "openai-agents-js",
+    name: "OpenAI Agents SDK (JavaScript/TypeScript)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "shared_state",
+      "tool_based_generative_ui",
+    ],
+    // The example server runs locally (port 8032); nothing is deployed for
+    // the hosted Dojo yet.
+    localOnly: true,
+  },
 ] as const satisfies MenuIntegrationConfig[];
