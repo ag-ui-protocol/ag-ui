@@ -1674,7 +1674,14 @@ export function buildSnapshotMessages(
       const tool = {
         id: msgId,
         role: "tool",
-        content: _coerceText(msg.content),
+        // Same rule as the user branch above: a list of parts stays a list,
+        // and only an unexpected type becomes text. The snapshot replaces
+        // what the client assembled, so flattening a list here would
+        // overwrite the client's own tool message with its text parts only,
+        // and the image would be gone.
+        content: Array.isArray(msg.content)
+          ? msg.content
+          : _coerceText(msg.content),
         toolCallId,
       } as AguiToolMessage;
       // This is an AG-UI -> AG-UI rebuild of the client's own message, so
