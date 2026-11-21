@@ -7,7 +7,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta/sessions/events";
 import { EventType } from "@ag-ui/client";
 import type { BaseEvent } from "@ag-ui/client";
-import type { SessionRecord } from "./types";
+import type { RecoveryCheckpoint, SessionRecord } from "./types";
 import { textOf } from "./text";
 import { toolContent } from "./content";
 
@@ -25,7 +25,101 @@ export type SessionStream =
     controller: AbortController;
   };
 
-/** Open first, then enumerate every history page; only unseen live events reach the turn. */
+type NativeEvent = BetaManagedAgentsSessionEvent;
+
+async function readHistory(events: AsyncIterable<NativeEvent>) {
+  const seen = new Set<string>();
+  const ordered: NativeEvent[] = [];
+  for await (const event of events) {
+    if (seen.has(event.id)) continue;
+    seen.add(event.id);
+    ordered.push(event);
+  }
+  return { seen, ordered };
+}
+
+function savedCheckpoint(record: SessionRecord) {
+  const checkpoint = record.recoveryCheckpoint;
+  if (
+    !record.sessionThreadId &&
+    record.lastEventId &&
+    checkpoint?.version === 1 &&
+    checkpoint.sessionId === record.sessionId &&
+    typeof checkpoint.processedAt === "string" &&
+    Array.isArray(checkpoint.boundaryIds) &&
+    checkpoint.boundaryIds.length &&
+    Array.isArray(checkpoint.pending) &&
+    Array.isArray(checkpoint.answeredIds) &&
+    Array.isArray(checkpoint.stateToolIds)
+  )
+    return checkpoint;
+}
+
+async function historyWindow(
+  client: Anthropic,
+  record: SessionRecord,
+  signal: AbortSignal,
+  checkpoint: RecoveryCheckpoint | undefined,
+) {
+  if (record.sessionThreadId) {
+    return {
+      ...(await readHistory(
+        client.beta.sessions.threads.events.list(
+          record.sessionThreadId,
+          { session_id: record.sessionId },
+          { signal },
+        ),
+      )),
+      checkpoint: undefined,
+      start: 0,
+    };
+  }
+  const events = client.beta.sessions.events;
+  if (checkpoint && record.lastEventId) {
+    try {
+      const window = await readHistory(
+        events.list(
+          record.sessionId,
+          {
+            "created_at[gte]": checkpoint.processedAt,
+            order: "asc",
+          },
+          { signal },
+        ),
+      );
+      // A timestamp is not an event identity. Also verify the delivery cursor:
+      // it can have advanced on the live stream since this checkpoint was saved.
+      if (
+        checkpoint.boundaryIds.every(
+          (id, i) =>
+            window.ordered[i]?.id === id &&
+            window.ordered[i].processed_at === checkpoint.processedAt,
+        ) &&
+        window.seen.has(record.lastEventId)
+      ) {
+        return { ...window, checkpoint, start: checkpoint.boundaryIds.length };
+      }
+    } catch (error) {
+      // Older compatible endpoints can reject time filters. Other errors (including
+      // failed pages and authorization errors) must reach the caller.
+      if (
+        !(
+          error instanceof Error &&
+          "status" in error &&
+          (error.status === 400 || error.status === 422)
+        )
+      )
+        throw error;
+    }
+  }
+  return {
+    ...(await readHistory(events.list(record.sessionId, {}, { signal }))),
+    checkpoint: undefined,
+    start: 0,
+  };
+}
+
+/** Subscribe before reading history so events arriving during pagination are buffered. */
 export async function recoverSession(
   client: Anthropic,
   record: SessionRecord,
@@ -63,25 +157,24 @@ export async function recoverSession(
           {},
           { signal },
         );
-    const history = record.sessionThreadId
-      ? client.beta.sessions.threads.events.list(
-          record.sessionThreadId,
-          { session_id: record.sessionId },
-          { signal },
-        )
-      : client.beta.sessions.events.list(record.sessionId, {}, { signal });
-    const seen = new Set<string>();
-    const ordered: BetaManagedAgentsSessionEvent[] = [];
-    const calls = new Map<string, BetaManagedAgentsSessionEvent>();
-    const answered = new Set<string>();
+    const previous = savedCheckpoint(record);
+    const { ordered, seen, checkpoint, start } = await historyWindow(
+      client,
+      record,
+      signal,
+      previous,
+    );
+    const suffix = start ? ordered.slice(start) : ordered;
+    const calls = new Map(
+      checkpoint?.pending.map((event) => [event.id, event]),
+    );
+    const answered = new Set(checkpoint?.answeredIds);
     const blocking = new Set<string>();
     let ended = false;
-    let running =
-      session.status === "running" || session.status === "rescheduling";
-    for await (const event of history) {
-      if (seen.has(event.id)) continue;
-      seen.add(event.id);
-      ordered.push(event);
+    let running = checkpoint?.running;
+    if (checkpoint?.runtimeContext !== undefined)
+      record.runtimeContext = checkpoint.runtimeContext;
+    for (const event of suffix) {
       if (event.type === "system.message")
         restoreContext(event.content, record);
       switch (event.type) {
@@ -149,7 +242,13 @@ export async function recoverSession(
           break;
       }
     }
-    await restoreStateHistory(client, record, ordered, signal);
+    const stateToolIds = await restoreStateHistory(
+      client,
+      record,
+      suffix,
+      signal,
+      checkpoint,
+    );
     if (ended)
       throw new RecoveryError(
         "session_ended",
@@ -161,7 +260,7 @@ export async function recoverSession(
         "A pending request is missing from the available native history.",
       );
     }
-    for (const event of ordered) rememberChildCall(record, event);
+    for (const event of suffix) rememberChildCall(record, event);
     const pending = [...calls.values()].filter(
       (event) => !answered.has(event.id),
     );
@@ -174,12 +273,20 @@ export async function recoverSession(
         "The saved event position is no longer available in native history.",
       );
     }
-    const missed =
+    // A provider need not order ties identically on two requests. If the
+    // delivery cursor is still at the saved boundary, use the IDs delivered at
+    // that timestamp even when a changed boundary forced a full native fold.
+    const deliveryBoundary =
+      previous &&
+      previous.boundaryIds.at(-1) === record.lastEventId &&
       cursorIndex >= 0
-        ? ordered.slice(cursorIndex + 1)
-        : record.preserveTools
-          ? []
-          : ordered;
+        ? { time: previous.processedAt, ids: new Set(previous.boundaryIds) }
+        : undefined;
+    const missed = ordered.filter((event, index) => {
+      if (deliveryBoundary && event.processed_at === deliveryBoundary.time)
+        return !deliveryBoundary.ids.has(event.id);
+      return cursorIndex >= 0 ? index > cursorIndex : !record.preserveTools;
+    });
     for (const event of missed)
       emitRecoveredActivity(
         event,
@@ -208,12 +315,47 @@ export async function recoverSession(
           : [],
       );
     }
+    const tail = ordered.at(-1);
+    if (
+      !record.sessionThreadId &&
+      tail?.processed_at &&
+      ordered.every(
+        (event) =>
+          event.processed_at && Number.isFinite(Date.parse(event.processed_at)),
+      )
+    ) {
+      const processedAt = tail.processed_at;
+      let first = ordered.length - 1;
+      while (first > 0 && ordered[first - 1].processed_at === processedAt)
+        first--;
+      record.recoveryCheckpoint = {
+        version: 1,
+        sessionId: record.sessionId,
+        processedAt,
+        boundaryIds: ordered.slice(first).map((event) => event.id),
+        pending,
+        answeredIds: [...answered],
+        stateToolIds: [...stateToolIds],
+        sharedState: record.sharedState,
+        runtimeContext: record.runtimeContext,
+        running,
+      };
+    } else {
+      delete record.recoveryCheckpoint;
+    }
+    // The overlap set also covers tool calls summarized before the time window.
+    if (checkpoint) {
+      for (const call of checkpoint.pending) seen.add(call.id);
+      for (const id of checkpoint.answeredIds) seen.add(id);
+    }
     const opened = stream;
     return {
       pending,
       answeredIds: answered,
       replayedIds: new Set(missed.map((event) => event.id)),
-      running,
+      running:
+        running ??
+        (session.status === "running" || session.status === "rescheduling"),
       stream: {
         controller: opened.controller,
         async *[Symbol.asyncIterator]() {
