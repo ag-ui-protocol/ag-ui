@@ -48,6 +48,21 @@
     the thread id, the call id and the tool name.
   - Reported privately by dtnvgs.
 
+## 0.2.0 — 2026-11-21
+
+- Paused tool calls are now signed with an HMAC over thread, call id, tool name, and canonical arguments; resumes run a tool only if this server paused it.
+- Approval tokens are bound to the pausing agent and rejected when used by a different agent.
+- Approvals are now checked for expiry at consume time, before and after the store responds, preventing reuse of expired tokens.
+- `OpenAIAgentsAgent` and `add_openai_agents_fastapi_endpoint` accept `consumed_tokens=`, a shared `ConsumedTokens` store, so decided approvals are shared across workers and survive restarts.
+- Pausing or resuming approvals now refuses an unscoped (default) signer to prevent cross-agent approval reuse.
+
+### Breaking changes
+
+- Pausing or resuming approvals with the default unscoped signer is now rejected; provide a properly scoped signer.
+- Resumed tool calls are validated against a server-signed paused call; client-modified arguments, injected calls, or replayed approvals are refused.
+- Expired approval tokens are now refused at consume time, not only at resume start.
+- Multi-worker or post-restart deployments must pass a shared `consumed_tokens=` store to avoid duplicate tool execution.
+
 ## 0.1.0
 
 - First release.
