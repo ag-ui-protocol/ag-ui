@@ -254,6 +254,26 @@ function bumpPythonVersion(
   }
 }
 
+// The pinned uv parser stores each release and dev number in a u64 and
+// reserves u64::MAX, so it rejects a `.devN` above this.
+const PEP440_MAX_DEV = 18446744073709551614n;
+
+/**
+ * Refuse a converted Python version whose `.devN` uv cannot parse: N must be
+ * numeric and at most PEP440_MAX_DEV. The canary converter joins the preid's
+ * components into one N, so an unbounded preid would otherwise be written and
+ * fail only at publish time.
+ */
+function checkPythonDevNumber(name: string, version: string): void {
+  const dev = version.match(/\.dev(.*)$/);
+  if (!dev) return;
+  if (/^[0-9]+$/.test(dev[1]) && BigInt(dev[1]) <= PEP440_MAX_DEV) return;
+  console.error(
+    `ERROR: ${name}: Python version ${version} has a .devN that is not a number from 0 to ${PEP440_MAX_DEV}, so uv cannot parse it. Use a shorter numeric prerelease suffix.`,
+  );
+  process.exit(1);
+}
+
 // ---------------------------------------------------------------------------
 // Config types
 // ---------------------------------------------------------------------------
@@ -808,6 +828,13 @@ function main(): void {
 
     console.error(`[${args.scope}] Shared version: ${currentVersion} -> ${newVersion}`);
 
+    // Check every Python package before anything is written, so a refusal
+    // leaves no package half-bumped.
+    for (const pkg of scopeConfig.packages) {
+      if (pkg.ecosystem === "python")
+        checkPythonDevNumber(pkg.name, toPep440(newVersion));
+    }
+
     if (versionSourceEcosystem === "dotnet" && args.bump !== "prerelease" && !args.dryRun) {
       recordWritten(writeVersionFile(repoRoot, versionSourcePath, versionSourceEcosystem, newVersion, versionSourceBuildSystem));
       const written = readVersionFile(versionSourcePath, versionSourceEcosystem, versionSourceBuildSystem);
@@ -875,14 +902,20 @@ function main(): void {
       });
     }
   } else {
-    // Each package has its own version
-    for (const pkg of scopeConfig.packages) {
-      const filePath = getVersionFilePath(repoRoot, pkg, scopeConfig.versionSource);
-      const relPath = path.relative(repoRoot, filePath);
+    // Each package has its own version. Compute and check every package
+    // before anything is written, so a refusal leaves no package half-bumped.
+    const planned = scopeConfig.packages.map((pkg) => {
       const currentVersion = readVersion(repoRoot, pkg, scopeConfig.versionSource);
       const newVersion = computeNewVersion(currentVersion, args.bump, args.preid, pkg.ecosystem);
-
       console.error(`[${args.scope}] ${pkg.name}: ${currentVersion} -> ${newVersion}`);
+      if (pkg.ecosystem === "python")
+        checkPythonDevNumber(pkg.name, newVersion);
+      return { pkg, currentVersion, newVersion };
+    });
+
+    for (const { pkg, currentVersion, newVersion } of planned) {
+      const filePath = getVersionFilePath(repoRoot, pkg, scopeConfig.versionSource);
+      const relPath = path.relative(repoRoot, filePath);
 
       if (!args.dryRun) {
         recordWritten(writeVersion(repoRoot, pkg, newVersion, scopeConfig.versionSource));
