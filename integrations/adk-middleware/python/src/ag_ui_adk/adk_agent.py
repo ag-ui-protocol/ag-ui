@@ -4,6 +4,7 @@
 from ag_ui_adk.agui_toolset import AGUIToolset
 
 import copy
+from collections.abc import Mapping
 from contextlib import aclosing
 
 from typing import Optional, Dict, Callable, Any, AsyncGenerator, Awaitable, List, Iterable, Set, TYPE_CHECKING, Tuple, Union
@@ -3872,10 +3873,27 @@ class ADKAgent:
             # Create RunConfig
             run_config = self._run_config_factory(input)
 
+            # Only a mapping (a JSON object) maps onto session state.
+            # ``RunAgentInput.state`` is typed ``Any``, and ``dict()`` would
+            # turn an array of ``[key, value]`` pairs back into keys,
+            # including ``app:``/``user:`` keys the endpoint's object-only
+            # scope check never saw. The endpoint rejects such state with a
+            # 422; this guards direct ``run()`` callers. Any ``Mapping`` (for
+            # example a ``MappingProxyType``) is kept and copied into a dict.
+            state_is_mapping = isinstance(input.state, Mapping)
+            if input.state is not None and not state_is_mapping:
+                logger.warning(
+                    "Ignoring run state of type %s for thread %s; "
+                    "state must be a JSON object.",
+                    type(input.state).__name__,
+                    input.thread_id,
+                )
             # Prepare state with context included
             # Context from RunAgentInput is stored under _ag_ui_context key,
             # making it accessible via tool_context.state['_ag_ui_context']
-            state_with_context = dict(input.state) if input.state else {}
+            state_with_context = (
+                dict(input.state) if state_is_mapping else {}
+            )
             # Strip backend-managed keys so stale frontend state cannot
             # overwrite internal metadata (e.g. lro_tool_call_id_remap).
             # See: https://github.com/ag-ui-protocol/ag-ui/issues/1168

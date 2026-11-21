@@ -110,6 +110,21 @@ def _session_read_error_response(thread_id: str) -> JSONResponse:
     )
 
 
+_NON_OBJECT_STATE_MESSAGE = "state must be a JSON object or null."
+
+
+class _NonObjectStateError(ValueError):
+    """``RunAgentInput.state`` is neither a JSON object nor null."""
+
+
+def _non_object_state_response() -> JSONResponse:
+    """Reject run state that is not a JSON object with a 422."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _NON_OBJECT_STATE_MESSAGE},
+    )
+
+
 def _build_run_error(message: str, code: str) -> RunErrorEvent:
     """Construct a ``RunErrorEvent`` with the given message and code.
 
@@ -135,7 +150,19 @@ async def _merge_extractor_state(
     extractor at all, and a removal placed after those returns would never run
     for them. It also means any prefixed key still present once this returns
     came from ``extract_state_from_request``, which is server-side.
+
+    Raises:
+        _NonObjectStateError: ``state`` is not a JSON object or null.
+            ``RunAgentInput.state`` is typed ``Any``, so an array of
+            ``[key, value]`` pairs passes validation. The prefix check below
+            only reads object keys, and ``dict()`` on the array would rebuild
+            the prefixed keys later, so only an object (or null, for no
+            state) is accepted. Only the run endpoint can raise this:
+            ``/capabilities`` and ``/agents/state`` build their input with
+            ``state={}``.
     """
+    if input_data.state is not None and not isinstance(input_data.state, dict):
+        raise _NonObjectStateError(_NON_OBJECT_STATE_MESSAGE)
     existing_state = input_data.state if isinstance(input_data.state, dict) else {}
     scoped_key_count = sum(
         1
@@ -520,7 +547,12 @@ def add_adk_fastapi_endpoint(
           continue to work without keep-alive pings (which are SSE-specific).
         """
 
-        input_data = await _merge_extractor_state(input_data, request, extract_state_fn)
+        try:
+            input_data = await _merge_extractor_state(
+                input_data, request, extract_state_fn
+            )
+        except _NonObjectStateError:
+            return _non_object_state_response()
         agent = await _resolve_agent(
             default_agent, request, input_data, agent_resolver
         )
@@ -683,11 +715,20 @@ def add_adk_fastapi_endpoint(
             metadata = agent._get_session_metadata(thread_id, user_id, app_name=app_name)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
-                session = await agent._session_manager._session_service.get_session(
-                    session_id=session_id,
-                    app_name=cached_app_name,
-                    user_id=cached_user_id
-                )
+                try:
+                    service = agent._session_manager._session_service
+                    session = await service.get_session(
+                        session_id=session_id,
+                        app_name=cached_app_name,
+                        user_id=cached_user_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Cached session read failed in /agents/state "
+                        "for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
                 # Use cached values for subsequent operations
                 app_name = cached_app_name
                 user_id = cached_user_id
