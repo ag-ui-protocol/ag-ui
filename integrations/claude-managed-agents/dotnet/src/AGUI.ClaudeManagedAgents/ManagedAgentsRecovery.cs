@@ -10,15 +10,36 @@ public sealed partial class ManagedAgentsAgent
         string key, ManagedAgentsSessionRecord record, RunContext run,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        var endId = record.CleanEndEventId;
+        if (endId is not null)
+        {
+            // A failed or interrupted attempt must not reuse this turn's end marker.
+            record.CleanEndEventId = null;
+            await PersistDeliveredAsync(key, record).ConfigureAwait(false);
+        }
         // Establish the live connection first; all history IDs are suppressed on that same connection.
         var stream = await _client.OpenConversationStreamAsync(record.SessionId, record.SessionThreadId, _options.StreamDeltas, cancellationToken).ConfigureAwait(false);
         await using var streamScope = ((IAsyncDisposable)stream).ConfigureAwait(false);
-        var history = await _client.ListSessionEventsAsync(record.SessionId, record.SessionThreadId, cancellationToken).ConfigureAwait(false);
+        JsonElement? verifiedEnd = null;
+        if (endId is not null && endId == record.LastEventId && record.SessionThreadId is null &&
+            messages.LastOrDefault() is AGUIUserMessage user && user.Id != record.LastUserMessageId &&
+            input.Resume is not { Count: > 0 } && record.PendingClientToolUseIds.Count == 0 && record.PendingConfirmationIds.Count == 0)
+        {
+            var latest = await _client.GetLatestIdleEventAsync(record.SessionId, cancellationToken).ConfigureAwait(false);
+            if (latest is { } evt && StringOf(evt, "id") == endId && StringOf(evt, "type") == "session.status_idle" &&
+                evt.TryGetProperty("stop_reason", out var stop) && StringOf(stop, "type") == "end_turn")
+                verifiedEnd = evt;
+        }
+        IReadOnlyList<JsonElement> history = verifiedEnd is { } end ? [end] :
+            await _client.ListSessionEventsAsync(record.SessionId, record.SessionThreadId, cancellationToken).ConfigureAwait(false);
         if (record.SessionThreadId is null && history.Any(evt => evt.TryGetProperty("session_thread_id", out var scope) && scope.ValueKind == JsonValueKind.String &&
             (StringOf(evt, "name") == ManagedAgentsState.Name || StringOf(evt, "type") is "system.message" or "user.custom_tool_result")))
             record.PrimaryThreadId = await _client.GetPrimaryThreadIdAsync(record.SessionId, cancellationToken).ConfigureAwait(false);
-        record.SharedState = null;
-        record.SharedStateRevision = 0;
+        if (verifiedEnd is null)
+        {
+            record.SharedState = null;
+            record.SharedStateRevision = 0;
+        }
         var clientTools = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var tool in input.Tools ?? []) clientTools[ManagedAgentsCustomTools.NormalizeToolName(tool.Name)] = tool.Name;
         var knownToolCalls = messages.OfType<AGUIAssistantMessage>().SelectMany(message => message.ToolCalls ?? []).Select(call => call.Id).ToHashSet(StringComparer.Ordinal);
@@ -61,13 +82,7 @@ public sealed partial class ManagedAgentsAgent
                 calls[id] = evt;
                 if (type != "agent.custom_tool_use") confirmations.Add(id);
             }
-            var resultId = type switch
-            {
-                "user.custom_tool_result" => StringOf(evt, "custom_tool_use_id"),
-                "user.tool_confirmation" or "agent.tool_result" => StringOf(evt, "tool_use_id"),
-                "agent.mcp_tool_result" => StringOf(evt, "mcp_tool_use_id"),
-                _ => null,
-            };
+            var resultId = AnsweredCallId(evt);
             if (resultId is not null) answered.Add(resultId);
         }
         if (record.SharedState is { } restoredState) yield return new StateSnapshotEvent { Snapshot = restoredState };
@@ -206,6 +221,8 @@ public sealed partial class ManagedAgentsAgent
         turn.PersistState = () => PersistDeliveredAsync(key, record);
         turn.SeenEventIds.UnionWith(seen);
         turn.AcknowledgeHistory(answered);
+        if (verifiedEnd is not null)
+            turn.LoadEarlierAnswers = () => AnswersBeforeEndAsync(record.SessionId, endId!, cancellationToken);
         turn.OnEventHandled = id => { record.LastEventId = id; return PersistDeliveredAsync(key, record); };
         run.Turn = turn;
         await foreach (var evt in turn.RunAsync(cancellationToken).ConfigureAwait(false))
@@ -222,6 +239,31 @@ public sealed partial class ManagedAgentsAgent
             await PersistDeliveredAsync(key, record).ConfigureAwait(false);
             yield return RecoveredFinished(input, record, turn.ConfirmationEvents);
         }
+    }
+
+    private static string? AnsweredCallId(JsonElement evt) => StringOf(evt, "type") switch
+    {
+        "user.custom_tool_result" => StringOf(evt, "custom_tool_use_id"),
+        "user.tool_confirmation" or "agent.tool_result" => StringOf(evt, "tool_use_id"),
+        "agent.mcp_tool_result" => StringOf(evt, "mcp_tool_use_id"),
+        _ => null,
+    };
+
+    private async Task<HashSet<string>> AnswersBeforeEndAsync(string sessionId, string endId, CancellationToken cancellationToken)
+    {
+        var answered = new HashSet<string>(StringComparer.Ordinal);
+        var history = await _client.ListSessionEventsAsync(sessionId, null, cancellationToken).ConfigureAwait(false);
+        foreach (var evt in history)
+        {
+            var id = StringOf(evt, "id");
+            if (id == endId) return answered;
+            var type = StringOf(evt, "type");
+            if (id is not null && (type == "agent.custom_tool_use" ||
+                (type is "agent.tool_use" or "agent.mcp_tool_use" && StringOf(evt, "evaluated_permission") == "ask")))
+                answered.Add(id);
+            if (AnsweredCallId(evt) is { } resultId) answered.Add(resultId);
+        }
+        throw new InvalidOperationException("The verified end event is no longer available in native history.");
     }
 
     private static bool TrackChildResult(ManagedAgentsSessionRecord record, BaseEvent evt)

@@ -10,6 +10,8 @@ public sealed class ManagedAgentsSessionRecord
     public string? PrimaryThreadId { get; set; }
     public Dictionary<string, string> ChildToolCalls { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> DeliveredChildResultIds { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>The root end_turn observed on a successfully completed turn. Optional on older records.</summary>
+    public string? CleanEndEventId { get; set; }
     public string? LastEventId { get; set; }
     public string? SessionThreadId { get; set; }
     public bool PreserveTools { get; set; }

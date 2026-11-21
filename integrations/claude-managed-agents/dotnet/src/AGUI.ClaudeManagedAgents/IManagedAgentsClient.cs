@@ -16,6 +16,10 @@ public interface IManagedAgentsClient
     Task<string?> GetPrimaryThreadIdAsync(string sessionId, CancellationToken cancellationToken)
         => Task.FromResult<string?>(null);
 
+    /// <summary>Returns the newest root event if the session is idle, or null to use full recovery.</summary>
+    Task<JsonElement?> GetLatestIdleEventAsync(string sessionId, CancellationToken cancellationToken)
+        => Task.FromResult<JsonElement?>(null);
+
     /// <summary>Lists all pages of native history. Recovery fails closed if unsupported.</summary>
     Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
         => throw new NotSupportedException("This client does not support session recovery.");
