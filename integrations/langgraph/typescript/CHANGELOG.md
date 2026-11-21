@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.0.47 — 2026-11-21
+
+- Added a `durability` agent option; the adapter sends it with runs and uses it to read boundary checkpoints instead of a client-controlled `forwardedProps.durability`.
+- Client `forwardedProps` now reach `runs.stream` only via an allowlist (`streamSubgraphs`, `durability`); `context`, `checkpoint`, `checkpointId` and others are dropped with a warning.
+- `forwardedProps.config` is no longer merged over `assistantConfig`; `forwardedProps.command` accepts only `resume` (`goto`/`update` dropped with a warning).
+- Continue mode now resumes only from the node that thread history shows ran in the latest step, using it as `asNode`, and filters client state by the graph input schema.
+- A continue that would change an input channel now starts a new run so prior gates re-evaluate the changed input.
+- A continue that proceeds unchanged no longer writes client state, avoiding reducer channels (e.g. `operator.add`) doubling stored values.
+- Fixed a pending interrupt being dropped when a continue was requested on an interrupted thread.
+
+### Breaking changes
+
+- Client-sent `forwardedProps.durability`, `context`, `checkpoint`, `checkpointId` and other non-allowlisted run options are now ignored; use the new `durability` agent option instead.
+- `forwardedProps.config` is no longer merged over `assistantConfig`.
+- `forwardedProps.command` now accepts only `resume`; `goto` and `update` are dropped.
+- Continue behavior changed: continues with altered input now start a new run, and resume node/state are constrained by thread history and input schema; re-verify continue flows.
+
 ## 0.0.46 — 2026-11-13
 
 - Read LangGraph's native `Interrupt.response_schema` field (langgraph >= 1.2.12), falling back to value-level `responseSchema`/`response_schema` keys.

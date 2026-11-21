@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.0.48 — 2026-11-21
+
+- Continue-mode now starts a new run when forwarded input differs from what a prior node (e.g. permission gate) checked, preventing bypass of gating nodes.
+- Continue no longer writes client state when it goes on, avoiding reducer channels (e.g. operator.add) double-combining values.
+- Node name for continue is honored only when the thread actually ran that node last; client-supplied node_name can no longer skip graph nodes.
+- Fixed resume logic under `durability="exit"` where one checkpoint per run made paused/gate nodes look already run.
+- Continue-mode state writes now apply the input-schema filter, so clients cannot set channels outside the graph's input schema.
+- Failed tool calls now stream TOOL_CALL_RESULT (and START/ARGS/END for non-streaming models) instead of only appearing in MESSAGES_SNAPSHOT.
+- Pending tool failures are keyed by run plus tool_call_id, fixing lost/crossed results across concurrent graphs sharing an id.
+- Interrupted tool calls (GraphInterrupt/GraphBubbleUp) are no longer recorded as failed.
+- Error handlers returning a Command carrying an error ToolMessage now stream the result correctly.
+- Tool messages are presented under their streamed id in MESSAGES_SNAPSHOT regardless of consumer timing; stopped mutating tool message objects in place.
+- Tool messages without an id get a stable id so TOOL_CALL_RESULT matches the snapshot.
+- Cancelled runs now synthesize a cancelled ToolMessage for dangling tool calls so the next turn is not rejected by the provider.
+- `lg_interrupt_to_agui` reads `Interrupt.response_schema` first, falling back to value-level keys; non-mapping values ignored.
+- Middleware-internal model calls (e.g. SummarizationMiddleware from langchain 1.4.0) no longer leak into the client stream as assistant text.
+- RUN_STARTED declares `protocol_version` when the SDK provides PROTOCOL_VERSION, guarded for the 0.1.22 floor.
+- A2UI recovery workers isolated and subagents kept on the caller event loop.
+- Locked langgraph moves 1.2.8 -> 1.2.12.
+
+### Breaking changes
+
+- Continue with a changed input-schema value now starts a new run instead of resuming from the named node; thread flows relying on the old resume behavior must be re-verified.
+- Client `forwardedProps.node_name` is honored only when the thread last ran that node; previously-accepted skips will now be rejected.
+- Continue no longer writes client state when it goes on, and applies input-schema filtering; code depending on those writes or on setting out-of-schema channels must change.
+- Tool message ids and TOOL_CALL_RESULT timing changed; id-based snapshot merges should be re-verified.
+- Requires langgraph 1.2.12 for `Interrupt.response_schema`.
+
 ## 0.0.47 — 2026-10-07
 
 - Non-streamed tool calls now name the owning assistant message as the parent instead of reusing the result message id.
