@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `getCapabilities()` now declares the adapter package version as `identity.metadata.adapterVersion`, so a host can tell which bridge release an app runs.
+
 ## 2.0.2 — 2026-10-27
 
 - RUN_FINISHED now carries Mastra's finish reason unchanged on `metadata.mastra.finishReason` when reported; cancelled runs carry none.

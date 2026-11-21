@@ -26,6 +26,7 @@ const child = spawn(
         process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
       OPENAI_API_KEY: process.env.OPENAI_API_KEY || "",
       OPENAI_MODEL: process.env.OPENAI_CHAT_MODEL_ID || "gpt-4o",
+      OPENAI_REASONING_MODEL: process.env.OPENAI_REASONING_MODEL_ID || "o4-mini",
       WRANGLER_SEND_METRICS: "false",
       CI: process.env.CI ?? "true",
     },

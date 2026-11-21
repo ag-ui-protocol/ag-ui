@@ -749,7 +749,7 @@ const agentFilesMapper: Record<
           path.join(
             __dirname,
             integrationsFolderPath,
-            `/community/cloudflare-agents/typescript/examples/src/messages.ts`,
+            `/community/cloudflare-agents/typescript/examples/src/agents.ts`,
           ),
         ],
       }),
