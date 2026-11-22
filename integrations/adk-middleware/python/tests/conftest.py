@@ -72,8 +72,12 @@ def _ensure_llmock_deps() -> None:
     elif installed_pkg.exists():
         return
 
+    npm = shutil.which("npm")
+    if npm is None:
+        pytest.skip("npm not available — cannot install LLMock dependencies")
+
     result = subprocess.run(
-        ["npm", "ci"],
+        [npm, "ci"],
         cwd=str(LLMOCK_DIR),
         capture_output=True,
         text=True,
