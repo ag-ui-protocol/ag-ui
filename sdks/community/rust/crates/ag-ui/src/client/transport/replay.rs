@@ -67,7 +67,8 @@ impl ReplayTransport {
     }
 
     /// Rebind each script's first RUN_STARTED and its matching RUN_FINISHED
-    /// to the actual request IDs. Unmatched terminal IDs stay unchanged so
+    /// to the actual request IDs, including IDs in the start event's input echo.
+    /// The echo preserves the recorded history. Unmatched terminal IDs stay unchanged so
     /// malformed fixtures still fail. The default replays events literally.
     ///
     /// In a script of several runs this makes the first one the requested
@@ -119,6 +120,12 @@ impl Transport for ReplayTransport {
                             Event::RunStarted(e)
                                 if e.thread_id == thread_id && e.run_id == run_id =>
                             {
+                                if let Some(echo) = e.input.as_mut().filter(|echo| {
+                                    echo.thread_id == thread_id && echo.run_id == run_id
+                                }) {
+                                    echo.thread_id = input.thread_id.clone();
+                                    echo.run_id = input.run_id.clone();
+                                }
                                 e.thread_id = input.thread_id.clone();
                                 e.run_id = input.run_id.clone();
                             }

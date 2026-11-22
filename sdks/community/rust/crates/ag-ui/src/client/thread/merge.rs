@@ -226,6 +226,48 @@ fn place_of_result(messages: &[Message], call: &ToolCallId) -> (usize, Option<us
     }
 }
 
+/// Providers may reuse a tool-call ID in a later assistant message.
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct IssuedCall<'a> {
+    assistant_id: &'a MessageId,
+    call_id: &'a ToolCallId,
+}
+
+/// Index each tool result by its message ID. A result before its call has no entry.
+fn calls_by_result(messages: &[Message]) -> HashMap<&MessageId, IssuedCall<'_>> {
+    #[derive(Default)]
+    struct Issuers<'a> {
+        latest: Option<&'a MessageId>,
+        unanswered: Vec<&'a MessageId>,
+    }
+
+    let mut issuers: HashMap<&ToolCallId, Issuers<'_>> = HashMap::new();
+    let mut results = HashMap::new();
+    for message in messages {
+        for call_id in calls_of(message) {
+            let history = issuers.entry(call_id).or_default();
+            history.latest = Some(message.id());
+            history.unanswered.push(message.id());
+        }
+        if let Message::Tool(result) = message {
+            let call_id = &result.tool_call_id;
+            let history = issuers.entry(call_id).or_default();
+            // Answer the newest outstanding call first, then fall back to the
+            // latest issuer if every occurrence already has a result.
+            if let Some(assistant_id) = history.unanswered.pop().or(history.latest) {
+                results.insert(
+                    &result.id,
+                    IssuedCall {
+                        assistant_id,
+                        call_id,
+                    },
+                );
+            }
+        }
+    }
+    results
+}
+
 /// Ids, for an error message.
 fn list<'a>(ids: impl Iterator<Item = &'a str>) -> String {
     ids.collect::<Vec<_>>().join(", ")
@@ -320,8 +362,10 @@ impl<T: Transport, S> Thread<T, S> {
     ///
     /// [`Error::Merge`], with nothing changed, when the two threads have
     /// different thread ids, when either is not at rest, when a tool call
-    /// has a result on each thread, and when this thread gave up a call the
-    /// other holds a result for.
+    /// has a result on each thread, when this thread gave up a call the
+    /// other holds a result for, or when keeping this thread's message
+    /// would detach an incoming result from its call or leave the merged
+    /// conversation with an unanswered call.
     pub fn merge_messages_from<U: Transport, R>(
         &mut self,
         other: &Thread<U, R>,
@@ -340,26 +384,19 @@ impl<T: Transport, S> Thread<T, S> {
         // answer to is left out: the call has its answer here. Told from a
         // result by the record `abandon_tool_call` keeps, not by what the
         // message says.
-        let answered: HashSet<&ToolCallId> = self
-            .messages()
-            .iter()
-            .filter_map(|message| match message {
-                Message::Tool(answer) => Some(&answer.tool_call_id),
-                _ => None,
-            })
-            .collect();
+        let answered: HashSet<_> = calls_by_result(self.messages()).into_values().collect();
+        let incoming_calls = calls_by_result(other.messages());
         let superseded: Vec<&MessageId> = other
             .messages()
             .iter()
-            .filter(|message| match message {
-                Message::Tool(stand_in) => {
-                    other.abandoned.contains(&stand_in.id)
-                        && answered.contains(&stand_in.tool_call_id)
-                        && self.applier.message(&stand_in.id).is_none()
-                }
-                _ => false,
-            })
             .map(Message::id)
+            .filter(|id| {
+                other.abandoned.contains(*id)
+                    && self.applier.message(id).is_none()
+                    && incoming_calls
+                        .get(*id)
+                        .is_some_and(|call| answered.contains(call))
+            })
             .collect();
         let skip: HashSet<&MessageId> = superseded.iter().copied().collect();
 
@@ -385,25 +422,57 @@ impl<T: Transport, S> Thread<T, S> {
             )));
         }
 
-        let superseded = superseded.into_iter().cloned().collect();
-        // An interrupt's decision stands in for a tool message, and is kept
-        // by call id. It travels with the call it decided. So does a
-        // stand-in's record, with the stand-in.
+        // A conflicting retained message can discard the assistant's call
+        // while its result is still added. Check the settled transcript
+        // before mutating either the messages or the thread's bookkeeping.
+        let merged_calls = calls_by_result(&merged.messages);
         for id in &merged.added {
-            if other.abandoned.contains(id) {
-                self.abandoned.insert(id.clone());
+            let Some(call) = incoming_calls.get(id) else {
+                continue;
+            };
+            if merged_calls.get(id) != Some(call) {
+                return Err(Error::Merge(format!(
+                    "tool result {id} would no longer answer call {} on message {}",
+                    call.call_id, call.assistant_id
+                )));
             }
+        }
+
+        // A retained message can also displace the incoming result itself.
+        // Project the decisions first: an interrupt may already have settled
+        // that call, even if no tool message survives for it.
+        let mut decided = self.decided_interrupt_tool_call_ids.clone();
+        for id in &merged.added {
             let Some(message) = other.applier.message(id) else {
                 continue;
             };
             for call in calls_of(message) {
-                if other.decided_interrupt_tool_call_ids.contains(call) {
-                    self.decided_interrupt_tool_call_ids.insert(call.clone());
+                if other.decided_interrupt_tool_call_ids.contains(call)
+                    && other.applier.tool_call_holder(call) == Some(id)
+                {
+                    decided.insert(call.clone());
                 } else {
-                    self.decided_interrupt_tool_call_ids.remove(call);
+                    decided.remove(call);
                 }
             }
         }
+        let pending = self.unanswered_tool_calls_in(&merged.messages, &decided);
+        if !pending.is_empty() {
+            return Err(Error::Merge(format!(
+                "the merged history would have unanswered tool calls {}",
+                list(pending.iter().map(ToolCallId::as_str))
+            )));
+        }
+
+        let superseded = superseded.into_iter().cloned().collect();
+        self.decided_interrupt_tool_call_ids = decided;
+        self.abandoned.extend(
+            merged
+                .added
+                .iter()
+                .filter(|id| other.abandoned.contains(*id))
+                .cloned(),
+        );
         self.applier = std::mem::take(&mut self.applier).with_messages(merged.messages);
         self.run_ids.extend(other.run_ids.iter().cloned());
         let announced: Vec<_> = other
@@ -455,5 +524,42 @@ impl<T: Transport, S> Thread<T, S> {
             )
         };
         Err(Error::Merge(format!("{which} {owes}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AssistantMessage, ToolCall};
+
+    #[test]
+    fn reused_call_ids_match_outstanding_calls_before_falling_back_to_the_latest_issuer() {
+        let issue = |id: &str| {
+            Message::Assistant(AssistantMessage {
+                id: id.into(),
+                tool_calls: Some(vec![ToolCall::new("c", "lookup", "{}")]),
+                ..Default::default()
+            })
+        };
+        let result = |id: &str| Message::tool(id, "c", "answer");
+        let messages = [
+            result("early"),
+            issue("a"),
+            issue("b"),
+            result("first"),
+            result("second"),
+            result("extra"),
+        ];
+        let calls = calls_by_result(&messages);
+        let issuer = |result: &str| {
+            calls
+                .get(&MessageId::new(result))
+                .map(|call| call.assistant_id.as_str())
+        };
+
+        assert_eq!(issuer("early"), None);
+        assert_eq!(issuer("first"), Some("b"));
+        assert_eq!(issuer("second"), Some("a"));
+        assert_eq!(issuer("extra"), Some("b"));
     }
 }

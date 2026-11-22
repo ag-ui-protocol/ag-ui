@@ -157,7 +157,7 @@ impl StateManager {
         // client reports that as a diagnostic and keeps its previous value.
         // Forget the baseline here so the next automatic publish is a full
         // snapshot; retaining an assumed value would corrupt later deltas.
-        if json_patch::patch(&mut next, &patch).is_err() {
+        if json_patch::patch_unsafe(&mut next, &patch).is_err() {
             return Ok(None);
         }
         Ok(Some(next))

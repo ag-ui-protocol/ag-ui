@@ -36,6 +36,7 @@ pub(crate) fn input(mut value: Value, warnings: &mut Vec<String>) -> Result<Valu
     // An older client's request may carry the registered nulls too; nothing
     // ahead of this function reads them as omitted.
     omit_input_nulls(&mut value, &mut Noticed::default(), warnings);
+    crate::message::upgrade_wire_messages(value.get_mut("messages"), "/messages", warnings);
     let shape = schema()
         .pointer("/$defs/RunAgentInput")
         .expect("input schema exists");
@@ -129,6 +130,7 @@ pub(crate) fn omit_event_nulls(
                 omit_nulls(entry, "a RUN_FINISHED usage entry", noticed, warnings);
             }
         }
+        "TOOL_CALL_RESULT" => omit_content_nulls(event, noticed, warnings),
         "MESSAGES_SNAPSHOT" => {
             for message in event
                 .get_mut("messages")
@@ -136,7 +138,7 @@ pub(crate) fn omit_event_nulls(
                 .into_iter()
                 .flatten()
             {
-                omit_message_nulls(message, noticed, warnings);
+                omit_content_nulls(message, noticed, warnings);
             }
         }
         _ => {}
@@ -163,12 +165,12 @@ fn omit_input_nulls(input: &mut Value, noticed: &mut Noticed, warnings: &mut Vec
         .into_iter()
         .flatten()
     {
-        omit_message_nulls(message, noticed, warnings);
+        omit_content_nulls(message, noticed, warnings);
     }
 }
 
-fn omit_message_nulls(message: &mut Value, noticed: &mut Noticed, warnings: &mut Vec<String>) {
-    for part in message
+fn omit_content_nulls(carrier: &mut Value, noticed: &mut Noticed, warnings: &mut Vec<String>) {
+    for part in carrier
         .get_mut("content")
         .and_then(Value::as_array_mut)
         .into_iter()

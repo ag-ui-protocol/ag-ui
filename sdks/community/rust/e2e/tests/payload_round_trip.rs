@@ -119,8 +119,16 @@ async fn the_request_the_client_sent_is_the_request_the_agent_received() {
     let url = serve_endpoint(AgentEndpoint::new(Quiet).echo_input(true)).await;
     let client = RemoteAgent::new(transport(&url));
 
-    let sent = request();
-    let mut events = client.run_events(sent.clone());
+    let input = request();
+    let mut events = client.run_events(input.clone());
+    // Activity belongs to the local transcript. Every other field goes to the agent.
+    let mut sent = input;
+    assert!(
+        sent.messages
+            .iter()
+            .any(|m| matches!(m, Message::Activity(_)))
+    );
+    sent.messages.retain(|m| !matches!(m, Message::Activity(_)));
     let first = events
         .next()
         .await

@@ -27,8 +27,8 @@ Use a local dependency while reviewing this branch:
 ag-ui = { path = "path/to/ag-ui/sdks/community/rust/crates/ag-ui", features = ["http"] }
 ```
 
-The standalone release uses the same `ag-ui` name and SDK version. The protocol
-declaration sent on requests and `RUN_STARTED` is `1.0`.
+For the released SDK, use `ag-ui = { version = "1.0.0", features = ["http"] }`.
+Requests and `RUN_STARTED` declare wire version `1.0`. [crates.io package](https://crates.io/crates/ag-ui/1.0.0)
 
 ### Client
 

@@ -322,3 +322,91 @@ async fn into_events_hands_the_warnings_to_the_caller() {
     assert!(matches!(&events[..], [Ok(Event::RunStarted(_))]));
     assert_eq!(warnings, ["unrecognised property at /extra"]);
 }
+
+#[tokio::test]
+async fn a_boundary_error_releases_its_source_before_the_error_is_delivered() {
+    use std::sync::Arc;
+    let live = Arc::new(());
+    let typed = Arc::clone(&live);
+    let events = TransportStream::typed(
+        stream::iter([Err(Error::Request("stop".into()))])
+            .chain(stream::pending())
+            .inspect(move |_| {
+                let _ = &typed;
+            }),
+    );
+    let mut events = Box::pin(events.into_events(|_| {}));
+    assert!(events.next().await.unwrap().is_err());
+    assert_eq!(Arc::strong_count(&live), 1);
+    assert!(events.next().await.is_none());
+
+    let raw = Arc::clone(&live);
+    let events = TransportStream::json(
+        stream::iter([Ok(json!({"type":"TOOL_CALL_RESULT", "toolCallId": false}))])
+            .chain(stream::pending())
+            .inspect(move |_| {
+                let _ = &raw;
+            }),
+    );
+    let mut events = Box::pin(events.into_events(|_| {}));
+    assert!(events.next().await.unwrap().is_err());
+    assert_eq!(Arc::strong_count(&live), 1);
+    assert!(events.next().await.is_none());
+}
+
+#[tokio::test]
+async fn matching_a_script_to_a_request_also_rebinds_its_input_echo() {
+    for (echo_thread, echo_run, expected_thread, expected_run) in [
+        ("old-thread", "old-run", "new-thread", "new-run"),
+        ("old-thread", "different-run", "old-thread", "different-run"),
+        ("different-thread", "old-run", "different-thread", "old-run"),
+    ] {
+        let mut start = Event::run_started("old-thread", "old-run");
+        let Event::RunStarted(ref mut started) = start else {
+            unreachable!()
+        };
+        started.input = Some(Box::new(
+            RunParams::new(echo_thread, echo_run)
+                .user("m", "recorded history")
+                .into_input(),
+        ));
+        let script =
+            ReplayTransport::new([start, Event::run_finished_success("old-thread", "old-run")])
+                .matching_requests();
+        let events = RemoteAgent::new(script)
+            .run_events(RunParams::new("new-thread", "new-run"))
+            .collect::<Vec<_>>()
+            .await;
+        let Event::RunStarted(started) = events[0].as_ref().unwrap() else {
+            panic!("expected RUN_STARTED")
+        };
+        let input = started.input.as_ref().unwrap();
+        assert_eq!(started.thread_id.as_str(), "new-thread");
+        assert_eq!(started.run_id.as_str(), "new-run");
+        assert_eq!(input.thread_id.as_str(), expected_thread);
+        assert_eq!(input.run_id.as_str(), expected_run);
+        assert_eq!(
+            input.messages,
+            [ag_ui::Message::user("m", "recorded history")]
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_stateless_client_sends_reasoning_but_strips_activity_from_the_request() {
+    let history: Vec<ag_ui::Message> = serde_json::from_value(json!([
+        {"role":"user","id":"u","content":"hello"},
+        {"role":"activity","id":"activity","activityType":"search","content":{"shown":true}},
+        {"role":"reasoning","id":"thought","content":"checking"}
+    ]))
+    .unwrap();
+    let transport = ReplayTransport::new([]);
+    let _ = RemoteAgent::new(transport.clone())
+        .run_events(RunParams::new("t", "r").messages(history.clone()))
+        .collect::<Vec<_>>()
+        .await;
+    assert_eq!(
+        transport.last_request().unwrap().messages,
+        [history[0].clone(), history[2].clone()]
+    );
+}

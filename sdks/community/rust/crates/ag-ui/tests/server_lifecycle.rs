@@ -278,27 +278,27 @@ fn usage(model: &str, input_tokens: u64, output_tokens: u64) -> ag_ui::TokenUsag
     }
 }
 
+struct Reports;
+
+impl Agent for Reports {
+    type State = ();
+
+    async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+        ctx.add_usage(usage("small", 10, 2));
+        ctx.add_usage(usage("large", 100, 20));
+        ctx.add_usage(usage("small", 5, 1));
+        // Labels without counts report nothing.
+        ctx.add_usage(ag_ui::TokenUsage {
+            model: Some("idle".to_owned()),
+            ..Default::default()
+        });
+        ctx.set_result(serde_json::json!({"answer": 42}));
+        Ok(RunOutcome::Success)
+    }
+}
+
 #[tokio::test]
 async fn the_result_and_usage_an_agent_reports_ride_on_run_finished() {
-    struct Reports;
-
-    impl Agent for Reports {
-        type State = ();
-
-        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
-            ctx.add_usage(usage("small", 10, 2));
-            ctx.add_usage(usage("large", 100, 20));
-            ctx.add_usage(usage("small", 5, 1));
-            // Labels without counts report nothing.
-            ctx.add_usage(ag_ui::TokenUsage {
-                model: Some("idle".to_owned()),
-                ..Default::default()
-            });
-            ctx.set_result(serde_json::json!({"answer": 42}));
-            Ok(RunOutcome::Success)
-        }
-    }
-
     let events = collect(Reports, input()).await;
     let Some(Event::RunFinished(finished)) = events.last() else {
         panic!("{events:?}");
@@ -374,5 +374,152 @@ async fn a_tool_call_can_name_the_message_that_requested_it() {
     assert_eq!(
         events.last().map(Event::event_type),
         Some(EventType::RunFinished)
+    );
+}
+
+#[tokio::test]
+async fn a_filtered_terminal_still_closes_the_wire_stream_once() {
+    use ag_ui::server::{Runner, StreamTransformer};
+
+    struct FilterTerminal {
+        replace: bool,
+    }
+    impl StreamTransformer for FilterTerminal {
+        fn transform(&mut self, event: Event) -> Vec<Event> {
+            match event {
+                Event::RunFinished(_) if self.replace => vec![Event::custom("closing", true)],
+                Event::RunFinished(_) | Event::RunError(_) => vec![],
+                _ => vec![event],
+            }
+        }
+    }
+    for replace in [false, true] {
+        let events: Vec<Event> = Runner::new(Reports)
+            .transformer(FilterTerminal { replace })
+            .run(input())
+            .collect()
+            .await;
+        assert_eq!(events.len(), if replace { 3 } else { 2 }, "{events:?}");
+        assert!(matches!(events.first(), Some(Event::RunStarted(_))));
+        if replace {
+            assert!(matches!(&events[1], Event::Custom(_)));
+        }
+        assert!(
+            matches!(events.last(), Some(Event::RunError(error))
+            if error.usage.is_none() && error.code.as_deref() == Some("PROTOCOL_VIOLATION")),
+            "{events:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn ids_from_history_are_reserved_even_without_an_input_echo() {
+    use ag_ui::server::Runner;
+    use ag_ui::{AssistantMessage, Message, ToolCall};
+
+    struct Mint;
+    impl Agent for Mint {
+        type State = ();
+        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+            assert_eq!(ctx.new_message_id().as_str(), "run-1-msg-5");
+            assert_eq!(ctx.new_tool_call_id().as_str(), "run-1-call-7");
+            assert_eq!(ctx.new_subagent_run_id().as_str(), "run-1-sub-3");
+            Ok(RunOutcome::Success)
+        }
+    }
+    let mut request = input();
+    request.messages = vec![
+        Message::Assistant(AssistantMessage {
+            id: "run-1-msg-4".into(),
+            tool_calls: Some(vec![ToolCall::new("run-1-call-5", "old", "{}")]),
+            subagent_run_id: Some("run-1-sub-2".into()),
+            ..Default::default()
+        }),
+        Message::tool("archived-result", "run-1-call-6", "ok"),
+    ];
+    let (mut ctx, _events) = RunContext::new(request.clone()).unwrap();
+    Mint.run(&mut ctx).await.unwrap();
+    for echo in [false, true] {
+        let events: Vec<Event> = Runner::new(Mint)
+            .echo_input(echo)
+            .run(request.clone())
+            .collect()
+            .await;
+        assert!(matches!(events.last(), Some(Event::RunFinished(_))));
+    }
+
+    let sent = [Event::run_started("thread-1", "run-1")];
+    let (driver, events) = Runner::new(Mint).continue_run(request, &sent).unwrap();
+    driver.await;
+    assert!(matches!(
+        events.collect::<Vec<_>>().await.as_slice(),
+        [Event::RunFinished(_)]
+    ));
+}
+
+#[tokio::test]
+async fn generated_ids_skip_explicit_ids_from_the_agent_and_transformers() {
+    use ag_ui::TextMessageRole;
+    use ag_ui::server::{Runner, StreamTransformer};
+
+    struct Rename;
+    impl StreamTransformer for Rename {
+        fn transform(&mut self, mut event: Event) -> Vec<Event> {
+            match &mut event {
+                Event::TextMessageStart(e) => e.message_id = "run-1-msg-7".into(),
+                Event::TextMessageEnd(e) => e.message_id = "run-1-msg-7".into(),
+                _ => {}
+            }
+            vec![event]
+        }
+    }
+    struct Names;
+    impl Agent for Names {
+        type State = ();
+        async fn run(&self, ctx: &mut RunContext<()>) -> Result<RunOutcome> {
+            ctx.message_with_id("run-1-msg-4", TextMessageRole::Assistant)?
+                .end()?;
+            assert_eq!(ctx.new_message_id().as_str(), "run-1-msg-8");
+            ctx.tool_call_with_id("run-1-call-3", "search")?.end()?;
+            assert_eq!(ctx.new_tool_call_id().as_str(), "run-1-call-4");
+            ctx.subagent_with(ag_ui::SubagentStartedEvent::new("run-1-sub-5", "worker"))?
+                .finish()?;
+            assert_eq!(ctx.new_subagent_run_id().as_str(), "run-1-sub-6");
+            Ok(RunOutcome::Success)
+        }
+    }
+    let events: Vec<_> = Runner::new(Names)
+        .transformer(Rename)
+        .run(input())
+        .collect()
+        .await;
+    assert!(matches!(events.last(), Some(Event::RunFinished(_))));
+}
+
+#[tokio::test]
+async fn a_transformer_cannot_publish_an_invalid_terminal_outcome() {
+    use ag_ui::server::{Runner, StreamTransformer};
+
+    struct InvalidTerminal;
+    impl StreamTransformer for InvalidTerminal {
+        fn transform(&mut self, event: Event) -> Vec<Event> {
+            match event {
+                Event::RunFinished(_) => {
+                    vec![Event::run_finished_interrupt("thread-1", "run-1", vec![])]
+                }
+                _ => vec![event],
+            }
+        }
+    }
+
+    let events: Vec<_> = Runner::new(Idle)
+        .transformer(InvalidTerminal)
+        .run(input())
+        .collect()
+        .await;
+    assert!(
+        matches!(events.as_slice(), [Event::RunStarted(_), Event::RunError(error)]
+        if error.code.as_deref() == Some("PROTOCOL_VIOLATION") && error.message.contains("interrupt")),
+        "{events:?}"
     );
 }

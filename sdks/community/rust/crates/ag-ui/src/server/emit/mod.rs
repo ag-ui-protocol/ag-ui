@@ -157,7 +157,7 @@ mod tool;
 use std::num::NonZeroUsize;
 
 use crate::{
-    Event, Message, MessageId, RunErrorEvent, StepName, SubagentErrorEvent, SubagentRunId,
+    Event, Message, MessageId, RunErrorEvent, RunId, StepName, SubagentErrorEvent, SubagentRunId,
     ToolCallId,
 };
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -165,6 +165,7 @@ use futures_core::Stream;
 use futures_util::StreamExt as _;
 
 use crate::server::cancel::CancellationToken;
+use crate::server::context::Minted;
 use crate::server::error::{Error, Result, Rule, VerificationError};
 use crate::server::state::StateManager;
 use crate::server::transform::{StreamTransformer, TransformerChain};
@@ -183,6 +184,7 @@ pub use tool::ToolCallHandle;
 /// [`RunContext`](crate::server::RunContext) or a handle, which is what keeps the
 /// ordering guarantees intact.
 pub(crate) struct EventSink {
+    pub(super) minted: Minted,
     tx: UnboundedSender<Event>,
     chain: TransformerChain,
     verifier: Verifier,
@@ -219,11 +221,13 @@ impl std::fmt::Debug for EventSink {
 
 impl EventSink {
     pub(crate) fn new(
+        run_id: RunId,
         tx: UnboundedSender<Event>,
         chain: TransformerChain,
         cancel: CancellationToken,
     ) -> Self {
         Self {
+            minted: Minted::new(run_id),
             tx,
             chain,
             verifier: Verifier::new(),
@@ -250,6 +254,7 @@ impl EventSink {
     /// resumed run answering a call the interrupted run opened would read as
     /// a result for a call that never started.
     pub(crate) fn seed(&mut self, history: &[Message]) {
+        self.minted.note_history(history);
         self.verifier.seed(history);
         StreamTransformer::seed(&mut self.chain, history);
     }
@@ -285,6 +290,7 @@ impl EventSink {
     pub(crate) fn replay(&mut self, event: &Event) -> Result<()> {
         let next_state = self.state_after(event)?;
         self.verifier.observe(event)?;
+        self.minted.note(event);
         self.terminated |= matches!(event, Event::RunFinished(_) | Event::RunError(_));
         if let Some(state) = next_state {
             self.state_manager.set_published(state);
@@ -368,14 +374,6 @@ impl EventSink {
                     .get(),
             });
         }
-        if matches!(event, Event::RunFinished(_)) {
-            if let Some(open) = self.unclosed.first() {
-                let detail = open.still_open();
-                return Err(
-                    VerificationError::new(event.event_type(), Rule::OpenAtFinish, detail).into(),
-                );
-            }
-        }
         let lifecycle = match &event {
             Event::SubagentStarted(started) => Some((started.subagent_run_id.clone(), true)),
             Event::SubagentFinished(finished) => Some((finished.subagent_run_id.clone(), false)),
@@ -394,6 +392,8 @@ impl EventSink {
         if self.chain.is_empty() {
             self.send(event)?;
         } else {
+            // A caller-selected ID stays reserved even when a transformer renames it.
+            self.minted.note(&event);
             for event in self.chain.transform(event) {
                 self.send(event)?;
             }
@@ -445,7 +445,9 @@ impl EventSink {
         std::mem::replace(&mut self.attribution, attribution)
     }
 
-    fn send(&mut self, event: Event) -> Result<()> {
+    /// Queues a post-transformation event. The driver also uses this for its
+    /// last-resort error if a transformer suppressed the terminal event.
+    pub(super) fn send(&mut self, event: Event) -> Result<()> {
         if self.tx.is_closed() {
             return Err(Error::Disconnected);
         }
@@ -459,6 +461,30 @@ impl EventSink {
                 "the run already ended",
             )
             .into());
+        }
+        if let Event::RunFinished(finished) = &event {
+            if let Some(open) = self.unclosed.first() {
+                return Err(VerificationError::new(
+                    event.event_type(),
+                    Rule::OpenAtFinish,
+                    open.still_open(),
+                )
+                .into());
+            }
+            // The ordering verifier also checks outcomes, but a hosting
+            // transport must emit a valid terminal with that feature off.
+            if let Some(reason) = finished
+                .outcome
+                .as_ref()
+                .and_then(crate::RunOutcome::interrupt_error)
+            {
+                return Err(VerificationError::new(
+                    event.event_type(),
+                    Rule::InvalidOutcome,
+                    reason,
+                )
+                .into());
+            }
         }
         if event.event_type().as_str().starts_with("THINKING_") {
             return Err(crate::Error::Protocol(
@@ -485,6 +511,7 @@ impl EventSink {
         }
         let next_state = self.state_after(&event)?;
         self.verifier.observe(&event)?;
+        self.minted.note(&event);
         self.terminated |= matches!(event, Event::RunFinished(_) | Event::RunError(_));
         // What an earlier driver left open is closed by whoever sends its
         // end: the agent, naming its id, or the driver for a cancelled run.

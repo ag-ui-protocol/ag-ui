@@ -12,9 +12,9 @@ The candidate includes protocol types, an agent server API, HTTP/SSE client,
 conversation state, interrupt/resume handling and Axum integration. Applications
 enable `server`, `client`, `http` or `axum` features as needed. JSON/SSE is supported;
 protobuf encoding is not implemented. A2UI is outside this proposal.
-The Rust workspace uses SDK version `1.0.0` and declares protocol version
-`1.0` on the wire. The standalone release and this proposal share their runtime
-source.
+This proposal includes the runtime published in the standalone
+[ag-ui 1.0.0 crate](https://crates.io/crates/ag-ui/1.0.0). It declares wire
+protocol version `1.0`.
 
 ## Review locally
 

@@ -25,7 +25,7 @@ fn history() -> Vec<Message> {
             {"type": "binary", "mimeType": "video/mp4", "id": "upload-7"},
             // A legacy mirror of the modern part next to it is dropped ...
             {"type": "image", "source":
-                {"type": "url", "value": "https://example.com/b.png"}},
+                {"type": "url", "value": "https://example.com/b.png", "mimeType": "image/png"}},
             {"type": "binary", "mimeType": "image/png", "url": "https://example.com/b.png"},
             // ... unless it carries a file name the modern part does not keep.
             {"type": "binary", "mimeType": "image/png", "url": "https://example.com/b.png",
@@ -58,7 +58,7 @@ fn assert_upgraded(sent: &[Message]) {
             "source": {"type": "data", "value": "JVBERg==", "mimeType": "application/pdf"}}),
     ];
     expected.extend([
-        json!({"type": "image", "source": {"type": "url", "value": "https://example.com/b.png"}}),
+        json!({"type": "image", "source": {"type": "url", "value": "https://example.com/b.png", "mimeType": "image/png"}}),
         json!({"type": "image",
             "source": {"type": "url", "value": "https://example.com/b.png", "mimeType": "image/png"},
             "metadata": {"filename": "b.png"}}),
@@ -187,4 +187,42 @@ async fn explicit_conflicting_mime_types_preserve_both_url_parts() {
             url("image", "a", "IMAGE/PNG")
         ])
     );
+}
+
+#[tokio::test]
+async fn a_modern_url_without_mime_does_not_shadow_a_typed_legacy_url() {
+    let transport = ReplayTransport::new(success());
+    let agent = RemoteAgent::new(transport.clone());
+    let modern = json!({"type":"image","source":{"type":"url","value":"same"}});
+    let user: Message = serde_json::from_value(json!({
+        "role":"user","id":"u","content":[
+            modern, {"type":"binary","url":"same","mimeType":"image/webp"}
+        ]
+    }))
+    .unwrap();
+    agent
+        .run_events(RunParams::new("t", "r").message(user))
+        .collect::<Vec<_>>()
+        .await;
+    let request = serde_json::to_value(transport.last_request().unwrap()).unwrap();
+    assert_eq!(
+        request["messages"][0]["content"],
+        json!([modern, url("image", "same", "image/webp")])
+    );
+}
+
+#[tokio::test]
+async fn inline_mirrors_match_mime_case_without_overwriting_modern_metadata() {
+    let transport = ReplayTransport::new(success());
+    let agent = RemoteAgent::new(transport.clone());
+    let modern = json!({"type":"image","source":{"type":"data","value":"AQ==","mimeType":"image/png"},"metadata":{"caption":"kept"}});
+    let user: Message = serde_json::from_value(json!({
+        "role":"user","id":"u","content":[modern,{"type":"binary","data":"AQ==","mimeType":"IMAGE/PNG"}]
+    })).unwrap();
+    agent
+        .run_events(RunParams::new("t", "r").message(user))
+        .collect::<Vec<_>>()
+        .await;
+    let request = serde_json::to_value(transport.last_request().unwrap()).unwrap();
+    assert_eq!(request["messages"][0]["content"], json!([modern]));
 }

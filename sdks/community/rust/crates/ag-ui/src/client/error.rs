@@ -75,9 +75,8 @@ pub enum Error {
 
     /// An RFC 6902 patch could not be applied.
     ///
-    /// The target document is left exactly as it was: [`json_patch::patch`]
-    /// rolls back the operations it had already applied, so a rejected patch
-    /// never leaves half-mutated state behind.
+    /// The client applies patches to a copy and commits the new document only
+    /// after every operation succeeds.
     #[error("{target} patch failed: {message}")]
     Patch {
         /// What the patch targeted — `"state"`, or `"activity <message id>"`.

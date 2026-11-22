@@ -454,6 +454,9 @@ pub struct Applier {
     by_id: HashMap<MessageId, usize>,
     /// Tool call id to the index of the assistant message that owns it.
     tool_calls: HashMap<ToolCallId, usize>,
+    /// Carriers allocated for parentless calls in this run. A chunk stream
+    /// can reopen after another lane interrupts it and must keep its carrier.
+    synthetic_carriers: HashMap<ToolCallId, MessageId>,
     /// Text messages open for content, in the order they opened — several at
     /// once under concurrent subagents. What a run that stops reports as
     /// aborted. An id stays here when a `MESSAGES_SNAPSHOT` removes its
@@ -493,6 +496,7 @@ impl Applier {
             messages: Vec::new(),
             by_id: HashMap::new(),
             tool_calls: HashMap::new(),
+            synthetic_carriers: HashMap::new(),
             open_text: Open::default(),
             open_reasoning: Open::default(),
             claimed: HashMap::new(),
@@ -531,6 +535,12 @@ impl Applier {
         self.messages.iter().filter(|message| {
             self.open_text.contains(message.id()) || self.open_reasoning.contains(message.id())
         })
+    }
+
+    pub(crate) fn tool_call_holder(&self, call: &ToolCallId) -> Option<&MessageId> {
+        self.messages
+            .get(*self.tool_calls.get(call)?)
+            .map(Message::id)
     }
 
     /// The message with this id, if the applier has seen one.
@@ -742,7 +752,7 @@ impl Applier {
                 Ok(Changed::State)
             }
             Event::StateDelta(e) => {
-                apply_patch(&mut self.state, &e.delta, "state")?;
+                self.state = patched(self.state.clone(), &e.delta, "state")?;
                 Ok(Changed::State)
             }
             Event::MessagesSnapshot(e) => {
@@ -788,6 +798,11 @@ impl Applier {
             ))),
 
             Event::RunStarted(e) => {
+                if self.run_id.as_ref() != Some(&e.run_id)
+                    || self.thread_id.as_ref() != Some(&e.thread_id)
+                {
+                    self.synthetic_carriers.clear();
+                }
                 self.thread_id = Some(e.thread_id.clone());
                 self.run_id = Some(e.run_id.clone());
                 self.interrupts.clear();
@@ -899,12 +914,31 @@ impl Applier {
     fn replace_messages(&mut self, messages: Vec<Message>) {
         self.by_id.clear();
         self.tool_calls.clear();
+        self.synthetic_carriers.clear();
         for (index, message) in messages.iter().enumerate() {
             self.by_id.insert(message.id().clone(), index);
             if let Message::Assistant(assistant) = message {
                 for call in assistant.tool_calls.iter().flatten() {
                     self.tool_calls.insert(call.id.clone(), index);
+                    // A join prelude can send a partial carrier as a snapshot
+                    // before reopening its call. The call itself must be on
+                    // that carrier: its message ID alone proves nothing.
+                    let base = format!("{}-message", call.id);
+                    let id = assistant.id.as_str();
+                    let synthetic = id == base
+                        || id
+                            .strip_prefix(&base)
+                            .and_then(|tail| tail.strip_prefix('-'))
+                            .is_some_and(|suffix| {
+                                !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+                            });
+                    if synthetic {
+                        self.synthetic_carriers
+                            .insert(call.id.clone(), assistant.id.clone());
+                    }
                 }
+            } else if let Message::Tool(result) = message {
+                self.synthetic_carriers.remove(&result.tool_call_id);
             }
         }
         self.messages = messages;
@@ -1131,7 +1165,28 @@ impl Applier {
                     }
                 };
                 let owner = owner.or_else(inherited);
-                (MessageId::new(format!("{tool_call_id}-message")), owner)
+                let resumed = self.synthetic_carriers.get(&tool_call_id).filter(|id| {
+                    self.tool_call_holder(&tool_call_id) == Some(*id)
+                        && matches!(self.message(id), Some(Message::Assistant(assistant))
+                            if (owner.is_none() || owner == assistant.subagent_run_id)
+                            && assistant.tool_calls.iter().flatten().any(|call| call.id == tool_call_id && call.function.name == name))
+                });
+                let id = match resumed {
+                    Some(id) => id.clone(),
+                    _ => {
+                        let base = format!("{tool_call_id}-message");
+                        let mut id = MessageId::new(&base);
+                        let mut suffix = 1usize;
+                        while self.by_id.contains_key(&id) {
+                            id = MessageId::new(format!("{base}-{suffix}"));
+                            suffix += 1;
+                        }
+                        self.synthetic_carriers
+                            .insert(tool_call_id.clone(), id.clone());
+                        id
+                    }
+                };
+                (id, owner)
             }
         };
         let index = match self.by_id.get(&carrier) {
@@ -1142,9 +1197,6 @@ impl Applier {
                 ..Default::default()
             })),
         };
-        // Even the message named after the call may exist and not be an
-        // assistant message, in which case there is nowhere to hang the call
-        // and nothing changes.
         let Some(Message::Assistant(assistant)) = self.messages.get_mut(index) else {
             return Changed::Nothing;
         };
@@ -1212,6 +1264,7 @@ impl Applier {
         content: ToolContent,
         owner: Option<SubagentRunId>,
     ) -> Changed {
+        self.synthetic_carriers.remove(&tool_call_id);
         let index = match self.by_id.get(&message_id).copied() {
             Some(index) => {
                 if let Some(Message::Tool(tool)) = self.messages.get_mut(index) {
@@ -1302,8 +1355,7 @@ impl Applier {
         // whole-document operation — `{"op":"replace","path":"","value":7}`
         // — has nowhere to land; taking the content out first would leave
         // the activity holding nothing at all.
-        let mut content = Value::Object(activity.content.clone());
-        apply_patch(&mut content, &event.patch, &what)?;
+        let content = patched(Value::Object(activity.content.clone()), &event.patch, &what)?;
         let Value::Object(object) = content else {
             return Err(Error::Patch {
                 target: what,
@@ -1677,8 +1729,9 @@ impl Applier {
     }
 }
 
-/// Applies an RFC 6902 patch, leaving `target` untouched when it fails.
-fn apply_patch(target: &mut Value, operations: &[PatchOperation], what: &str) -> Result<()> {
+/// Applies a patch to an owned copy. A failed move may already have removed
+/// its source; the caller only receives a document after every operation succeeds.
+fn patched(mut candidate: Value, operations: &[PatchOperation], what: &str) -> Result<Value> {
     // The protocol's operation type and the patch engine's are both the RFC
     // wire format, so JSON is the conversion. Deserializing is also where a
     // malformed JSON Pointer is caught, before anything is mutated.
@@ -1688,10 +1741,11 @@ fn apply_patch(target: &mut Value, operations: &[PatchOperation], what: &str) ->
             target: what.to_owned(),
             message: error.to_string(),
         })?;
-    json_patch::patch(target, &patch).map_err(|error| Error::Patch {
+    json_patch::patch_unsafe(&mut candidate, &patch).map_err(|error| Error::Patch {
         target: what.to_owned(),
         message: error.to_string(),
-    })
+    })?;
+    Ok(candidate)
 }
 
 /// Names a JSON value's type, for an error message.

@@ -1035,3 +1035,122 @@ async fn an_interrupts_decision_goes_with_the_call_it_decided() {
     );
     assert!(decided.unanswered_tool_calls().is_empty());
 }
+
+#[test]
+fn an_answer_for_another_holder_does_not_supersede_a_stand_in() {
+    let mut main = holding(vec![
+        calling("first", &["call_0"]),
+        Message::tool("answered", "call_0", "first result"),
+    ]);
+    let mut side = holding(vec![calling("second", &["call_0"])]);
+    side.abandon_tool_call(&"call_0".into(), "second call abandoned")
+        .unwrap();
+    let stand_in = side.messages()[1].clone();
+
+    let merged = main.merge_messages_from(&side).unwrap();
+    assert!(merged.superseded.is_empty());
+    assert_eq!(main.messages().last(), Some(&stand_in));
+    assert!(main.unanswered_tool_calls().is_empty());
+}
+
+#[test]
+fn a_merge_must_keep_the_holder_of_every_incoming_result() {
+    let mut main = holding(vec![Message::assistant("a", "still writing")]);
+    let side = holding(vec![
+        calling("a", &["c"]),
+        Message::tool("t", "c", "answer"),
+    ]);
+    let before = main.snapshot();
+    assert!(matches!(
+        main.merge_messages_from(&side),
+        Err(Error::Merge(_))
+    ));
+    assert_eq!(main.snapshot(), before);
+}
+
+#[test]
+fn a_merge_cannot_leave_a_new_tool_call_without_its_answer() {
+    let answer = Message::tool("answer", "c", "done");
+    let other = holding(vec![calling("new-holder", &["c"]), answer.clone()]);
+    for history in [
+        vec![Message::user(
+            "answer",
+            "different message with the same ID",
+        )],
+        vec![calling("old-holder", &["c"]), answer],
+    ] {
+        let mut main = holding(history);
+        let before = main.snapshot();
+        let why = refused(main.merge_messages_from(&other));
+        assert!(why.contains("unanswered tool calls c"), "{why}");
+        assert_eq!(main.snapshot(), before);
+    }
+}
+
+#[test]
+fn conflicting_result_ids_can_merge_when_the_added_call_has_another_answer() {
+    let other = holding(vec![
+        calling("holder", &["c"]),
+        Message::tool("collision", "c", "first answer"),
+        Message::tool("another", "c", "updated answer"),
+    ]);
+    let mut main = holding(vec![Message::user("collision", "keep me")]);
+    let report = main.merge_messages_from(&other).unwrap();
+    assert_eq!(report.differing, ["collision"]);
+    assert!(main.unanswered_tool_calls().is_empty());
+}
+
+#[tokio::test]
+async fn a_confirmed_decision_covers_an_incoming_call_when_its_result_id_collides() {
+    let mut side = after(
+        [asks_approval("c", "i"), reply("approved", "Done.")],
+        "Run the tool",
+    )
+    .await;
+    let interrupt = side.interrupts()[0].clone();
+    side.resume(&interrupt, json!({"approved": true}))
+        .unwrap()
+        .collect_report()
+        .await;
+    side.push_message(Message::tool("shared-id", "c", "done"))
+        .unwrap();
+
+    let mut main = holding(vec![Message::user("shared-id", "keep me")]);
+    let report = main.merge_messages_from(&side).unwrap();
+    assert_eq!(report.differing, ["shared-id"]);
+    assert_eq!(main.snapshot().decided_interrupt_tool_call_ids, ["c"]);
+    assert!(main.unanswered_tool_calls().is_empty());
+}
+
+#[tokio::test]
+async fn a_restated_stand_in_keeps_only_the_provenance_its_contents_support() {
+    let transport = script([vec![]]);
+    let mut draft = Thread::<_>::builder(transport, THREAD)
+        .messages(vec![calling("a", &["c"])])
+        .build()
+        .unwrap();
+    draft.abandon_tool_call(&"c".into(), "no result").unwrap();
+    let stand_in = draft.messages()[1].clone();
+    for (updated, still_abandoned) in [
+        (stand_in.clone(), true),
+        (
+            Message::tool(stand_in.id().clone(), "c", "no result"),
+            false,
+        ),
+    ] {
+        let transport = script([vec![
+            Event::run_started(THREAD, "r"),
+            Event::messages_snapshot(vec![calling("a", &["c"]), updated]),
+            Event::run_finished_success(THREAD, "r"),
+        ]]);
+        let mut thread = Thread::<_>::restore(transport, draft.snapshot()).unwrap();
+        assert!(matches!(
+            thread.run().unwrap().collect_report().await.end,
+            RunEnd::Success { .. }
+        ));
+        assert_eq!(
+            thread.snapshot().abandoned.contains(stand_in.id()),
+            still_abandoned
+        );
+    }
+}

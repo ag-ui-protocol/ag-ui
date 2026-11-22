@@ -2,12 +2,11 @@
 
 The feature-based `ag-ui` SDK originates in
 [KimSoungRyoul/ag-ui-rust](https://github.com/KimSoungRyoul/ag-ui-rust).
-The first import came from v0.4.2. The full runtime and protocol models for
-the 1.0.0 release match standalone commit
-`77061a66aba60e9d387aac77b65dcf2f87f7d03c`. The Git tree for
-`crates/ag-ui/src` is `6b9813f4d4e0ea88571b8d57dcf7718236c9cb82` in both
-workspaces. This update also synchronizes the AG-UI tests and deterministic
-examples, with the checkout-specific adaptations below.
+The first import came from v0.4.2. The runtime in this checkout matches the
+[ag-ui 1.0.0 package on crates.io](https://crates.io/crates/ag-ui/1.0.0).
+The [v1.0.0 tag](https://github.com/KimSoungRyoul/ag-ui-rust/releases/tag/v1.0.0)
+identifies commit `071aeada5add7921f44af58c79e774f1f233a138`. Both workspaces
+have the same `crates/ag-ui/src` tree, `b8c22dad96dd60cc4743c0d564494faf8711bff7`.
 The MIT notice is included in `crates/ag-ui/LICENSE` and `LICENSE-ag-ui`.
 
 Both copies embed the frozen AG-UI 1.0 schema. This checkout reads the official

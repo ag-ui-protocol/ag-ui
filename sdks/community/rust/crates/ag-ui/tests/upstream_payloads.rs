@@ -557,6 +557,31 @@ fn capability_caps_stay_integers_on_the_wire() {
 }
 
 #[test]
+fn producers_only_serialize_integers_that_survive_a_json_round_trip() {
+    const MAX: i64 = (1 << 53) - 1;
+    for timestamp in [-MAX, MAX, -MAX - 1, MAX + 1, i64::MIN] {
+        let event = ag_ui::Event::run_started("t", "r").with_timestamp(timestamp);
+        assert_eq!(
+            serde_json::to_value(event).is_ok(),
+            (-MAX..=MAX).contains(&timestamp)
+        );
+    }
+    for n in [MAX as u64, MAX as u64 + 1, u64::MAX] {
+        let limits = ag_ui::ExecutionCapabilities {
+            max_iterations: Some(n),
+            max_execution_time: Some(n),
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(limits).is_ok(), n == MAX as u64);
+        let usage = ag_ui::TokenUsage {
+            input_tokens: Some(n),
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(usage).is_ok(), n == MAX as u64);
+    }
+}
+
+#[test]
 fn the_whole_capability_snapshot_round_trips() {
     // AgentCapabilitiesSchema, every category populated, in this crate's order.
     let payload = r#"{"identity":{"name":"Weather","type":"langgraph","description":"Forecasts","version":"1.2.0","provider":"acme","documentationUrl":"https://acme.example/docs","metadata":{"tier":"beta"}},"transport":{"streaming":true,"websocket":false,"httpBinary":false,"pushNotifications":false,"resumable":true},"tools":{"supported":true,"items":[{"name":"get_weather","description":"Look it up","parameters":{"type":"object"}}],"parallelCalls":true,"clientProvided":true},"output":{"structuredOutput":true,"supportedMimeTypes":["application/json"]},"state":{"snapshots":true,"deltas":true,"memory":false,"persistentState":true},"multiAgent":{"supported":true,"delegation":true,"handoffs":false,"subagents":[{"name":"geocoder","description":"Resolves place names"}]},"reasoning":{"supported":true,"streaming":true,"encrypted":false},"multimodal":{"input":{"image":true,"audio":false,"video":false,"pdf":true,"file":true},"output":{"image":false,"audio":false}},"execution":{"codeExecution":false,"sandboxed":false,"maxIterations":25,"maxExecutionTime":120000},"humanInTheLoop":{"supported":true,"approvals":true,"interventions":false,"feedback":true,"interrupts":true,"approveWithEdits":true},"custom":{"vendor":"acme"}}"#;

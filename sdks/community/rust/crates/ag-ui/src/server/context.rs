@@ -46,17 +46,17 @@ pub struct RunContext<S> {
     input: RunAgentInput,
     state: RunState<S>,
     sink: EventSink,
-    minted: Minted,
     terminal: Terminal,
 }
 
-/// How many ids of each kind a run's contexts have handed out.
+/// The message, tool-call and subagent IDs reserved in this run.
 ///
 /// An id is the run id and a counter, so a context that continues a run
 /// counts on from where the earlier one stopped. A message id handed out
 /// twice does not start a second message: it re-opens the first.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct Minted {
+    run_id: RunId,
     messages: IdCounter,
     tool_calls: IdCounter,
     subagents: IdCounter,
@@ -73,90 +73,126 @@ pub(crate) struct Minted {
 struct IdCounter {
     /// The last number handed out, or the highest that was noted.
     last: u64,
-    /// Every number that was noted. Empty unless the context continues a
-    /// run: nothing is noted for a run that starts here.
+    /// Consecutive reserved numbers from 1. A run using only generated IDs
+    /// needs no set entries.
+    used_through: u64,
+    /// Other reserved numbers beyond that prefix.
     taken: HashSet<u64>,
 }
 
 impl IdCounter {
-    /// Records a number an id of the run already carries.
     fn note(&mut self, number: u64) {
-        self.taken.insert(number);
+        if number <= self.used_through {
+            return;
+        }
         self.last = self.last.max(number);
+        if number == self.used_through + 1 {
+            self.used_through = number;
+            while let Some(next) = self.used_through.checked_add(1) {
+                if !self.taken.remove(&next) {
+                    break;
+                }
+                self.used_through = next;
+            }
+        } else {
+            self.taken.insert(number);
+        }
     }
 
-    /// The next number: one more than the last, and past every number that
-    /// was noted.
-    ///
-    /// A noted number can be the largest there is. The count then starts
-    /// again from 1 and passes over what was noted, where adding one more
-    /// would overflow, and saturating would hand the same number out twice.
-    /// The noted numbers are fewer than there are numbers, so there is
-    /// always a next one.
-    fn next(&mut self) -> u64 {
-        loop {
-            self.last = self.last.checked_add(1).unwrap_or(1);
-            if !self.taken.contains(&self.last) {
-                return self.last;
-            }
+    fn note_id(&mut self, prefix: &str, kind: &str, id: &str) {
+        if let Some(number) = id
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix(kind))
+            .and_then(|number| number.parse::<u64>().ok())
+        {
+            self.note(number);
         }
+    }
+
+    /// Continue above the highest number in use. A caller may have reserved
+    /// u64::MAX, in which case the first gap above the contiguous prefix is free.
+    fn next(&mut self) -> u64 {
+        let number = self
+            .last
+            .checked_add(1)
+            .unwrap_or_else(|| self.used_through + 1);
+        self.note(number);
+        number
     }
 }
 
 impl Minted {
-    /// Notes the ids `event` introduces, where they have the shape a context
-    /// of the run `run_id` hands out, so that the context counts on past them.
-    pub(crate) fn note(&mut self, run_id: &RunId, event: &Event) {
-        let prefix = id_prefix(run_id);
-        let past = |counter: &mut IdCounter, kind: &str, id: &str| {
-            let number = id
-                .strip_prefix(prefix)
-                .and_then(|rest| rest.strip_prefix(kind))
-                .and_then(|number| number.parse::<u64>().ok());
-            if let Some(number) = number {
-                counter.note(number);
-            }
-        };
-        // Attribution needs no `SUBAGENT_STARTED`, so a subagent id is in
-        // use wherever something is attributed to it.
-        if let Some(id) = event.subagent_run_id() {
-            past(&mut self.subagents, SUBAGENT_ID, id);
+    pub(super) fn new(run_id: RunId) -> Self {
+        Self {
+            run_id,
+            messages: IdCounter::default(),
+            tool_calls: IdCounter::default(),
+            subagents: IdCounter::default(),
         }
-        let mut message = |id: &MessageId| past(&mut self.messages, MESSAGE_ID, id);
-        let mut call = |id: &ToolCallId| past(&mut self.tool_calls, TOOL_CALL_ID, id);
-        let mut subagent = |id: &SubagentRunId| past(&mut self.subagents, SUBAGENT_ID, id);
-        // A restated conversation uses the ids of its messages, of the calls
-        // they carry and of the subagents they are attributed to, whether or
-        // not an event of this run introduced them.
-        let mut replayed = |messages: &[Message]| {
-            for replayed in messages {
-                message(replayed.id());
-                replayed
-                    .subagent_run_id()
-                    .into_iter()
-                    .for_each(&mut subagent);
-                if let Message::Assistant(assistant) = replayed {
-                    let calls = assistant.tool_calls.iter().flatten();
-                    calls.for_each(|carried| call(&carried.id));
-                }
+    }
+
+    pub(super) fn note_history(&mut self, messages: &[Message]) {
+        let prefix = id_prefix(&self.run_id);
+        for message in messages {
+            self.messages.note_id(prefix, MESSAGE_ID, message.id());
+            if let Some(owner) = message.subagent_run_id() {
+                self.subagents.note_id(prefix, SUBAGENT_ID, owner);
             }
-        };
+            match message {
+                Message::Assistant(assistant) => {
+                    for call in assistant.tool_calls.iter().flatten() {
+                        self.tool_calls.note_id(prefix, TOOL_CALL_ID, &call.id);
+                    }
+                }
+                Message::Tool(tool) => {
+                    self.tool_calls
+                        .note_id(prefix, TOOL_CALL_ID, &tool.tool_call_id)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Reserve entity IDs introduced by an event, including the references
+    /// that introduce an implicit tool-call carrier or subagent.
+    pub(super) fn note(&mut self, event: &Event) {
+        let prefix = id_prefix(&self.run_id);
+        let mut message = |id: &MessageId| self.messages.note_id(prefix, MESSAGE_ID, id);
+        let mut call = |id: &ToolCallId| self.tool_calls.note_id(prefix, TOOL_CALL_ID, id);
+        let mut subagent = |id: &SubagentRunId| self.subagents.note_id(prefix, SUBAGENT_ID, id);
+        if let Some(owner) = event.subagent_run_id() {
+            subagent(owner);
+        }
         match event {
             Event::TextMessageStart(e) => message(&e.message_id),
             Event::ReasoningStart(e) => message(&e.message_id),
             Event::ReasoningMessageStart(e) => message(&e.message_id),
             Event::ActivitySnapshot(e) => message(&e.message_id),
-            Event::ToolCallResult(e) => message(&e.message_id),
+            Event::ToolCallResult(e) => {
+                message(&e.message_id);
+                call(&e.tool_call_id);
+            }
             Event::TextMessageChunk(e) => e.message_id.iter().for_each(message),
             Event::ReasoningMessageChunk(e) => e.message_id.iter().for_each(message),
-            Event::MessagesSnapshot(e) => replayed(&e.messages),
+            Event::MessagesSnapshot(e) => self.note_history(&e.messages),
             Event::RunStarted(e) => {
                 if let Some(input) = &e.input {
-                    replayed(&input.messages);
+                    self.note_history(&input.messages);
                 }
             }
-            Event::ToolCallStart(e) => call(&e.tool_call_id),
-            Event::ToolCallChunk(e) => e.tool_call_id.iter().for_each(call),
+            Event::SubagentStarted(e) => {
+                e.parent_subagent_run_id.iter().for_each(subagent);
+                e.parent_tool_call_id.iter().for_each(call);
+                e.parent_message_id.iter().for_each(message);
+            }
+            Event::ToolCallStart(e) => {
+                call(&e.tool_call_id);
+                e.parent_message_id.iter().for_each(message);
+            }
+            Event::ToolCallChunk(e) => {
+                e.tool_call_id.iter().for_each(call);
+                e.parent_message_id.iter().for_each(message);
+            }
             _ => {}
         }
     }
@@ -204,35 +240,29 @@ impl<S: AgentState> RunContext<S> {
     /// isolation. The ordering verifier takes the run as started.
     pub fn new(input: RunAgentInput) -> Result<(Self, EventReceiver)> {
         let (tx, rx) = mpsc::unbounded();
-        let mut sink = EventSink::new(tx, TransformerChain::new(), CancellationToken::new());
+        let mut sink = EventSink::new(
+            input.run_id.clone(),
+            tx,
+            TransformerChain::new(),
+            CancellationToken::new(),
+        );
         // As the driver does, so an agent that answers a call from an earlier
         // run behaves here as it will in a real one.
         sink.seed(&input.messages);
         sink.assume_run_started();
         let state = decode_state(&input.state)?;
-        Ok((
-            Self::from_parts(input, state, sink, Minted::default()),
-            EventReceiver::new(rx),
-        ))
+        Ok((Self::from_parts(input, state, sink), EventReceiver::new(rx)))
     }
 
     /// Assembles a context from an already-decoded state.
     ///
     /// The run driver decodes first so that a state that does not fit `S` is
-    /// reported through the sink it still owns, as a `RUN_ERROR`. `minted`
-    /// is where the run's ids stand: nothing handed out yet, unless this
-    /// context continues a run.
-    pub(crate) fn from_parts(
-        input: RunAgentInput,
-        state: S,
-        sink: EventSink,
-        minted: Minted,
-    ) -> Self {
+    /// reported through the sink it still owns, as a `RUN_ERROR`.
+    pub(crate) fn from_parts(input: RunAgentInput, state: S, sink: EventSink) -> Self {
         Self {
             input,
             state: RunState::new(state),
             sink,
-            minted,
             terminal: Terminal::default(),
         }
     }
@@ -464,19 +494,21 @@ impl<S> RunContext<S> {
 
     /// A fresh message id, unique within the run.
     ///
+    /// The counter skips IDs from the request history, replayed events and
+    /// IDs chosen by the agent or its transformers during this run.
     /// Derived from the run id and a counter rather than a UUID: the protocol
     /// asks for opaque strings, this crate takes no `uuid` dependency, and a
     /// deterministic id makes a recorded stream diffable. Pass your own id to
     /// [`message_with_id`](Self::message_with_id) when you need one.
     pub fn new_message_id(&mut self) -> MessageId {
-        let number = self.minted.messages.next();
+        let number = self.sink.minted.messages.next();
         let prefix = id_prefix(&self.input.run_id);
         MessageId::new(format!("{prefix}{MESSAGE_ID}{number}"))
     }
 
     /// A fresh tool call id, unique within the run.
     pub fn new_tool_call_id(&mut self) -> ToolCallId {
-        let number = self.minted.tool_calls.next();
+        let number = self.sink.minted.tool_calls.next();
         let prefix = id_prefix(&self.input.run_id);
         ToolCallId::new(format!("{prefix}{TOOL_CALL_ID}{number}"))
     }
@@ -488,7 +520,7 @@ impl<S> RunContext<S> {
     /// resuming run that continues a *suspended* subagent should reuse the
     /// suspended id instead — see [`subagent_with`](Self::subagent_with).
     pub fn new_subagent_run_id(&mut self) -> SubagentRunId {
-        let number = self.minted.subagents.next();
+        let number = self.sink.minted.subagents.next();
         let prefix = id_prefix(&self.input.run_id);
         SubagentRunId::new(format!("{prefix}{SUBAGENT_ID}{number}"))
     }
@@ -768,7 +800,7 @@ mod tests {
     #[test]
     fn only_an_id_of_the_shape_a_context_hands_out_is_noted() {
         let run_id = RunId::new("run-7");
-        let mut minted = Minted::default();
+        let mut minted = Minted::new(run_id);
         for id in [
             "run-7-msg-12",
             "run-7-msg-twelve",
@@ -778,7 +810,7 @@ mod tests {
             "msg-40",
         ] {
             let start = Event::text_message_start(id, TextMessageRole::Assistant);
-            minted.note(&run_id, &start);
+            minted.note(&start);
         }
         assert_eq!(minted.messages.next(), 13);
         assert_eq!(minted.tool_calls.next(), 1);

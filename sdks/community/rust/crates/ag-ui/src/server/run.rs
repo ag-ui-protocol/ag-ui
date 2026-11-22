@@ -76,7 +76,7 @@ use futures_util::StreamExt as _;
 
 use crate::server::agent::Agent;
 use crate::server::cancel::CancellationToken;
-use crate::server::context::{Minted, RunContext, Terminal, decode_state};
+use crate::server::context::{RunContext, Terminal, decode_state};
 use crate::server::emit::{EventReceiver, EventSink};
 use crate::server::error::{Error, Result, Rule, VerificationError};
 use crate::server::transform::{StreamTransformer, TransformerChain};
@@ -309,7 +309,7 @@ impl<A: Agent> Runner<A> {
         input: RunAgentInput,
     ) -> (impl Future<Output = ()> + Send, EventReceiver) {
         let echo_input = self.echo_input;
-        let (agent, sink, events) = self.split();
+        let (agent, sink, events) = self.split(&input.run_id);
         let opening = Opening::Start { echo_input };
         (drive(agent, input, sink, opening), events)
     }
@@ -423,19 +423,17 @@ impl<A: Agent> Runner<A> {
         input: RunAgentInput,
         sent: &[Event],
     ) -> Result<(impl Future<Output = ()> + Send + use<A>, EventReceiver)> {
-        let (agent, mut sink, events) = self.split();
+        let (agent, mut sink, events) = self.split(&input.run_id);
         // As the first driver did before its first event: a result in `sent`
         // may answer a call the request's history introduced.
         sink.seed(&input.messages);
         // Then what the first driver sent: this one finishes and answers
         // calls that one opened.
         sink.show_sent(sent);
-        let mut minted = Minted::default();
         let mut started = None;
         let mut ended = None;
         for event in sent {
             sink.replay(event)?;
-            minted.note(&input.run_id, event);
             match event {
                 // The run to continue is the last one `sent` starts: the
                 // ones before it are the stream's history.
@@ -475,12 +473,11 @@ impl<A: Agent> Runner<A> {
                 input.thread_id.as_str(),
             ))));
         }
-        let opening = Opening::Continue { minted };
-        Ok((drive(agent, input, sink, opening), events))
+        Ok((drive(agent, input, sink, Opening::Continue), events))
     }
 
     /// The agent, the write end of its event stream and the read end.
-    fn split(self) -> (A, EventSink, EventReceiver) {
+    fn split(self, run_id: &RunId) -> (A, EventSink, EventReceiver) {
         let Self {
             agent,
             chain,
@@ -489,8 +486,8 @@ impl<A: Agent> Runner<A> {
             event_buffer_capacity,
         } = self;
         let (tx, rx) = mpsc::unbounded();
-        let sink =
-            EventSink::new(tx, chain, cancel).with_event_buffer_capacity(event_buffer_capacity);
+        let sink = EventSink::new(run_id.clone(), tx, chain, cancel)
+            .with_event_buffer_capacity(event_buffer_capacity);
         (agent, sink, EventReceiver::new(rx))
     }
 }
@@ -501,7 +498,7 @@ enum Opening {
     Start { echo_input: bool },
     /// With nothing: an earlier driver began the run, and the sink already
     /// holds what it sent.
-    Continue { minted: Minted },
+    Continue,
 }
 
 /// Opens the run, runs the agent, and emits the terminal event.
@@ -513,33 +510,25 @@ async fn drive<A: Agent>(agent: A, input: RunAgentInput, mut sink: EventSink, op
     let thread_id = input.thread_id.clone();
     let run_id = input.run_id.clone();
 
-    let minted = match opening {
-        Opening::Start { echo_input } => {
-            // The history is the request's whether or not RUN_STARTED echoes
-            // it: a resumed run may answer a tool call the interrupted run
-            // opened.
-            sink.seed(&input.messages);
-            let mut started = RunStartedEvent::new(thread_id.clone(), run_id.clone());
-            started.parent_run_id = input.parent_run_id.clone();
-            if echo_input {
-                started.input = Some(Box::new(input.clone()));
-            }
-            if sink.emit_forced(started.into()).is_err() {
-                // Nobody is listening, or RUN_STARTED was rejected. Either way
-                // there is no run to report on.
-                return;
-            }
-            Minted::default()
+    if let Opening::Start { echo_input } = opening {
+        // Seed history whether or not the client asked for an input echo.
+        sink.seed(&input.messages);
+        let mut started = RunStartedEvent::new(thread_id.clone(), run_id.clone());
+        started.parent_run_id = input.parent_run_id.clone();
+        if echo_input {
+            started.input = Some(Box::new(input.clone()));
         }
-        Opening::Continue { minted } => minted,
-    };
+        if sink.emit_forced(started.into()).is_err() {
+            return;
+        }
+    }
 
     // Decoded before the match so the borrow of `input` ends here: the context
     // takes the input by value on the next line.
     let decoded = decode_state::<A::State>(&input.state);
     let (outcome, terminal) = match decoded {
         Ok(state) => {
-            let mut ctx = RunContext::from_parts(input, state, sink, minted);
+            let mut ctx = RunContext::from_parts(input, state, sink);
             let outcome = agent.run(&mut ctx).await;
             if ctx.is_terminated() {
                 // The agent emitted its own terminal event through `emit`.
@@ -594,15 +583,20 @@ fn terminate(
         Err(error) => error_event(&error, usage.clone()),
     };
 
-    let Err(rejected) = sink.emit_forced(event) else {
-        return;
-    };
-    // `RUN_FINISHED` can be rejected — by the verifier, for a message the agent
-    // left open. A run that ends with no terminal event at all is worse than
-    // one that ends badly, so say what went wrong instead. `RUN_ERROR` is
-    // exempt from the open-at-finish rule for exactly this reason.
-    if !rejected.is_disconnected() && !sink.is_terminated() {
+    if let Err(rejected) = sink.emit_forced(event) {
+        if rejected.is_disconnected() || sink.is_terminated() {
+            return;
+        }
+        // Preserve the transformer's opportunity to redact or reclassify the error.
         let _ = sink.emit_forced(error_event(&rejected, usage));
+    }
+    if !sink.is_terminated() {
+        // A transformer may have dropped or replaced every terminal event.
+        // Only this fixed diagnostic bypasses the chain. Original payloads,
+        // including usage, may have been filtered intentionally.
+        let error = RunErrorEvent::new("the transformer chain did not deliver a terminal event")
+            .with_code("PROTOCOL_VIOLATION");
+        let _ = sink.send(error.into());
     }
 }
 

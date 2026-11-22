@@ -196,8 +196,8 @@ impl<T: Transport> RemoteAgent<T> {
     /// [`TransportStream::into_events`] over [`Transport::run`] hands them to
     /// a callback.
     ///
-    /// A legacy `binary` content part in the request's messages is sent as the
-    /// 1.0 media part it stands for.
+    /// The request omits activity messages, which belong to the local rendering
+    /// history, and upgrades legacy `binary` content to its 1.0 media part.
     pub fn run_events(&self, params: impl Into<RunAgentInput>) -> EventStream {
         let input = match outgoing(params.into(), &mut Vec::new()) {
             Ok(input) => input,
@@ -231,6 +231,9 @@ pub(crate) fn outgoing(input: RunAgentInput, warnings: &mut Vec<String>) -> Resu
 
 /// The wire form used by the HTTP transport, including direct Transport::run calls.
 pub(crate) fn outgoing_json(mut input: RunAgentInput, warnings: &mut Vec<String>) -> Result<Value> {
+    input
+        .messages
+        .retain(|message| !matches!(message, Message::Activity(_)));
     crate::message::upgrade_legacy_content(&mut input.messages);
     crate::protocol::input(serde_json::to_value(input)?, warnings).map_err(Error::Request)
 }

@@ -378,7 +378,12 @@ async fn a_thread_reports_a_failed_patch_and_keeps_the_state_it_had() {
     let transport = ReplayTransport::new([
         Event::run_started("thread-1", "run-1"),
         Event::state_snapshot(json!({ "count": 1 })),
-        Event::state_delta(vec![PatchOperation::replace("/missing/deeply", json!(2))]),
+        // A move removes its source before noticing the missing destination.
+        // Rejecting the entire delta must restore the source and the earlier add.
+        Event::state_delta(vec![
+            PatchOperation::add("/temporary", true),
+            PatchOperation::mv("/count", "/missing/count"),
+        ]),
         Event::state_delta(vec![PatchOperation::replace("/count", json!(2))]),
         Event::run_finished_success("thread-1", "run-1"),
     ])

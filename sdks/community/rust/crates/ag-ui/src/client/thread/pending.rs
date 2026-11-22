@@ -215,13 +215,22 @@ impl<T: Transport, S> Thread<T, S> {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn unanswered_tool_calls(&self) -> Vec<ToolCallId> {
+        self.unanswered_tool_calls_in(self.messages(), &self.decided_interrupt_tool_call_ids)
+    }
+
+    /// The same preflight applies before committing a proposed history merge.
+    pub(super) fn unanswered_tool_calls_in(
+        &self,
+        messages: &[Message],
+        decided: &HashSet<ToolCallId>,
+    ) -> Vec<ToolCallId> {
         // Read the ordered transcript, because an answer preceding a call does
         // not answer that call. A server-side TOOL_CALL_RESULT is already a tool
         // message here, so it clears the same debt as a frontend response.
         let mut pending = Vec::new();
         let mut seen = HashSet::new();
         let mut answered = HashSet::new();
-        for message in self.messages() {
+        for message in messages {
             match message {
                 Message::Assistant(assistant) => {
                     for call in assistant.tool_calls.iter().flatten() {
@@ -256,9 +265,7 @@ impl<T: Transport, S> Thread<T, S> {
             _ => HashSet::new(),
         };
         pending.retain(|id| {
-            !answered.contains(id)
-                && (!self.decided_interrupt_tool_call_ids.contains(id)
-                    || explicit_pending.contains(id))
+            !answered.contains(id) && (!decided.contains(id) || explicit_pending.contains(id))
         });
         pending
     }

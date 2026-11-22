@@ -1217,3 +1217,83 @@ async fn runs_are_paired_without_ordering_verification() {
         [("m-1", "r-1"), ("m-between", "between runs"), ("m-2", "r")]
     );
 }
+
+#[tokio::test]
+async fn a_repeated_request_id_cannot_confirm_a_failed_resume() {
+    let events = vec![
+        started("r"),
+        Event::run_error("original failure"),
+        started("r"),
+        finished("r"),
+    ];
+    for verify in [true, false] {
+        let mut thread = paused((events.clone(), Then::Close)).await;
+        thread.set_verify(verify);
+        let report = thread
+            .resume_many(answers())
+            .unwrap()
+            .collect_report()
+            .await;
+        assert!(matches!(report.end, RunEnd::Failed { .. }), "{report:?}");
+        assert_eq!(report.runs.iter().filter(|run| run.requested).count(), 1);
+        assert_eq!(
+            thread.submission().unwrap().status,
+            SubmissionStatus::Unconfirmed
+        );
+        assert_eq!(pending(&thread), ["first", "second"]);
+        assert!(report.diagnostics.iter().any(|d| d.kind == "protocol"));
+    }
+}
+
+#[tokio::test]
+async fn tool_decisions_follow_the_same_replayed_holder_but_not_a_reused_id() {
+    use ag_ui::{AssistantMessage, ToolCall, ToolCallStartEvent};
+    let call = |holder: &str| {
+        Message::Assistant(AssistantMessage {
+            id: holder.into(),
+            tool_calls: Some(vec![ToolCall::new("call", "approve", "")]),
+            ..Default::default()
+        })
+    };
+    // Older history can contain the synthetic holder of a parentless call.
+    for holder in ["explicit-parent", "call-message"] {
+        let mut saved = ag_ui::client::ThreadSnapshot::new("t");
+        saved.messages = vec![call(holder)];
+        saved.decided_interrupt_tool_call_ids = vec!["call".into()];
+
+        let mut historical = vec![
+            started("old"),
+            Event::messages_snapshot(saved.messages.clone()),
+        ];
+        if holder == "explicit-parent" {
+            historical.push(
+                ToolCallStartEvent::new("call", "approve")
+                    .with_parent_message_id(holder)
+                    .into(),
+            );
+            historical.push(Event::tool_call_end("call"));
+        }
+        historical.extend([finished("old"), started("current"), finished("current")]);
+
+        let transport = wire([
+            (historical, Then::Close),
+            (run("new", "response"), Then::Close),
+        ]);
+        let mut thread = Thread::<_>::restore(transport, saved).unwrap();
+        thread.set_next_run_id("current");
+        assert!(matches!(
+            thread.run().unwrap().collect_report().await.end,
+            RunEnd::Success { .. }
+        ));
+        assert!(thread.unanswered_tool_calls().is_empty());
+        thread.set_next_run_id("new");
+        drop(thread.send_message(call("new-parent")).unwrap());
+        assert!(thread.unanswered_tool_calls().is_empty());
+        thread
+            .send_message(call("new-parent"))
+            .unwrap()
+            .collect_report()
+            .await;
+        assert_eq!(thread.unanswered_tool_calls(), ["call"]);
+    }
+}

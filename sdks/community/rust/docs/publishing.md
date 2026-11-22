@@ -22,10 +22,10 @@ uses this environment; dry-run verification needs no release approval.
 
 ## Manual release
 
-1. Select the `ag-ui` SDK version in the workspace manifest. Version `1.0.0`
-   is shared with the standalone release supporting AG-UI 1.0. Future releases
-   follow Cargo SemVer. An existing version with matching runtime source and
-   dependency declarations completes verification and skips the upload.
+1. Select the workspace version. The standalone project has published
+   [ag-ui 1.0.0](https://crates.io/crates/ag-ui/1.0.0). For an existing version,
+   verification compares the runtime and build declarations with the registry
+   archive. A match skips the upload. Use an unpublished SemVer version for changes.
 2. Run **Publish Rust SDK** on `main`, enter that exact version, and keep
    `dry_run` enabled for verification. This does not request a publishing token.
 3. To publish, run it on official `main` with the same version and `dry_run`

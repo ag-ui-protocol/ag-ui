@@ -33,7 +33,10 @@ use serde_json::Value;
 /// orphaned ID-less chunk after filtering. Normalize chunks first, or track
 /// the producer's open streams before deciding which chunks to drop.
 ///
-/// Dropping is silent: the emit that produced the event returns `Ok`.
+/// An emit whose output is filtered out returns `Ok`. At the end of a
+/// hosted run the driver checks whether the consumer received a terminal
+/// event. If the chain removed it, the driver sends a final `RUN_ERROR`
+/// directly to the event queue.
 pub trait StreamTransformer: Send {
     /// Rewrites one event into zero or more events.
     fn transform(&mut self, event: Event) -> Vec<Event>;
@@ -615,10 +618,15 @@ impl ToolResultToState {
                 .map(Event::state_snapshot),
             // A patch a consumer could not read is no more the expected
             // shape than content that is not JSON.
-            StateForm::Delta => serde_json::from_str::<Vec<PatchOperation>>(content)
-                .ok()
-                .filter(|patch| crate::server::state::well_formed(patch).is_ok())
-                .map(Event::state_delta),
+            StateForm::Delta => {
+                // Validate the original tool output before the SDK's compatibility
+                // decoder supplies a missing value. Decode it again into the wire
+                // type to keep RFC 6902 extension members on the emitted delta.
+                serde_json::from_str::<json_patch::Patch>(content).ok()?;
+                serde_json::from_str::<Vec<PatchOperation>>(content)
+                    .ok()
+                    .map(Event::state_delta)
+            }
         }
     }
 
@@ -1772,23 +1780,27 @@ mod tests {
     }
 
     #[test]
-    fn a_patch_with_a_malformed_pointer_is_not_promoted() {
+    fn a_malformed_patch_is_not_promoted() {
         let mut promote = ToolResultToState::delta("patch_state");
         for (call, content) in [
             ("c1", r#"[{"op":"add","path":"oops","value":1}]"#),
             ("c2", r#"[{"op":"move","from":"oops","path":"/a"}]"#),
             ("c3", r#"[{"op":"add","path":"/a/~2","value":1}]"#),
+            ("c4", r#"[{"op":"add","path":"/a"}]"#),
+            ("c5", r#"[{"op":"replace","path":"/a"}]"#),
+            ("c6", r#"[{"op":"test","path":"/a"}]"#),
         ] {
             promote.transform(Event::tool_call_start(call, "patch_state"));
             let result = Event::tool_call_result("m1", call, content);
             assert_eq!(promote.transform(result.clone()), vec![result], "{content}");
         }
         // The root is a pointer, and so is an escaped segment.
-        promote.transform(Event::tool_call_start("c4", "patch_state"));
-        let content =
-            r#"[{"op":"add","path":"/a~1b","value":1},{"op":"test","path":"","value":{}}]"#;
-        let out = promote.transform(Event::tool_call_result("m1", "c4", content));
-        assert_eq!(out.len(), 2, "{out:?}");
+        promote.transform(Event::tool_call_start("valid", "patch_state"));
+        let content = r#"[{"op":"add","path":"/a~1b","value":null,"note":"keep"},{"op":"test","path":"","value":{}}]"#;
+        let result = Event::tool_call_result("m1", "valid", content);
+        let delta =
+            Event::state_delta(serde_json::from_str::<Vec<PatchOperation>>(content).unwrap());
+        assert_eq!(promote.transform(result.clone()), [result, delta]);
     }
 
     #[test]

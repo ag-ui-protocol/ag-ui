@@ -933,7 +933,7 @@ async fn restored_legacy_reasoning_ids_do_not_overwrite_saved_reasoning() {
 }
 
 #[tokio::test]
-async fn activity_is_local_ui_state_while_raw_requests_remain_literal() {
+async fn activity_stays_in_local_history_and_is_omitted_from_remote_requests() {
     // Reference: official TS AbstractAgent.prepareRunAgentInput filters
     // message.role !== "activity" (commit 747933694b05676203da7d5bb8d8e50432e59b75).
     let activity = Message::Activity(ag_ui::ActivityMessage {
@@ -955,11 +955,11 @@ async fn activity_is_local_ui_state_while_raw_requests_remain_literal() {
     let restored = Thread::<_>::restore(script([]), thread.snapshot()).unwrap();
     assert_eq!(restored.messages()[0], activity);
 
-    // Raw transport callers choose their complete request payload themselves.
+    // Stateless requests go through the same outgoing boundary.
     let raw = ag_ui::client::RemoteAgent::new(transport.clone());
     let input = ag_ui::client::RunParams::new("t", "raw").message(activity.clone());
     raw.run_events(input).collect::<Vec<_>>().await;
-    assert_eq!(transport.requests()[1].messages, vec![activity]);
+    assert!(transport.requests()[1].messages.is_empty());
 }
 
 #[tokio::test]
@@ -995,4 +995,34 @@ async fn dropping_a_run_clears_open_text_and_reasoning_even_without_subagents() 
     );
     assert_eq!(thread.last_run_end(), Some(&RunEnd::Aborted));
     assert!(thread.snapshot().active_run_id.is_none());
+}
+
+#[tokio::test]
+async fn stopping_after_a_local_resume_warning_leaves_the_answer_unsent() {
+    for abort in [false, true] {
+        let (mut thread, transport, question) = paused_until("whenever").await;
+        thread.set_next_run_id("retry-this-id");
+        let before = thread.snapshot();
+        let mut resume = thread.resume(&question, true).unwrap();
+        assert!(matches!(resume.next().await, Some(Update::Warning(_))));
+        assert!(resume.thread().submission().is_none());
+        if abort {
+            resume.abort();
+            assert_eq!(resume.collect_report().await.end, RunEnd::Aborted);
+        } else {
+            drop(resume);
+        }
+        assert_eq!(thread.snapshot(), before);
+        assert_eq!(transport.requests().len(), 1);
+        assert!(matches!(
+            thread
+                .resume(&question, true)
+                .unwrap()
+                .collect_report()
+                .await
+                .end,
+            RunEnd::Success { .. }
+        ));
+        assert_eq!(transport.last_request().unwrap().run_id, "retry-this-id");
+    }
 }

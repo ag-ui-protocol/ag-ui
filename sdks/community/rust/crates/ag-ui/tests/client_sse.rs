@@ -523,3 +523,36 @@ fn a_valid_prefix_is_delivered_before_an_oversized_line_at_every_split() {
         );
     }
 }
+
+#[test]
+fn lone_cr_dispatches_before_the_next_read_and_a_late_lf_is_consumed() {
+    let mut decoder = SseDecoder::new();
+    decoder.push(b"data: first\r\r").unwrap();
+    assert_eq!(decoder.next_frame().unwrap().unwrap().data, "first");
+    decoder.push(b"").unwrap();
+    decoder.push(b"\ndata: second\r").unwrap();
+    assert!(decoder.next_frame().unwrap().is_none());
+    decoder.push(b"\ndata: line two\n\n").unwrap();
+    assert_eq!(
+        decoder.next_frame().unwrap().unwrap().data,
+        "second\nline two"
+    );
+}
+
+#[tokio::test]
+async fn raw_sse_errors_release_the_body_even_with_the_result_stream_alive() {
+    use ag_ui::client::transport::decode_raw_events;
+    use std::sync::Arc;
+    let live = Arc::new(());
+    let held = Arc::clone(&live);
+    let body = futures_util::stream::iter([Ok::<_, std::io::Error>(b"data: {}\r\rdata: ???\n\n")])
+        .chain(futures_util::stream::pending())
+        .inspect(move |_| {
+            let _ = &held;
+        });
+    let mut events = Box::pin(decode_raw_events(body));
+    assert_eq!(events.next().await.unwrap().unwrap(), serde_json::json!({}));
+    assert!(events.next().await.unwrap().is_err());
+    assert_eq!(Arc::strong_count(&live), 1);
+    assert!(events.next().await.is_none());
+}

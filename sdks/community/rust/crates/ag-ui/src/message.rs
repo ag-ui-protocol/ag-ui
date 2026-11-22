@@ -196,7 +196,7 @@ impl BinaryInputContent {
     /// else its URL, under the modality its MIME type names, the file name
     /// kept as `metadata.filename`. `None` when it carries only an `id`,
     /// which no 1.0 source can express.
-    #[cfg(feature = "client")]
+    #[cfg(any(feature = "client", feature = "axum"))]
     fn upgraded(&self) -> Option<InputContent> {
         let mime_type = self.mime_type.clone();
         let filled = |value: &Option<String>| value.clone().filter(|value| !value.is_empty());
@@ -285,20 +285,35 @@ pub(crate) fn upgrade_legacy_event_content(
         "RUN_STARTED" => (event.pointer_mut("/input/messages"), "/input/messages"),
         _ => return,
     };
+    upgrade_wire_messages(messages, at, warnings);
+}
+
+#[cfg(any(feature = "client", feature = "axum"))]
+pub(crate) fn upgrade_wire_messages(
+    messages: Option<&mut Value>,
+    at: &str,
+    warnings: &mut Vec<String>,
+) {
     for (index, message) in messages
         .and_then(Value::as_array_mut)
         .into_iter()
         .flatten()
         .enumerate()
     {
-        let at = format!("{at}/{index}/content");
-        upgrade_wire_parts(message.get_mut("content"), &at, warnings);
+        if matches!(
+            message.get("role").and_then(Value::as_str),
+            Some("user" | "tool")
+        ) && message.get("content").is_some_and(Value::is_array)
+        {
+            let at = format!("{at}/{index}/content");
+            upgrade_wire_parts(message.get_mut("content"), &at, warnings);
+        }
     }
 }
 
 /// One content list on the wire. A part that is not a well-formed legacy
 /// part is left for enforcement to judge.
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "axum"))]
 fn upgrade_wire_parts(content: Option<&mut Value>, at: &str, warnings: &mut Vec<String>) {
     let Some(parts) = content.and_then(Value::as_array_mut) else {
         return;
@@ -344,7 +359,7 @@ fn upgrade_wire_parts(content: Option<&mut Value>, at: &str, warnings: &mut Vec<
 
 /// Whether `part` is the media part `media` was converted to, file name
 /// included when the legacy part had one.
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "axum"))]
 fn mirrors(part: &InputContent, media: &InputContent, legacy: &BinaryInputContent) -> bool {
     let (part, media) = match (part, media) {
         (InputContent::Image(part), InputContent::Image(media))
@@ -358,25 +373,35 @@ fn mirrors(part: &InputContent, media: &InputContent, legacy: &BinaryInputConten
         .as_ref()
         .and_then(|metadata| metadata.get("filename"))
         .and_then(Value::as_str);
+    let same_mime = |a: &str, b: &str| {
+        let (kind_a, params_a) = a.split_once(';').unwrap_or((a, ""));
+        let (kind_b, params_b) = b.split_once(';').unwrap_or((b, ""));
+        kind_a.eq_ignore_ascii_case(kind_b) && params_a == params_b
+    };
+    // A URL may omit MIME, while a retired binary part always carries it.
+    // Discard the mirror only when the modern attachment retains that fact.
     let same_source = match (&part.source, &media.source) {
         (
             InputContentSource::Url {
                 value: a,
-                mime_type: mime_a,
+                mime_type: Some(mime_a),
             },
             InputContentSource::Url {
                 value: b,
+                mime_type: Some(mime_b),
+            },
+        )
+        | (
+            InputContentSource::Data {
+                value: a,
+                mime_type: mime_a,
+            },
+            InputContentSource::Data {
+                value: b,
                 mime_type: mime_b,
             },
-        ) => {
-            a == b
-                && mime_a.as_ref().zip(mime_b.as_ref()).is_none_or(|(a, b)| {
-                    let (a, params_a) = a.split_once(';').unwrap_or((a, ""));
-                    let (b, params_b) = b.split_once(';').unwrap_or((b, ""));
-                    a.eq_ignore_ascii_case(b) && params_a == params_b
-                })
-        }
-        _ => part.source == media.source,
+        ) => a == b && same_mime(mime_a, mime_b),
+        _ => false,
     };
     same_source
         && legacy

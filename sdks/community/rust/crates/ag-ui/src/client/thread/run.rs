@@ -1,7 +1,7 @@
 //! One request of a conversation: the stream that answers it, the runs that
 //! stream carries, and what it yields.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::pin::Pin;
 use std::sync::{
     Arc,
@@ -269,6 +269,43 @@ pub struct RunReport {
     pub diagnostics_omitted: usize,
 }
 
+impl<T, S> Thread<T, S> {
+    /// A snapshot may remove or replace a tool result or the assistant that
+    /// held a decided call. Keep local provenance only for what survives it.
+    fn apply_event(&mut self, event: &Event) -> Result<Changed> {
+        let Event::MessagesSnapshot(snapshot) = event else {
+            return self.applier.apply(event);
+        };
+        let echoed: HashMap<_, _> = snapshot
+            .messages
+            .iter()
+            .filter(|message| self.abandoned.contains(message.id()))
+            .map(|message| (message.id(), message))
+            .collect();
+        self.abandoned.retain(|id| {
+            self.applier
+                .message(id)
+                .is_some_and(|old| echoed.get(id) == Some(&old))
+        });
+        let before: HashMap<_, _> = self
+            .decided_interrupt_tool_call_ids
+            .iter()
+            .filter_map(|call| {
+                self.applier
+                    .tool_call_holder(call)
+                    .map(|holder| (call.clone(), holder.clone()))
+            })
+            .collect();
+        let changed = self.applier.apply(event)?;
+        self.decided_interrupt_tool_call_ids.retain(|call| {
+            self.applier
+                .tool_call_holder(call)
+                .is_some_and(|holder| before.get(call) == Some(holder))
+        });
+        Ok(changed)
+    }
+}
+
 impl<T: Transport, S> Thread<T, S> {
     pub(super) fn start(
         &mut self,
@@ -313,6 +350,7 @@ impl<T: Transport, S> Thread<T, S> {
             request_run_id,
             thread: self,
             prepared: Some((input, message)),
+            validated: false,
             events: None,
             normalizer: ChunkNormalizer::new(),
             verifier,
@@ -416,6 +454,8 @@ impl AbortHandle {
 pub struct RunStream<'a, T, S = Value> {
     thread: &'a mut Thread<T, S>,
     prepared: Option<(RunAgentInput, Option<Message>)>,
+    /// Local validation can yield warnings before a transport is even called.
+    validated: bool,
     events: Option<CheckedStream>,
     normalizer: ChunkNormalizer,
     verifier: Option<Verifier>,
@@ -843,6 +883,12 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
                             ));
                             return;
                         }
+                        if self.live && started.run_id == self.request_run_id {
+                            self.fail(Error::protocol(
+                                "the requested run ID was started a second time",
+                            ));
+                            return;
+                        }
                         opening = Some(started.run_id.clone());
                     }
                 }
@@ -879,17 +925,30 @@ impl<T, S: DeserializeOwned + Clone> RunStream<'_, T, S> {
         if let Some(run_id) = opening {
             self.open(run_id);
         }
-        let started_tool_call = match &event {
-            Event::ToolCallStart(started) => Some(started.tool_call_id.clone()),
-            _ => None,
+        let same_replayed_call = match &event {
+            Event::ToolCallStart(started)
+                if self
+                    .run
+                    .as_ref()
+                    .is_some_and(|r| r.place == Place::Replayed) =>
+            {
+                started.parent_message_id.as_ref().is_some_and(|holder| {
+                    self.thread.applier.tool_call_holder(&started.tool_call_id) == Some(holder)
+                })
+            }
+            _ => false,
         };
-        match self.thread.applier.apply(&event) {
+        match self.thread.apply_event(&event) {
             Ok(changed) => {
                 self.remark(&event, &changed);
-                if let Some(id) = started_tool_call {
-                    self.thread.decided_interrupt_tool_call_ids.remove(&id);
+                if let Event::ToolCallStart(started) = &event {
+                    if !same_replayed_call {
+                        self.thread
+                            .decided_interrupt_tool_call_ids
+                            .remove(&started.tool_call_id);
+                    }
                     if let Some(run) = &mut self.run {
-                        run.started_tool_calls.insert(id);
+                        run.started_tool_calls.insert(started.tool_call_id.clone());
                     }
                 }
                 if let Event::ToolCallResult(result) = &event {
@@ -1233,22 +1292,32 @@ impl<T: Transport, S: DeserializeOwned + Clone + Unpin> Stream for RunStream<'_,
                         this.fail(error);
                         continue;
                     }
-                    // Said once, with the request that sends the answer.
-                    for warning in unread_expiries(&this.thread.interrupts, entries) {
+                }
+                let input = if this.validated {
+                    input
+                } else {
+                    let mut warnings = input.resume.as_ref().map_or_else(Vec::new, |entries| {
+                        unread_expiries(&this.thread.interrupts, entries)
+                    });
+                    let normalized = crate::client::agent::outgoing(input, &mut warnings);
+                    for warning in warnings {
                         this.warning(warning);
                     }
-                }
-                let mut warnings = Vec::new();
-                let prepared = crate::client::agent::outgoing(input, &mut warnings);
-                for warning in warnings {
-                    this.warning(warning);
-                }
-                let input = match prepared {
-                    Ok(input) => input,
-                    Err(error) => {
-                        this.fail(error);
+                    let input = match normalized {
+                        Ok(input) => input,
+                        Err(error) => {
+                            this.fail(error);
+                            continue;
+                        }
+                    };
+                    if !this.ready.is_empty() {
+                        // No request has left the thread. Dropping the stream
+                        // while reading these warnings leaves a resume retryable.
+                        this.validated = true;
+                        this.prepared = Some((input, message));
                         continue;
                     }
+                    input
                 };
                 this.dispatched = true;
                 this.thread.applier.reset_streams();
@@ -1256,7 +1325,7 @@ impl<T: Transport, S: DeserializeOwned + Clone + Unpin> Stream for RunStream<'_,
                 this.thread.active_run_id = Some(input.run_id.clone());
                 this.thread.next_run_id = None;
                 if let Some(message) = message {
-                    this.thread.applier.push_message(message);
+                    this.thread.append_local_message(message);
                 }
                 if let Some(entries) = &input.resume {
                     this.thread.submission = Some(ResumeSubmission {
@@ -1266,11 +1335,6 @@ impl<T: Transport, S: DeserializeOwned + Clone + Unpin> Stream for RunStream<'_,
                     });
                 }
                 this.events = Some(this.thread.agent.run_checked(input));
-                // What dispatching had to say is delivered before the first
-                // event is waited for.
-                if !this.ready.is_empty() {
-                    continue;
-                }
             }
             match this
                 .events

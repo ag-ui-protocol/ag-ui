@@ -180,3 +180,27 @@ fn minimal_input_keeps_optional_defaults() {
         })
     );
 }
+
+#[test]
+fn incoming_legacy_binary_parts_are_translated_before_schema_enforcement() {
+    let legacy = json!({"type":"binary","mimeType":"image/png","url":"https://example.com/fig.png","filename":"fig.png"});
+    let body = json!({"threadId":"t","runId":"r","messages":[
+        {"role":"user","id":"u","content":[legacy.clone()]},
+        {"role":"tool","id":"res","toolCallId":"c","content":[legacy]}
+    ]});
+    let (input, warnings) =
+        ag_ui::axum::extract::decode_with_warnings(&serde_json::to_vec(&body).unwrap()).unwrap();
+    let messages = serde_json::to_value(input.messages).unwrap();
+    for (index, message) in messages.as_array().unwrap().iter().enumerate() {
+        assert_eq!(
+            message["content"],
+            json!([{"type":"image","source":{"type":"url","value":"https://example.com/fig.png","mimeType":"image/png"},"metadata":{"filename":"fig.png"}}])
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains(&format!("/messages/{index}/content/0"))),
+            "{warnings:?}"
+        );
+    }
+}

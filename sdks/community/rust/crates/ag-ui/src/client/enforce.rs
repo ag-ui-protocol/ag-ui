@@ -122,9 +122,6 @@ where
             if let Some(item) = boundary.out.pop_front() {
                 return Some((item, boundary));
             }
-            if boundary.done {
-                return None;
-            }
             let mut warnings = Vec::new();
             if let Some(value) = boundary.ready.pop_front() {
                 let decoded = decode(value, &mut warnings);
@@ -136,7 +133,7 @@ where
                 }
                 continue;
             }
-            match boundary.raw.next().await? {
+            match boundary.raw.as_mut()?.next().await? {
                 Ok(value) => {
                     // A later run on the same stream reports its own warnings.
                     if value.get("type").and_then(Value::as_str) == Some("RUN_STARTED") {
@@ -169,10 +166,7 @@ where
             if let Some(item) = boundary.out.pop_front() {
                 return Some((item, boundary));
             }
-            if boundary.done {
-                return None;
-            }
-            match boundary.raw.next().await? {
+            match boundary.raw.as_mut()?.next().await? {
                 Ok(event) => boundary.typed(event),
                 Err(error) => boundary.fail(error),
             }
@@ -182,7 +176,7 @@ where
 
 /// What [`checked`] and [`typed`] carry between polls.
 struct Boundary<S> {
-    raw: Pin<Box<S>>,
+    raw: Option<Pin<Box<S>>>,
     legacy: Legacy,
     /// Translated values waiting to be decoded.
     ready: VecDeque<Value>,
@@ -190,18 +184,16 @@ struct Boundary<S> {
     out: VecDeque<Result<Checked>>,
     /// Warnings handed on in this run, up to [`REMEMBERED`] of them.
     delivered: HashSet<String>,
-    done: bool,
 }
 
 impl<S> Boundary<S> {
     fn new(raw: S) -> Self {
         Self {
-            raw: Box::pin(raw),
+            raw: Some(Box::pin(raw)),
             legacy: Legacy::default(),
             ready: VecDeque::new(),
             out: VecDeque::new(),
             delivered: HashSet::new(),
-            done: false,
         }
     }
 
@@ -255,7 +247,8 @@ impl<S> Boundary<S> {
 
     fn fail(&mut self, error: Error) {
         self.out.push_back(Err(error));
-        self.done = true;
+        self.raw = None;
+        self.ready.clear();
     }
 }
 

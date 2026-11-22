@@ -314,3 +314,28 @@ async fn an_id_shared_across_owners_is_said_and_the_call_is_whose_the_reply_is()
     let carrier = thread.applier().message(&"c-1-message".into()).unwrap();
     assert_eq!(carrier.subagent_run_id().map(|id| id.as_str()), Some("s1"));
 }
+
+#[test]
+fn a_parentless_tool_call_allocates_its_own_carrier_when_ids_collide() {
+    let history = vec![
+        Message::user("c-message", "question"),
+        Message::assistant("c-message-1", "previous answer"),
+    ];
+    let mut applier = ag_ui::client::Applier::new().with_messages(history.clone());
+    for event in [
+        Event::tool_call_start("c", "search"),
+        Event::tool_call_args("c", "{}"),
+        Event::tool_call_end("c"),
+    ] {
+        applier.apply(&event).unwrap();
+    }
+    assert_eq!(&applier.messages()[..2], &history[..]);
+    let Message::Assistant(carrier) = &applier.messages()[2] else {
+        panic!("assistant carrier required")
+    };
+    assert_eq!(carrier.id, "c-message-2");
+    assert_eq!(
+        carrier.tool_calls.as_ref().unwrap()[0].function.arguments,
+        "{}"
+    );
+}

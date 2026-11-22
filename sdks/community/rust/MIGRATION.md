@@ -141,8 +141,11 @@ with a typed media part and a `Data`, `Url` or `File` source. `RemoteAgent` and
 `Thread` also upgrade legacy binary attachments on outgoing requests, preserving
 inline data (preferred over a URL), MIME type, and filename metadata. Incoming
 snapshots, input echoes, and tool results use the same translation before schema
-enforcement. A matching modern media part avoids a duplicate; an ID-only legacy
-part has no registered 1.0 translation and is dropped at the compatibility boundary.
+enforcement. The Axum decoder also upgrades incoming legacy request attachments.
+A modern part replaces its legacy mirror only when the source, MIME type and any
+legacy filename match. An ID-only legacy attachment has no registered 1.0
+translation and is dropped at the boundary. Local activity messages are omitted
+from requests by the thread, the stateless client, and the HTTP transport.
 
 Axum run endpoints require a JSON `Content-Type`. Send `application/json`,
 `text/json`, or a media type with a `+json` suffix. A missing or unsupported

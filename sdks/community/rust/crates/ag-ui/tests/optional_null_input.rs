@@ -311,3 +311,14 @@ fn an_optional_null_outside_the_registry_is_still_a_protocol_violation() {
         assert!(error.to_string().contains(field), "{event}: {error}");
     }
 }
+
+#[test]
+fn tool_results_apply_the_same_media_null_registry_as_tool_history() {
+    for kind in ["image", "audio", "video", "document"] {
+        let event = json!({"type":"TOOL_CALL_RESULT","toolCallId":"c","messageId":"result","content":[media(kind)]});
+        assert_eq!(
+            decode(&event).unwrap(),
+            decode(&without(&event, "/content/0/metadata")).unwrap()
+        );
+    }
+}

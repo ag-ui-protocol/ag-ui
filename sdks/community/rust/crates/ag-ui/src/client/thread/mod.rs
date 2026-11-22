@@ -323,13 +323,16 @@ impl<T, S> Thread<T, S> {
                 message.id()
             )));
         }
+        self.append_local_message(message);
+        Ok(())
+    }
+    fn append_local_message(&mut self, message: Message) {
         if let Message::Assistant(assistant) = &message {
             for call in assistant.tool_calls.iter().flatten() {
                 self.decided_interrupt_tool_call_ids.remove(&call.id);
             }
         }
         self.applier.push_message(message);
-        Ok(())
     }
     /// Tools offered on subsequent runs. AG-UI does not discover tools.
     pub fn set_tools(&mut self, tools: impl Into<Vec<Tool>>) {

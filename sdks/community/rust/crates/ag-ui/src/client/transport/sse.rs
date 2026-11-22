@@ -90,6 +90,9 @@ pub struct SseDecoder {
     /// is taken: shifting the remainder once per read instead of once per line
     /// is what keeps a chunk carrying a thousand frames linear.
     consumed: usize,
+    /// A CR at the end of the last read already ended its line. If the
+    /// next nonempty read begins with LF, consume it as part of that CRLF.
+    skip_lf: bool,
     /// First byte of the pending line not yet checked for a terminator.
     scan_from: usize,
     data: String,
@@ -113,6 +116,7 @@ impl SseDecoder {
         Self {
             buffer: Vec::new(),
             consumed: 0,
+            skip_lf: false,
             scan_from: 0,
             data: String::new(),
             event: None,
@@ -150,6 +154,12 @@ impl SseDecoder {
             self.scan_from -= self.consumed;
             self.consumed = 0;
         }
+        let bytes = if self.skip_lf && !bytes.is_empty() {
+            self.skip_lf = false;
+            bytes.strip_prefix(b"\n").unwrap_or(bytes)
+        } else {
+            bytes
+        };
         self.buffer.extend_from_slice(bytes);
         // A complete line may dispatch an earlier frame. Leave later lines
         // for next_frame so network chunking cannot hide a valid prefix.
@@ -176,8 +186,7 @@ impl SseDecoder {
 
     fn check_partial_line(&self) -> Result<()> {
         let pending = self.without_initial_bom(self.pending());
-        let partial = pending.strip_suffix(b"\r").unwrap_or(pending);
-        self.check_size(self.frame_bytes.saturating_add(partial.len()))
+        self.check_size(self.frame_bytes.saturating_add(pending.len()))
     }
 
     fn without_initial_bom<'a>(&self, pending: &'a [u8]) -> &'a [u8] {
@@ -252,8 +261,7 @@ impl SseDecoder {
     /// Takes one complete line, minus its terminator.
     ///
     /// At `eof` the trailing bytes count as a line even without a terminator.
-    /// Otherwise a `\r` at the very end of the buffer is held back: it may yet
-    /// turn out to be the first half of a `\r\n` split across two chunks.
+    /// A trailing CR is already a terminator, even if the next read never arrives.
     fn take_line(&mut self, eof: bool) -> Result<Option<String>> {
         let position = self.line_end().map(|end| end - self.consumed);
         let pending = self.pending();
@@ -267,16 +275,14 @@ impl SseDecoder {
         };
 
         let is_cr = pending[position] == b'\r';
-        if is_cr && position + 1 == pending.len() && !eof {
-            return Ok(None);
-        }
-
+        let trailing_cr = is_cr && position + 1 == pending.len();
         let width = if is_cr && pending.get(position + 1) == Some(&b'\n') {
             2
         } else {
             1
         };
         let line = pending[..position].to_vec();
+        self.skip_lf = trailing_cr;
         self.consumed += position + width;
         self.scan_from = self.consumed;
         self.decode_line(line).map(Some)
@@ -379,10 +385,9 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     let state = Decoding {
-        chunks: Box::pin(chunks),
+        chunks: Some(Box::pin(chunks)),
         decoder: SseDecoder::new(),
         ready: VecDeque::new(),
-        done: false,
     };
 
     futures_util::stream::unfold(state, |mut state| async move {
@@ -390,14 +395,10 @@ where
             if let Some(item) = state.ready.pop_front() {
                 return Some((item, state));
             }
-            if state.done {
-                return None;
-            }
-
-            match state.chunks.next().await {
+            match state.chunks.as_mut()?.next().await {
                 Some(Ok(bytes)) => {
                     if let Err(error) = state.decoder.push(bytes.as_ref()) {
-                        state.done = true;
+                        state.chunks = None;
                         return Some((Err(error), state));
                     }
                     loop {
@@ -406,13 +407,13 @@ where
                                 Ok(value) => state.ready.push_back(Ok(value)),
                                 Err(error) => {
                                     state.ready.push_back(Err(error));
-                                    state.done = true;
+                                    state.chunks = None;
                                     break;
                                 }
                             },
                             Ok(None) => break,
                             Err(error) => {
-                                state.done = true;
+                                state.chunks = None;
                                 state.ready.push_back(Err(error));
                                 break;
                             }
@@ -420,11 +421,11 @@ where
                     }
                 }
                 Some(Err(error)) => {
-                    state.done = true;
+                    state.chunks = None;
                     return Some((Err(Error::transport(error)), state));
                 }
                 None => {
-                    state.done = true;
+                    state.chunks = None;
                     match state.decoder.finish() {
                         Ok(frames) => {
                             for frame in frames {
@@ -447,10 +448,9 @@ where
 
 /// The state [`decode_events`] carries between polls.
 struct Decoding<S> {
-    chunks: std::pin::Pin<Box<S>>,
+    chunks: Option<std::pin::Pin<Box<S>>>,
     decoder: SseDecoder,
     ready: VecDeque<Result<Value>>,
-    done: bool,
 }
 
 #[cfg(test)]
