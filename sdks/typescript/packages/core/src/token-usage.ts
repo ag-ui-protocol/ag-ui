@@ -181,7 +181,14 @@ export function aggregateTokenUsage(entries: TokenUsage[]): TokenUsage[] {
   const grouped = new Map<string, TokenUsage>();
 
   for (const entry of entries) {
-    const key = `${entry.provider ?? ""} ${entry.model ?? ""}`;
+    // The PAIR, not the two labels joined by a separator. A label is a free-form
+    // string — a provider name or a model id reported by the provider — so any
+    // separator chosen could appear inside one, and two distinct pairs would
+    // then fold into one group and have their counts summed under one of the
+    // two labels. The encoded array is injective over the pair, and keeps the
+    // map's first-appearance ordering. The Python twin keys on the tuple for
+    // the same reason.
+    const key = JSON.stringify([entry.provider, entry.model]);
     let target = grouped.get(key);
     if (!target) {
       target = { provider: entry.provider, model: entry.model };
