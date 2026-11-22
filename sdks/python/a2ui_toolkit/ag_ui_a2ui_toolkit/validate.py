@@ -34,7 +34,10 @@ def _absolute_path_resolves(path: str, data: Any) -> bool:
         if isinstance(cursor, list):
             if seg != "0" and (not seg.isascii() or not seg.isdigit() or seg.startswith("0")):
                 return False
-            idx = int(seg)
+            try:
+                idx = int(seg)
+            except ValueError:
+                return False
             if idx >= len(cursor):
                 return False
             cursor = cursor[idx]

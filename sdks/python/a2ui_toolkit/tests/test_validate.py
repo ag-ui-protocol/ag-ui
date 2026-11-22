@@ -284,6 +284,14 @@ class TestBindings(unittest.TestCase):
         comps_empty_array_idx = [{"id": "root", "component": "Text", "text": {"path": "/items/"}}]
         self.assertIn("unresolved_binding", codes(validate_a2ui_components(components=comps_empty_array_idx, data={"items": ["x"]})))
 
+    def test_oversized_array_index_reports_unresolved_binding(self):
+        # Exceeds CPython's default 4300-digit int conversion limit; must return
+        # unresolved_binding rather than raising ValueError.
+        comps = [{"id": "root", "component": "Text", "text": {"path": "/items/" + "1" * 4301}}]
+        r = validate_a2ui_components(components=comps, data={"items": ["x"]})
+        self.assertFalse(r["valid"])
+        self.assertIn("unresolved_binding", codes(r))
+
 
 if __name__ == "__main__":
     unittest.main()
