@@ -22,7 +22,7 @@ def _is_object(v: Any) -> bool:
 
 
 def _absolute_path_resolves(path: str, data: Any) -> bool:
-    segments = [s for s in path.split("/") if s]
+    segments = [s.replace("~1", "/").replace("~0", "~") for s in path.split("/") if s]
     cursor: Any = data
     for seg in segments:
         if cursor is None or not isinstance(cursor, (dict, list)):
