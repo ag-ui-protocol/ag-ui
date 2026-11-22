@@ -330,6 +330,32 @@ describe("validateA2UIComponents — data bindings", () => {
     expect(r.errors.some((e) => e.code === "unresolved_binding")).toBe(false);
     expect(r.valid).toBe(true);
   });
+
+  it("unescapes RFC 6901 ~1/~0 tokens and preserves empty reference tokens", () => {
+    const escaped = [{ id: "root", component: "Text", text: { path: "/a~1b/m~0n/~01" } }];
+    expect(validateA2UIComponents({ components: escaped, data: { "a/b": { "m~n": { "~1": "ok" } } } }).valid).toBe(true);
+
+    const emptyMid = [{ id: "root", component: "Text", text: { path: "/a~1b//c" } }];
+    expect(
+      validateA2UIComponents({ components: emptyMid, data: { "a/b": { c: 1 } } }).errors.some(
+        (e) => e.code === "unresolved_binding",
+      ),
+    ).toBe(true);
+    expect(validateA2UIComponents({ components: emptyMid, data: { "a/b": { "": { c: 1 } } } }).valid).toBe(true);
+
+    const rootEmptyKey = [{ id: "root", component: "Text", text: { path: "/" } }];
+    expect(validateA2UIComponents({ components: rootEmptyKey, data: { "": 1 } }).valid).toBe(true);
+    expect(
+      validateA2UIComponents({ components: rootEmptyKey, data: {} }).errors.some((e) => e.code === "unresolved_binding"),
+    ).toBe(true);
+
+    const emptyArrayIdx = [{ id: "root", component: "Text", text: { path: "/items/" } }];
+    expect(
+      validateA2UIComponents({ components: emptyArrayIdx, data: { items: ["x"] } }).errors.some(
+        (e) => e.code === "unresolved_binding",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("frontend allOf catalog constraints", () => {

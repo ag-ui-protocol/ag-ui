@@ -266,6 +266,24 @@ class TestBindings(unittest.TestCase):
         self.assertNotIn("unresolved_binding", codes(r))
         self.assertTrue(r["valid"])
 
+    def test_rfc6901_escaped_and_empty_reference_tokens(self):
+        comps_escaped = [{"id": "root", "component": "Text", "text": {"path": "/a~1b/m~0n/~01"}}]
+        r_ok = validate_a2ui_components(components=comps_escaped, data={"a/b": {"m~n": {"~1": "ok"}}})
+        self.assertTrue(r_ok["valid"])
+
+        comps_empty_mid = [{"id": "root", "component": "Text", "text": {"path": "/a~1b//c"}}]
+        r_missing_empty = validate_a2ui_components(components=comps_empty_mid, data={"a/b": {"c": 1}})
+        self.assertIn("unresolved_binding", codes(r_missing_empty))
+        r_present_empty = validate_a2ui_components(components=comps_empty_mid, data={"a/b": {"": {"c": 1}}})
+        self.assertTrue(r_present_empty["valid"])
+
+        comps_root_empty_key = [{"id": "root", "component": "Text", "text": {"path": "/"}}]
+        self.assertTrue(validate_a2ui_components(components=comps_root_empty_key, data={"": 1})["valid"])
+        self.assertIn("unresolved_binding", codes(validate_a2ui_components(components=comps_root_empty_key, data={})))
+
+        comps_empty_array_idx = [{"id": "root", "component": "Text", "text": {"path": "/items/"}}]
+        self.assertIn("unresolved_binding", codes(validate_a2ui_components(components=comps_empty_array_idx, data={"items": ["x"]})))
+
 
 if __name__ == "__main__":
     unittest.main()
