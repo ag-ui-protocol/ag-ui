@@ -6,6 +6,7 @@ Need a custom mapping? Subclass a translator in ag_ui_openai_agents.engine.
 """
 
 from .agent import OpenAIAgentsAgent
+from .approvals import ApprovalSigner, ConsumedTokens, default_approval_signer
 from .endpoint import add_openai_agents_fastapi_endpoint
 from .engine import TranslatedInput
 from .interrupts import ResumedInput, approval_interrupts, resume_tool_calls
@@ -17,11 +18,14 @@ __version__ = "0.1.0"
 __all__ = [
     "add_openai_agents_fastapi_endpoint",
     "AGUITranslator",
+    "ApprovalSigner",
+    "ConsumedTokens",
     "OpenAIAgentsAgent",
     "ResumedInput",
     "SharedState",
     "TranslatedInput",
     "approval_interrupts",
+    "default_approval_signer",
     "resume_tool_calls",
     "shared_state",
     "use_shared_state",

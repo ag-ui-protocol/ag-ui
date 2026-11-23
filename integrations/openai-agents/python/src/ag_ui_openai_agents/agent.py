@@ -1,5 +1,6 @@
 """Agent wrapper — an OpenAI Agents SDK Agent that speaks AG-UI."""
 
+import copy
 import inspect
 import logging
 from contextlib import aclosing
@@ -8,6 +9,7 @@ from typing import Any, AsyncIterator
 from agents import Agent, RunConfig, RunContextWrapper, Runner
 
 from ag_ui.core import BaseEvent, CustomEvent, RunAgentInput
+from .approvals import ApprovalSigner, ConsumedTokens, default_approval_signer
 from .interrupts import _mcp_tools, resume_tool_calls
 from .state import SharedState, use_shared_state
 from .translator import AGUITranslator
@@ -25,9 +27,10 @@ class OpenAIAgentsAgent:
     The wrapper is reusable across requests. Non-conflicting client tools are
     added to a per-request agent clone, and output uses fresh per-run state.
 
-    Tools marked ``needs_approval`` work with no extra code and no server
-    state: a paused call ends the run with an AG-UI interrupt, and the next
-    request's ``resume`` entry approves or rejects it (see ``interrupts``).
+    Tools marked ``needs_approval`` work with no extra code: a paused call
+    ends the run with an AG-UI interrupt, and the next request's ``resume``
+    entry approves or rejects it (see ``interrupts``). The server signs each
+    paused call, so only calls it paused can run (see ``approvals``).
 
     The request's AG-UI context is added to the agent's instructions, and its
     state is the run's ``SharedState``: tools read and change it through
@@ -64,6 +67,9 @@ class OpenAIAgentsAgent:
         emit_run_error: bool = True,
         run_error_message: str | None = None,
         context_in_instructions: bool = True,
+        approvals: ApprovalSigner | None = None,
+        consumed_tokens: ConsumedTokens | None = None,
+        approval_scope: str | None = None,
     ) -> None:
         """Configure an OpenAI Agents SDK Agent for AG-UI requests.
 
@@ -96,7 +102,31 @@ class OpenAIAgentsAgent:
             context_in_instructions: Append the request's AG-UI context to the
                 agent's instructions, as "description: value" lines, so the
                 model sees what the page shared. Defaults to True.
+            approvals: Signs the tool calls a run pauses for approval and
+                verifies them on resume. Give every worker the same secret.
+                Defaults to ``default_approval_signer()``, whose secret comes
+                from ``AG_UI_OPENAI_AGENTS_APPROVAL_SECRET`` (or is random per
+                process).
+            consumed_tokens: Where the default signer records decided
+                approvals, so each runs once. Defaults to process memory,
+                which does not stop a replay that reaches another worker or
+                comes after a restart: with several workers, pass a store they
+                share (see ``ConsumedTokens``). With ``approvals``, pass the
+                store to ``ApprovalSigner(consumed=...)`` instead.
+            approval_scope: The scope this agent's approval tokens are bound
+                to: a token runs a call only on an agent with the same scope.
+                Defaults to the scope of ``approvals`` when it has one, else
+                ``name``. Give every worker serving this agent the same scope,
+                and give agents that share the secret and a name, but not
+                their tools, different ones.
+
+        Raises:
+            ValueError: Both ``approvals`` and ``consumed_tokens`` were given.
         """
+        if approvals is not None and consumed_tokens is not None:
+            raise ValueError(
+                "Pass consumed_tokens to ApprovalSigner(consumed=...) when you pass approvals."
+            )
         self.agent = agent
         self.name = name or agent.name
         self.description = description
@@ -111,6 +141,44 @@ class OpenAIAgentsAgent:
         self._emit_run_error = emit_run_error
         self._run_error_message = run_error_message
         self._context_in_instructions = context_in_instructions
+        self._own_signer = approvals is not None
+        self._approval_scope = approval_scope
+        self._signer = (
+            default_approval_signer(consumed=consumed_tokens) if consumed_tokens is not None else approvals
+        )
+        self._approvals: ApprovalSigner | None = None
+
+    def with_consumed_tokens(self, consumed_tokens: ConsumedTokens) -> "OpenAIAgentsAgent":
+        """A copy of this agent whose default signer records decided approvals in ``consumed_tokens``.
+
+        Raises:
+            ValueError: This agent was given its own ``approvals`` signer.
+        """
+        if self._own_signer:
+            raise ValueError(
+                "Pass consumed_tokens to ApprovalSigner(consumed=...) when you pass approvals."
+            )
+        clone = copy.copy(self)
+        clone._signer = default_approval_signer(consumed=consumed_tokens)
+        clone._approvals = None
+        return clone
+
+    @property
+    def approvals(self) -> ApprovalSigner:
+        """The signer this agent pauses and resumes approvals with.
+
+        Without ``approvals`` or ``consumed_tokens`` this is
+        ``default_approval_signer()``, made on first use; it logs a warning
+        when its decided approvals are kept per process. It is bound to this
+        agent's ``approval_scope``.
+        """
+        if self._approvals is None:
+            signer = self._signer if self._signer is not None else default_approval_signer()
+            scope = self._approval_scope
+            if scope is None:
+                scope = signer.scope or self.name
+            self._approvals = signer.scoped(scope)
+        return self._approvals
 
     async def run_streamed(self, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
         """Translate one AG-UI request, run the agent, and yield AG-UI events.
@@ -148,11 +216,16 @@ class OpenAIAgentsAgent:
             emit_run_error=self._emit_run_error,
             run_error_message=self._run_error_message,
             shared_state=state,
+            approvals=self.approvals,
         )
         try:
             with use_shared_state(state):
                 resumed = await resume_tool_calls(
-                    self.agent, input, context=context, run_config=self._run_config
+                    self.agent,
+                    input,
+                    context=context,
+                    run_config=self._run_config,
+                    approvals=self.approvals,
                 )
         except Exception as exc:
             # A tool that failed while resuming fails the run the way a tool
