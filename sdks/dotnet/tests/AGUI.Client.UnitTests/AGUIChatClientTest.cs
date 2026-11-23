@@ -772,6 +772,42 @@ public sealed class AGUIChatClientTest
         Assert.Equal("t1", response.AdditionalProperties?["agui_thread_id"]);
     }
 
+    // Assigning a fresh AdditionalPropertiesDictionary on RunStarted would drop
+    // custom keys EventStreamConverter restored from rawEvent. Merge instead,
+    // and keep the SDK thread id authoritative over a spoofed agui_thread_id.
+    [Fact]
+    public async Task GetStreamingResponse_RunStarted_KeepsRawEventCustomProperties()
+    {
+        var raw = ParseRawEvent(
+            """
+            {
+              "additionalProperties": {
+                "MyProperty": "MyValue",
+                "agui_thread_id": "spoofed"
+              }
+            }
+            """);
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1", RawEvent = raw },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        var started = Assert.Single(updates, u => u.RawRepresentation is RunStartedEvent);
+        Assert.NotNull(started.AdditionalProperties);
+        Assert.True(
+            started.AdditionalProperties.TryGetValue("MyProperty", out string? custom) == true
+            && custom == "MyValue");
+        Assert.Equal("t1", started.AdditionalProperties["agui_thread_id"]);
+    }
+
     // Converter-owned keys in rawEvent.additionalProperties must not be restored:
     // agui.__ownerResolved would skip ResolveOwner (even when the payload value is
     // false), and a raw agui.subagentRunId would stick on a parent-owned update
