@@ -105,17 +105,29 @@ public sealed class AGUIChatClient : DelegatingChatClient
         // FunctionResultContent (which it skips via its functionResultCallIds
         // set) — so a completed call is not re-executed locally.
         //
+        // The unwrap runs only when the history does not already hold the
+        // same call as a plain FunctionCallContent: FunctionInvokingChatClient
+        // rebuilds the plain call after an approval, so unwrapping as well
+        // would send the call twice (maintainer review on #3418,
+        // 2026-11-23). In that case the wrapper is left untouched and is
+        // stripped downstream, leaving the single plain call.
+        //
         // Pending requests are dropped only when a fresh approval response
         // arrived in the last message (its resume payload is carried in
         // AdditionalProperties instead); on an ordinary turn they pass
         // through untouched, as before.
         {
             var completedCallIds = new HashSet<string>(StringComparer.Ordinal);
+            var plainCallIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var message in messagesList)
             {
-                foreach (var result in message.Contents.OfType<FunctionResultContent>())
+                foreach (var content in message.Contents)
                 {
-                    if (result.CallId is not null)
+                    if (content is FunctionCallContent plainCall && plainCall.CallId is not null)
+                    {
+                        plainCallIds.Add(plainCall.CallId);
+                    }
+                    else if (content is FunctionResultContent result && result.CallId is not null)
                     {
                         completedCallIds.Add(result.CallId);
                     }
@@ -151,10 +163,15 @@ public sealed class AGUIChatClient : DelegatingChatClient
                     {
                         if (request.ToolCall is FunctionCallContent call
                             && call.CallId is not null
-                            && completedCallIds.Contains(call.CallId))
+                            && completedCallIds.Contains(call.CallId)
+                            && !plainCallIds.Contains(call.CallId))
                         {
                             // Completed: unwrap to the plain call so it survives
-                            // downstream and stays adjacent to its result.
+                            // downstream and stays adjacent to its result. When
+                            // the history already holds the plain call (rebuilt
+                            // by FunctionInvokingChatClient after the approval),
+                            // the wrapper is left untouched instead so the call
+                            // is sent once, not twice.
                             newContents.Add(call);
                         }
 

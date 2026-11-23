@@ -524,6 +524,154 @@ public sealed class AGUIChatClientTest
         Assert.Equal(0, executions);
     }
 
+    // Maintainer review on #3418 (2026-11-23): when an app uses
+    // FunctionInvokingChatClient, the history it returns after an approval
+    // already contains a rebuilt plain FunctionCallContent for the same call
+    // id, so the outgoing AG-UI payload must carry the call exactly once,
+    // directly before its result — the wrapper must not be unwrapped a
+    // second time. The history is produced by a real
+    // FunctionInvokingChatClient + ApprovalRequiredAIFunction, not hand-built.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetStreamingResponse_FunctionInvokingHistoryAfterApproval_SendsEachCallOnceDirectlyBeforeItsResult(bool approved)
+    {
+        var history = await BuildFunctionInvokingApprovalHistoryAsync(approved);
+
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        Assert.Equal(
+            ["call-1"],
+            messages!.OfType<AGUIAssistantMessage>()
+                .SelectMany(m => m.ToolCalls ?? [])
+                .Select(c => c.Id)
+                .ToList());
+        var assistantIndex = messages.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "call-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "call-1");
+        Assert.True(assistantIndex >= 0, "Plain call rebuilt by FunctionInvokingChatClient is missing from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+
+        // The completed call must not be re-executed locally.
+        Assert.Equal(0, executions);
+    }
+
+    // Maintainer review on #3418 (2026-11-23): when the user ignores an
+    // approval prompt and types something else instead, the outgoing AG-UI
+    // payload must contain no tool call without a matching result. History
+    // produced by a real FunctionInvokingChatClient + ApprovalRequiredAIFunction.
+    [Fact]
+    public async Task GetStreamingResponse_UnansweredApprovalFollowedByNewMessage_SendsNoOrphanedToolCall()
+    {
+        var history = await BuildFunctionInvokingUnansweredApprovalHistoryAsync();
+
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, new ChatOptions()));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var callIds = messages!.OfType<AGUIAssistantMessage>()
+            .SelectMany(m => m.ToolCalls ?? [])
+            .Select(c => c.Id)
+            .ToList();
+        Assert.Empty(callIds);
+        Assert.Empty(messages.OfType<AGUIToolMessage>());
+        Assert.Equal(
+            ["Confirm the operation", "Actually, do something else instead."],
+            messages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+    }
+
+    // Drives a real FunctionInvokingChatClient around a scripted inner client:
+    // turn 1 asks for approval of confirm_operation, turn 2 answers it. Returns
+    // the caller-maintained history as the next turn would see it: user prompt,
+    // assistant with the approval request, user with the approval response,
+    // assistant with the rebuilt plain call, tool with the result, assistant
+    // follow-up, and a new user turn.
+    private static async Task<List<ChatMessage>> BuildFunctionInvokingApprovalHistoryAsync(bool approved)
+    {
+        var planner = new ScriptedClient((round, _) => round == 1
+            ? [new(ChatRole.Assistant, [new FunctionCallContent("call-1", "confirm_operation", new Dictionary<string, object?>())])]
+            : [new(ChatRole.Assistant, "Acknowledged.")]);
+        using var client = new FunctionInvokingChatClient(planner);
+        var options = new ChatOptions
+        {
+            Tools = [(AITool)new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "Completed.", "confirm_operation"))],
+        };
+
+        List<ChatMessage> history = [new(ChatRole.User, "Confirm the operation")];
+        var initial = await client.GetResponseAsync(history, options).ConfigureAwait(false);
+        history.AddRange(initial.Messages);
+        var requests = initial.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(requests);
+        history.Add(new(ChatRole.User, requests.Select(r => (AIContent)r.CreateResponse(approved)).ToList()));
+        var resumed = await client.GetResponseAsync(history, options).ConfigureAwait(false);
+        history.AddRange(resumed.Messages);
+        history.Add(new(ChatRole.User, "Next turn"));
+        return history;
+    }
+
+    // Same setup as above, but the user answers the approval prompt with a new
+    // message instead of an approval response.
+    private static async Task<List<ChatMessage>> BuildFunctionInvokingUnansweredApprovalHistoryAsync()
+    {
+        var planner = new ScriptedClient((round, _) => round == 1
+            ? [new(ChatRole.Assistant, [new FunctionCallContent("call-1", "confirm_operation", new Dictionary<string, object?>())])]
+            : [new(ChatRole.Assistant, "Acknowledged.")]);
+        using var client = new FunctionInvokingChatClient(planner);
+        var options = new ChatOptions
+        {
+            Tools = [(AITool)new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "Completed.", "confirm_operation"))],
+        };
+
+        List<ChatMessage> history = [new(ChatRole.User, "Confirm the operation")];
+        var initial = await client.GetResponseAsync(history, options).ConfigureAwait(false);
+        history.AddRange(initial.Messages);
+        Assert.Single(initial.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        history.Add(new(ChatRole.User, "Actually, do something else instead."));
+        return history;
+    }
+
+    // Minimal scripted IChatClient: returns the scripted response updates per call.
+    private sealed class ScriptedClient(Func<int, IReadOnlyList<ChatMessage>, IEnumerable<ChatResponseUpdate>> script) : IChatClient
+    {
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask.ConfigureAwait(false);
+            foreach (var update in script(++Calls, messages.ToList()))
+            {
+                yield return update;
+            }
+        }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => serviceType.IsInstanceOfType(this) ? this : null;
+        public void Dispose()
+        {
+        }
+
+        public int Calls { get; private set; }
+    }
+
     // CodeRabbit follow-up on issue #3364: with parallel calls A and B
     // answered by separate tool messages, the deferred text for A must not
     // land between result A and result B — it is released only after every

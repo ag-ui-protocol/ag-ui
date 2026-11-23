@@ -285,6 +285,33 @@ public static class AGUIChatMessageExtensions
         // its batch has been emitted, so it never lands between two
         // results of the same assistant turn.
         var messageList = chatMessages.ToList();
+
+        // A completed approval-wrapped call is unwrapped only when the
+        // history carries a FunctionResultContent for its call id and does
+        // not already hold the same call as a plain FunctionCallContent:
+        // FunctionInvokingChatClient rebuilds the plain call after an
+        // approval, so unwrapping unconditionally sends the call twice and
+        // the first copy has no result following it (maintainer review on
+        // #3418, 2026-11-23). The same holds when the user ignores an
+        // approval and types something else: with no result for the call,
+        // the wrapped call must not turn into a tool call at all.
+        var resultCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var plainCallIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var message in messageList)
+        {
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionCallContent plainCall && plainCall.CallId is not null)
+                {
+                    plainCallIds.Add(plainCall.CallId);
+                }
+                else if (content is FunctionResultContent result && result.CallId is not null)
+                {
+                    resultCallIds.Add(result.CallId);
+                }
+            }
+        }
+
         var assistantCallBatches = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var message in messageList)
         {
@@ -412,7 +439,10 @@ public static class AGUIChatMessageExtensions
                 // ToolApprovalRequestContent (issue #3364) must be preserved
                 // the same way as a plain FunctionCallContent: dropping it
                 // while its FunctionResultContent survives leaves an orphaned
-                // tool result that providers reject.
+                // tool result that providers reject. It is unwrapped only
+                // when the history has the call's result and no plain call
+                // with the same id (see the pre-pass above): otherwise the
+                // call would be sent twice, or sent with no result at all.
                 var functionCalls = new List<FunctionCallContent>();
                 foreach (var content in message.Contents)
                 {
@@ -420,7 +450,10 @@ public static class AGUIChatMessageExtensions
                     {
                         functionCalls.Add(functionCall);
                     }
-                    else if (content is ToolApprovalRequestContent { ToolCall: FunctionCallContent wrappedCall })
+                    else if (content is ToolApprovalRequestContent { ToolCall: FunctionCallContent wrappedCall }
+                        && wrappedCall.CallId is not null
+                        && resultCallIds.Contains(wrappedCall.CallId)
+                        && !plainCallIds.Contains(wrappedCall.CallId))
                     {
                         functionCalls.Add(wrappedCall);
                     }
