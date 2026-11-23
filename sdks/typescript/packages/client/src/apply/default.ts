@@ -1000,14 +1000,29 @@ const applyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
+            // A subscriber that returned replacement messages left targetToolCall
+            // pointing into the discarded array, so resolve the call again in the
+            // retained one. Only then: this event fires per streamed chunk.
+            const retainedToolCall =
+              mutation.messages === undefined
+                ? targetToolCall
+                : (
+                    lookup.toolCallOwner(messages, toolCallId) as AssistantMessage | undefined
+                  )?.toolCalls?.find((tc) => tc.id === toolCallId);
+            if (!retainedToolCall) {
+              // Nothing to write to, so leave the replace marker for a write
+              // that actually lands.
+              console.warn(`TOOL_CALL_ARGS: Tool call '${toolCallId}' was removed by a subscriber`);
+              return emitUpdates();
+            }
             // The first accepted chunk replaces the previous stream lazily;
             // subsequent chunks (including identical text) are real deltas.
             if (replaceToolCallArgs.delete(toolCallId)) {
-              targetToolCall.function.arguments = delta;
+              retainedToolCall.function.arguments = delta;
             } else {
-              targetToolCall.function.arguments += delta;
+              retainedToolCall.function.arguments += delta;
             }
-            applyEventMetadata(targetToolCall, event);
+            applyEventMetadata(retainedToolCall, event);
             applyMutation({ messages });
           }
 
