@@ -16,6 +16,7 @@ import sys
 def test_importing_ag_ui_adk_never_imports_a2a():
     code = (
         "import sys, ag_ui_adk, ag_ui_adk.a2ui_tool, ag_ui_adk.a2ui_google_sdk\n"
+        "ag_ui_adk.compile_a2ui_express('root = Text(\"Hi\")')\n"
         "bad = sorted(m for m in sys.modules\n"
         "             if m == 'a2a' or m.startswith('a2a.')\n"
         "             or m == 'a2ui.a2a' or m.startswith('a2ui.a2a.')\n"

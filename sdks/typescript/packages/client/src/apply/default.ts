@@ -47,11 +47,13 @@ import {
   type ToolMessage,
 } from "@ag-ui/core";
 import jsonpatch from "fast-json-patch";
-import { EMPTY, of } from "rxjs";
+import { EMPTY, concat, defer, of, throwError } from "rxjs";
 import type { Observable } from "rxjs";
-import { concatMap, defaultIfEmpty, mergeAll } from "rxjs/operators";
+import { catchError, defaultIfEmpty } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
+import { applyInOrder, type Backlog } from "./apply-in-order";
+import { MessageLookup } from "./message-lookup";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";
 
 /**
@@ -67,9 +69,10 @@ function resolveOrCreateAssistantMessage(
   messages: Message[],
   parentMessageId: string | undefined,
   toolCallId: string,
+  lookup: MessageLookup,
 ): AssistantMessage {
   if (parentMessageId) {
-    const existing = messages.find((m) => m.id === parentMessageId);
+    const existing = lookup.find(messages, parentMessageId);
     if (existing?.role === "assistant") {
       return existing as AssistantMessage;
     }
@@ -394,23 +397,167 @@ export function keepToolResultsWithCalls(messages: Message[]): Message[] {
   return repaired;
 }
 
+/**
+ * A copy of a message for an emitted update. Copies every container the
+ * reducer edits in place (the message, its `toolCalls` array, each tool call
+ * and its `function`) and shares everything else. Strings are immutable, and
+ * nested values such as metadata and multimodal content are only ever
+ * replaced by the reducer, never edited.
+ *
+ * Activity content is copied whole. Consumers edit it: A2UI keeps the
+ * operations it is handed as its data model and changes them on form input.
+ * The next ACTIVITY_DELTA patches the reducer's content, so a shared object
+ * would carry that edit into later updates.
+ */
+function copyForEmit(message: Message): Message {
+  const copy = { ...message } as Message & { toolCalls?: ToolCall[] };
+  if (message.role === "activity") {
+    (copy as ActivityMessage).content = structuredClone_((message as ActivityMessage).content);
+  }
+  const toolCalls = (message as { toolCalls?: ToolCall[] }).toolCalls;
+  if (Array.isArray(toolCalls)) {
+    copy.toolCalls = toolCalls.map((toolCall) =>
+      toolCall?.function ? { ...toolCall, function: { ...toolCall.function } } : { ...toolCall },
+    );
+  }
+  return copy;
+}
+
+/**
+ * Whether `working` still matches the copy emitted for it. A shallow check is
+ * enough for the same reason a shallow copy is: the reducer changes a message
+ * only by assigning fields (a new string, a new metadata object), adding or
+ * deleting keys, or editing its tool calls, and each of those shows up here.
+ * `sourceContent` is the working content the copy was made from, which stands
+ * in for the copy's own `content` when that was copied whole (activity).
+ */
+function isUnchangedSince(copy: Message, working: Message, sourceContent: unknown): boolean {
+  const copyKeys = Object.keys(copy);
+  if (copyKeys.length !== Object.keys(working).length) return false;
+  for (const key of copyKeys) {
+    const copyValue = key === "content" ? sourceContent : (copy as Record<string, unknown>)[key];
+    const workingValue = (working as Record<string, unknown>)[key];
+    if (key === "toolCalls" && Array.isArray(copyValue) && Array.isArray(workingValue)) {
+      if (!sameToolCalls(copyValue as ToolCall[], workingValue as ToolCall[])) return false;
+    } else if (copyValue !== workingValue) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameToolCalls(copy: ToolCall[], working: ToolCall[]): boolean {
+  if (copy.length !== working.length) return false;
+  for (let index = 0; index < copy.length; index += 1) {
+    const copyCall = copy[index] as ToolCall & Record<string, unknown>;
+    const workingCall = working[index] as ToolCall & Record<string, unknown>;
+    const keys = Object.keys(copyCall);
+    if (keys.length !== Object.keys(workingCall).length) return false;
+    for (const key of keys) {
+      if (key === "function" && copyCall.function && workingCall.function) {
+        const copyFunction = copyCall.function as unknown as Record<string, unknown>;
+        const workingFunction = workingCall.function as unknown as Record<string, unknown>;
+        const functionKeys = Object.keys(copyFunction);
+        if (functionKeys.length !== Object.keys(workingFunction).length) return false;
+        for (const functionKey of functionKeys) {
+          if (copyFunction[functionKey] !== workingFunction[functionKey]) return false;
+        }
+      } else if (copyCall[key] !== workingCall[key]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Options for {@link defaultApplyEvents}. */
+export interface ApplyEventsOptions {
+  /**
+   * Emit one update for events that arrive together, instead of one per event.
+   * An update is emitted only when no further event is waiting to be applied,
+   * so a burst (a thread history replayed at once, or several events parsed
+   * from one network chunk) yields a single update with the state after its
+   * last event. Per-event subscriber hooks still run for every event, with the
+   * current messages and state; what is merged is the emitted updates, and
+   * with them `agent.messages`, `agent.state`, `onMessagesChanged` and
+   * `onStateChanged`. Events that arrive one at a time still emit one update
+   * each. If the stream fails before the update of a burst is emitted, the
+   * update for the events applied so far is emitted before the error. It
+   * includes what the event being applied at that moment had already changed.
+   * Off by default.
+   */
+  coalesce?: boolean;
+}
+
+/**
+ * Applies a run's events to the agent's messages and state, and emits an
+ * update after each event that changed them.
+ *
+ * What an emitted update shares, and with whom:
+ * - Emitted messages are read-only, including every nested value (metadata,
+ *   multimodal content, tool calls). An unchanged message is the same object
+ *   in consecutive updates, and a changed message shares its unchanged nested
+ *   values with the reducer's working copy. Editing one in place can change an
+ *   earlier update that holds it, and what later updates contain.
+ * - The reducer itself never changes an update it emitted. It copies every
+ *   container it edits in place (each message, its `toolCalls` array, each
+ *   tool call and its `function`), and it replaces nested values rather than
+ *   editing them.
+ * - Two values are copied whole because consumers are known to edit them:
+ *   emitted `state`, which the agent assigns to `agent.state`, and activity
+ *   message `content`, which A2UI keeps as its data model. Edits to either
+ *   never reach later updates. An edited state or activity object can still
+ *   change an earlier update that holds the same object.
+ * - Incoming payloads (`MESSAGES_SNAPSHOT` messages, `STATE_SNAPSHOT` and
+ *   `ACTIVITY_SNAPSHOT` content, `STATE_DELTA` and `ACTIVITY_DELTA` values,
+ *   event metadata) are copied on intake, so a caller's event objects never
+ *   alias emitted values.
+ *
+ * With `options.coalesce`, an update is emitted only once no further event is
+ * waiting to be applied; see {@link ApplyEventsOptions}.
+ */
 export const defaultApplyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
   agent: AbstractAgent,
   subscribers: AgentSubscriber[],
   debugLogger?: DebugLoggerInput,
+  options?: ApplyEventsOptions,
+): Observable<AgentStateMutation> =>
+  // The working messages and state belong to one subscription. An event that
+  // finishes applying after its subscription ended must not reach the next one.
+  defer(() => applyEvents(input, events$, agent, subscribers, debugLogger, options));
+
+const applyEvents = (
+  input: RunAgentInput,
+  events$: Observable<BaseEvent>,
+  agent: AbstractAgent,
+  subscribers: AgentSubscriber[],
+  debugLogger?: DebugLoggerInput,
+  options?: ApplyEventsOptions,
 ): Observable<AgentStateMutation> => {
   const log = resolveDebugLogger(debugLogger);
+  const coalesce = options?.coalesce === true;
+  // Events received but not yet picked up for applying. With `coalesce`, an
+  // update waits until none are.
+  const backlog: Backlog = { waiting: 0 };
   let messages = structuredClone_(agent.messages);
   let state = structuredClone_(input.state);
   let currentMutation: AgentStateMutation = {};
+  // Every lookup by message id or tool call id goes through this index rather
+  // than scanning `messages`, so an event costs the same in a long thread as in
+  // a short one.
+  const lookup = new MessageLookup();
 
   // The tool calls this run has started and answered so far. RUN_FINISHED
   // reads them when the success outcome names no `pendingToolCallIds`: the
   // specification lets a consumer derive the pending list from the stream —
   // every call the run started that got no TOOL_CALL_RESULT — and a producer
   // that names the list is trusted over the tally.
+  // Starts within an open stream are duplicates. A start after an end (or in
+  // a new run) begins a new argument stream, including for a call in history.
+  const activeToolCallIds = new Set<string>();
+  const replaceToolCallArgs = new Set<string>();
   let runToolCallIds: string[] = [];
   let answeredToolCallIds = new Set<string>();
   const pendingToolCallIdsOf = (e: RunFinishedEvent): string[] => {
@@ -430,9 +577,64 @@ export const defaultApplyEvents = (
     }
   };
 
+  // The reducer edits its working messages in place, but it must never change
+  // an update it has emitted: subscribers, `agent.messages` and anything that
+  // kept a snapshot hold it. See the contract above. Deep-cloning every message on every
+  // emitted update kept that promise at a cost that grew with the whole thread
+  // on every streamed token. Instead each update carries a structural copy of
+  // only the messages that changed since the last one; an unchanged message
+  // reuses its previous copy, so it also keeps its identity across updates.
+  // `content` is the working content a copy was made from. Activity content is
+  // copied whole, so the copy's own content never equals the working one; the
+  // reducer replaces activity content rather than editing it, so comparing
+  // against the source reference still detects a change.
+  const emittedCopies = new WeakMap<Message, { copy: Message; content: unknown }>();
+  const snapshotMessages = (working: Message[]): Message[] =>
+    working.map((message) => {
+      const previous = emittedCopies.get(message);
+      if (previous !== undefined && isUnchangedSince(previous.copy, message, previous.content)) {
+        return previous.copy;
+      }
+      const copy = copyForEmit(message);
+      emittedCopies.set(message, { copy, content: message.content });
+      return copy;
+    });
+
+  // With `coalesce`: whether events that finished applying changed messages or
+  // state that no update has passed on yet. A stream error emits them first.
+  let unemitted = false;
+
   const emitUpdates = () => {
-    const result = structuredClone_(currentMutation) as AgentStateMutation;
+    if (!coalesce) {
+      return emitCollected();
+    }
+    unemitted = currentMutation.messages !== undefined || currentMutation.state !== undefined;
+    // More events are already waiting: keep collecting into currentMutation,
+    // and let the last of them emit the combined update.
+    if (backlog.waiting > 0) {
+      return EMPTY;
+    }
+    // Collected when it is passed on, a few microtasks later: if the stream
+    // fails first, the error path below still finds the update to emit.
+    return defer(emitCollected);
+  };
+
+  // The update collected so far, whatever is still waiting.
+  const emitCollected = () => {
+    const result: AgentStateMutation = {};
+    if (currentMutation.messages !== undefined) {
+      result.messages = snapshotMessages(currentMutation.messages);
+    }
+    // State is copied whole on emit. The agent assigns emitted state to
+    // `agent.state`, which apps edit, and the next STATE_DELTA patches the
+    // reducer's state, so a shared object would make that edit an unannounced
+    // input to later events. State is emitted only when it changed, so text and
+    // tool-call streaming do not pay for this copy.
+    if (currentMutation.state !== undefined) {
+      result.state = structuredClone_(currentMutation.state);
+    }
     currentMutation = {};
+    unemitted = false;
     if (result.messages !== undefined || result.state !== undefined) {
       return of(result);
     }
@@ -440,7 +642,7 @@ export const defaultApplyEvents = (
   };
 
   return events$.pipe(
-    concatMap(async (event) => {
+    applyInOrder(async (event: BaseEvent) => {
       const mutation = await runSubscribersWithMutation(
         subscribers,
         messages,
@@ -493,7 +695,7 @@ export const defaultApplyEvents = (
 
             // Check if a message with this ID already exists (e.g., created by TOOL_CALL_START
             // with the same parentMessageId)
-            const existingMessage = messages.find((m) => m.id === messageId);
+            const existingMessage = lookup.find(messages, messageId);
 
             if (existingMessage?.role === "activity") {
               // Message ids are unique across the conversation, so an activity message under
@@ -541,7 +743,7 @@ export const defaultApplyEvents = (
           const { messageId, delta } = event as TextMessageContentEvent;
 
           // Find the target message by ID
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -589,7 +791,7 @@ export const defaultApplyEvents = (
           const { messageId } = event as TextMessageEndEvent;
 
           // Find the target message by ID
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`TEXT_MESSAGE_END: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -676,15 +878,20 @@ export const defaultApplyEvents = (
             // turn. Resolve the existing entry the same way TOOL_CALL_ARGS
             // does, and do it before resolveOrCreateAssistantMessage so a
             // replay can't append a stray empty assistant message either.
-            const ownerMessage = messages.find((m) =>
-              (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-            ) as AssistantMessage | undefined;
+            const ownerMessage = lookup.toolCallOwner(messages, toolCallId) as
+              | AssistantMessage
+              | undefined;
             const existingToolCall = ownerMessage?.toolCalls?.find((tc) => tc.id === toolCallId);
+
+            if (!activeToolCallIds.has(toolCallId)) {
+              activeToolCallIds.add(toolCallId);
+              if (existingToolCall) replaceToolCallArgs.add(toolCallId);
+            }
 
             if (existingToolCall) {
               // Update the existing entry instead of pushing a second one, and
-              // leave `arguments` untouched — a start event carries none, so
-              // the copy already in state holds the only streamed args.
+              // retain arguments until an args event arrives. Start-only
+              // approval resumes must preserve the call already in history.
               const renamed = existingToolCall.function.name !== toolCallName;
               if (renamed) {
                 console.warn(
@@ -701,13 +908,19 @@ export const defaultApplyEvents = (
               return emitUpdates();
             }
 
-            const preexistingIds = new Set(messages.map((m) => m.id));
+            const lengthBefore = messages.length;
             const targetMessage = resolveOrCreateAssistantMessage(
               messages,
               parentMessageId,
               toolCallId,
+              lookup,
             );
-            const wasCreated = !preexistingIds.has(targetMessage.id);
+            // Created, and no earlier message had its id. A created message is
+            // appended, so it is the first with its id exactly when its id was
+            // new.
+            const wasCreated =
+              messages.length !== lengthBefore &&
+              lookup.indexOf(messages, targetMessage.id) === messages.length - 1;
             if (wasCreated && subagentRunId != null && targetMessage.subagentRunId === undefined) {
               targetMessage.subagentRunId = subagentRunId;
             }
@@ -724,6 +937,7 @@ export const defaultApplyEvents = (
               },
             };
             targetMessage.toolCalls.push(newToolCall);
+            lookup.addedToolCall(messages, targetMessage, toolCallId);
 
             applyEventMetadata(newToolCall, event);
 
@@ -737,9 +951,7 @@ export const defaultApplyEvents = (
           const { toolCallId, delta } = event as ToolCallArgsEvent;
 
           // Find the message containing this tool call
-          const targetMessage = messages.find((m) =>
-            (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-          ) as AssistantMessage;
+          const targetMessage = lookup.toolCallOwner(messages, toolCallId) as AssistantMessage;
 
           if (!targetMessage) {
             console.warn(
@@ -760,7 +972,9 @@ export const defaultApplyEvents = (
             messages,
             state,
             (subscriber, messages, state) => {
-              const toolCallBuffer = targetToolCall.function.arguments;
+              const toolCallBuffer = replaceToolCallArgs.has(toolCallId)
+                ? ""
+                : targetToolCall.function.arguments;
               const toolCallName = targetToolCall.function.name;
               let partialToolCallArgs = {};
               try {
@@ -786,8 +1000,13 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            // Append the arguments to the correct tool call by ID
-            targetToolCall.function.arguments += delta;
+            // The first accepted chunk replaces the previous stream lazily;
+            // subsequent chunks (including identical text) are real deltas.
+            if (replaceToolCallArgs.delete(toolCallId)) {
+              targetToolCall.function.arguments = delta;
+            } else {
+              targetToolCall.function.arguments += delta;
+            }
             applyEventMetadata(targetToolCall, event);
             applyMutation({ messages });
           }
@@ -799,9 +1018,7 @@ export const defaultApplyEvents = (
           const { toolCallId } = event as ToolCallEndEvent;
 
           // Find the message containing this tool call
-          const targetMessage = messages.find((m) =>
-            (m as AssistantMessage).toolCalls?.some((tc) => tc.id === toolCallId),
-          ) as AssistantMessage;
+          const targetMessage = lookup.toolCallOwner(messages, toolCallId) as AssistantMessage;
 
           if (!targetMessage) {
             console.warn(
@@ -843,6 +1060,11 @@ export const defaultApplyEvents = (
             },
           );
           applyMutation(mutation);
+
+          if (mutation.stopPropagation !== true) {
+            activeToolCallIds.delete(toolCallId);
+            replaceToolCallArgs.delete(toolCallId);
+          }
 
           // Merge before onNewToolCall, for the same reason as TEXT_MESSAGE_END:
           // an end event carries the values only known once the call is closed.
@@ -887,12 +1109,19 @@ export const defaultApplyEvents = (
               event as ToolCallResultEvent;
             answeredToolCallIds.add(toolCallId);
 
-            const existingIndex = messages.findIndex(
-              (message) =>
-                message.id === messageId &&
-                message.role === "tool" &&
-                message.toolCallId === toolCallId,
-            );
+            const isThisResult = (message: Message) =>
+              message.id === messageId &&
+              message.role === "tool" &&
+              message.toolCallId === toolCallId;
+            // The first message with the id is almost always the answer, or
+            // there is none; only a reused id needs the scan past it.
+            const firstWithId = lookup.indexOf(messages, messageId);
+            let existingIndex = firstWithId;
+            if (firstWithId !== -1 && !isThisResult(messages[firstWithId])) {
+              existingIndex = messages.findIndex(
+                (message, index) => index > firstWithId && isThisResult(message),
+              );
+            }
             const toolMessage: ToolMessage = {
               ...(existingIndex !== -1 ? messages[existingIndex] : {}),
               id: messageId,
@@ -969,8 +1198,10 @@ export const defaultApplyEvents = (
                 ) {
                   insertAt++;
                 }
+                lookup.insertedBefore(messages, insertAt);
                 messages.splice(insertAt, 0, toolMessage);
               }
+              applyMutation({ messages });
 
               await Promise.all(
                 subscribers.map((subscriber) => {
@@ -1010,8 +1241,9 @@ export const defaultApplyEvents = (
           if (mutation.stopPropagation !== true) {
             const { snapshot } = event as StateSnapshotEvent;
 
-            // Replace state with the literal snapshot
-            state = snapshot;
+            // Replace state with the snapshot, copied so that emitted state
+            // never aliases the caller's event.
+            state = structuredClone_(snapshot);
 
             applyMutation({ state });
           }
@@ -1039,8 +1271,12 @@ export const defaultApplyEvents = (
             const { delta } = event as StateDeltaEvent;
 
             try {
-              // Apply the JSON Patch operations to the current state without mutating the original
-              const result = jsonpatch.applyPatch(state, delta, true, false);
+              // Apply the JSON Patch operations to the current state without
+              // mutating the original. fast-json-patch inserts patch values by
+              // reference, so copy the patch first: otherwise the event and the
+              // emitted state share those objects and an edit to either
+              // changes the other.
+              const result = jsonpatch.applyPatch(state, structuredClone_(delta), true, false);
               state = result.newDocument;
               applyMutation({ state });
             } catch (error: unknown) {
@@ -1073,7 +1309,9 @@ export const defaultApplyEvents = (
           applyMutation(mutation);
 
           if (mutation.stopPropagation !== true) {
-            const { messages: rawNewMessages } = event as MessagesSnapshotEvent;
+            // Copied on intake: the reducer edits its working messages in
+            // place, and those edits must not reach the caller's event.
+            const rawNewMessages = structuredClone_((event as MessagesSnapshotEvent).messages);
             // A runtime null tag reads as absent — it must not persist into state
             // and ride the next run's serialized input (the schemas forbid null;
             // this reducer also runs on unverified inputs).
@@ -1148,7 +1386,7 @@ export const defaultApplyEvents = (
 
         case EventType.ACTIVITY_SNAPSHOT: {
           const activityEvent = event as ActivitySnapshotEvent;
-          const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
+          const existingIndex = lookup.indexOf(messages, activityEvent.messageId);
           const existingMessage = existingIndex >= 0 ? messages[existingIndex] : undefined;
           const existingActivityMessage =
             existingMessage?.role === "activity" ? (existingMessage as ActivityMessage) : undefined;
@@ -1240,7 +1478,7 @@ export const defaultApplyEvents = (
 
         case EventType.ACTIVITY_DELTA: {
           const activityEvent = event as ActivityDeltaEvent;
-          const existingIndex = messages.findIndex((m) => m.id === activityEvent.messageId);
+          const existingIndex = lookup.indexOf(messages, activityEvent.messageId);
           if (existingIndex === -1) {
             return emitUpdates();
           }
@@ -1368,6 +1606,8 @@ export const defaultApplyEvents = (
 
           // Handle input.messages if present and stopPropagation is not set
           if (mutation.stopPropagation !== true) {
+            activeToolCallIds.clear();
+            replaceToolCallArgs.clear();
             const runStartedEvent = event as RunStartedEvent;
 
             // Check if the event contains input with messages
@@ -1383,7 +1623,7 @@ export const defaultApplyEvents = (
                   delete copy.subagentRunId;
                   message = copy as typeof rawMessage;
                 }
-                const existingMessage = messages.find((m) => m.id === message.id);
+                const existingMessage = lookup.find(messages, message.id);
                 if (!existingMessage) {
                   messages.push(message);
                 }
@@ -1556,7 +1796,7 @@ export const defaultApplyEvents = (
 
           if (mutation.stopPropagation !== true) {
             const { messageId, subagentRunId } = event as ReasoningMessageStartEvent;
-            const existingMessage = messages.find((m) => m.id === messageId);
+            const existingMessage = lookup.find(messages, messageId);
 
             if (existingMessage?.role === "activity") {
               // Message ids are unique across the conversation, so an activity message under
@@ -1595,7 +1835,7 @@ export const defaultApplyEvents = (
         case EventType.REASONING_MESSAGE_CONTENT: {
           const { messageId, delta } = event as ReasoningMessageContentEvent;
 
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_CONTENT: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -1640,7 +1880,7 @@ export const defaultApplyEvents = (
         case EventType.REASONING_MESSAGE_END: {
           const { messageId } = event as ReasoningMessageEndEvent;
 
-          const targetMessage = messages.find((m) => m.id === messageId);
+          const targetMessage = lookup.find(messages, messageId);
           if (!targetMessage) {
             console.warn(`REASONING_MESSAGE_END: No message found with ID '${messageId}'`);
             return emitUpdates();
@@ -1753,7 +1993,7 @@ export const defaultApplyEvents = (
             } else {
               // subtype is "message"
               // Find message by entityId and set encryptedValue
-              const message = messages.find((m) => m.id === entityId);
+              const message = lookup.find(messages, entityId);
               // Activity messages do not have encryptedValue
               if (message?.role !== "activity" && message) {
                 message.encryptedValue = encryptedValue;
@@ -1826,8 +2066,17 @@ export const defaultApplyEvents = (
       // If a new EventType is added, this will cause a compile error
       const _exhaustiveCheck: never = event.type;
       return emitUpdates();
-    }),
-    mergeAll(),
+    }, backlog),
+    // With `coalesce`, an update can still be held back when the stream fails:
+    // events of the burst were applied, and their update waited for the rest.
+    // Emit it before the error, as their own updates would have been without
+    // `coalesce`. The event being applied at that moment edits the same
+    // messages and state, so what it changed so far goes with them.
+    coalesce
+      ? catchError((error: unknown) =>
+          concat(unemitted ? emitCollected() : EMPTY, throwError(() => error)),
+        )
+      : <T>(stream: T) => stream,
     // Only use defaultIfEmpty when there are subscribers to avoid emitting empty updates
     // when patches fail and there are no subscribers (like in state patching test)
     subscribers.length > 0 ? defaultIfEmpty({} as AgentStateMutation) : <T>(stream: T) => stream,

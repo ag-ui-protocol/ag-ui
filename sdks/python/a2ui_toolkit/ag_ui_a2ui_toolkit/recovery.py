@@ -27,6 +27,18 @@ _NO_TOOL_CALL_ERROR = {
 }
 
 
+class A2UIGenerationError(Exception):
+    """An adapter's retryable generation/compilation diagnostics.
+
+    Transport failures and cancellation remain exceptions; only this explicit
+    error is fed back to the model through the bounded recovery loop.
+    """
+
+    def __init__(self, errors: list[dict[str, str]]):
+        self.errors = errors
+        super().__init__(format_validation_errors(errors))
+
+
 def format_validation_errors(errors: list[dict[str, str]]) -> str:
     """Render structured errors as a compact, model-readable list."""
     return "\n".join(f"- [{e['code']}] {e['path']}: {e['message']}" for e in errors)
@@ -73,7 +85,15 @@ def run_a2ui_generation_with_recovery(
 
     for attempt in range(1, max_attempts + 1):
         prompt = augment_prompt_with_validation_errors(base_prompt, last_errors)
-        args = invoke_subagent(prompt, attempt)
+        try:
+            args = invoke_subagent(prompt, attempt)
+        except A2UIGenerationError as error:
+            record = {"attempt": attempt, "ok": False, "errors": error.errors}
+            attempts.append(record)
+            if on_attempt:
+                on_attempt(record)
+            last_errors = error.errors
+            continue
 
         if not args:
             record = {"attempt": attempt, "ok": False, "errors": [_NO_TOOL_CALL_ERROR]}

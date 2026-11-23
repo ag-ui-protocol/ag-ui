@@ -770,6 +770,23 @@ export const agentsIntegrations = {
       tool_based_generative_ui: "tool_based_generative_ui",
     }),
 
+  "openai-agents-python": async () =>
+    mapAgents(
+      (path) =>
+        new HttpAgent({ url: `${envVars.openaiAgentsPythonUrl}/${path}/` }),
+      {
+        ag_ui_docs_copilot: "ag_ui_docs_copilot",
+        agentic_chat: "agentic_chat",
+        backend_tool_rendering: "backend_tool_rendering",
+        human_in_the_loop: "human_in_the_loop",
+        human_in_the_loop_approval: "human_in_the_loop_approval",
+        tool_based_generative_ui: "tool_based_generative_ui",
+        subagents: "subagents",
+        custom_lifecycle_events: "custom_lifecycle_events",
+        dynamic_system_prompt: "dynamic_system_prompt",
+      },
+    ),
+
   "claude-agent-sdk-python": async () =>
     mapAgents(
       (path) =>
@@ -860,19 +877,29 @@ export const agentsIntegrations = {
       },
     ),
 
-  // A Worker running on workerd (`wrangler dev` locally) that routes each
-  // thread to its own Agents SDK Durable Object and streams AG-UI over SSE.
+  // A Worker running on workerd (`wrangler dev` locally): one Agents SDK agent
+  // (Durable Object) per demo, each thread its own instance. A plain HttpAgent
+  // posts every thread to /agents/<demo>; the Worker routes it to
+  // /agents/<demo>/<threadId>.
   "cloudflare-agents": async () =>
     mapAgents(
       (path) =>
-        new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/${path}` }),
+        new HttpAgent({ url: `${envVars.cloudflareAgentsUrl}/agents/${path}` }),
       {
-        agentic_chat: "agentic_chat",
-        // The example agent puts the client's context into its system
-        // prompt, so the plain chat agent serves the generative UI demos.
-        generative_ui_markdown: "agentic_chat",
-        generative_ui_tool: "agentic_chat",
-        backend_tool_rendering: "backend_tool_rendering",
+        agentic_chat: "agentic-chat",
+        agentic_chat_multimodal: "agentic-chat-multimodal",
+        agentic_chat_reasoning: "agentic-chat-reasoning",
+        agentic_generative_ui: "agentic-generative-ui",
+        backend_tool_rendering: "backend-tool-rendering",
+        human_in_the_loop: "human-in-the-loop",
+        human_in_the_loop_approval: "human-in-the-loop-approval",
+        predictive_state_updates: "predictive-state-updates",
+        shared_state: "shared-state",
+        tool_based_generative_ui: "tool-based-generative-ui",
+        // The chat agent puts the client's context into its instructions, so
+        // it serves the generative UI demos too.
+        generative_ui_markdown: "agentic-chat",
+        generative_ui_tool: "agentic-chat",
       },
     ),
 

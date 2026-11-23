@@ -1050,8 +1050,6 @@ class ClaudeAgentAdapter:
                             if not has_streamed_text:
                                 yield TextMessageStartEvent(
                                     type=EventType.TEXT_MESSAGE_START,
-                                    thread_id=thread_id,
-                                    run_id=run_id,
                                     message_id=current_message_id,
                                     role="assistant",
                                 )
@@ -1061,8 +1059,6 @@ class ClaudeAgentAdapter:
 
                             yield TextMessageContentEvent(
                                 type=EventType.TEXT_MESSAGE_CONTENT,
-                                thread_id=thread_id,
-                                run_id=run_id,
                                 message_id=current_message_id,
                                 delta=text_chunk,
                             )
@@ -1091,8 +1087,6 @@ class ClaudeAgentAdapter:
                             safe_delta = fix_surrogates(partial_json)
                             yield ToolCallArgsEvent(
                                 type=EventType.TOOL_CALL_ARGS,
-                                thread_id=thread_id,
-                                run_id=run_id,
                                 tool_call_id=current_tool_call_id,
                                 delta=safe_delta,
                             )
@@ -1124,8 +1118,6 @@ class ClaudeAgentAdapter:
                             
                             yield ToolCallStartEvent(
                                 type=EventType.TOOL_CALL_START,
-                                thread_id=thread_id,
-                                run_id=run_id,
                                 tool_call_id=current_tool_call_id,
                                 tool_call_name=current_tool_display_name,
                                 parent_message_id=current_message_id,
@@ -1213,8 +1205,6 @@ class ClaudeAgentAdapter:
                         # Emit TOOL_CALL_END for regular backend tools
                         yield ToolCallEndEvent(
                             type=EventType.TOOL_CALL_END,
-                            thread_id=thread_id,
-                            run_id=run_id,
                             tool_call_id=current_tool_call_id,
                         )
 
@@ -1258,8 +1248,6 @@ class ClaudeAgentAdapter:
                     if current_message_id and has_streamed_text:
                         yield TextMessageEndEvent(
                             type=EventType.TEXT_MESSAGE_END,
-                            thread_id=thread_id,
-                            run_id=run_id,
                             message_id=current_message_id,
                         )
                     current_message_id = None
@@ -1371,9 +1359,9 @@ class ClaudeAgentAdapter:
                     last_assistant = next((m for m in reversed(run_messages) if getattr(m, 'role', None) == 'assistant'), None)
                     matching_assistant = last_assistant if last_assistant is not None and last_assistant.content == result_text else None
                     result_msg_id = matching_assistant.id if matching_assistant is not None else str(uuid.uuid4())
-                    yield TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, thread_id=thread_id, run_id=run_id, message_id=result_msg_id, role="assistant")
-                    yield TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, thread_id=thread_id, run_id=run_id, message_id=result_msg_id, delta=result_text)
-                    yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, thread_id=thread_id, run_id=run_id, message_id=result_msg_id)
+                    yield TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=result_msg_id, role="assistant")
+                    yield TextMessageContentEvent(type=EventType.TEXT_MESSAGE_CONTENT, message_id=result_msg_id, delta=result_text)
+                    yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=result_msg_id)
 
                     upsert_message(matching_assistant if matching_assistant is not None else AguiAssistantMessage(
                         id=result_msg_id,
@@ -1389,8 +1377,6 @@ class ClaudeAgentAdapter:
             logger.debug(f"Cleanup: closing hanging TOOL_CALL_START for {current_tool_call_id}")
             yield ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
-                thread_id=thread_id,
-                run_id=run_id,
                 tool_call_id=current_tool_call_id,
             )
             current_tool_call_id = None
@@ -1412,8 +1398,6 @@ class ClaudeAgentAdapter:
             logger.debug(f"Cleanup: closing hanging TEXT_MESSAGE_START for {current_message_id}")
             yield TextMessageEndEvent(
                 type=EventType.TEXT_MESSAGE_END,
-                thread_id=thread_id,
-                run_id=run_id,
                 message_id=current_message_id,
             )
 

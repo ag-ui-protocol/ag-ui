@@ -284,8 +284,6 @@ async def handle_tool_use_block(
         # Regular tool handling for non-state tools
         yield ToolCallStartEvent(
             type=EventType.TOOL_CALL_START,
-            thread_id=thread_id,
-            run_id=run_id,
             tool_call_id=tool_id,
             tool_call_name=tool_display_name,  # Use unprefixed name
             parent_message_id=parent_message_id,
@@ -295,8 +293,6 @@ async def handle_tool_use_block(
             args_json = json.dumps(tool_input)
             yield ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
-                thread_id=thread_id,
-                run_id=run_id,
                 tool_call_id=tool_id,
                 delta=args_json,
             )
@@ -307,8 +303,6 @@ async def handle_tool_use_block(
         # is the only place that closes the tool call.
         yield ToolCallEndEvent(
             type=EventType.TOOL_CALL_END,
-            thread_id=thread_id,
-            run_id=run_id,
             tool_call_id=tool_id,
         )
 
@@ -388,8 +382,6 @@ async def handle_tool_result_block(
             raw_event["uuid"] = sdk_message_id
         yield ToolCallResultEvent(
             type=EventType.TOOL_CALL_RESULT,
-            thread_id=thread_id,
-            run_id=run_id,
             message_id=result_message_id,
             tool_call_id=tool_use_id,
             content=result_str,

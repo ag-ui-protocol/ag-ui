@@ -18,6 +18,9 @@ interface StateChangeHandler {
 
     /**
      * Called when a state update fails.
+     *
+     * [StateManager] calls this for every delta it rejects. In [defaultApplyEvents], a malformed
+     * `STATE_DELTA` fails the flow instead, and only a delta that cannot be applied gets here.
      */
     suspend fun onStateError(error: Throwable, delta: JsonArray?) {}
 }

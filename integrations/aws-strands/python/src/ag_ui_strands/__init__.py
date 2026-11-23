@@ -42,6 +42,7 @@ from .config import (
     TemplateToolsProvider,
     ToolStreamEventHandler,
 )
+from .subagents import SubagentVisibility
 from ag_ui.core import (
     Interrupt,
     ResumeEntry,
@@ -82,6 +83,7 @@ __all__ = [
     "SessionManagerProvider",
     "TemplateToolsProvider",
     "ToolStreamEventHandler",
+    "SubagentVisibility",
     "Interrupt",
     "ResumeEntry",
     "RunFinishedInterruptOutcome",

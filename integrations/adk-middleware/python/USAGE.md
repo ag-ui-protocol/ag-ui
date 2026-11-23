@@ -14,26 +14,26 @@ agent = ADKAgent(
     user_id="static_user"
 )
 
-# Dynamic extraction from context (recommended for multi-tenant)
-def extract_app(input: RunAgentInput) -> str:
-    # Extract from context
-    for ctx in input.context:
-        if ctx.description == "app":
-            return ctx.value
-    return "default_app"
+# Dynamic identity from the authenticated request (recommended for multi-tenant).
+# Do not trust client-supplied context or state for identity: the client controls them.
+from fastapi import FastAPI, HTTPException, Request
+from ag_ui_adk import add_adk_fastapi_endpoint
 
-def extract_user(input: RunAgentInput) -> str:
-    # Extract from context
-    for ctx in input.context:
-        if ctx.description == "user":
-            return ctx.value
-    return f"anonymous_{input.thread_id}"
+async def extract_identity(request: Request, input: RunAgentInput) -> dict:
+    # Set by your authenticating gateway or auth middleware, never by the client.
+    user_id = request.headers.get("x-user-id")
+    if not user_id:
+        raise HTTPException(status_code=401)
+    return {"user_id": user_id}
 
 agent = ADKAgent(
     adk_agent=my_agent,
-    app_name_extractor=extract_app,
-    user_id_extractor=extract_user
+    app_name="my_app",
+    user_id_extractor=lambda input: input.state["user_id"]
 )
+
+app = FastAPI()
+add_adk_fastapi_endpoint(app, agent, "/chat", extract_state_from_request=extract_identity)
 ```
 
 ### Session Management

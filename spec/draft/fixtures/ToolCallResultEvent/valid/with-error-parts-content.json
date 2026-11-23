@@ -1,0 +1,20 @@
+{
+  "type": "TOOL_CALL_RESULT",
+  "messageId": "m2",
+  "toolCallId": "c1",
+  "content": [
+    {
+      "type": "text",
+      "text": "Rendered 2 of 3 pages before the renderer crashed."
+    },
+    {
+      "type": "image",
+      "source": {
+        "type": "url",
+        "value": "https://example.com/page-1.png",
+        "mimeType": "image/png"
+      }
+    }
+  ],
+  "error": "renderer crashed on page 3"
+}

@@ -15,9 +15,11 @@ from packaging.requirements import Requirement
         ("0.2.4", False),  # Same undefined annotation as 0.2.3.
         ("0.2.5", False),  # Require an explicit compatibility migration.
         ("0.3.0", False),
-        ("0.9.0", True),
-        ("0.9.1", True),
-        ("0.10.0", False),
+        ("0.9.0", False),  # No incremental Express streaming.
+        ("0.9.1", False),
+        ("0.10.0", True),
+        ("0.10.1", True),
+        ("0.11.0", False),
         ("1.0.0", False),
     ],
 )
@@ -35,6 +37,7 @@ def test_a2ui_requires_core_without_framework_integration():
     requirements = {
         Requirement(value).name: Requirement(value) for value in requires("ag-ui-adk")
     }
-    assert requirements["a2ui-core"].specifier.contains("0.4.0")
-    assert not requirements["a2ui-core"].specifier.contains("0.5.0")
+    assert not requirements["a2ui-core"].specifier.contains("0.4.0")
+    assert requirements["a2ui-core"].specifier.contains("0.5.0")
+    assert not requirements["a2ui-core"].specifier.contains("0.6.0")
     assert "a2ui-adk" not in requirements

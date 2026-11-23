@@ -31,6 +31,7 @@
       "@ag-ui/llamaindex",
       "@ag-ui/mastra",
       "@ag-ui/omnara",
+      "@ag-ui/openai-agents",
       "@ag-ui/pydantic-ai",
       "@ag-ui/spring-ai",
       "@ag-ui/watsonx",

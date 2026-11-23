@@ -169,7 +169,7 @@ describe("compaction at run terminal boundaries", () => {
     await expect(verify(compacted)).resolves.toHaveLength(compacted.length);
   });
 
-  it("keeps a fully closed run verifier-readable after normal stream reordering", async () => {
+  it("keeps a tool call that ends inside an answer after the answer it started in", async () => {
     const events: BaseEvent[] = [
       { type: EventType.RUN_STARTED, threadId: "t", runId: "r-finished" },
       { type: EventType.TEXT_MESSAGE_START, messageId: "m", role: "assistant" },
@@ -184,16 +184,17 @@ describe("compaction at run terminal boundaries", () => {
     await expect(verify(events)).resolves.toHaveLength(events.length);
 
     const compacted = compactEvents(events);
-    // The completed tool call flushes before the text group: that preexisting
-    // reordering is legal, unlike moving either stream past the run terminal.
+    // Each stream stays together where it started: the answer opened first, so
+    // the tool call that ended inside it comes out after it, and a replay
+    // creates the answer before the tool call's message.
     expect(compacted.map((event) => event.type)).toEqual([
       EventType.RUN_STARTED,
-      EventType.TOOL_CALL_START,
-      EventType.TOOL_CALL_ARGS,
-      EventType.TOOL_CALL_END,
       EventType.TEXT_MESSAGE_START,
       EventType.TEXT_MESSAGE_CONTENT,
       EventType.TEXT_MESSAGE_END,
+      EventType.TOOL_CALL_START,
+      EventType.TOOL_CALL_ARGS,
+      EventType.TOOL_CALL_END,
       EventType.RUN_FINISHED,
     ]);
     await expect(verify(compacted)).resolves.toHaveLength(compacted.length);

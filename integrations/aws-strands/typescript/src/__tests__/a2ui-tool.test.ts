@@ -44,7 +44,9 @@ function fakeRegistry(opts: { withList?: boolean; throwOnAdd?: string } = {}) {
     get: (n: string) => tools.get(n),
     getByName: (n: string) => tools.get(n),
     remove: (t: unknown) =>
-      tools.delete(typeof t === "string" ? t : (t as { name?: string })?.name ?? ""),
+      tools.delete(
+        typeof t === "string" ? t : ((t as { name?: string })?.name ?? ""),
+      ),
     removeByName: (n: string) => tools.delete(n),
     values: () => Array.from(tools.values()),
   };
@@ -256,11 +258,19 @@ describe("Strands message-shape helpers (real SDK block types)", () => {
 
   it("stripInFlightToolCall drops a trailing toolUseBlock for the tool", () => {
     const messages = [
-      { role: "user", content: [{ type: "textBlock", text: "compare hotels" }] },
+      {
+        role: "user",
+        content: [{ type: "textBlock", text: "compare hotels" }],
+      },
       {
         role: "assistant",
         content: [
-          { type: "toolUseBlock", name: "generate_a2ui", toolUseId: "t1", input: {} },
+          {
+            type: "toolUseBlock",
+            name: "generate_a2ui",
+            toolUseId: "t1",
+            input: {},
+          },
         ],
       },
     ];
@@ -271,7 +281,10 @@ describe("Strands message-shape helpers (real SDK block types)", () => {
 
   it("stripInFlightToolCall keeps a trailing user turn", () => {
     const messages = [
-      { role: "user", content: [{ type: "textBlock", text: "compare hotels" }] },
+      {
+        role: "user",
+        content: [{ type: "textBlock", text: "compare hotels" }],
+      },
     ];
     expect(stripInFlightToolCall(messages, "generate_a2ui")).toHaveLength(1);
   });
@@ -303,7 +316,9 @@ describe("Strands message-shape helpers (real SDK block types)", () => {
     const fromText = strandsToolResultsToAgui([
       {
         role: "user",
-        content: [{ toolResult: { toolUseId: "tc1", content: [{ text: envelope }] } }],
+        content: [
+          { toolResult: { toolUseId: "tc1", content: [{ text: envelope }] } },
+        ],
       },
     ]);
     expect(fromText).toHaveLength(1);
@@ -359,7 +374,10 @@ describe("auto-inject across turns (F1 regression)", () => {
     const agent = scriptedStrandsAgent([]);
     const registry = (
       agent as unknown as {
-        _agentsByThread: Map<string, { toolRegistry: { list(): { name: string }[] } }>;
+        _agentsByThread: Map<
+          string,
+          { toolRegistry: { list(): { name: string }[] } }
+        >;
       }
     )._agentsByThread.get("thread-1")!.toolRegistry;
 
@@ -394,7 +412,11 @@ describe("A2UI sub-agent streaming → synthetic inner TOOL_CALL events", () => 
 
   it("re-emits start/args/end payloads as inner TOOL_CALL events on the wire", async () => {
     const agent = scriptedStrandsAgent([
-      streamEvt({ kind: "start", toolCallId: "r1", toolCallName: "render_a2ui" }),
+      streamEvt({
+        kind: "start",
+        toolCallId: "r1",
+        toolCallName: "render_a2ui",
+      }),
       streamEvt({ kind: "args", toolCallId: "r1", delta: '{"surfaceId":' }),
       streamEvt({ kind: "args", toolCallId: "r1", delta: '"s1"}' }),
       streamEvt({ kind: "end", toolCallId: "r1" }),
@@ -436,10 +458,210 @@ describe("A2UI sub-agent streaming → synthetic inner TOOL_CALL events", () => 
       events.some(
         (e) =>
           e.type === EventType.STATE_SNAPSHOT &&
-          JSON.stringify((e as { snapshot?: unknown }).snapshot).includes("steps"),
+          JSON.stringify((e as { snapshot?: unknown }).snapshot).includes(
+            "steps",
+          ),
       ),
     ).toBe(true);
-    expect(events.some((e) => e.type === EventType.TOOL_CALL_START)).toBe(false);
+    expect(events.some((e) => e.type === EventType.TOOL_CALL_START)).toBe(
+      false,
+    );
+  });
+});
+
+describe("generate_a2ui explicit tool-choice opt-out", () => {
+  async function driveTool(tool: ReturnType<typeof getA2UITools>) {
+    const gen = (
+      tool as { stream: (c: unknown) => AsyncGenerator<unknown, unknown> }
+    ).stream({
+      toolUse: { toolUseId: "tu-1", input: {} },
+      agent: { messages: [] },
+    });
+    const events: unknown[] = [];
+    for (;;) {
+      const step = await gen.next();
+      if (step.done) {
+        const result = step.value as { content: Array<{ text: string }> };
+        return { events, text: result.content[0].text };
+      }
+      events.push(step.value);
+    }
+  }
+
+  function configuredTool(
+    model: unknown,
+    entryPath: string,
+    config: {
+      forceToolChoice?: boolean;
+      defaultCatalogId?: string;
+      recovery?: { maxAttempts: number };
+      onA2UIAttempt?: (record: { ok: boolean }) => void;
+    },
+  ) {
+    return entryPath === "factory"
+      ? getA2UITools({ model, ...config })
+      : planA2UIInjection({
+          model,
+          input: minimalRunInput({ forwardedProps: { injectA2UITool: true } }),
+          existingToolNames: [],
+          config,
+        })!.tool;
+  }
+
+  function* renderEvents(input: string) {
+    yield {
+      type: "modelContentBlockStartEvent",
+      start: { type: "toolUseStart", toolUseId: "r1", name: "render_a2ui" },
+    };
+    yield {
+      type: "modelContentBlockDeltaEvent",
+      delta: { type: "toolUseInputDelta", input },
+    };
+    yield { type: "modelContentBlockStopEvent" };
+  }
+
+  describe.each(["factory", "injection"])("%s", (entryPath) => {
+    it.each([undefined, true, false, null])(
+      "honors forceToolChoice=%s in the actual request",
+      async (forceToolChoice) => {
+        const calls: Array<Record<string, unknown>> = [];
+        const model = {
+          async *stream(_messages: unknown, options: Record<string, unknown>) {
+            calls.push(options);
+            yield* renderEvents(
+              '{"surfaceId":"s1","components":[{"id":"root","component":"Row"}]}',
+            );
+          },
+        };
+        const { events, text } = await driveTool(
+          configuredTool(model, entryPath, {
+            // Runtime configuration can contain null despite the boolean API.
+            ...(forceToolChoice === undefined
+              ? {}
+              : { forceToolChoice: forceToolChoice as boolean }),
+            defaultCatalogId: "host-catalog",
+          }),
+        );
+        expect(calls).toHaveLength(1);
+        if (forceToolChoice === false) {
+          expect(Object.hasOwn(calls[0], "toolChoice")).toBe(false);
+        } else {
+          expect(calls[0].toolChoice).toEqual({
+            tool: { name: "render_a2ui" },
+          });
+        }
+        expect(calls[0].toolSpecs).toEqual([
+          expect.objectContaining({ name: "render_a2ui" }),
+        ]);
+        expect(calls[0].systemPrompt).toContain("render_a2ui");
+        const payloads = events.map(
+          (e) =>
+            (
+              e as {
+                data: Record<string, { kind: string; delta?: string }>;
+              }
+            ).data.__a2uiRenderStream,
+        );
+        expect(payloads.map((p) => p.kind)).toEqual(["start", "args", "end"]);
+        expect(
+          JSON.parse(
+            payloads
+              .filter((p) => p.kind === "args")
+              .map((p) => p.delta)
+              .join(""),
+          ),
+        ).toHaveProperty("catalogId", "host-catalog");
+        expect(text).toContain("a2ui_operations");
+        expect(text).toContain("host-catalog");
+      },
+    );
+
+    describe.each(["text", "invalid"])("%s output", (firstOutput) => {
+      it.each([true, false])(
+        "preserves bounded recovery (succeeds=%s)",
+        async (succeeds) => {
+          const calls: Array<Record<string, unknown>> = [];
+          const attempts: Array<{ ok: boolean }> = [];
+          const model = {
+            async *stream(
+              _messages: unknown,
+              options: Record<string, unknown>,
+            ) {
+              calls.push(options);
+              if (succeeds && calls.length === 2) {
+                yield* renderEvents(
+                  '{"components":[{"id":"root","component":"Row"}]}',
+                );
+              } else if (firstOutput === "invalid") {
+                yield* renderEvents('{"components":[]}');
+              } else {
+                yield {
+                  type: "modelContentBlockDeltaEvent",
+                  delta: { type: "textDelta", text: "I can render a UI." },
+                };
+                yield { type: "modelContentBlockStopEvent" };
+              }
+            },
+          };
+          const { text } = await driveTool(
+            configuredTool(model, entryPath, {
+              forceToolChoice: false,
+              recovery: { maxAttempts: 2 },
+              onA2UIAttempt: (record) => attempts.push(record),
+            }),
+          );
+          expect(calls).toHaveLength(2);
+          expect(
+            calls.every((call) => !Object.hasOwn(call, "toolChoice")),
+          ).toBe(true);
+          expect(attempts.map((a) => a.ok)).toEqual([false, succeeds]);
+          expect(calls[1].systemPrompt).toContain(
+            "Previous attempt was invalid",
+          );
+          if (succeeds) {
+            expect(text).toContain("a2ui_operations");
+            expect(text).not.toContain("a2ui_recovery_exhausted");
+          } else {
+            expect(text).toContain("a2ui_recovery_exhausted");
+            expect(text).not.toContain("a2ui_operations");
+          }
+        },
+      );
+    });
+
+    it.each([Error, TypeError, DOMException])(
+      "preserves %s classification without changing choice",
+      async (ErrorType) => {
+        const calls: Array<Record<string, unknown>> = [];
+        const error =
+          ErrorType === DOMException
+            ? new DOMException("tool_choice is not supported", "AbortError")
+            : new ErrorType("tool_choice is not supported");
+        const model = {
+          async *stream(_messages: unknown, options: Record<string, unknown>) {
+            calls.push(options);
+            throw error;
+            yield; // Async generator protocol; no output before rejection.
+          },
+        };
+        const tool = configuredTool(model, entryPath, {
+          forceToolChoice: false,
+          recovery: { maxAttempts: 2 },
+        });
+        if (ErrorType === Error) {
+          expect((await driveTool(tool)).text).toContain(
+            "a2ui_recovery_exhausted",
+          );
+          expect(calls).toHaveLength(2);
+        } else {
+          await expect(driveTool(tool)).rejects.toBe(error);
+          expect(calls).toHaveLength(1);
+        }
+        expect(calls.every((call) => !Object.hasOwn(call, "toolChoice"))).toBe(
+          true,
+        );
+      },
+    );
   });
 });
 
@@ -527,8 +749,12 @@ describe("classifyA2UISubagentError (cancel / adapter-bug vs recoverable)", () =
     expect(classifyA2UISubagentError(cancelled, false)).toBe("rethrow");
   });
   it("rethrows programmer errors (TypeError / ReferenceError = adapter bug)", () => {
-    expect(classifyA2UISubagentError(new TypeError("x"), false)).toBe("rethrow");
-    expect(classifyA2UISubagentError(new ReferenceError("x"), false)).toBe("rethrow");
+    expect(classifyA2UISubagentError(new TypeError("x"), false)).toBe(
+      "rethrow",
+    );
+    expect(classifyA2UISubagentError(new ReferenceError("x"), false)).toBe(
+      "rethrow",
+    );
   });
   it("treats undici network TypeErrors as recoverable, not adapter bugs", () => {
     // Node 18+ fetch rejects with `TypeError: fetch failed` (+ errno cause) —
@@ -536,9 +762,9 @@ describe("classifyA2UISubagentError (cancel / adapter-bug vs recoverable)", () =
     const fetchFailed = new TypeError("fetch failed");
     (fetchFailed as { cause?: unknown }).cause = new Error("ECONNREFUSED");
     expect(classifyA2UISubagentError(fetchFailed, false)).toBe("recoverable");
-    expect(classifyA2UISubagentError(new TypeError("fetch failed"), false)).toBe(
-      "recoverable",
-    );
+    expect(
+      classifyA2UISubagentError(new TypeError("fetch failed"), false),
+    ).toBe("recoverable");
     // A bare TypeError with no network shape stays an adapter bug — and so
     // does a CAUSED non-network TypeError or one merely mentioning "fetch"
     // (exact-message match only).

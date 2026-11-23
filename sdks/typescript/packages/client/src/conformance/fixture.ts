@@ -71,6 +71,14 @@ export interface StreamExpectation {
   /** Subset-matched against the final messages, in order. */
   messages?: Array<Record<string, unknown>>;
   /**
+   * Paths inside the final messages, keyed `"<index>.<dotted path>"`, that
+   * must NOT exist. The subset match ignores keys it does not name, so a
+   * client that merged a restated message over its streamed copy, keeping a
+   * field the restatement dropped, satisfies `messages`; this is how a fixture
+   * says the field is gone.
+   */
+  messageAbsentPaths?: string[];
+  /**
    * Subset-matched against the final state. Any JSON value: state is
    * unconstrained by the schema, and fixtures legitimately expect an array,
    * a number or null.

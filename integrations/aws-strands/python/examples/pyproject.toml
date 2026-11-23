@@ -14,6 +14,10 @@ pydantic = ">=2.11.2"
 python-dotenv = "^1.0.0"
 uvicorn = ">=0.34.3"
 strands-agents = {extras = ["openai", "anthropic", "gemini"], version = "^1.55.0"}
+# strands-agents 1.63.0 allows openai 3.x, whose typed response annotations
+# break OpenAIResponsesModel's url_citation handling (it calls .get() on them).
+# Hold openai below 3 until strands supports it.
+openai = "<3.0.0"
 ag_ui_strands = {path = "..", develop = true}
 
 [build-system]

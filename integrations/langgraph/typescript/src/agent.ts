@@ -195,11 +195,96 @@ export interface LangGraphAgentConfig extends AgentConfig {
    * typed AG-UI events. AG-UI event metadata is preserved. Defaults to true.
    */
   emitRawEvents?: boolean;
+  /**
+   * The run's checkpoint durability (`runs.stream` `durability`). Unset, the
+   * LangGraph server's default applies (`"async"`). The adapter reads
+   * checkpoints by this value, so it must be the one the run uses. A client
+   * cannot set it: `forwardedProps.durability` is dropped.
+   */
+  durability?: Durability;
 }
 
 const ROOT_SUBGRAPH_NAME = "root";
 const ASYNC_BOUNDARY_CHECKPOINT_ATTEMPTS = 3;
 const ASYNC_BOUNDARY_CHECKPOINT_RETRY_DELAY_MS = 25;
+
+/**
+ * The `forwardedProps` keys a client may pass through to `runs.stream`. It is
+ * an option the adapter reads itself while it handles the stream, so the run
+ * must use the same value. `streamMode` is also client-chosen, but the
+ * adapter sets it on the payload itself, and `command` is rebuilt from
+ * `command.resume` only. Everything else in a LangGraph run payload (config,
+ * context, checkpoint, durability, webhook, interrupts, multitask and
+ * completion options, metadata) is the operator's: set it with
+ * `assistantConfig`, the `durability` option, or in a subclass.
+ */
+const CLIENT_RUN_PROPS = ["streamSubgraphs"] as const;
+
+/** LangGraph run options a client may not set. Named only for the warning. */
+const LANGGRAPH_RUN_OPTIONS = [
+  "config",
+  "durability",
+  "context",
+  "checkpoint",
+  "checkpointId",
+  "checkpointDuring",
+  "metadata",
+  "webhook",
+  "interruptBefore",
+  "interruptAfter",
+  "multitaskStrategy",
+  "onCompletion",
+  "onDisconnect",
+  "afterSeconds",
+  "ifNotExists",
+  "streamResumable",
+  "feedbackKeys",
+] as const;
+
+/**
+ * A JSON form of `value` with object keys in a fixed order, so that two
+ * values that differ only in key order compare equal. `undefined` when the
+ * value cannot be serialized (a BigInt, a cycle).
+ */
+function stableJson(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value, (_key, item: unknown) =>
+      item && typeof item === "object" && !Array.isArray(item)
+        ? Object.fromEntries(
+            Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
+              a < b ? -1 : a > b ? 1 : 0,
+            ),
+          )
+        : item,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The keys of `update` that would change the thread's values `current`.
+ * Messages are added to the thread, so any message is a change. A value
+ * that cannot be compared counts as changed.
+ */
+function changedInputKeys(
+  update: Record<string, unknown>,
+  current: Record<string, unknown> = {},
+): string[] {
+  const isEmpty = (value: unknown) =>
+    value === undefined ||
+    value === null ||
+    (Array.isArray(value) && value.length === 0) ||
+    (typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value as object).length === 0);
+  return Object.entries(update).flatMap(([key, value]) => {
+    if (key === "messages") return isEmpty(value) ? [] : [key];
+    if (!(key in current)) return isEmpty(value) ? [] : [key];
+    const stored = stableJson(current[key]);
+    return stored !== undefined && stored === stableJson(value) ? [] : [key];
+  });
+}
 
 export class LangGraphAgent extends AbstractAgent {
   client: LangGraphClient;
@@ -245,6 +330,8 @@ export class LangGraphAgent extends AbstractAgent {
   enableLegacyOnInterruptEvent: boolean;
   emitInterruptOutcome: boolean;
   emitRawEvents: boolean;
+  /** The operator's run durability; see `LangGraphAgentConfig.durability`. */
+  durability?: Durability;
 
   constructor(config: LangGraphAgentConfig) {
     super(config);
@@ -253,6 +340,7 @@ export class LangGraphAgent extends AbstractAgent {
       config.enableLegacyOnInterruptEvent ?? true;
     this.emitInterruptOutcome = config.emitInterruptOutcome ?? false;
     this.emitRawEvents = config.emitRawEvents ?? true;
+    this.durability = config.durability;
     this.messagesInProcess = {};
     this.agentName = config.agentName;
     this.graphId = config.graphId;
@@ -310,6 +398,7 @@ export class LangGraphAgent extends AbstractAgent {
       enableLegacyOnInterruptEvent: this.enableLegacyOnInterruptEvent,
       emitInterruptOutcome: this.emitInterruptOutcome,
       emitRawEvents: this.emitRawEvents,
+      durability: this.durability,
 
       assistant: this.assistant,
       activeRun: this.activeRun ? structuredClone(this.activeRun) : undefined,
@@ -605,6 +694,81 @@ export class LangGraphAgent extends AbstractAgent {
     };
   }
 
+  /**
+   * Split the client-supplied `forwardedProps` into what may reach the run.
+   *
+   * Only the keys in `CLIENT_RUN_PROPS` pass through to `runs.stream`. The run
+   * config, context, checkpoint and every other run option are the
+   * operator's (`assistantConfig`, or a subclass). A client may resume an
+   * interrupt (`command.resume`), but may not steer the graph (`goto`) or
+   * write its state (`update`). Dropped LangGraph run options are logged;
+   * other keys (the adapter's own `nodeName`, `threadMetadata`, app data) are
+   * not run options and are dropped without a warning.
+   */
+  private clientRunProps(
+    forwardedProps: RunAgentExtendedInput["forwardedProps"],
+  ) {
+    const props: Record<string, unknown> = forwardedProps ?? {};
+    const restProps: Record<string, unknown> = {};
+    for (const key of CLIENT_RUN_PROPS) {
+      if (props[key] !== undefined) restProps[key] = props[key];
+    }
+    const droppedRunOptions = LANGGRAPH_RUN_OPTIONS.filter(
+      (key) => props[key] !== undefined,
+    );
+    if (droppedRunOptions.length > 0) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring forwardedProps run options: ${droppedRunOptions.join(", ")}; the run config comes from the agent's assistantConfig.`,
+      );
+    }
+    const { resume, ...droppedCommandFields } = forwardedProps?.command ?? {};
+    const dropped = Object.keys(droppedCommandFields);
+    if (dropped.length > 0) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring forwardedProps.command fields: ${dropped.join(", ")}; only "resume" is accepted.`,
+      );
+    }
+    const command: { resume?: unknown } | undefined =
+      resume !== undefined ? { resume } : undefined;
+    return { command, restProps };
+  }
+
+  /**
+   * Whether the thread's history backs a continue after `nodeName`. The
+   * checkpoint before the latest lists, in `next`, the nodes the latest step
+   * ran. A thread with no such pair (a new thread), or whose latest
+   * checkpoint was written by `updateState` rather than by a step, has no
+   * node to continue from. A node still in the latest `next` has not
+   * finished (it failed, or it waits to run again).
+   *
+   * This is a sanity check, not the guard: with `durability: "exit"` the two
+   * latest checkpoints can come from different runs, so the "previous"
+   * `next` does not prove the node ran. A continue only resumes the thread's
+   * own pending tasks, so a wrong answer here starts a new run or resumes
+   * those tasks; it never skips a node.
+   */
+  private async ranInLatestStep(
+    threadId: string,
+    nodeName: string,
+  ): Promise<boolean> {
+    let history: ThreadState<State>[];
+    try {
+      history = await this.client.threads.getHistory(threadId, { limit: 2 });
+    } catch (error) {
+      console.warn(
+        `[@ag-ui/langgraph] could not read the thread's history to check the node name: ${(error as Error)?.message ?? error}`,
+      );
+      return false;
+    }
+    if (!history || history.length < 2) return false;
+    const [latest, previous] = history;
+    if (latest.metadata?.source !== "loop") {
+      return false;
+    }
+    if ((latest.next ?? []).includes(nodeName)) return false;
+    return (previous.next ?? []).includes(nodeName);
+  }
+
   async prepareRegenerateStream(
     input: RegenerateInput,
     streamMode: StreamMode | StreamMode[],
@@ -634,10 +798,9 @@ export class LangGraphAgent extends AbstractAgent {
     });
 
     let payloadConfig: LangGraphConfig | undefined;
-    const configsToMerge = [
-      this.assistantConfig,
-      forwardedProps?.config,
-    ].filter(Boolean) as LangGraphConfig[];
+    const configsToMerge = [this.assistantConfig].filter(
+      Boolean,
+    ) as LangGraphConfig[];
     if (configsToMerge.length) {
       payloadConfig = await this.mergeConfigs({
         configs: configsToMerge,
@@ -650,7 +813,8 @@ export class LangGraphAgent extends AbstractAgent {
       this.shapePayloadConfig(payloadConfig);
 
     const payload = {
-      ...(input.forwardedProps ?? {}),
+      ...this.clientRunProps(forwardedProps).restProps,
+      ...(this.durability ? { durability: this.durability } : {}),
       input: this.langGraphDefaultMergeState(
         timeTravelCheckpoint.values,
         [messageCheckpoint],
@@ -821,23 +985,84 @@ export class LangGraphAgent extends AbstractAgent {
       this.assistant.assistant_id,
     );
 
-    const mode =
+    let continueFromNode =
       !hasResume &&
       threadId &&
       this.activeRun!.nodeName != "__end__" &&
       this.activeRun!.nodeName
-        ? "continue"
-        : "start";
+        ? this.activeRun!.nodeName
+        : undefined;
 
-    if (mode === "continue") {
-      const nodeBefore = this.activeRun!.graphInfo.edges.find(
-        (e) => e.target === this.activeRun!.nodeName,
-      );
-      await this.client.threads.updateState(threadId, {
-        values: inputState,
-        asNode: nodeBefore?.source,
-      });
+    // A thread paused at an interrupt has nowhere to continue from: the
+    // request ends on that interrupt below (same order as the Python
+    // adapter, which checks interrupts first).
+    if (
+      continueFromNode &&
+      (agentState.tasks ?? []).some((task) => task.interrupts?.length)
+    ) {
+      continueFromNode = undefined;
     }
+
+    // The node name is a claim about where the thread stands. A continue does
+    // not act on that claim: it resumes only the nodes the thread itself has
+    // waiting (see below). The claim only decides between a continue and a
+    // new run, so a claim the thread's history does not back starts a new
+    // run (same rule as the Python adapter).
+    if (
+      continueFromNode &&
+      !(await this.ranInLatestStep(threadId, continueFromNode))
+    ) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the thread's latest step did not run that node; starting a new run instead.`,
+      );
+      continueFromNode = undefined;
+    }
+
+    // A continue compares the client's state with the thread's on the
+    // channels of the graph's input schema, the same channels a new run would
+    // write (`getStreamPayloadInput`). With the schema unavailable there is
+    // nothing to compare against, so there is no continue either.
+    const inputKeys = this.activeRun!.schemaKeys?.input;
+    if (continueFromNode && !inputKeys) {
+      console.warn(
+        `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the graph's input schema is unavailable; starting a new run instead.`,
+      );
+      continueFromNode = undefined;
+    }
+    if (continueFromNode && inputKeys) {
+      const continueValues = filterObjectBySchemaKeys(inputState ?? {}, [
+        ...DEFAULT_SCHEMA_KEYS,
+        ...inputKeys,
+      ]);
+      // The nodes that ran before may have checked the input (a permission
+      // gate, say). Their decision holds only for the input they saw. If the
+      // request changes it (a new message, a changed channel), the run starts
+      // from START instead, so those nodes check the new input (same rule as
+      // the Python adapter).
+      const changedKeys = changedInputKeys(continueValues, agentState.values);
+      if (
+        stateValuesDiff.messages?.length &&
+        !changedKeys.includes("messages")
+      ) {
+        changedKeys.push("messages");
+      }
+      if (changedKeys.length > 0) {
+        console.warn(
+          `[@ag-ui/langgraph] ignoring node name "${continueFromNode}": the request changes ${changedKeys.join(", ")}, which the nodes before it have not seen; starting a new run instead.`,
+        );
+        continueFromNode = undefined;
+      }
+    }
+
+    // A continue resumes the thread as it stands: the run input is `null`
+    // (`getStreamPayloadInput`) and nothing is written first, so LangGraph
+    // runs only the tasks in the latest checkpoint's `next`. It cannot skip a
+    // node. (An `updateState` with `asNode` would mark the named node as
+    // finished and run its successors instead; with `durability: "exit"` the
+    // history check cannot tell whether that node really finished, so that
+    // write let a client run the nodes after a gate that had refused, or
+    // after a node that never ran.)
+    const mode = continueFromNode ? "continue" : "start";
 
     const payloadInput = getStreamPayloadInput({
       mode,
@@ -858,10 +1083,9 @@ export class LangGraphAgent extends AbstractAgent {
     }
 
     let payloadConfig: LangGraphConfig | undefined;
-    const configsToMerge = [
-      this.assistantConfig,
-      forwardedProps?.config,
-    ].filter(Boolean) as LangGraphConfig[];
+    const configsToMerge = [this.assistantConfig].filter(
+      Boolean,
+    ) as LangGraphConfig[];
     if (configsToMerge.length) {
       payloadConfig = await this.mergeConfigs({
         configs: configsToMerge,
@@ -872,7 +1096,7 @@ export class LangGraphAgent extends AbstractAgent {
     // forwardedProps is optional on the input; the SSE-drop recovery now reaches
     // this continuation path (instead of returning early via regenerate), so guard
     // against an undefined value here rather than throwing on destructure.
-    const { command, ...restProps } = forwardedProps ?? {};
+    const { command, restProps } = this.clientRunProps(forwardedProps);
 
     // Collect interrupts from ALL tasks, not just tasks[0] (fixes #1409).
     // The SDK doesn't export a Task type, so we use `any` here.
@@ -905,6 +1129,7 @@ export class LangGraphAgent extends AbstractAgent {
 
     const payload: Record<string, unknown> = {
       ...restProps,
+      ...(this.durability ? { durability: this.durability } : {}),
       command: effectiveCommand,
       streamMode,
       input: payloadInput,
@@ -1149,7 +1374,10 @@ export class LangGraphAgent extends AbstractAgent {
             : typeof metadata.langgraph_step === "number"
               ? metadata.langgraph_step - 1
               : undefined;
-          const durability = input.forwardedProps?.durability ?? "async";
+          // The run's durability, which decides when its checkpoints are
+          // saved. It is the operator's: the run never gets a client
+          // `forwardedProps.durability`, so the adapter must not read one.
+          const durability = this.durability ?? "async";
           // Root values and event callbacks are multiplexed independently. A
           // future values pulse can therefore arrive before the first nested
           // callback reveals that an outer node is a subgraph. When the outer
@@ -1828,6 +2056,12 @@ export class LangGraphAgent extends AbstractAgent {
         break;
       case LangGraphEventTypes.OnToolEnd:
         let toolCallOutput = event.data?.output;
+        // Like the chat-model outputs recordToolCallOwners reads, a tool's
+        // ToolMessage can arrive LangChain-serialized; its fields are under
+        // `kwargs`, so `tool_call_id` would otherwise look missing.
+        if (toolCallOutput?.lc && toolCallOutput?.kwargs) {
+          toolCallOutput = toolCallOutput.kwargs;
+        }
 
         // Command from within a tool. We need to grab result from the tool result message
         if (
@@ -1886,6 +2120,24 @@ export class LangGraphAgent extends AbstractAgent {
             });
 
           // Tool has completed — reset so the next snapshot reflects real state.
+          this.activeRun!.modelMadeToolCall = false;
+          this.activeRun!.hasFunctionStreaming = false;
+          break;
+        }
+
+        // Only a ToolMessage-shaped output names the tool call it answers.
+        // A tool invoked outside ToolNode can end with undefined, a string or
+        // a list; reading `tool_call_id` off those either threw (undefined)
+        // or emitted tool events with no id. Skip them, as the Python
+        // integration does (#1072).
+        if (
+          typeof toolCallOutput !== "object" ||
+          toolCallOutput === null ||
+          typeof toolCallOutput.tool_call_id !== "string"
+        ) {
+          console.warn(
+            `[LangGraphAgent] Skipping on_tool_end output without a tool_call_id for tool "${event.name}".`,
+          );
           this.activeRun!.modelMadeToolCall = false;
           this.activeRun!.hasFunctionStreaming = false;
           break;
@@ -2423,10 +2675,10 @@ export class LangGraphAgent extends AbstractAgent {
       const outputSchema = Object.keys(graphSchema.output_schema.properties);
 
       return {
-        input:
-          inputSchema && inputSchema.length
-            ? [...inputSchema, ...this.constantSchemaKeys]
-            : null,
+        // An empty input schema is an empty allowlist (only the adapter's
+        // constant keys), not an unavailable one: `null` would let every
+        // client key through.
+        input: [...inputSchema, ...this.constantSchemaKeys],
         output:
           outputSchema && outputSchema.length
             ? [...outputSchema, ...this.constantSchemaKeys]
