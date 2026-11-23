@@ -4818,11 +4818,13 @@ class StrandsAgent:
                     False,
                 )
                 or not has_tool_results
+                or has_placeholder_results(history[-1:])
             ):
                 ev_started, ev_error = _error_events(
                     input_data,
                     "Persisted continuation requires no new input and a restored, "
-                    "uninterrupted session ending in tool results.",
+                    "uninterrupted session ending in a user message with only "
+                    "resolved tool results.",
                     "PERSISTED_CONTINUATION_INVALID",
                 )
                 yield ev_started

@@ -276,7 +276,8 @@ class StrandsAgentConfig:
 
     Use on a dedicated adapter invocation after the host verifies the run to
     recover. The request must contain no messages or resume entries, and the
-    restored history must end in native tool results with no active interrupt.
+    session must have no active interrupt. The final message must be a user
+    message containing only native tool results, with no proxy placeholders.
     Strands then continues that history without appending an empty user turn.
     This does not make tool side effects idempotent or coordinate concurrent
     recovery attempts; those remain the host's responsibility.

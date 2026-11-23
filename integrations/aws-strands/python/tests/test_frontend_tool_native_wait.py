@@ -19,8 +19,10 @@ from ag_ui.core import (
 from strands import Agent, ToolContext, tool
 from strands.models.model import Model
 from strands.session.file_session_manager import FileSessionManager
+from strands.types.session import SessionMessage
 
 from ag_ui_strands.agent import StrandsAgent
+from ag_ui_strands.client_proxy_tool import PROXY_RESULT_PLACEHOLDER
 from ag_ui_strands.config import StrandsAgentConfig, ToolBehavior
 from ag_ui_strands.frontend_tool_interrupt import index_frontend_tool_interrupts
 from ag_ui_strands.session_reconcile import AG_UI_FRONTEND_CALL_IDS_STATE_KEY
@@ -313,8 +315,11 @@ def _adapter(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tail", ["results", "placeholder", "mixed", "empty-assistant"]
+)
 async def test_persisted_frontend_result_continues_without_replay_after_crash(
-    tmp_path: Path,
+    tmp_path: Path, tail: str
 ) -> None:
     thread_id = "frontend-result-crash"
     model = _CrashAfterResultsModel()
@@ -342,6 +347,29 @@ async def test_persisted_frontend_result_continues_without_replay_after_crash(
     assert any(event.type == EventType.RUN_ERROR for event in crashed)
     assert model.calls == 2
 
+    if tail != "results":
+        manager = FileSessionManager(thread_id, storage_dir=str(tmp_path))
+        repository = manager.session_repository
+        agent_id = "stable-native-wait-agent"
+        last = repository.list_messages(thread_id, agent_id)[-1]
+        if tail == "empty-assistant":
+            repository.create_message(
+                thread_id,
+                agent_id,
+                SessionMessage(
+                    message={"role": "assistant", "content": []},
+                    message_id=last.message_id + 1,
+                ),
+            )
+        else:
+            if tail == "placeholder":
+                last.message["content"][0]["toolResult"]["content"] = [
+                    {"text": PROXY_RESULT_PLACEHOLDER}
+                ]
+            else:
+                last.message["content"].append({"text": "more input"})
+            repository.update_message(thread_id, agent_id, last)
+
     recovered = await _collect(
         _adapter(
             model,
@@ -351,6 +379,12 @@ async def test_persisted_frontend_result_continues_without_replay_after_crash(
         ),
         _input(thread_id, run_id="run-3", messages=[]),
     )
+    if tail != "results":
+        [error] = [event for event in recovered if event.type == EventType.RUN_ERROR]
+        assert error.code == "PERSISTED_CONTINUATION_INVALID"
+        assert model.calls == 2
+        return
+
     _assert_success(recovered)
     assert model.calls == 3
     assert any(
