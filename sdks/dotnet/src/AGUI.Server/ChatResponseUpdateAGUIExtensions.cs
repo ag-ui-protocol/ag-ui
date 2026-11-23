@@ -509,7 +509,7 @@ public static class ChatResponseUpdateAGUIExtensions
 
                         yield return ToolCallStartEvent.Create(fcc.CallId, fcc.Name, chatResponse.MessageId, raw);
 
-                        var args = JsonSerializer.Serialize(fcc.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                        var args = JsonSerializer.Serialize(fcc.Arguments ?? new Dictionary<string, object?>(), jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
                         yield return ToolCallArgsEvent.Create(fcc.CallId, args, raw);
 
                         yield return ToolCallEndEvent.Create(fcc.CallId, raw);
@@ -590,7 +590,7 @@ public static class ChatResponseUpdateAGUIExtensions
                         // Emit the tool call events so spec-compliant clients can see the proposal
                         yield return ToolCallStartEvent.Create(toolCall.CallId, toolCall.Name, chatResponse.MessageId, raw);
 
-                        var approvalArgs = JsonSerializer.Serialize(toolCall.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                        var approvalArgs = JsonSerializer.Serialize(toolCall.Arguments ?? new Dictionary<string, object?>(), jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
                         yield return ToolCallArgsEvent.Create(toolCall.CallId, approvalArgs, raw);
 
                         yield return ToolCallEndEvent.Create(toolCall.CallId, raw);

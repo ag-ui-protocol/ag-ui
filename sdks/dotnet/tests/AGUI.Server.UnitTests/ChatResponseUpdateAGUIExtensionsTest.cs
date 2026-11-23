@@ -554,6 +554,44 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
     }
 
     [Fact]
+    public async Task FunctionCallContent_NullArguments_EmitsEmptyObjectArgsDelta()
+    {
+        // M.E.AI uses Arguments == null for a zero-argument tool call. Serializing
+        // that as-is yields the JSON literal "null", which clients that parse args
+        // as an object reject (CopilotKit fails the tool call). Emit "{}".
+        var fcc = new FunctionCallContent("call_1", "get_time", arguments: null);
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [fcc]
+        };
+
+        var events = await CollectEvents(ToAsyncEnumerable(update));
+
+        var toolArgs = events.OfType<ToolCallArgsEvent>().Single();
+        Assert.Equal("call_1", toolArgs.ToolCallId);
+        Assert.Equal("{}", toolArgs.Delta);
+    }
+
+    [Fact]
+    public async Task ToolApprovalRequestContent_NullArguments_EmitsEmptyObjectArgsDelta()
+    {
+        var toolCall = new FunctionCallContent("call_1", "get_time", arguments: null);
+        var approval = new ToolApprovalRequestContent("req-1", toolCall);
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [approval]
+        };
+
+        var events = await CollectEvents(ToAsyncEnumerable(update));
+
+        var toolArgs = events.OfType<ToolCallArgsEvent>().Single();
+        Assert.Equal("call_1", toolArgs.ToolCallId);
+        Assert.Equal("{}", toolArgs.Delta);
+    }
+
+    [Fact]
     public async Task FunctionCallContent_SetsParentMessageId()
     {
         var fcc = new FunctionCallContent("call-1", "my_tool");
