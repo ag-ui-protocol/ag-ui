@@ -772,6 +772,105 @@ public sealed class AGUIChatClientTest
         Assert.Equal("t1", response.AdditionalProperties?["agui_thread_id"]);
     }
 
+    // Converter-owned keys in rawEvent.additionalProperties must not be restored:
+    // agui.__ownerResolved would skip ResolveOwner (even when the payload value is
+    // false), and a raw agui.subagentRunId would stick on a parent-owned update
+    // because ResolveOwner returns null for the parent and does not overwrite.
+    [Fact]
+    public async Task GetStreamingResponse_RawEventConverterOwnedKeys_DoNotAffectOwnerResolution()
+    {
+        var raw = ParseRawEvent(
+            """
+            {
+              "additionalProperties": {
+                "agui.__ownerResolved": false,
+                "agui.subagentRunId": "spoofed",
+                "MyProperty": "MyValue"
+              }
+            }
+            """);
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new SubagentStartedEvent { SubagentRunId = "s1", Name = "researcher" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant", SubagentRunId = "s1" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "from-subagent", SubagentRunId = "s1", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m1", SubagentRunId = "s1" },
+            new SubagentFinishedEvent { SubagentRunId = "s1" },
+            new TextMessageStartEvent { MessageId = "m2", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m2", Delta = "from-parent", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m2" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        var subagent = Assert.Single(updates, u =>
+            u.RawRepresentation is TextMessageContentEvent { MessageId: "m1" });
+        Assert.Equal("s1", subagent.AdditionalProperties?[EventStreamConverter.AGUISubagentRunIdKey]);
+        Assert.False(subagent.AdditionalProperties?.ContainsKey("agui.__ownerResolved"));
+        Assert.True(
+            subagent.AdditionalProperties?.TryGetValue("MyProperty", out string? subagentCustom) == true
+            && subagentCustom == "MyValue");
+
+        var parent = Assert.Single(updates, u =>
+            u.RawRepresentation is TextMessageContentEvent { MessageId: "m2" });
+        Assert.False(parent.AdditionalProperties?.ContainsKey(EventStreamConverter.AGUISubagentRunIdKey));
+        Assert.False(parent.AdditionalProperties?.ContainsKey("agui.__ownerResolved"));
+        Assert.True(
+            parent.AdditionalProperties?.TryGetValue("MyProperty", out string? parentCustom) == true
+            && parentCustom == "MyValue");
+    }
+
+    // Numbers that cannot round-trip through Int64 (or Double) must keep their
+    // original JSON digits. UInt64.MaxValue and a high-precision decimal both
+    // lose information if GetDouble is used after TryGetInt64 fails.
+    [Fact]
+    public async Task GetStreamingResponse_RawEventNumbers_PreserveExactValues()
+    {
+        var raw = ParseRawEvent(
+            """
+            {
+              "additionalProperties": {
+                "smallInt": 42,
+                "bigUint": 18446744073709551615,
+                "precise": 1.234567890123456789
+              }
+            }
+            """);
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant", RawEvent = raw },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "Hi", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m1", RawEvent = raw },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "Hello!") }))
+        {
+            updates.Add(u);
+        }
+
+        var content = Assert.Single(updates, u => u.RawRepresentation is TextMessageContentEvent);
+        Assert.NotNull(content.AdditionalProperties);
+        Assert.Equal(42L, content.AdditionalProperties["smallInt"]);
+
+        var bigUint = Assert.IsType<JsonElement>(content.AdditionalProperties["bigUint"]);
+        Assert.Equal("18446744073709551615", bigUint.GetRawText());
+        Assert.Equal(18446744073709551615UL, bigUint.GetUInt64());
+
+        var precise = Assert.IsType<JsonElement>(content.AdditionalProperties["precise"]);
+        Assert.Equal("1.234567890123456789", precise.GetRawText());
+    }
+
     // https://github.com/ag-ui-protocol/ag-ui/issues/3272
     // Non-.NET servers omit rawEvent, and when they do send one it is not a
     // serialized ChatResponseUpdate. Mapping those shapes must not throw and
@@ -797,6 +896,12 @@ public sealed class AGUIChatClientTest
     {
         using var doc = JsonDocument.Parse(rawJson);
         await AssertRawEventDoesNotLeakKeysAsync(doc.RootElement.Clone());
+    }
+
+    private static JsonElement ParseRawEvent(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
     }
 
     private static async Task AssertRawEventDoesNotLeakKeysAsync(JsonElement? rawEvent)

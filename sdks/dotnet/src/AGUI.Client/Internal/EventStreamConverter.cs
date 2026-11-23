@@ -43,8 +43,9 @@ internal static class EventStreamConverter
         {
             // AGUI.Server serializes the originating ChatResponseUpdate onto BaseEvent.RawEvent,
             // including custom AdditionalProperties. Restore those onto the update so they
-            // survive GetStreamingResponseAsync and ToChatResponse (issue #3272). Keys already
-            // set by the converter (subagent attribution, owner markers) are left alone.
+            // survive GetStreamingResponseAsync and ToChatResponse (issue #3272). Converter-owned
+            // keys (subagent attribution, owner markers) are never taken from the payload, and
+            // keys the converter already set are left alone.
             ApplyRawEventAdditionalProperties(update);
 
             // The marker means this update was buffered and its owner already frozen at
@@ -90,7 +91,9 @@ internal static class EventStreamConverter
         update.AdditionalProperties ??= new AdditionalPropertiesDictionary();
         foreach (var property in properties.EnumerateObject())
         {
-            if (update.AdditionalProperties.ContainsKey(property.Name))
+            if (property.Name == AGUIOwnerResolvedKey
+                || property.Name == AGUISubagentRunIdKey
+                || update.AdditionalProperties.ContainsKey(property.Name))
             {
                 continue;
             }
@@ -111,7 +114,10 @@ internal static class EventStreamConverter
                     return integer;
                 }
 
-                return value.GetDouble();
+                // Anything outside Int64 (UInt64.MaxValue, high-precision decimals,
+                // non-integral numbers) stays a cloned JsonElement so digits are not
+                // rounded through Double.
+                return value.Clone();
             case JsonValueKind.True:
                 return true;
             case JsonValueKind.False:
@@ -119,9 +125,6 @@ internal static class EventStreamConverter
             case JsonValueKind.Null:
             case JsonValueKind.Undefined:
                 return null;
-            case JsonValueKind.Object:
-            case JsonValueKind.Array:
-                return value.Clone();
             default:
                 return value.Clone();
         }
