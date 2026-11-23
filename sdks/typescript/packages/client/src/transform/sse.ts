@@ -77,12 +77,10 @@ export const parseSSEStream = (
     },
     error: (err) => jsonSubject.error(err),
     complete: () => {
-      // Use the final call to decoder.decode() to flush any remaining bytes
-      if (buffer) {
-        buffer += decoder.decode();
-        // Process any remaining SSE event data
-        processSSEEvent(buffer);
-      }
+      // SSE dispatch requires a terminating blank line. EOF must discard any
+      // pending data, even if it happens to contain a complete JSON value.
+      // https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
+      buffer = "";
       jsonSubject.complete();
     },
   });
