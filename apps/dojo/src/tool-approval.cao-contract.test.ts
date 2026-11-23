@@ -1,5 +1,6 @@
 // CAO's interrupt contract, as read from awslabs/cli-agent-orchestrator at the
-// commit the integration README pins (f8da9364):
+// release the integration README installs (cli-agent-orchestrator 2.5.5). The cited
+// files under services/agui/ are unchanged from f8da9364, where they were first read:
 //
 // - Every interrupt the /agui/v1/run run plane reports is built from one place,
 //   `AgUiInterrupt(...)` (services/agui/run_plane.py:403-418), from the single

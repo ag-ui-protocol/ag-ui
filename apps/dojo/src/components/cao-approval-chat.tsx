@@ -14,6 +14,7 @@ import {
   ApprovalSession,
   batchAtClick,
   collectApprovals,
+  settleAnswer,
   type ResumeAgent,
   type ResumeHost,
 } from "@/tool-approval";
@@ -95,9 +96,13 @@ export const CaoApprovalChat = () => {
     setSending(true);
     setError(null);
     setNotices([]);
-    const outcome = await session.answer(batch, id, approved);
-    busy.current = false;
-    setSending(false);
+    const outcome = await settleAnswer(
+      () => session.answer(batch, id, approved),
+      () => {
+        busy.current = false;
+        setSending(false);
+      },
+    );
     if (outcome === "locked" || outcome === "blocked") return;
     // The card keeps showing its answer until the whole batch is delivered.
     setAnswered((all) => new Map(all).set(id, approved));

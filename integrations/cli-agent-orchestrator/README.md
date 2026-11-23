@@ -38,15 +38,12 @@ what is being asked.
 ## Run it
 
 1. **Install CAO.** The demo needs CAO fixes (the run finishing after a decision, detecting Claude
-   Code's permission prompt, and starting current Claude Code versions) that are not in a release
-   yet. Until they are, install this commit from awslabs `main`, which carries them:
+   Code's permission prompt, and starting current Claude Code versions) that were first released in
+   CAO 2.5.5:
 
    ```bash
-   uv tool install 'cli-agent-orchestrator[agui] @ git+https://github.com/awslabs/cli-agent-orchestrator@f8da9364716ac415a0e3ead6b73c1afd4328c68e'
+   uv tool install 'cli-agent-orchestrator[agui]==2.5.5'
    ```
-
-   This line moves to the awslabs release once it is on PyPI:
-   `uv tool install 'cli-agent-orchestrator[agui]'`.
 
 2. **Start CAO and the agent.** All the commands below use paths relative to **the checkout root**
    (the top-level directory of your ag-ui clone, not a subdirectory such as `apps/dojo`). Start

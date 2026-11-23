@@ -85,12 +85,38 @@ trap 'exit 130' INT TERM
 echo "== starting the Dojo (loopback only) on $DOJO_URL (log: $LOG_DIR/dojo.log)"
 (cd "$REPO_ROOT/apps/dojo" && CAO_URL="$CAO_URL" PORT="$DOJO_PORT" exec pnpm dev -H 127.0.0.1) >"$LOG_DIR/dojo.log" 2>&1 &
 DOJO_PID=$!
-# The first request compiles the page; wait for it to come back 200 (about 6 minutes at most).
-i=0
-until [ "$(curl -s -o /dev/null -m 10 -w '%{http_code}' \
-  "$DOJO_URL/cli-agent-orchestrator/feature/tool_approval" || true)" = 200 ]; do
-  i=$((i + 1))
-  [ "$i" -le 30 ] || die "the Dojo did not serve the Tool Approval page; see $LOG_DIR/dojo.log"
+# The first request compiles the page, which takes 10 to 40 s on a busy machine, so each poll may wait
+# up to 60 s: a shorter limit aborts the compile and the next poll starts it again. Right after "Ready",
+# Next's dev server can also answer 404 for a route it has not registered yet (even for "/"), then serve
+# it on a later request. So a 404 is retried like any other non-200 until the deadline: the wait
+# is at least E2E_DOJO_WAIT seconds (default 360), and one poll may add up to ~62 s. On failure the last status, the first response headers and the Dojo log tail
+# are printed.
+DOJO_WAIT="${E2E_DOJO_WAIT:-360}"
+DOJO_PAGE="$DOJO_URL/cli-agent-orchestrator/feature/tool_approval"
+DOJO_HEADERS="$LOG_DIR/dojo.headers"
+dojo_status=""
+dojo_deadline=$((SECONDS + DOJO_WAIT))
+while :; do
+  : >"$DOJO_HEADERS"
+  dojo_status="$(curl -s -o /dev/null -D "$DOJO_HEADERS" -m 60 -w '%{http_code}' "$DOJO_PAGE" || true)"
+  [ "$dojo_status" = 200 ] && break
+  if ! kill -0 "$DOJO_PID" 2>/dev/null; then
+    tail -n 20 "$LOG_DIR/dojo.log" >&2 || true
+    die "the Dojo exited during startup; see $LOG_DIR/dojo.log"
+  fi
+  if [ "$SECONDS" -ge "$dojo_deadline" ]; then
+    {
+      echo "e2e-local: last status from $DOJO_PAGE: ${dojo_status:-none}"
+      echo "e2e-local: first response headers:"
+      head -n 3 "$DOJO_HEADERS" | sed 's/^/  /'
+      echo "e2e-local: end of $LOG_DIR/dojo.log:"
+      tail -n 15 "$LOG_DIR/dojo.log" | sed 's/^/  /'
+      if [ "$dojo_status" = 404 ]; then
+        echo "e2e-local: a 404 here means the Dojo is up but does not serve the route; check that the checkout is the PR head and that apps/dojo/.next is not left over from another tree"
+      fi
+    } >&2
+    die "the Dojo did not serve the Tool Approval page within ${DOJO_WAIT}s; see $LOG_DIR/dojo.log"
+  fi
   sleep 2
 done
 

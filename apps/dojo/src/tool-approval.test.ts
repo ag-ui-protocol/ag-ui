@@ -7,6 +7,7 @@ import {
   batchAtClick,
   collectApprovals,
   readSkippedResume,
+  settleAnswer,
   sendResume,
   type ResumeAgent,
   type ResumeHost,
@@ -743,4 +744,36 @@ test("the attempt passes a fresh runId to runAgent and accepts only that run", a
   assert.equal(seen.length, 2);
   assert.notEqual(seen[0], seen[1]);
   assert.ok(seen.every((id) => id.length > 0));
+});
+
+test("settleAnswer releases the busy state and reports a failure when answer() throws", async () => {
+  // crypto.randomUUID and host.subscribe run before sendResume's try block, so
+  // a throw there rejects session.answer().
+  const a = agentFinishing([{}]);
+  const host: ResumeHost = {
+    ...fakeHost([]).host,
+    subscribe() {
+      throw new Error("subscribe failed");
+    },
+  };
+  const session = new ApprovalSession(host, a);
+  await assert.rejects(session.answer(one, "int-1", true), /subscribe failed/);
+
+  let released = 0;
+  const out = await settleAnswer(
+    () => session.answer(one, "int-1", true),
+    () => void released++,
+  );
+  assert.equal(released, 1);
+  assert.deepEqual(out, { ok: false, message: "subscribe failed" });
+});
+
+test("settleAnswer releases once and passes a normal outcome through", async () => {
+  let released = 0;
+  const out = await settleAnswer(
+    async () => "waiting" as const,
+    () => void released++,
+  );
+  assert.equal(out, "waiting");
+  assert.equal(released, 1);
 });

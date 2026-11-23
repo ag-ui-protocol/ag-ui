@@ -453,3 +453,23 @@ export class ApprovalSession {
     return delivery;
   }
 }
+
+// Runs one answer and always calls `release`, so the page cannot stay busy.
+// `session.answer()` can reject: sendResume calls crypto.randomUUID() and the
+// two subscribe() calls before its own try block. A rejection becomes a failed
+// delivery, which the page shows and lets the user retry.
+export async function settleAnswer<T>(
+  answer: () => Promise<T>,
+  release: () => void,
+): Promise<T | { ok: false; message: string }> {
+  try {
+    return await answer();
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    release();
+  }
+}
