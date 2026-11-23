@@ -355,7 +355,7 @@ class EventTranslator:
         # the final aggregated event can still be recognized as a duplicate
         # after the first text chunk closed the reasoning stream. (#2937)
         self._reasoning_emitted_for_response: bool = False
-        self._reasoning_run_id: Optional[str] = None  # Run the marker above belongs to
+        self._reasoning_run_id: Optional[str] = None  # Last run seen; fallback reset in translate()
 
         # Predictive state configuration
         self._predict_state_mappings = normalize_predict_state(predict_state)
@@ -452,8 +452,11 @@ class EventTranslator:
         Yields:
             One or more AG-UI protocol events
         """
-        # A new run_id marks a new model response: reset the per-response
-        # reasoning marker so aggregate dedup never leaks across responses. (#2937)
+        # A run can contain several model responses (e.g. a tool loop), so the
+        # per-response reasoning marker is reset when each response's
+        # partial=False event is handled (see _translate_text_content). This
+        # run_id check is only a fallback: it keeps the marker from leaking into
+        # a new run if the previous run ended without that event. (#2937)
         if self._reasoning_run_id != run_id:
             self._reasoning_run_id = run_id
             self._reasoning_emitted_for_response = False
@@ -686,6 +689,10 @@ class EventTranslator:
         if thought_parts and not (self._reasoning_emitted_for_response and not is_partial):
             async for event in self._translate_reasoning_content(thought_parts, thought_signatures):
                 yield event
+        if not is_partial:
+            # The partial=False event closes this model response; a later
+            # response in the same run starts with a fresh marker.
+            self._reasoning_emitted_for_response = False
 
         # Suppress user-visible text from agents with output_schema configured.
         # Their text content is structured output intended for inter-agent data
@@ -905,6 +912,7 @@ class EventTranslator:
         # aggregated event (partial=False) consults this to skip its
         # duplicated thought parts even after the stream was closed. (#2937)
         self._reasoning_emitted_for_response = True
+
         # Emit reasoning content
         self._current_reasoning_text += combined_thought
         yield ReasoningMessageContentEvent(

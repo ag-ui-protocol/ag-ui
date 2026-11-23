@@ -47,8 +47,10 @@ def _adk_event(parts, partial: bool, final: bool) -> MagicMock:
     return event
 
 
-async def _translate_all(events, run_id: str = "run_1") -> List[BaseEvent]:
-    translator = EventTranslator()
+async def _translate_all(
+    events, run_id: str = "run_1", translator: Optional[EventTranslator] = None
+) -> List[BaseEvent]:
+    translator = translator or EventTranslator()
     out: List[BaseEvent] = []
     for ev in events:
         async for ag_event in translator.translate(ev, "thread_1", run_id):
@@ -58,6 +60,14 @@ async def _translate_all(events, run_id: str = "run_1") -> List[BaseEvent]:
 
 def _reasoning_starts(events: List[BaseEvent]) -> List[BaseEvent]:
     return [e for e in events if e.type == EventType.REASONING_START]
+
+
+def _reasoning_texts(events: List[BaseEvent]) -> List[str]:
+    return [e.delta for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT]
+
+
+def _text_deltas(events: List[BaseEvent]) -> List[str]:
+    return [e.delta for e in events if e.type == EventType.TEXT_MESSAGE_CONTENT]
 
 
 def _reasoning_after_first_text(events: List[BaseEvent]) -> List[BaseEvent]:
@@ -89,10 +99,7 @@ async def test_streamed_thoughts_then_text_aggregate_not_duplicated():
     assert len(_reasoning_starts(out)) == 1
     assert _reasoning_after_first_text(out) == []
 
-    text_deltas = [
-        e.delta for e in out if e.type == EventType.TEXT_MESSAGE_CONTENT
-    ]
-    assert text_deltas == ["Hello"]
+    assert _text_deltas(out) == ["Hello"]
 
 
 @pytest.mark.asyncio
@@ -107,10 +114,7 @@ async def test_thoughts_only_aggregate_not_duplicated():
     out = await _translate_all(events)
 
     assert len(_reasoning_starts(out)) == 1
-    content_deltas = [
-        e.delta for e in out if e.type == EventType.REASONING_MESSAGE_CONTENT
-    ]
-    assert content_deltas == ["Thinking..."]
+    assert _reasoning_texts(out) == ["Thinking..."]
 
 
 @pytest.mark.asyncio
@@ -126,14 +130,8 @@ async def test_non_streaming_aggregate_still_emits_reasoning():
     out = await _translate_all(events)
 
     assert len(_reasoning_starts(out)) == 1
-    reasoning_content = [
-        e.delta for e in out if e.type == EventType.REASONING_MESSAGE_CONTENT
-    ]
-    assert reasoning_content == ["Only copy."]
-    text_deltas = [
-        e.delta for e in out if e.type == EventType.TEXT_MESSAGE_CONTENT
-    ]
-    assert text_deltas == ["Answer"]
+    assert _reasoning_texts(out) == ["Only copy."]
+    assert _text_deltas(out) == ["Answer"]
 
 
 @pytest.mark.asyncio
@@ -156,13 +154,116 @@ async def test_new_run_emits_reasoning_again():
                 final=True,
             ),
         ]
-        for ev in events:
-            async for ag_event in translator.translate(ev, "thread_1", run_id):
-                collected.append(ag_event)
+        collected += await _translate_all(events, run_id, translator)
 
     assert len(_reasoning_starts(collected)) == 2
 
-    reasoning_content = [
-        e.delta for e in collected if e.type == EventType.REASONING_MESSAGE_CONTENT
+    assert _reasoning_texts(collected) == ["thought-run_1", "thought-run_2"]
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_second_response_in_same_run_keeps_reasoning():
+    """StreamingMode.NONE, two model responses in one run (e.g. a tool loop).
+
+    Each partial=False event carries the only copy of its response's thoughts,
+    so the second response's reasoning must not be mistaken for a duplicate.
+    """
+    events = [
+        _adk_event(
+            [_part("Plan A", thought=True), _part("Checking.")],
+            partial=False,
+            final=False,
+        ),
+        _adk_event(
+            [_part("Plan B", thought=True), _part("Done.")],
+            partial=False,
+            final=True,
+        ),
     ]
-    assert reasoning_content == ["thought-run_1", "thought-run_2"]
+    out = await _translate_all(events, run_id="run_1")
+
+    assert _reasoning_texts(out) == ["Plan A", "Plan B"]
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_tool_loop_keeps_reasoning_of_each_response():
+    """StreamingMode.NONE tool loop: thoughts-only call, tool result, answer.
+
+    Response 1 carries only thoughts plus a function call; response 2 carries
+    thoughts plus the answer. Both thoughts must reach the client.
+    """
+    call = SimpleNamespace(id="fc_1", name="get_weather", args={"city": "Oslo"})
+    tool_call = _adk_event(
+        [_part("I need the weather.", thought=True)], partial=False, final=False
+    )
+    tool_call.long_running_tool_ids = []
+    tool_call.get_function_calls = MagicMock(return_value=[call])
+
+    tool_result = _adk_event([], partial=False, final=False)
+    tool_result.author = "user"
+    tool_result.get_function_responses = MagicMock(
+        return_value=[SimpleNamespace(id="fc_1", name="get_weather", response={"temp": 3})]
+    )
+
+    answer = _adk_event(
+        [_part("It is cold.", thought=True), _part("3 degrees in Oslo.")],
+        partial=False,
+        final=True,
+    )
+    out = await _translate_all([tool_call, tool_result, answer])
+
+    assert _reasoning_texts(out) == ["I need the weather.", "It is cold."]
+    assert [e.type for e in out if e.type == EventType.TOOL_CALL_START] == [
+        EventType.TOOL_CALL_START
+    ]
+
+
+@pytest.mark.asyncio
+async def test_streaming_two_responses_in_same_run_not_duplicated():
+    """SSE, two model responses in one run: each aggregate is still deduped.
+
+    Guards the other direction of the per-response reset: clearing the marker
+    before the aggregate is checked would bring back the #2937 duplicate.
+    """
+    events = []
+    for n in (1, 2):
+        events += [
+            _adk_event([_part(f"thought-{n}", thought=True)], partial=True, final=False),
+            _adk_event([_part(f"answer-{n}")], partial=True, final=False),
+            _adk_event(
+                [_part(f"thought-{n}", thought=True), _part(f"answer-{n}")],
+                partial=False,
+                final=n == 2,
+            ),
+        ]
+    out = await _translate_all(events, run_id="run_1")
+
+    assert _reasoning_texts(out) == ["thought-1", "thought-2"]
+    assert len(_reasoning_starts(out)) == 2
+    assert _text_deltas(out) == ["answer-1", "answer-2"]
+
+
+@pytest.mark.asyncio
+async def test_new_run_after_interrupted_stream_keeps_reasoning():
+    """A run whose stream stopped before its partial=False event (e.g. cancelled).
+
+    The per-response reset never ran, so the run_id fallback must clear the
+    marker; otherwise the next run's only copy of its thoughts would be dropped.
+    """
+    translator = EventTranslator()
+    interrupted = [
+        _adk_event([_part("Half a thought", thought=True)], partial=True, final=False),
+    ]
+    out = await _translate_all(interrupted, "run_1", translator)
+
+    non_streaming = [
+        _adk_event(
+            [_part("Fresh thought", thought=True), _part("Answer")],
+            partial=False,
+            final=True,
+        ),
+    ]
+    out += await _translate_all(non_streaming, "run_2", translator)
+
+    assert _reasoning_texts(out) == ["Half a thought", "Fresh thought"]
+    assert _text_deltas(out) == ["Answer"]
