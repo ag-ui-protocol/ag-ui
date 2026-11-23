@@ -690,8 +690,11 @@ class EventTranslator:
             async for event in self._translate_reasoning_content(thought_parts, thought_signatures):
                 yield event
         if not is_partial:
-            # The partial=False event closes this model response; a later
-            # response in the same run starts with a fresh marker.
+            # The partial=False event closes this model response: end its
+            # reasoning message and reset the marker, so a later response in
+            # the same run (e.g. after a tool call) gets its own message. (#2937)
+            async for event in self._close_reasoning_stream():
+                yield event
             self._reasoning_emitted_for_response = False
 
         # Suppress user-visible text from agents with output_schema configured.

@@ -190,7 +190,8 @@ async def test_non_streaming_tool_loop_keeps_reasoning_of_each_response():
     """StreamingMode.NONE tool loop: thoughts-only call, tool result, answer.
 
     Response 1 carries only thoughts plus a function call; response 2 carries
-    thoughts plus the answer. Both thoughts must reach the client.
+    thoughts plus the answer. Both thoughts must reach the client, each in its
+    own reasoning message that is closed before the next step starts.
     """
     call = SimpleNamespace(id="fc_1", name="get_weather", args={"city": "Oslo"})
     tool_call = _adk_event(
@@ -213,9 +214,28 @@ async def test_non_streaming_tool_loop_keeps_reasoning_of_each_response():
     out = await _translate_all([tool_call, tool_result, answer])
 
     assert _reasoning_texts(out) == ["I need the weather.", "It is cold."]
-    assert [e.type for e in out if e.type == EventType.TOOL_CALL_START] == [
-        EventType.TOOL_CALL_START
+
+    # One complete reasoning message per model response, with distinct IDs.
+    reasoning = [(e.type, e.message_id) for e in out if e.type in REASONING_EVENTS]
+    first_id, second_id = reasoning[0][1], reasoning[-1][1]
+    assert first_id != second_id
+    assert reasoning == [
+        (EventType.REASONING_START, first_id),
+        (EventType.REASONING_MESSAGE_START, first_id),
+        (EventType.REASONING_MESSAGE_CONTENT, first_id),
+        (EventType.REASONING_MESSAGE_END, first_id),
+        (EventType.REASONING_END, first_id),
+        (EventType.REASONING_START, second_id),
+        (EventType.REASONING_MESSAGE_START, second_id),
+        (EventType.REASONING_MESSAGE_CONTENT, second_id),
+        (EventType.REASONING_MESSAGE_END, second_id),
+        (EventType.REASONING_END, second_id),
     ]
+
+    # The first reasoning message is closed before the tool call is emitted.
+    types = [e.type for e in out]
+    assert types.count(EventType.TOOL_CALL_START) == 1
+    assert types.index(EventType.REASONING_END) < types.index(EventType.TOOL_CALL_START)
 
 
 @pytest.mark.asyncio
