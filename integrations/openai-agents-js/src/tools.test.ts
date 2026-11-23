@@ -100,6 +100,16 @@ describe("normalizeParameters", () => {
     expect(schema.$defs).toEqual({ City: { type: "string" } });
     expect(schema.properties.city).toEqual({ $ref: "#/$defs/City" });
   });
+
+  it("omits a non-string description while preserving other schema keywords", () => {
+    const schema = normalizeParameters({
+      description: 42,
+      properties: { city: { $ref: "#/$defs/City" } },
+      $defs: { City: { type: "string" } },
+    });
+    expect(Object.prototype.hasOwnProperty.call(schema, "description")).toBe(false);
+    expect(schema.$defs).toEqual({ City: { type: "string" } });
+  });
 });
 
 describe("convertAguiToolToOpenAi", () => {

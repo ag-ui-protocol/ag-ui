@@ -58,6 +58,7 @@ export class StreamContext {
   readonly toolCallItemIds = new Map<string, string>();
   private readonly assistantToolCalls = new Map<string, AssistantToolCall>();
   private messageSequence = 0;
+  private readonly usedMessageIds: Set<string>;
 
   /** toolCallId → tool name, captured when the call item is first seen. */
   readonly toolCallNames = new Map<string, string>();
@@ -98,8 +99,10 @@ export class StreamContext {
     /** Base id used to derive message ids when the SDK provides none. */
     public readonly runId: string,
     initialState?: unknown,
+    existingMessageIds: Iterable<string> = [],
   ) {
     this.currentState = initialState ?? null;
+    this.usedMessageIds = new Set(existingMessageIds);
   }
 
   /** Record a frontend-tool interrupt and arm the halt flag. (Phase 5.) */
@@ -130,8 +133,13 @@ export class StreamContext {
   }
 
   nextMessageId(): string {
-    const sequence = this.messageSequence++;
-    return sequence === 0 ? this.runId : `${this.runId}-${sequence}`;
+    while (true) {
+      const sequence = this.messageSequence++;
+      const messageId = sequence === 0 ? this.runId : `${this.runId}-${sequence}`;
+      if (this.usedMessageIds.has(messageId)) continue;
+      this.usedMessageIds.add(messageId);
+      return messageId;
+    }
   }
 
   /** Append streamed assistant text to the pending message. */

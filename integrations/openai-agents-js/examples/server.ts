@@ -36,6 +36,8 @@ const adapters: Record<string, AgentRunner> = {
   tool_based_generative_ui: createToolBasedGenerativeUiAdapter(),
 };
 
+// This demo server has no caller authentication. Deploying hosts must
+// authenticate requests and authorize or scope each threadId before running.
 async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -161,7 +163,7 @@ function main(): void {
   const port = parseInt(process.env.PORT ?? "8032", 10);
   const server = createServer();
 
-  server.listen(port, "0.0.0.0", () => {
+  server.listen(port, "127.0.0.1", () => {
     const endpoint = process.env.OPENAI_BASE_URL ?? "https://api.openai.com";
     console.log(
       `OpenAI Agents JS server running on http://localhost:${port}`,

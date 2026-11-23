@@ -293,6 +293,36 @@ describe("OpenAIAgentsAdapter — run lifecycle", () => {
     expect(assistant.content).toBe("Sure");
   });
 
+  it("uses a message id that does not collide with the input history", async () => {
+    eventsRef.events = [
+      { type: "raw_model_stream_event", data: { type: "output_text_delta", delta: "New reply" } },
+      { type: "run_item_stream_event", name: "message_output_created", item: { rawItem: {} } },
+    ];
+    process.env.OPENAI_API_KEY = "sk-test";
+
+    const events = await collectEvents(
+      new OpenAIAgentsAdapter(),
+      baseInput({
+        runId: "run-1",
+        messages: [
+          { id: "run-1", role: "assistant", content: "Earlier reply" } as any,
+          { id: "run-1-1", role: "user", content: "Follow-up" } as any,
+        ],
+      }),
+    );
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "run-1-2",
+    }));
+    const snapshot = events.find((event) => event.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    expect(snapshot.messages.map((message) => message.id)).toEqual([
+      "run-1",
+      "run-1-1",
+      "run-1-2",
+    ]);
+  });
+
   it("emits RUN_ERROR when the SDK run throws", async () => {
     eventsRef.throwErr = new Error("boom");
     process.env.OPENAI_API_KEY = "sk-test";
@@ -597,6 +627,59 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
     expect(events.at(-1)?.type).toBe(EventType.RUN_FINISHED);
   });
 
+  it("orders async state writes per thread across cloned adapters", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    let startOldWrite!: () => void;
+    let releaseOldWrite!: () => void;
+    const oldWriteStarted = new Promise<void>((resolve) => { startOldWrite = resolve; });
+    const oldWriteGate = new Promise<void>((resolve) => { releaseOldWrite = resolve; });
+    let storedState: unknown;
+    const adapter = new OpenAIAgentsAdapter({
+      runStateStore: {
+        get: async () => storedState,
+        set: async (_threadId, state) => {
+          if ((state as { count: number }).count === 1) {
+            startOldWrite();
+            await oldWriteGate;
+          }
+          storedState = state;
+        },
+        delete: async () => {},
+      },
+    });
+
+    const oldSubscription = adapter.run(baseInput({ state: { count: 1 } })).subscribe();
+    await oldWriteStarted;
+    oldSubscription.unsubscribe();
+
+    let notifyNewerReady!: () => void;
+    const newerReady = new Promise<void>((resolve) => { notifyNewerReady = resolve; });
+    const newerRun = new Promise<void>((resolve, reject) => {
+      adapter.clone().run(baseInput({ state: { count: 2 } })).subscribe({
+        next: (event) => {
+          if (event.type === EventType.MESSAGES_SNAPSHOT) notifyNewerReady();
+        },
+        error: reject,
+        complete: resolve,
+      });
+    });
+    await newerReady;
+    expect(storedState).toBeUndefined();
+    releaseOldWrite();
+    await newerRun;
+    expect(storedState).toEqual({ count: 2 });
+
+    eventsRef.events = [];
+    const resumedEvents = await collectEvents(
+      adapter,
+      baseInput({ state: null }),
+    );
+    expect(resumedEvents).toContainEqual(expect.objectContaining({
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: { count: 2 },
+    }));
+  });
+
   it.each([true, false])("preserves all frontend calls in a model response (interrupt=%s)", async (interrupt) => {
     process.env.OPENAI_API_KEY = "sk-test";
     eventsRef.events = [
@@ -622,6 +705,37 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
     expect(snapshot?.messages.find((m) => m.role === "assistant")?.toolCalls?.map((t) => t.id)).toEqual(["a", "b"]);
     const finished = events.find((e) => e.type === EventType.RUN_FINISHED) as RunFinishedEvent | undefined;
     expect(finished?.outcome?.type).toBe(interrupt ? "interrupt" : "success");
+  });
+
+  it("finishes backend tool outputs before halting on frontend calls in the same response", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    eventsRef.events = [
+      { type: "raw_model_stream_event", data: { type: "response_done", response: { output: [
+        { type: "function_call", callId: "front-1", name: "confirm" },
+        { type: "function_call", callId: "back-1", name: "lookup" },
+      ] } } },
+      { type: "run_item_stream_event", name: "tool_called", item: { rawItem: { callId: "front-1", name: "confirm", arguments: "{}" } } },
+      { type: "run_item_stream_event", name: "tool_called", item: { rawItem: { callId: "back-1", name: "lookup", arguments: "{}" } } },
+      { type: "run_item_stream_event", name: "tool_output", item: { rawItem: { callId: "back-1" }, output: "found" } },
+      { type: "raw_model_stream_event", data: { type: "output_text_delta", delta: "AFTER HALT" } },
+    ];
+
+    const events = await collectEvents(
+      new OpenAIAgentsAdapter(),
+      baseInput({
+        state: null,
+        tools: [{ name: "confirm", description: "", parameters: {} }],
+      }),
+    );
+
+    expect(events.some((event) => event.type === EventType.TOOL_CALL_START && event.toolCallId === "front-1")).toBe(true);
+    expect(events.some((event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === "back-1")).toBe(true);
+    expect(events.some((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)).toBe(false);
+    const snapshot = events.find((event) => event.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
+    expect(snapshot.messages.find((message) => message.role === "tool")).toMatchObject({
+      toolCallId: "back-1",
+      content: "found",
+    });
   });
 
   it("aborts the SDK signal when the subscriber unsubscribes", async () => {

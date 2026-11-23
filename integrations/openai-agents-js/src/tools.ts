@@ -67,8 +67,9 @@ export function normalizeParameters(
       ? (params as Record<string, unknown>)
       : {};
 
+  const { description, ...schemaKeywords } = p;
   const schema: NormalizedJsonSchema = {
-    ...p,
+    ...schemaKeywords,
     type: "object",
     properties: (p.properties as Record<string, unknown> | undefined) ?? {},
     required: Array.isArray(p.required)
@@ -79,8 +80,8 @@ export function normalizeParameters(
     additionalProperties: true,
   };
 
-  if (typeof p.description === "string") {
-    schema.description = p.description;
+  if (typeof description === "string") {
+    schema.description = description;
   }
   return schema;
 }

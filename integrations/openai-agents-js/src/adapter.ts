@@ -74,6 +74,7 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
    * (DynamoDB / S3 / Redis / etc.) via `config.runStateStore`.
    */
   private runStateStore: RunStateStore;
+  private stateWriteQueues = new Map<string, Promise<void>>();
 
   constructor(config: OpenAIAgentsAdapterConfig = {}) {
     super(config);
@@ -90,6 +91,7 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
     const cloned = super.clone() as OpenAIAgentsAdapter;
     cloned.config = { ...this.config };
     cloned.runStateStore = this.runStateStore;
+    cloned.stateWriteQueues = this.stateWriteQueues;
     cloned.providerConfigured = false;
     return cloned;
   }
@@ -273,7 +275,11 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
 
     const agent = this.buildAgent(mod, { ...input, state: effectiveState });
 
-    const ctx = new StreamContext(runId, effectiveState);
+    const ctx = new StreamContext(
+      runId,
+      effectiveState,
+      (input.messages ?? []).map((message) => message.id),
+    );
     ctx.frontendToolNames = frontendToolNames;
     ctx.interruptFrontendTools = this.config.interruptOnFrontendToolCall !== false;
 
@@ -304,31 +310,47 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
       const stream = (await mod.run(agent, sdkInput, { stream: true, signal })) as AsyncIterable<any>;
       if (signal.aborted) return;
       let pendingFrontendCalls: Set<string> | undefined;
+      let pendingBackendCalls: Set<string> | undefined;
 
       for await (const ev of stream) {
         if (subscriber.closed) break;
         // The SDK emits response_done before its run-item events; use its
-        // output to retain every frontend call from the same model response.
+        // output to track every tool call from the same model response.
         if (ev?.type === "raw_model_stream_event" && ev.data?.type === "response_done") {
           const output = ev.data.response?.output;
           if (Array.isArray(output)) {
-            pendingFrontendCalls = new Set(
-              output
-                .filter((item) => item?.type === "function_call" && frontendToolNames.has(item.name))
-                .map((item) => item.callId ?? item.call_id)
-                .filter((id): id is string => typeof id === "string"),
+            const calls = output.filter(
+              (item) => item?.type === "function_call",
             );
+            pendingFrontendCalls = new Set();
+            pendingBackendCalls = new Set();
+            for (const call of calls) {
+              const callId = call.callId ?? call.call_id;
+              if (typeof callId !== "string") continue;
+              if (frontendToolNames.has(call.name)) {
+                pendingFrontendCalls.add(callId);
+              } else {
+                pendingBackendCalls.add(callId);
+              }
+            }
           }
         }
         if (ctx.halt && !pendingFrontendCalls?.size &&
-            !(ev?.type === "run_item_stream_event" && ev.name === "tool_called")) break;
+            !pendingBackendCalls?.size &&
+            !(ev?.type === "run_item_stream_event" &&
+              (ev.name === "tool_called" || ev.name === "tool_output"))) break;
         const emitted = dispatchStreamEvent(ev, ctx);
         for (const e of emitted) subscriber.next(e as ProcessedEvent);
         if (ev?.type === "run_item_stream_event" && ev.name === "tool_called") {
           const raw = ev.item?.rawItem;
           pendingFrontendCalls?.delete(raw?.callId ?? raw?.call_id);
         }
-        if (ctx.halt && pendingFrontendCalls && pendingFrontendCalls.size === 0) break;
+        if (ev?.type === "run_item_stream_event" && ev.name === "tool_output") {
+          const raw = ev.item?.rawItem;
+          pendingBackendCalls?.delete(raw?.callId ?? raw?.call_id);
+        }
+        if (ctx.halt && pendingFrontendCalls && pendingBackendCalls &&
+            pendingFrontendCalls.size === 0 && pendingBackendCalls.size === 0) break;
       }
       if (signal.aborted) return;
 
@@ -344,7 +366,7 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
       // hydrate it even if the frontend doesn't resend `state`. (Phase 5.)
       if (signal.aborted) return;
       if (hasState(ctx.currentState)) {
-        await this.runStateStore.set(threadId, ctx.currentState);
+        await this.persistRunState(threadId, ctx.currentState);
       }
 
       subscriber.next({
@@ -365,6 +387,21 @@ export class OpenAIAgentsAdapter extends AbstractAgent {
           message,
         });
         subscriber.complete();
+      }
+    }
+  }
+
+  private async persistRunState(threadId: string, state: unknown): Promise<void> {
+    const previous = this.stateWriteQueues.get(threadId) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this.runStateStore.set(threadId, state));
+    this.stateWriteQueues.set(threadId, current);
+    try {
+      await current;
+    } finally {
+      if (this.stateWriteQueues.get(threadId) === current) {
+        this.stateWriteQueues.delete(threadId);
       }
     }
   }

@@ -195,6 +195,8 @@ sequenceDiagram
 
 Across a HITL pause the frontend may not resend `input.state`. The adapter stashes the last-known shared `currentState` per `threadId` behind a `RunStateStore` **interface**, so you can persist paused-run state durably — e.g. to DynamoDB, S3, or Redis — by implementing three async methods:
 
+The example server is a local development demo without caller authentication. The adapter keys state by the request's `threadId`; a production host must authenticate callers and ensure each caller is authorized for that thread, or use a store scoped by trusted caller identity. Do not expose the example server as a multi-tenant endpoint without that boundary.
+
 ```typescript
 import type { RunStateStore, InMemoryRunStateStore } from "@ag-ui/openai-agents-js";
 
