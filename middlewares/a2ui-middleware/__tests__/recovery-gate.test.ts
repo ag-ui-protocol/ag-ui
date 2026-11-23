@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { BaseEvent, EventType, RunAgentInput } from "@ag-ui/client";
+import {
+  ActivitySnapshotEvent,
+  BaseEvent,
+  EventType,
+  RunAgentInput,
+} from "@ag-ui/client";
 import { Observable, firstValueFrom, toArray } from "rxjs";
 import { A2UIMiddleware, A2UIActivityType } from "../src/index";
 import { AbstractAgent } from "@ag-ui/client";
@@ -318,6 +323,107 @@ describe("A2UI middleware — unified generation lifecycle gate (OSS-162)", () =
     expect(failed.length).toBe(1);
     expect((failed[0] as any).content.error).toContain("Failed to generate");
   });
+
+  it.each([
+    { mode: "nested", complete: true },
+    { mode: "direct", complete: true },
+    { mode: "nested", complete: false },
+  ])(
+    "preserves an exhausted-recovery failure after a $mode render streamed (complete args: $complete)",
+    async ({ mode, complete }) => {
+      const mw = new A2UIMiddleware({
+        schema: CATALOG,
+        a2uiGenerationToolNames: ["generate_a2ui"],
+        recovery: { maxAttempts: 4 },
+      });
+      const failure = {
+        code: "a2ui_recovery_exhausted",
+        error: "Provider failed after streaming",
+        attempts: [
+          { attempt: 1, ok: false },
+          { attempt: 2, ok: false },
+        ],
+      };
+      const failKey = mode === "nested" ? "outer1" : "tc1";
+      const render = streamRender([ROOT, GOOD_CARD]).slice(1, -1);
+      render[0] = {
+        ...render[0],
+        parentMessageId: "inner-message",
+      } as BaseEvent;
+      if (!complete) {
+        // Components still paint, but finalization would reject the truncated
+        // JSON. The adapter's detailed failure must remain authoritative.
+        const args = JSON.stringify({
+          surfaceId: "hotels",
+          components: [ROOT, GOOD_CARD],
+          data: DATA,
+        });
+        render[1] = {
+          type: EventType.TOOL_CALL_ARGS,
+          toolCallId: "tc1",
+          delta: args.slice(0, -1),
+        };
+      }
+      const result: BaseEvent = {
+        type: EventType.TOOL_CALL_RESULT,
+        messageId: "failure-result",
+        toolCallId: failKey,
+        content: JSON.stringify(failure),
+      };
+      const events = await collect(
+        mw.run(
+          input(),
+          new MockAgent([
+            { type: EventType.RUN_STARTED, runId: "r", threadId: "t" },
+            ...(mode === "nested"
+              ? [
+                  {
+                    type: EventType.TOOL_CALL_START,
+                    toolCallId: "outer1",
+                    toolCallName: "generate_a2ui",
+                    parentMessageId: "outer-message",
+                  },
+                  {
+                    type: EventType.TOOL_CALL_ARGS,
+                    toolCallId: "outer1",
+                    delta: '{"intent":"create"}',
+                  },
+                  { type: EventType.TOOL_CALL_END, toolCallId: "outer1" },
+                ]
+              : []),
+            ...render,
+            result,
+            { type: EventType.RUN_FINISHED, runId: "r", threadId: "t" },
+          ]),
+        ),
+      );
+      const painted = paints(events) as ActivitySnapshotEvent[];
+      expect(painted.length).toBeGreaterThan(0);
+      expect(
+        painted.every((e) => e.messageId === `a2ui-surface-${failKey}`),
+      ).toBe(true);
+      const failed = withStatus(events, "failed") as ActivitySnapshotEvent[];
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({
+        messageId: `a2ui-surface-${failKey}`,
+        replace: true,
+        content: {
+          status: "failed",
+          error: failure.error,
+          attempts: failure.attempts,
+          maxAttempts: 2,
+        },
+      });
+      expect(surfaceSnapshots(events).at(-1)).toBe(failed[0]);
+      expect(events.indexOf(painted.at(-1)!)).toBeLessThan(
+        events.indexOf(failed[0]),
+      );
+      expect(events.indexOf(failed[0])).toBeLessThan(
+        events.findIndex((e) => e.type === EventType.RUN_FINISHED),
+      );
+      expect(events).toContainEqual(result);
+    },
+  );
 
   it("stamps server-configured recovery.debugExposure onto the lifecycle snapshot (OSS-162)", async () => {
     // Server-side knob, applied to every wrapped agent (Python + TS) since this

@@ -23,20 +23,15 @@ on:
       - "package.json"
       - "nx.json"
       - ".github/workflows/lint-typescript.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "sdks/typescript/**"
-      - "apps/**"
-      - "eslint.config.base.mjs"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "package.json"
-      - "nx.json"
-      - ".github/workflows/lint-typescript.yml"
+  # Pull requests run this through required-checks.yml (workflow_call), so
+  # the PR path list lives in .github/scripts/required-checks-areas.mjs.
+  workflow_call:
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
+  # Literal name, not github.workflow: under workflow_call that is the
+  # caller's name, so every workflow that required-checks.yml calls and
+  # that declares a group would share one group.
+  group: ${{ github.repository }}-lint-typescript-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

@@ -23,15 +23,26 @@ Install the required peer dependencies:
 npm install @mastra/client-js @mastra/core @ag-ui/core @ag-ui/client
 ```
 
-The optional CopilotKit integration is available from `@ag-ui/mastra/copilotkit`.
-Install its peer dependency only when using that entry point. It needs
-`@copilotkit/runtime` `^1.76.0`, which uses AG-UI 1.0 agent types and protocol.
-This raises the optional runtime peer from `^1.60.1`; applications using this
-entry point must upgrade CopilotKit. The runtime and shared development
-dependencies also use 1.76.0 so integration tests exercise that baseline:
+The optional CopilotKit integration exports `registerCopilotKit`. Import it
+from the entry point for your CopilotKit version, and install its peer
+dependency only when you use it. The route options are the same in both; the
+runtime options are the `CopilotRuntime` options of that CopilotKit version.
+
+| CopilotKit | Entry point                  | Peer dependency                         |
+| ---------- | ---------------------------- | --------------------------------------- |
+| 1.x        | `@ag-ui/mastra/copilotkit`   | `@copilotkit/runtime` `^1.76.0`         |
+| 2.x        | `@ag-ui/mastra/copilotkit-2` | `@copilotkit/runtime` `>=2.0.0-rc.0 <3` |
+
+CopilotKit 1.76.0 is the first 1.x release with AG-UI 1.0 agent types and
+protocol. The runtime and shared development dependencies use 1.76.0, so the
+integration tests exercise that baseline. A 2.x development copy types the 2.x
+entry point.
 
 ```bash
+# CopilotKit 1.x
 npm install @copilotkit/runtime@^1.76.0
+# CopilotKit 2.x
+npm install @copilotkit/runtime@next
 ```
 
 ## Usage

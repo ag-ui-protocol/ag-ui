@@ -67,3 +67,19 @@ chunks, and result order are preserved; catalog IDs alone are normalized to
 or failure replace one wrapper activity. The same traces also exercise a custom
 wrapper name with and without explicit configuration. These regressions reproduce the initial PR's CI failure
 without starting a server or calling a provider.
+
+## ADK Express native 1.0 capture (published CopilotKit 1.87.0 validation)
+
+`adk-express-1.0-live.json` retains both runs of the 2026-11-11 published-package
+validation: ag-ui-adk candidate `f889498` (PR #3378) driving `gemini-3.8-flash`
+through the Express inference format against the native A2UI 1.0 basic catalog
+that CopilotKit 1.87.0 ships as the schema context entry. Run boundaries, the
+`generate_a2ui` call events, the adapter's own complete `a2ui-surface`
+activities, the canonical tool results and the assistant text are retained in
+order; reasoning and state snapshots are removed. The update run's canonical
+result is update-only by design, so the regression asserts that the activity the
+middleware leaves behind still carries the creation and replays on its own.
+
+`a2ui-1.0-basic-catalog.json` is the catalog object from that capture's schema
+context entry (the A2UI 1.0 basic catalog with `protocolVersion: "1.0"`), used to
+validate native 1.0 components in the Direct JSON regressions.

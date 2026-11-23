@@ -82,6 +82,27 @@ describe("HttpAgent cloning", () => {
 });
 
 /**
+ * clone() builds the copy with Object.create, so field initializers never run
+ * on it: a field the constructor sets and clone() doesn't copy is simply
+ * absent. Code that compares an agent with its clone by own keys (to catch a
+ * subclass whose clone() drops its state) then reports the base class itself.
+ */
+describe("clone() field coverage", () => {
+  const missingOnClone = (agent: AbstractAgent) => {
+    const cloned = agent.clone();
+    return Object.keys(agent).filter((key) => !Object.prototype.hasOwnProperty.call(cloned, key));
+  };
+
+  it("gives an AbstractAgent clone every own field a fresh instance has", () => {
+    expect(missingOnClone(new CloneableTestAgent())).toEqual([]);
+  });
+
+  it("gives an HttpAgent clone every own field a fresh instance has", () => {
+    expect(missingOnClone(new HttpAgent({ url: "https://example.com/agent" }))).toEqual([]);
+  });
+});
+
+/**
  * A clone manages its own active run. Detaching one agent must not detach
  * another agent, including the source from which it was cloned.
  */

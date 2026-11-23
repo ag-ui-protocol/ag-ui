@@ -1,4 +1,20 @@
-# This file inherits analysis options from the parent package
-# to ensure consistent linting across the entire project.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+include: package:flutter_lints/flutter.yaml
 
-include: ../analysis_options.yaml
+linter:
+  rules:
+    avoid_print: false
+    prefer_const_constructors_in_immutables: false
+    prefer_const_constructors: false
+    prefer_const_literals_to_create_immutables: false
+    prefer_final_fields: false
+    unnecessary_breaks: true
+    use_key_in_widget_constructors: false

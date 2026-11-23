@@ -6,14 +6,44 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  // One Agents SDK agent per demo; routeAgentRequest serves each binding at
+  // /agents/<kebab-case binding>/<thread id>.
   "durable_objects": {
-    "bindings": [{ "name": "AgUiAgent", "class_name": "AgUiAgent" }]
+    "bindings": [
+      { "name": "AgenticChat", "class_name": "AgenticChat" },
+      { "name": "AgenticChatMultimodal", "class_name": "AgenticChatMultimodal" },
+      { "name": "AgenticChatReasoning", "class_name": "AgenticChatReasoning" },
+      { "name": "AgenticGenerativeUi", "class_name": "AgenticGenerativeUi" },
+      { "name": "BackendToolRendering", "class_name": "BackendToolRendering" },
+      { "name": "HumanInTheLoop", "class_name": "HumanInTheLoop" },
+      { "name": "HumanInTheLoopApproval", "class_name": "HumanInTheLoopApproval" },
+      { "name": "PredictiveStateUpdates", "class_name": "PredictiveStateUpdates" },
+      { "name": "SharedState", "class_name": "SharedState" },
+      { "name": "ToolBasedGenerativeUi", "class_name": "ToolBasedGenerativeUi" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgUiAgent"] }],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "AgenticChat",
+        "AgenticChatMultimodal",
+        "AgenticChatReasoning",
+        "AgenticGenerativeUi",
+        "BackendToolRendering",
+        "HumanInTheLoop",
+        "HumanInTheLoopApproval",
+        "PredictiveStateUpdates",
+        "SharedState",
+        "ToolBasedGenerativeUi"
+      ]
+    }
+  ],
   "vars": {
     // Overridden by scripts/dojo.mjs from the shell environment.
     "OPENAI_BASE_URL": "https://api.openai.com/v1",
-    "OPENAI_MODEL": "gpt-4o"
+    "OPENAI_MODEL": "gpt-4o",
+    "OPENAI_REASONING_MODEL": "o4-mini"
   },
   "observability": { "enabled": false }
 }

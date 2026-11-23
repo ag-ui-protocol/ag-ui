@@ -194,6 +194,144 @@ test("normalizes generated identities while retaining their relationships", () =
   ]);
 });
 
+// Captured RUN_STARTED forwardedProps shapes from CI run 43145748120.
+for (const [lane, forwardedProps] of Object.entries({
+  langgraph: {
+    a2uiCatalogAvailable: true,
+    __copilotkitRequestId: "6cef93d8-bc8f-4ce8-8b0d-9dbc44866701",
+  },
+  strandsPython: {
+    __copilotkitRequestId: "0b7991fe-5246-422c-a370-617062ecc64a",
+  },
+  strandsTypescript: {
+    __copilotkitRequestId: "179f1813-2e36-4bea-8f80-bea4316d5976",
+  },
+})) {
+  test(`normalizes the captured ${lane} CopilotKit request identity`, () => {
+    const events = [
+      {
+        type: "RUN_STARTED",
+        threadId: "thread-a",
+        runId: "run-a",
+        input: { forwardedProps },
+      },
+      {
+        type: "RUN_FINISHED",
+        threadId: "thread-a",
+        runId: "run-a",
+        requestId: forwardedProps.__copilotkitRequestId,
+      },
+    ];
+    const original = structuredClone(events);
+    const normalized = normalizeEventTrace(events);
+    assert.deepEqual(normalized, [
+      {
+        type: "RUN_STARTED",
+        threadId: "id-1",
+        runId: "id-2",
+        input: {
+          forwardedProps: { ...forwardedProps, __copilotkitRequestId: "id-3" },
+        },
+      },
+      {
+        type: "RUN_FINISHED",
+        threadId: "id-1",
+        runId: "id-2",
+        requestId: "id-3",
+      },
+    ]);
+    assert.deepEqual(normalizeEventTrace(normalized), normalized);
+    assert.deepEqual(events, original);
+  });
+}
+
+test("retains logical request correlation across continuations and new requests", () => {
+  const starts = ["request-a", "request-a", "request-b"].map(
+    (__copilotkitRequestId, index) => ({
+      type: "RUN_STARTED",
+      runId: `run-${index}`,
+      input: { forwardedProps: { __copilotkitRequestId } },
+    }),
+  );
+  assert.deepEqual(normalizeEventTrace(starts), [
+    {
+      type: "RUN_STARTED",
+      runId: "id-1",
+      input: { forwardedProps: { __copilotkitRequestId: "id-2" } },
+    },
+    {
+      type: "RUN_STARTED",
+      runId: "id-3",
+      input: { forwardedProps: { __copilotkitRequestId: "id-2" } },
+    },
+    {
+      type: "RUN_STARTED",
+      runId: "id-4",
+      input: { forwardedProps: { __copilotkitRequestId: "id-5" } },
+    },
+  ]);
+});
+
+test("preserves request-looking business metadata and the request field itself", () => {
+  const requestId = "6cef93d8-bc8f-4ce8-8b0d-9dbc44866701";
+  const business = {
+    __copilotkitRequestId: requestId,
+    __customerRequestId: requestId,
+  };
+  const events = [
+    {
+      type: "RUN_STARTED",
+      input: {
+        forwardedProps: {
+          __copilotkitRequestId: requestId,
+          __customerRequestId: requestId,
+          a2uiCatalogAvailable: true,
+          metadata: business,
+        },
+        context: [{ description: "catalog", value: "complete catalog guide" }],
+      },
+    },
+    { type: "STATE_SNAPSHOT", snapshot: { forwardedProps: business } },
+    {
+      type: "CUSTOM",
+      name: "business",
+      value: { input: { forwardedProps: business } },
+    },
+  ];
+  const normalized = normalizeEventTrace(events);
+  const expected = structuredClone(events);
+  expected[0].input!.forwardedProps.__copilotkitRequestId = "id-1";
+  assert.deepEqual(normalized, expected);
+  const missingRequest = structuredClone(normalized);
+  delete (
+    missingRequest[0].input as { forwardedProps: Record<string, unknown> }
+  ).forwardedProps.__copilotkitRequestId;
+  assert.throws(() => assertEventTraceMatches(normalized, missingRequest));
+  const changedCatalog = structuredClone(normalized);
+  (
+    changedCatalog[0].input as { context: { value: string }[] }
+  ).context[0].value = "different catalog guide";
+  assert.throws(() => assertEventTraceMatches(normalized, changedCatalog));
+});
+
+test("retains non-string CopilotKit request IDs for diagnostics", () => {
+  for (const __copilotkitRequestId of [
+    null,
+    false,
+    17,
+    [],
+    { customer: "value" },
+  ]) {
+    const events = [
+      {
+        type: "RUN_STARTED",
+        input: { forwardedProps: { __copilotkitRequestId } },
+      },
+    ];
+    assert.deepEqual(normalizeEventTrace(events), events);
+  }
+});
+
 test("normalizes subagent run identities while preserving their namespace and references", () => {
   const subagentRunId = "tools:fdecf438-f47b-2e18-3753-b24a141985c2";
   const parentToolCallId = "call_7ctR-vROo_NGnX-w";

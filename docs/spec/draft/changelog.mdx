@@ -44,6 +44,22 @@ None yet.
    ([Reasoning](/spec/draft/events/reasoning#encryptedvaluetype),
    [#2888](https://github.com/ag-ui-protocol/ag-ui/pull/2888)).
 
+2. **A streamed tool result can say it failed.** `TOOL_CALL_RESULT` carries
+   the optional `error` that `ToolMessage` already has, so a consumer can show
+   a failed call as failed while the run is still streaming instead of waiting
+   for a `MESSAGES_SNAPSHOT`. A string marks the tool call as failed — a
+   producer must not send an empty one, and a consumer that receives one
+   still reads a failure — and a consumer copies it onto the tool message the
+   event mints; an absent `error` is not proof of success. A later snapshot
+   restates the same `error`, unless it corrects the result. `content` should
+   still tell the model what happened, since a peer that drops the field keeps
+   only what `content` says. Optional, so a 1.0 peer that follows its
+   processing model strips it and the run continues — with a warning on the
+   JSON wire, silently on protobuf; a lenient one may keep it or drop it
+   without a warning
+   ([Tool Calls](/spec/draft/events/tool-calls#error),
+   [#3232](https://github.com/ag-ui-protocol/ag-ui/pull/3232)).
+
 ### Schema changes
 
 1. Optional `encryptedValueType` (string) on `ReasoningEncryptedValueEvent`,
@@ -51,6 +67,11 @@ None yet.
    Protobuf appends `encrypted_value_type` to `Message`,
    `ReasoningEncryptedValueEvent` and `ToolCall`; no existing field number
    changes ([#2888](https://github.com/ag-ui-protocol/ag-ui/pull/2888)).
+
+2. Optional `error` (string) on `ToolCallResultEvent`. Protobuf appends
+   `error` to `ToolCallResultEvent`; no existing field number changes.
+   `ToolMessage.error` is unchanged
+   ([#3232](https://github.com/ag-ui-protocol/ag-ui/pull/3232)).
 
 ## Changes in 1.0
 

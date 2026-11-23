@@ -373,6 +373,10 @@
         "role": {
           "const": "tool",
           "description": "Present only for symmetry with the message it mints; the value is fixed, so a producer may leave it out."
+        },
+        "error": {
+          "type": "string",
+          "description": "Why the tool failed, when it did. A string marks the tool call as failed, not the run. A producer MUST NOT send an empty one; a consumer that receives one anyway still reads a failure, which is why the schema accepts it. The tool message this event mints carries the same value as its own error. Absent means the producer reported no failure on this event, not that the call succeeded. Present alongside content rather than instead of it, so a partial result survives a failure."
         }
       },
       "required": ["type", "messageId", "toolCallId", "content"],

@@ -91,6 +91,7 @@ export type {
   MastraSubagentToolResults,
   MastraSubagentVisibility,
 } from "./subagents";
+import { version as ADAPTER_VERSION } from "../package.json";
 
 const { compare } = jsonpatch;
 
@@ -1748,6 +1749,7 @@ export class MastraAgent extends AbstractAgent {
         type: "mastra",
         ...(this.agentId ? { name: this.agentId } : {}),
         ...(this.description ? { description: this.description } : {}),
+        metadata: { adapterVersion: ADAPTER_VERSION },
       },
       tools: { supported: true, clientProvided: true },
       ...(state ? { state } : {}),

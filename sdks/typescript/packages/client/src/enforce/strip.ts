@@ -135,8 +135,7 @@ function stripAgainst(
     // ignore members they do not define rather than reject them: a remove
     // carrying a leftover value is a valid patch, and removing that member
     // while warning about it deletes conformant data and cries wolf.
-    const specOpen =
-      (target.meta() as { specOpen?: boolean } | undefined)?.specOpen === true;
+    const specOpen = (target.meta() as { specOpen?: boolean } | undefined)?.specOpen === true;
     const keys = Object.keys(record);
     charge(budget, keys.length, path);
     for (const key of keys) {
@@ -148,9 +147,7 @@ function stripAgainst(
       // schema describes. It was then left in place and reported nowhere, and
       // an unrecognised property reached verification, subscribers and
       // application code in silence. Both halves of the guarantee at once.
-      const field = Object.prototype.hasOwnProperty.call(shape, key)
-        ? shape[key]
-        : undefined;
+      const field = Object.prototype.hasOwnProperty.call(shape, key) ? shape[key] : undefined;
       if (field === undefined) {
         if (specOpen) {
           result[key] = record[key];
@@ -236,7 +233,13 @@ function stripAgainst(
       // the field quietly gone. It is a malformed VALUE on a described field,
       // which is the one deviation that stays fatal.
       if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-      const tag = (value as Record<string, unknown>)[discriminator];
+      const tag = Object.prototype.hasOwnProperty.call(value, discriminator)
+        ? (value as Record<string, unknown>)[discriminator]
+        : undefined;
+      // Only a string tag can name a union variant (recognised or future). A
+      // missing or non-string discriminator is a malformed value on a field the
+      // protocol describes, so it stays in place for the validator to reject.
+      if (typeof tag !== "string") return { ...value, [discriminator]: tag };
       for (const option of options) {
         const unwrapped = unwrap(option);
         if (!(unwrapped instanceof z.ZodObject)) continue;

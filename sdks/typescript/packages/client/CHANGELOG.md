@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.0.5 — 2026-11-17
+
+- `compactEvents` now preserves message order and snapshot boundaries across overlapping streams, fixing swapped parallel tool calls and deltas overwritten by mid-stream snapshots.
+- Events arriving between overlapping streams now keep their arrival order, avoiding `STEP_STARTED`/`STEP_FINISHED` sequences rejected by `verifyEvents`.
+- Reasoning message deltas (`REASONING_MESSAGE_CONTENT`) are now compacted like text messages, greatly reducing stored history size.
+- Large replayed threads apply much faster via a `MessageLookup` index replacing full-list scans by message and tool call id.
+- `AbstractAgent.clone()` now copies `resolvingPeerCeiling`, so clones retain all own fields.
+- Enforcement now rejects missing, non-string, or inherited union discriminators.
+
+### Breaking changes
+
+- Event enforcement rejects missing, non-string, or inherited union discriminators that were previously accepted; verify emitted events conform.
+- `compactEvents` output ordering and reasoning-delta compaction changed; re-verify any code depending on prior event ordering or raw reasoning deltas.
+
+## 1.0.4 — 2026-11-05
+
+- Stopped deep-cloning the entire thread per event; each update now copies only changed messages, removing quadratic cost on long threads.
+- Emitted messages are read-only; emitted state and activity content are copied so consumer edits no longer leak into the reducer's working copy or later events.
+- `threadId` is now a lazily-generated accessor, allowing agents to be constructed at Cloudflare Worker global scope without crashing.
+- Reworked tool-result/call pairing: results are re-paired with their calls on run input, snapshot merges, and across reused call ids, human-in-the-loop, and reasoning messages.
+- Tool results now placed in front of reasoning rather than after, fixing LangGraph/Mastra handling.
+- Added a per-event entry budget to bound schema enforcement work against unbounded container sizes (CVE-2023-54404 mitigation).
+- `zod` is now a peer dependency (`^3.25.18 || ^4.0.0`) instead of a direct dependency.
+- Fixed dropped awaits on async `onNewMessage` and `onNewToolCall` hooks.
+- Avoided serializing discarded unknown events.
+- Mastra: `clone()` now carries `use()` middlewares onto cloned agents.
+
+### Breaking changes
+
+- `threadId` is now an accessor on `AbstractAgent`; subclasses declaring or overriding `threadId` as a field fail (TS2610). Assign it in the constructor instead.
+- `threadId` is no longer an own property; it is absent from `Object.keys`, spread, and `JSON.stringify` until read.
+- `zod` moved from a direct to a required peer dependency (`^3.25.18 || ^4.0.0`); applications must install a compatible zod.
+- `AbstractAgent.middlewares` is now protected.
+- Tool-result ordering and re-pairing behavior changed; re-verify any code relying on prior message ordering.
+
 ## 1.0.3 — 2026-10-15
 
 - Maintenance release; no consumer-facing changes identified.

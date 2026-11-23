@@ -30,6 +30,18 @@ Low-level client infrastructure and transport implementations.
 - **SseParser**: Server-Sent Events parser for streaming responses
 - **EventStreamManager**: Event stream management and processing
 
+#### HTTP streaming responses
+
+`HttpTransport` applies configured request headers to both the default client and
+injected `HTTPClient` implementations. Explicit headers override the default
+`Accept` and `Content-Type` values; a supplied resume cursor overrides a configured
+`Last-Event-ID` header.
+
+A streaming run must return a 2xx status with `Content-Type: text/event-stream`.
+Media type matching ignores case and accepts parameters such as `charset=utf-8`.
+Non-2xx responses throw `ClientError.httpError(statusCode:)`; missing or incorrect
+media types throw `ClientError.invalidResponse`.
+
 ### AGUICore
 Protocol types, events, and message definitions.
 - **Events**: All AG-UI protocol event types and serialization

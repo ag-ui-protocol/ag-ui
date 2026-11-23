@@ -70,6 +70,27 @@ async def _empty_stream():
         yield None
 
 
+def _snapshot(source, next_nodes):
+    """A thread history entry: who wrote the checkpoint and what ran next."""
+    snapshot = MagicMock()
+    snapshot.metadata = {"source": source}
+    snapshot.next = next_nodes
+    return snapshot
+
+
+def _history(*snapshots):
+    """Stand in for ``graph.aget_state_history``: newest checkpoint first."""
+
+    def aget_state_history(config, limit=None):
+        async def walk():
+            for snapshot in snapshots[:limit]:
+                yield snapshot
+
+        return walk()
+
+    return aget_state_history
+
+
 def _checkpoint_signature(messages):
     """Return stable message fields so tests can assert no checkpoint mutation."""
     return [
@@ -95,7 +116,9 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
     """Interrupt resumes must bypass the regenerate heuristic (#1743)."""
 
     async def test_handle_stream_events_uses_forwarded_node_name_for_continue_mode(self):
-        """A no-resume request with node_name should continue from that node."""
+        """A no-resume request with node_name continues the paused thread when
+        it adds no input. (A new message would start a new run instead; see
+        test_continue_mode_node_name.py.)"""
         agent = make_agent()
 
         checkpoint_messages = [
@@ -104,10 +127,15 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         initial_state = _make_state(messages=checkpoint_messages)
         agent.graph.aget_state = AsyncMock(return_value=initial_state)
         agent.graph.astream_events.return_value = _empty_stream()
+        # The thread's history: approval_node ran in the step that produced the
+        # latest checkpoint, which is what makes it a node to continue from.
+        agent.graph.aget_state_history = _history(
+            _snapshot(source="loop", next_nodes=()),
+            _snapshot(source="loop", next_nodes=("approval_node",)),
+        )
 
         frontend_messages = [
             UserMessage(id="h1", role="user", content="do something"),
-            UserMessage(id="h2", role="user", content="follow up"),
         ]
         inp = _make_input(
             messages=frontend_messages,
@@ -118,11 +146,36 @@ class TestPrepareStreamInterruptResumeOrdering(unittest.IsolatedAsyncioTestCase)
         async for event in agent._handle_stream_events(inp):
             collected.append(event)
 
-        agent.graph.aupdate_state.assert_awaited_once()
-        self.assertEqual(
-            agent.graph.aupdate_state.await_args.kwargs.get("as_node"),
-            "approval_node",
+        # A continue resumes the thread as it stands: no state write (an
+        # ``as_node`` write would mark the node as finished and skip it) and
+        # no stream input, so only the thread's pending tasks run.
+        agent.graph.aupdate_state.assert_not_called()
+        self.assertIsNone(agent.graph.astream_events.call_args.kwargs.get("input"))
+
+    async def test_node_name_the_thread_did_not_run_last_starts_a_new_run(self):
+        """A node name the thread's history does not back is not continued from."""
+        agent = make_agent()
+
+        initial_state = _make_state(messages=[HumanMessage(id="h1", content="do something")])
+        agent.graph.aget_state = AsyncMock(return_value=initial_state)
+        agent.graph.astream_events.return_value = _empty_stream()
+        agent.graph.aget_state_history = _history(
+            _snapshot(source="loop", next_nodes=()),
+            _snapshot(source="loop", next_nodes=("some_other_node",)),
         )
+
+        inp = _make_input(
+            messages=[
+                UserMessage(id="h1", role="user", content="do something"),
+                UserMessage(id="h2", role="user", content="follow up"),
+            ],
+            forwarded_props={"node_name": "approval_node"},
+        )
+
+        async for _ in agent._handle_stream_events(inp):
+            pass
+
+        agent.graph.aupdate_state.assert_not_called()
 
     async def test_interrupt_none_resume_with_node_name_does_not_emit_unmatched_step(self):
         """Short-circuit interrupt replay must not start a step it never finishes."""

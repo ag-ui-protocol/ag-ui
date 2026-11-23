@@ -504,59 +504,119 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
   return parts.join("\n");
 }
 
+type JsonSchema = Record<string, unknown>;
+
+function isJsonSchema(value: unknown): value is JsonSchema {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function unionOf(options: z.ZodTypeAny[]): z.ZodTypeAny {
+  if (options.length === 0) return z.any();
+  if (options.length === 1) return options[0];
+  return z.union(options as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+}
+
+function enumToZod(values: unknown[]): z.ZodTypeAny {
+  if (values.every((value) => typeof value === "string"))
+    return z.enum(values as [string, ...string[]]);
+  if (
+    values.every(
+      (value) =>
+        value === null ||
+        ["string", "number", "boolean"].includes(typeof value),
+    )
+  )
+    return unionOf(
+      values.map((value) =>
+        z.literal(value as string | number | boolean | null),
+      ),
+    );
+  return z.any();
+}
+
+function objectToZod(schema: JsonSchema): z.ZodTypeAny {
+  const shape = jsonSchemaPropertiesToZod(schema);
+  if (Object.keys(shape).length > 0) {
+    // Never strip undeclared keys: the parsed args must equal the model's
+    // original tool input. Reject them only when the schema forbids them.
+    return schema.additionalProperties === false
+      ? z.object(shape).strict()
+      : z.object(shape).passthrough();
+  }
+  return z.record(
+    z.string(),
+    isJsonSchema(schema.additionalProperties)
+      ? jsonSchemaTypeToZod(schema.additionalProperties)
+      : z.any(),
+  );
+}
+
+function jsonSchemaNodeToZod(schema: JsonSchema): z.ZodTypeAny {
+  if (Array.isArray(schema.enum) && schema.enum.length > 0)
+    return enumToZod(schema.enum);
+  if ("const" in schema) return enumToZod([schema.const]);
+  const variants = schema.anyOf ?? schema.oneOf;
+  if (Array.isArray(variants))
+    return unionOf(variants.map((variant) => jsonSchemaTypeToZod(variant)));
+  if (Array.isArray(schema.type))
+    return unionOf(
+      schema.type.map((type) => jsonSchemaNodeToZod({ ...schema, type })),
+    );
+
+  switch (schema.type) {
+    case "string":
+      return z.string();
+    case "number":
+      return z.number();
+    case "integer":
+      return z.number().int();
+    case "boolean":
+      return z.boolean();
+    case "null":
+      return z.null();
+    case "array":
+      return z.array(
+        isJsonSchema(schema.items)
+          ? jsonSchemaTypeToZod(schema.items)
+          : z.any(),
+      );
+    case "object":
+      return objectToZod(schema);
+    case undefined:
+      return isJsonSchema(schema.properties) ? objectToZod(schema) : z.any();
+    default:
+      return z.any();
+  }
+}
+
 /**
- * Convert a basic JSON Schema type string to a Zod type.
- * Falls back to z.any() for complex or unknown types.
+ * Convert a JSON Schema node to a Zod type, keeping nested object properties,
+ * array item schemas, required fields, enums and descriptions so the model
+ * sees the frontend tool's full parameter schema. Constructs that cannot be
+ * represented (e.g. $ref, allOf, tuple items) fall back to z.any().
  */
-function jsonSchemaTypeToZod(prop: Record<string, unknown>): z.ZodTypeAny {
-  const type = prop.type as string | undefined;
-  const description = prop.description as string | undefined;
+function jsonSchemaTypeToZod(prop: unknown): z.ZodTypeAny {
+  if (!isJsonSchema(prop)) return z.any();
 
   let zodType: z.ZodTypeAny;
-
-  switch (type) {
-    case "string":
-      zodType = prop.enum
-        ? z.enum(prop.enum as [string, ...string[]])
-        : z.string();
-      break;
-    case "number":
-    case "integer":
-      zodType = z.number();
-      break;
-    case "boolean":
-      zodType = z.boolean();
-      break;
-    case "array":
-      zodType = z.array(z.any());
-      break;
-    case "object":
-      zodType = z.record(z.string(), z.any());
-      break;
-    default:
-      zodType = z.any();
+  try {
+    zodType = jsonSchemaNodeToZod(prop);
+  } catch {
+    zodType = z.any();
   }
 
-  if (description) {
-    zodType = zodType.describe(description);
+  if (typeof prop.description === "string") {
+    zodType = zodType.describe(prop.description);
   }
 
   return zodType;
 }
 
-/**
- * Convert a JSON Schema properties object to a Zod raw shape.
- * This is a pragmatic conversion for stub tools -- handles basic types
- * with z.any() fallback for complex nested schemas.
- */
-function jsonSchemaToZodShape(
-  schema: Record<string, unknown>,
+function jsonSchemaPropertiesToZod(
+  schema: JsonSchema,
 ): Record<string, z.ZodTypeAny> {
-  const properties = (schema.properties ?? {}) as Record<
-    string,
-    Record<string, unknown>
-  >;
-  const required = (schema.required ?? []) as string[];
+  const properties = isJsonSchema(schema.properties) ? schema.properties : {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const [key, prop] of Object.entries(properties)) {
@@ -566,6 +626,18 @@ function jsonSchemaToZodShape(
     }
     shape[key] = zodType;
   }
+
+  return shape;
+}
+
+/**
+ * Convert a JSON Schema properties object to a Zod raw shape for the SDK's
+ * tool() function.
+ */
+function jsonSchemaToZodShape(
+  schema: Record<string, unknown>,
+): Record<string, z.ZodTypeAny> {
+  const shape = jsonSchemaPropertiesToZod(schema);
 
   // If no properties were defined, use a catch-all
   if (Object.keys(shape).length === 0) {
