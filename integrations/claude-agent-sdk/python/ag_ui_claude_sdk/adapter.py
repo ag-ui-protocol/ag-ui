@@ -133,6 +133,10 @@ class ClaudeAgentAdapter:
         # No path may hold ``_state_locks`` then wait on ``_run_locks``.
         self._run_locks: Dict[str, asyncio.Lock] = {}
         self._per_thread_state: Dict[str, Any] = {}  # thread_id -> current state
+        # thread_id -> the running run's state/context addendum and whether a
+        # hook has delivered it yet. Hooks read it at call time because a
+        # reused worker keeps the hooks (and options) of the run that made it.
+        self._run_state_context: Dict[str, Dict[str, Any]] = {}
         # Per-RUN result keyed by (thread_id, run_id). ``RUN_FINISHED.result`` is
         # per-run by definition, so it must not share a per-thread slot that a
         # concurrent/serialized peer run could clobber.
@@ -336,6 +340,7 @@ class ClaudeAgentAdapter:
         # keyed per-run so a serialized peer can never clobber it (Fix 4).
         self._per_thread_state[thread_id] = input_data.state
         self._per_run_result[result_key] = None
+        self._begin_state_context(thread_id, input_data)
 
         # Set True only once this run has been counted into a worker's
         # ``active_runs`` refcount, so the ``finally`` block decrements exactly
@@ -721,6 +726,7 @@ class ClaudeAgentAdapter:
                         await loopback.close()
             finally:
                 self._per_run_result.pop(result_key, None)
+                self._run_state_context.pop(thread_id, None)
                 run_lock.release()
                 self._evict_memory_bindings()
 
@@ -767,6 +773,41 @@ class ClaudeAgentAdapter:
                 recovery.assert_supported()
             yield message
 
+    def _begin_state_context(self, thread_id: str, input_data: RunAgentInput) -> None:
+        """Record this run's state/context addendum for the hooks to deliver."""
+        self._run_state_context[thread_id] = {
+            "addendum": build_state_context_addendum(input_data),
+            "delivered": False,
+        }
+
+    def _with_state_context_hooks(self, hooks, thread_id: str):
+        """Add hooks that hand the running run's addendum to the model as
+        ``additionalContext``, once per run, keeping the caller's hooks.
+
+        Hooks run on fresh and resumed sessions alike, and leaving the system
+        prompt alone keeps it stable for prompt caching. ``UserPromptSubmit``
+        covers every run that submits a user prompt; a run that only carries a
+        frontend tool result submits none, so the first ``PostToolUse`` (the
+        resumed call) carries it there.
+        """
+        from claude_agent_sdk import HookMatcher
+
+        def deliver(event_name: str):
+            async def hook(hook_input, tool_use_id, context):
+                current = self._run_state_context.get(thread_id)
+                if not current or current["delivered"] or not current["addendum"]:
+                    return {}
+                current["delivered"] = True
+                logger.debug(f"Passing state/context ({len(current['addendum'])} chars) through {event_name}")
+                return {"hookSpecificOutput": {"hookEventName": event_name,
+                                               "additionalContext": current["addendum"]}}
+            return hook
+
+        hooks = dict(hooks or {})
+        for event_name in ("UserPromptSubmit", "PostToolUse"):
+            hooks[event_name] = [*hooks.get(event_name, []), HookMatcher(hooks=[deliver(event_name)])]
+        return hooks
+
     def build_options(self, input_data: Optional[RunAgentInput] = None, thread_id: Optional[str] = None, profile_options=None, resolve_frontend_result=None) -> "ClaudeAgentOptions":
         """Build ClaudeAgentOptions from base config + RunAgentInput."""
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server
@@ -810,13 +851,13 @@ class ClaudeAgentAdapter:
         if profile_options is not None:
             merged_kwargs.update(profile_options if isinstance(profile_options, dict) else vars(profile_options))
 
-        # Append state and context to the system prompt (not the user message).
+        # Deliver state and context through hooks, not the system prompt: a
+        # resumed session (and a reused worker) keeps the system prompt it
+        # started with, so an addendum there stayed at the first run's value.
         if input_data:
-            addendum = build_state_context_addendum(input_data)
-            if addendum:
-                base = merged_kwargs.get("system_prompt", "") or ""
-                merged_kwargs["system_prompt"] = f"{base}\n\n{addendum}" if base else addendum
-                logger.debug(f"Appended state/context ({len(addendum)} chars) to system_prompt")
+            key = thread_id or input_data.thread_id
+            self._begin_state_context(key, input_data)
+            merged_kwargs["hooks"] = self._with_state_context_hooks(merged_kwargs.get("hooks"), key)
         
         # Ensure ag_ui tools are always allowed (frontend tools + state management)
         if input_data and (input_data.state is not None or input_data.tools):

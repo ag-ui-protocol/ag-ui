@@ -371,13 +371,12 @@ def process_messages(input_data: RunAgentInput) -> Tuple[ClaudePrompt, bool]:
 
 def build_state_context_addendum(input_data: RunAgentInput) -> str:
     """
-    Build state and context addendum for injection into the system prompt.
+    Build the state and context addendum for a run.
     
     Returns the formatted text block describing current state and application
-    context, or an empty string if neither is present.
-    
-    This keeps state/context in the system prompt (where it belongs) rather
-    than polluting the user message.
+    context, or an empty string if neither is present. The adapter delivers it
+    through hooks, so it stays out of both the system prompt and the user's
+    message.
     
     Args:
         input_data: RunAgentInput containing state and context
