@@ -33,10 +33,17 @@
     "@modelcontextprotocol/sdk": "^1.15.0"
   },
   "peerDependencies": {
+    "@a2ui/web_core": "^0.15.0",
     "@ag-ui/client": ">=1.0.0",
     "rxjs": "7.8.1"
   },
+  "peerDependenciesMeta": {
+    "@a2ui/web_core": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@a2ui/web_core": "^0.15.0",
     "@ag-ui/client": "workspace:*",
     "@arethetypeswrong/cli": "^0.17.4",
     "@types/node": "^20.11.19",
@@ -52,6 +59,17 @@
       "require": "./dist/index.js",
       "import": "./dist/index.mjs"
     },
+    "./a2ui": {
+      "require": "./dist/a2ui.js",
+      "import": "./dist/a2ui.mjs"
+    },
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "a2ui": [
+        "dist/a2ui.d.ts"
+      ]
+    }
   }
 }
