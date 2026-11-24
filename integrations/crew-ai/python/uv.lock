@@ -38,6 +38,7 @@ tools = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "chromadb" },
     { name = "crewai-agui-dojo" },
     { name = "hatchling" },
     { name = "httpx" },
@@ -62,6 +63,7 @@ provides-extras = ["tools"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "chromadb", specifier = ">=1.1.1,<2" },
     { name = "crewai-agui-dojo", editable = "examples" },
     { name = "hatchling", specifier = "==1.32.0" },
     { name = "httpx", specifier = ">=0.27,<0.29" },

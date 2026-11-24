@@ -1209,7 +1209,17 @@ jobs:
         working-directory: integrations/crew-ai/python
         env:
           CREWAI_REQUIREMENT: ${{ matrix.crewai }}
-        run: uv pip install -e . -e examples --upgrade-package crewai "$CREWAI_REQUIREMENT"
+        run: |
+          # Resolve the whole project, including dev/example dependencies. A
+          # selective pip upgrade can leave Chroma's gRPC exporter incompatible
+          # with CrewAI's upgraded OpenTelemetry packages.
+          # Only this boundary install may re-resolve the lock. Restore it before
+          # tests so the final lockfile assertion still detects test-time writes.
+          saved_lock=$(mktemp)
+          cp uv.lock "$saved_lock"
+          trap 'cp "$saved_lock" uv.lock; rm "$saved_lock"' EXIT
+          uv sync --upgrade-package "$CREWAI_REQUIREMENT"
+          uv pip check
 
       - name: Run tests
         working-directory: integrations/crew-ai/python
