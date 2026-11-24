@@ -266,9 +266,14 @@ export class CopilotAgent extends AbstractAgent {
     this.threads.delete(input.threadId);
     while (!thread && this.threads.size >= MAX_THREADS) {
       // Join a teardown already freeing a slot before evicting another thread,
-      // and never evict a thread mid-run: that would abort a live stream.
+      // and never evict a thread mid-run: that would abort a live stream. A thread
+      // awaiting an approval goes last, so abandoned approvals cannot block admission.
       const entries = [...this.threads];
-      const victim = (entries.find(([, entry]) => entry.closing) ?? entries.find(([, entry]) => !entry.busy))?.[0];
+      const victim = (
+        entries.find(([, entry]) => entry.closing) ??
+        entries.find(([, entry]) => !entry.busy && !entry.pending.size) ??
+        entries.find(([, entry]) => !entry.busy)
+      )?.[0];
       if (victim === undefined) {
         yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
         yield { type: E.RUN_ERROR, message: "Thread capacity reached; every thread has an active run", code: "COPILOT_SDK_ERROR" };

@@ -289,6 +289,29 @@ async def test_l4a_cache_evicts_least_recently_used_not_first_inserted(monkeypat
         await agent.close()
 
 
+async def test_s6_eviction_spares_a_thread_awaiting_an_approval(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_THREADS", 2)
+    client = FakeClient(FRONTEND_TOOL_TURN)
+    agent = CopilotAgent(
+        client, interrupts={"change_background": lambda answer, args: answer}, run_timeout=1
+    )
+    try:
+        assert (await collect(agent, make_input(threadId="a", tools=TOOLS)))[
+            -1
+        ].type == "RUN_FINISHED"
+        approval = client.session
+        client._script = TEXT_TURN
+        for thread_id in ("b", "c"):
+            assert (await collect(agent, make_input(threadId=thread_id)))[-1].type == "RUN_FINISHED"
+        assert set(agent._threads) == {"a", "c"} and not approval.aborted
+        resume = [{"interruptId": "call-1", "status": "resolved", "payload": "ok"}]
+        answer = make_input(threadId="a", runId="approve", tools=TOOLS, resume=resume)
+        assert (await collect(agent, answer))[-1].type == "RUN_FINISHED"
+        assert [request.request_id for request in approval.resolved] == ["req-1"]
+    finally:
+        await agent.close()
+
+
 @pytest.mark.parametrize("capacity", [1, 2], ids=["all-busy", "idle-victim"])
 async def test_l4b_cache_never_evicts_an_inflight_session(monkeypatch, capacity):
     monkeypatch.setattr(agent_module, "MAX_THREADS", capacity)

@@ -415,10 +415,16 @@ class CopilotAgent:
         thread = self._threads.pop(input_data.thread_id, None)
         while thread is None and len(self._threads) >= MAX_THREADS:
             # Join a teardown already freeing a slot before evicting another thread,
-            # and never evict a thread mid-run: that would abort a live stream.
-            victim = next((key for key, entry in self._threads.items() if entry.closing), None)
+            # and never evict a thread mid-run: that would abort a live stream. A thread
+            # awaiting an approval goes last, so abandoned approvals cannot block admission.
+            entries = self._threads.items()
+            victim = next((key for key, entry in entries if entry.closing), None)
             if victim is None:
-                victim = next((key for key, entry in self._threads.items() if not entry.busy), None)
+                victim = next(
+                    (key for key, entry in entries if not (entry.busy or entry.pending)), None
+                )
+            if victim is None:
+                victim = next((key for key, entry in entries if not entry.busy), None)
             if victim is None:
                 yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
                 yield RunErrorEvent(

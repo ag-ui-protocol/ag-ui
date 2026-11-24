@@ -213,6 +213,32 @@ describe("session lifecycle", () => {
     }
   });
 
+  it("S6: evicts a thread awaiting an approval only as a last resort", async () => {
+    const script: Payload[] = [...FRONTEND_TOOL_TURN];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({
+      client, tools: TOOLS, interrupts: { change_background: (answer) => answer }, runTimeoutMs: 1_000,
+    });
+    try {
+      expect((await run(agent, makeInput({ threadId: "a" }))).at(-1)!.type).toBe("RUN_FINISHED");
+      const approval = client.session!;
+      script.splice(0, script.length, ...TEXT_TURN);
+      const sessions: FakeSession[] = [];
+      for (let index = 1; index < 33; index++) {
+        await run(agent, makeInput({ threadId: `thread-${index}` }));
+        sessions.push(client.session!);
+      }
+      expect(approval.aborted).toBe(false);
+      expect(sessions[0]!.aborted).toBe(true);
+      expect((await run(agent, makeInput({
+        threadId: "a", runId: "approve", resume: [{ interruptId: "call-1", status: "resolved", payload: "ok" }],
+      }))).at(-1)!.type).toBe("RUN_FINISHED");
+      expect(approval.resolved).toEqual(["req-1"]);
+    } finally {
+      await agent.close();
+    }
+  });
+
   it("L4b: never evicts a busy thread to make room for a new thread", async () => {
     vi.useFakeTimers();
     const script: Payload[] = [];
