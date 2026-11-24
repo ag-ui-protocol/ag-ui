@@ -135,6 +135,18 @@ async def test_non_streaming_aggregate_still_emits_reasoning():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [True, False], ids=["sse", "non_streaming"])
+async def test_text_only_response_emits_no_reasoning(streaming):
+    """A response without thoughts: closing on partial=False must emit nothing."""
+    events = [_adk_event([_part("Hello")], partial=True, final=False)] if streaming else []
+    events.append(_adk_event([_part("Hello")], partial=False, final=True))
+    out = await _translate_all(events)
+
+    assert [e for e in out if e.type in REASONING_EVENTS] == []
+    assert _text_deltas(out) == ["Hello"]
+
+
+@pytest.mark.asyncio
 async def test_new_run_emits_reasoning_again():
     """The per-response marker resets across runs on the same translator."""
     translator = EventTranslator()
