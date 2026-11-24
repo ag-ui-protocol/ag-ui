@@ -210,9 +210,25 @@ export class CopilotAgent extends AbstractAgent {
     });
   }
 
-  /** Closes the sessions shared by this agent and its clones; call at host shutdown. */
+  /**
+   * Closes the sessions shared by this agent and its clones and deletes their native
+   * history. Call at host shutdown, once the host stops admitting runs and drains them.
+   */
   async close(): Promise<void> {
     await Promise.allSettled([...this.threads.keys()].map((id) => this.dispose(id)));
+    // Best effort: the ledger names every thread this family opened; ids never stored just fail.
+    // ponytail: a run still opening its session during the sweep leaves it on disk, and every
+    // delete starts at once; gate admissions or batch the deletes if either starts to matter.
+    const { client } = this.config;
+    await Promise.allSettled(
+      [...this.delivered.keys()].map(async (id) =>
+        this.withDeadline(client.deleteSession(this.sessionId(id)), Date.now() + 5000, "")),
+    );
+  }
+
+  // The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
+  private sessionId(threadId: string): string {
+    return `${this.sessionPrefix}-${createHash("sha256").update(threadId).digest("hex")}`;
   }
 
   private async dispose(threadId: string, thread = this.threads.get(threadId)): Promise<void> {
@@ -515,8 +531,7 @@ export class CopilotAgent extends AbstractAgent {
     // The native session is keyed by the thread, so a thread whose in-memory
     // entry was disposed (cancel, timeout, eviction) resumes its history.
     const { client } = this.config;
-    // The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
-    const sessionId = `${this.sessionPrefix}-${createHash("sha256").update(input.threadId).digest("hex")}`;
+    const sessionId = this.sessionId(input.threadId);
     if (await client.getSessionMetadata(sessionId)) {
       try {
         return await client.resumeSession(sessionId, config);

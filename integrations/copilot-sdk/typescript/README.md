@@ -26,8 +26,10 @@ agent.run(input).subscribe({ next: (event) => res.write(encoder.encode(event)) }
 
 Register and reuse a long-lived `CopilotAgent` when hosting directly in CopilotKit.
 Per-request `clone()` instances share its native sessions and pending tool calls,
-while separately constructed agents remain independent. Call `close()` at host
-shutdown, not after each request: closing any clone closes the family's sessions.
+while separately constructed agents remain independent. At host shutdown, stop
+admitting runs and drain active ones, then await `close()` before stopping the
+client; never call it after each request. Closing any clone closes the family's
+sessions and deletes their native history, best effort.
 Sessions and pending calls remain process-local; cloning does not provide recovery
 after a restart or continuation on another server process.
 

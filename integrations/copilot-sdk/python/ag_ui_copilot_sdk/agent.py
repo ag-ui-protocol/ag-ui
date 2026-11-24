@@ -203,8 +203,26 @@ class CopilotAgent:
         self._session_prefix = str(uuid.uuid4())
 
     async def close(self) -> None:
+        """Close the live sessions and delete their native history.
+
+        Call at host shutdown, once the host stops admitting runs and drains them.
+        """
         for thread_id in list(self._threads):
             await self._dispose(thread_id)
+        # Best effort: the ledger names every thread this agent opened; ids never stored just fail.
+        # ponytail: a run still opening its session during the sweep leaves it on disk, and every
+        # delete starts at once; gate admissions or batch the deletes if either starts to matter.
+        await asyncio.gather(
+            *(
+                asyncio.wait_for(self.client.delete_session(self._session_id(thread_id)), 5)
+                for thread_id in list(self._delivered)
+            ),
+            return_exceptions=True,
+        )
+
+    def _session_id(self, thread_id: str) -> str:
+        # The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
+        return f"{self._session_prefix}-{hashlib.sha256(thread_id.encode()).hexdigest()}"
 
     async def _dispose(self, thread_id: str, thread: _Thread | None = None) -> None:
         if thread is None:
@@ -304,9 +322,7 @@ class CopilotAgent:
         options["on_event"] = lambda event: thread.queue.put_nowait(event.to_dict())
         # A stable id lets the next run resume the on-disk history after a cancel
         # or failure disposed the live session, instead of starting empty.
-        # The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
-        thread_hash = hashlib.sha256(input_data.thread_id.encode()).hexdigest()
-        session_id = f"{self._session_prefix}-{thread_hash}"
+        session_id = self._session_id(input_data.thread_id)
         options.pop("session_id", None)
         if await self.client.get_session_metadata(session_id):
             # create-only in SDK 1.0.28; resume rejects them

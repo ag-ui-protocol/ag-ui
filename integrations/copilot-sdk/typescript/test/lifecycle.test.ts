@@ -147,7 +147,7 @@ describe("session lifecycle", () => {
       expect(client.session!.prompts).toEqual([]);
 
       // An acknowledged replay is not a new turn, so a broken resume must not delete history.
-      await agent.close();
+      await (agent as unknown as { dispose(threadId: string): Promise<void> }).dispose("t1");
       client.resumeSession = async () => {
         throw new Error("Session file is corrupt");
       };
@@ -156,6 +156,19 @@ describe("session lifecycle", () => {
     } finally {
       await agent.close();
     }
+  });
+
+  it("S7: close() deletes the native history of every thread the family opened", async () => {
+    const script: Payload[] = [{ id: "cancel", type: "abort", data: {} }];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 500 });
+    expect((await run(agent, makeInput({ threadId: "a" }))).at(-1)).toMatchObject({ type: "RUN_ERROR", message: "Run cancelled" });
+    script.splice(0, script.length, ...TEXT_TURN);
+    expect((await run(agent.clone(), makeInput({ threadId: "b" }))).at(-1)!.type).toBe("RUN_FINISHED");
+    expect(client.stored.size).toBe(2);
+    await agent.close();
+    expect(client.stored.size).toBe(0);
+    expect(client.deleted).toHaveLength(2);
   });
 
   it("S5: rejects an expired interrupt without disturbing the live one", async () => {

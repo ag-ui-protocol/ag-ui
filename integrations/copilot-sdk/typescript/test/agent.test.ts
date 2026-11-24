@@ -118,6 +118,7 @@ describe("CopilotAgent", () => {
       expect(disconnect).toHaveBeenCalledTimes(1);
       expect(independentSession.aborted).toBe(false);
       expect(independentSession.disconnected).toBe(false);
+      expect([...client.stored]).toEqual([createSession.mock.calls[1]![0].sessionId]);
       await agent.close();
       await cloned.close();
       expect(abort).toHaveBeenCalledTimes(1);
@@ -125,8 +126,8 @@ describe("CopilotAgent", () => {
 
       const fresh = await run(cloned.clone(), makeInput({ runId: "fresh" }));
       expect(fresh.at(-1)!.type).toBe("RUN_FINISHED");
-      expect(createSession).toHaveBeenCalledTimes(2);
-      expect(client.resumed).toHaveLength(1);
+      expect(createSession).toHaveBeenCalledTimes(3);
+      expect(client.resumed).toHaveLength(0);
       expect(client.session).not.toBe(sharedSession);
       expect(client.session).not.toBe(independentSession);
     } finally {

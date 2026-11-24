@@ -188,7 +188,7 @@ async def test_s4_retry_after_dispose_neither_resends_nor_loses_the_prompt(monke
     assert client.session is not acked and client.session.prompts == []
 
     # An acknowledged replay is not a new turn, so a broken resume must not delete history.
-    await agent.close()
+    await agent._dispose("t1")
 
     async def corrupt_resume(session_id, **options):
         raise RuntimeError("Session file is corrupt")
@@ -197,6 +197,17 @@ async def test_s4_retry_after_dispose_neither_resends_nor_loses_the_prompt(monke
     assert (await collect(agent, make_input(runId="corrupt")))[-1].type == "RUN_ERROR"
     assert client.deleted == []
     await agent.close()
+
+
+async def test_s7_close_deletes_the_native_history_of_every_thread_it_opened():
+    client = FakeClient([{"id": "cancel", "type": "abort", "data": {}}])
+    agent = CopilotAgent(client, run_timeout=1)
+    assert (await collect(agent, make_input(threadId="a")))[-1].type == "RUN_ERROR"
+    client._script = TEXT_TURN
+    assert (await collect(agent, make_input(threadId="b")))[-1].type == "RUN_FINISHED"
+    assert len(client.stored) == 2
+    await agent.close()
+    assert client.stored == set() and len(client.deleted) == 2
 
 
 async def test_s5_expired_interrupt_is_rejected_without_disturbing_the_live_one():

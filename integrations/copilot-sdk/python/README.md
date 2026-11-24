@@ -26,6 +26,10 @@ add_copilot_fastapi_endpoint(app=app, agent=agent, path="/agentic_chat")
 `add_copilot_fastapi_endpoint` registers the agent route plus a `/health` route,
 and forwards extra keyword arguments to `app.post`.
 
+At shutdown, stop admitting runs and drain active ones, then await `agent.close()`
+before stopping the client. It closes the agent's sessions and deletes their native
+history, best effort.
+
 ## Features
 
 - **One native session per thread** — reused across runs, so the model keeps its turn context
