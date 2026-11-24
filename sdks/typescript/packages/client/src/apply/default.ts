@@ -47,9 +47,9 @@ import {
   type ToolMessage,
 } from "@ag-ui/core";
 import jsonpatch from "fast-json-patch";
-import { EMPTY, of } from "rxjs";
+import { EMPTY, concat, defer, of, throwError } from "rxjs";
 import type { Observable } from "rxjs";
-import { defaultIfEmpty } from "rxjs/operators";
+import { catchError, defaultIfEmpty } from "rxjs/operators";
 import untruncateJson from "untruncate-json";
 import { structuredClone_ } from "../utils";
 import { applyInOrder, type Backlog } from "./apply-in-order";
@@ -481,7 +481,10 @@ export interface ApplyEventsOptions {
    * current messages and state; what is merged is the emitted updates, and
    * with them `agent.messages`, `agent.state`, `onMessagesChanged` and
    * `onStateChanged`. Events that arrive one at a time still emit one update
-   * each. Off by default.
+   * each. If the stream fails before the update of a burst is emitted, the
+   * update for the events applied so far is emitted before the error. It
+   * includes what the event being applied at that moment had already changed.
+   * Off by default.
    */
   coalesce?: boolean;
 }
@@ -514,6 +517,18 @@ export interface ApplyEventsOptions {
  * waiting to be applied; see {@link ApplyEventsOptions}.
  */
 export const defaultApplyEvents = (
+  input: RunAgentInput,
+  events$: Observable<BaseEvent>,
+  agent: AbstractAgent,
+  subscribers: AgentSubscriber[],
+  debugLogger?: DebugLoggerInput,
+  options?: ApplyEventsOptions,
+): Observable<AgentStateMutation> =>
+  // The working messages and state belong to one subscription. An event that
+  // finishes applying after its subscription ended must not reach the next one.
+  defer(() => applyEvents(input, events$, agent, subscribers, debugLogger, options));
+
+const applyEvents = (
   input: RunAgentInput,
   events$: Observable<BaseEvent>,
   agent: AbstractAgent,
@@ -585,12 +600,27 @@ export const defaultApplyEvents = (
       return copy;
     });
 
+  // With `coalesce`: whether events that finished applying changed messages or
+  // state that no update has passed on yet. A stream error emits them first.
+  let unemitted = false;
+
   const emitUpdates = () => {
+    if (!coalesce) {
+      return emitCollected();
+    }
+    unemitted = currentMutation.messages !== undefined || currentMutation.state !== undefined;
     // More events are already waiting: keep collecting into currentMutation,
     // and let the last of them emit the combined update.
-    if (coalesce && backlog.waiting > 0) {
+    if (backlog.waiting > 0) {
       return EMPTY;
     }
+    // Collected when it is passed on, a few microtasks later: if the stream
+    // fails first, the error path below still finds the update to emit.
+    return defer(emitCollected);
+  };
+
+  // The update collected so far, whatever is still waiting.
+  const emitCollected = () => {
     const result: AgentStateMutation = {};
     if (currentMutation.messages !== undefined) {
       result.messages = snapshotMessages(currentMutation.messages);
@@ -604,6 +634,7 @@ export const defaultApplyEvents = (
       result.state = structuredClone_(currentMutation.state);
     }
     currentMutation = {};
+    unemitted = false;
     if (result.messages !== undefined || result.state !== undefined) {
       return of(result);
     }
@@ -1170,6 +1201,7 @@ export const defaultApplyEvents = (
                 lookup.insertedBefore(messages, insertAt);
                 messages.splice(insertAt, 0, toolMessage);
               }
+              applyMutation({ messages });
 
               await Promise.all(
                 subscribers.map((subscriber) => {
@@ -2035,6 +2067,16 @@ export const defaultApplyEvents = (
       const _exhaustiveCheck: never = event.type;
       return emitUpdates();
     }, backlog),
+    // With `coalesce`, an update can still be held back when the stream fails:
+    // events of the burst were applied, and their update waited for the rest.
+    // Emit it before the error, as their own updates would have been without
+    // `coalesce`. The event being applied at that moment edits the same
+    // messages and state, so what it changed so far goes with them.
+    coalesce
+      ? catchError((error: unknown) =>
+          concat(unemitted ? emitCollected() : EMPTY, throwError(() => error)),
+        )
+      : <T>(stream: T) => stream,
     // Only use defaultIfEmpty when there are subscribers to avoid emitting empty updates
     // when patches fail and there are no subscribers (like in state patching test)
     subscribers.length > 0 ? defaultIfEmpty({} as AgentStateMutation) : <T>(stream: T) => stream,
