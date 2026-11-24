@@ -267,7 +267,9 @@ class CopilotAgent:
             skip_permission=tool.skip_permission,
         )
 
-    async def _create_session(self, thread: _Thread, input_data: RunAgentInput) -> Any:
+    async def _create_session(
+        self, thread: _Thread, input_data: RunAgentInput, *, new_turn: bool
+    ) -> Any:
         # Frontend tools are declared without a handler: that is what makes the
         # runtime suspend the call instead of executing it.
         tools = [self._bind(thread, tool) for tool in self.tools] + [
@@ -304,9 +306,30 @@ class CopilotAgent:
         session_id = f"{self._session_prefix}-{thread_hash}"
         options.pop("session_id", None)
         if await self.client.get_session_metadata(session_id):
-            for key in ("cloud", "name", "refresh_custom_instructions", "trust_working_directory"):
-                options.pop(key, None)  # create-only in SDK 1.0.28; resume rejects them
-            return await self.client.resume_session(session_id, **options)
+            # create-only in SDK 1.0.28; resume rejects them
+            create_only = (
+                "cloud",
+                "name",
+                "refresh_custom_instructions",
+                "trust_working_directory",
+            )
+            resume_options = {k: v for k, v in options.items() if k not in create_only}
+            try:
+                return await self.client.resume_session(session_id, **resume_options)
+            except Exception:
+                # The SDK already tried transcript recovery; without a reset every later
+                # run of this thread fails. Only a run ending in a new user turn may reset
+                # it, never a replay.
+                # ponytail: any resume error resets; classify once the SDK exposes error codes.
+                if not new_turn:
+                    raise
+                logger.warning(
+                    "Resume failed; deleting session %s and starting this thread fresh",
+                    session_id,
+                    exc_info=True,
+                )
+                await self.client.delete_session(session_id)
+                thread.queue = asyncio.Queue()
         return await self.client.create_session(session_id=session_id, **options)
 
     async def _resolve_pending(self, thread: _Thread, message: Any) -> None:
@@ -471,7 +494,12 @@ class CopilotAgent:
                 thread.queue = asyncio.Queue()
             if thread.session is None:
                 thread.session = await asyncio.wait_for(
-                    self._create_session(thread, input_data), self.run_timeout
+                    self._create_session(
+                        thread,
+                        input_data,
+                        new_turn=bool(new_user) and input_data.messages[-1] is last_user,
+                    ),
+                    max(deadline - loop.time(), 0),
                 )
 
             if results:

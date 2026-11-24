@@ -31,6 +31,7 @@ export class FakeClient implements CopilotClientPort {
   /** Session ids the fake runtime has persisted, as the CLI does on disk. */
   readonly stored = new Set<string>();
   readonly resumed: string[] = [];
+  readonly deleted: string[] = [];
   constructor(
     private readonly script: Payload[],
     private readonly stall = false,
@@ -47,6 +48,10 @@ export class FakeClient implements CopilotClientPort {
     // The CLI rejects session ids outside this set (e.g. ":" or ".").
     if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error(`Invalid sessionId: "${sessionId}"`);
     return this.stored.has(sessionId) ? { sessionId } : undefined;
+  }
+  async deleteSession(sessionId: string): Promise<void> {
+    if (!this.stored.delete(sessionId)) throw new Error(`Failed to delete session ${sessionId}`);
+    this.deleted.push(sessionId);
   }
   private open(config: SessionConfig | ResumeSessionConfig): CopilotSessionPort {
     this.config = config as SessionConfig;

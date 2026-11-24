@@ -33,6 +33,7 @@ export interface CopilotClientPort {
   createSession(config: SessionConfig): Promise<CopilotSessionPort>;
   resumeSession(sessionId: string, config: ResumeSessionConfig): Promise<CopilotSessionPort>;
   getSessionMetadata(sessionId: string): Promise<unknown>;
+  deleteSession(sessionId: string): Promise<void>;
 }
 
 /** What a server-side tool handler gets besides its arguments. */
@@ -334,7 +335,8 @@ export class CopilotAgent extends AbstractAgent {
       }
       if (!thread.session) {
         thread.session = await this.withDeadline(
-          this.createSession(thread, input),
+          this.createSession(thread, input, () =>
+            input.messages.at(-1) === lastUser && !!newUser && !signal.aborted && Date.now() < deadline),
           deadline,
           "Session creation timed out",
         );
@@ -462,7 +464,11 @@ export class CopilotAgent extends AbstractAgent {
     });
   }
 
-  private async createSession(thread: Thread, input: RunAgentInput): Promise<CopilotSessionPort> {
+  private async createSession(
+    thread: Thread,
+    input: RunAgentInput,
+    canReset: () => boolean,
+  ): Promise<CopilotSessionPort> {
     // Frontend tools are declared without a handler: that is what makes the
     // runtime suspend the call instead of executing it. The browser owns the
     // permission decision, so the runtime must not gate it.
@@ -496,9 +502,23 @@ export class CopilotAgent extends AbstractAgent {
     const { client } = this.config;
     // The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
     const sessionId = `${this.sessionPrefix}-${createHash("sha256").update(input.threadId).digest("hex")}`;
-    return (await client.getSessionMetadata(sessionId))
-      ? client.resumeSession(sessionId, config)
-      : client.createSession({ ...config, sessionId });
+    if (await client.getSessionMetadata(sessionId)) {
+      try {
+        return await client.resumeSession(sessionId, config);
+      } catch (error) {
+        // The SDK already tried transcript recovery; without a reset every later run
+        // of this thread fails. Only a live run ending in a new user turn may reset it,
+        // never a replay or a run that timed out or was cancelled meanwhile.
+        // ponytail: any resume error resets, classify once the SDK exposes error codes;
+        // a retry can still race a reset its timed-out run left in flight.
+        if (!canReset()) throw error;
+        console.warn("[copilot-sdk] Resume failed; deleting the session and starting this thread fresh", error);
+        await client.deleteSession(sessionId);
+        if (!canReset()) throw error;
+        thread.events.length = 0;
+      }
+    }
+    return client.createSession({ ...config, sessionId });
   }
 
   private async resolvePending(thread: Thread, result: ToolMessage): Promise<void> {

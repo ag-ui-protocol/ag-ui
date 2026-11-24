@@ -5,7 +5,7 @@ import inspect
 
 import pytest
 from copilot import CopilotClient
-from test_agent import FRONTEND_TOOL_TURN, TEXT_TURN, FakeClient, collect, make_input
+from test_agent import FRONTEND_TOOL_TURN, TEXT_TURN, FakeClient, FakeEvent, collect, make_input
 
 from ag_ui_copilot_sdk import CopilotAgent
 from ag_ui_copilot_sdk import agent as agent_module
@@ -118,6 +118,44 @@ async def test_l2_failed_run_resumes_the_same_native_session():
     assert len(client.stored) == 2 and client.resumed == client.resumed[:1]
     await agent.close()
     await other.close()
+
+
+async def test_s2_unresumable_session_is_deleted_and_recreated():
+    client = FakeClient(TEXT_TURN)
+    create_only = {"name": "chat", "trust_working_directory": "session"}
+    agent = CopilotAgent(client, run_timeout=1, session_options=create_only)
+    assert (await collect(agent, make_input()))[-1].type == "RUN_FINISHED"
+    (session_id,) = client.stored
+
+    async def corrupt_resume(session_id, **options):
+        options["on_event"](FakeEvent({"id": "stale", "type": "session.idle", "data": {}}))
+        raise RuntimeError("Session file is corrupt")
+
+    client.resume_session = corrupt_resume
+    client._script = [
+        {
+            "id": "r2-text",
+            "type": "assistant.message",
+            "data": {"messageId": "m2", "content": "Fresh start", "toolRequests": []},
+        },
+        {"id": "r2-idle", "type": "session.idle", "data": {}},
+    ]
+    # A different tool list re-opens the session, which resumes it by id.
+    replay = [
+        USER,
+        {"id": "u2", "role": "user", "content": "Retry"},
+        {"id": "a2", "role": "assistant", "content": "..."},
+    ]
+    failed = await collect(agent, make_input(runId="replay", tools=TOOLS, messages=replay))
+    assert failed[-1].type == "RUN_ERROR" and client.deleted == []
+    messages = [*replay, {"id": "u3", "role": "user", "content": "Start over"}]
+    events = await collect(agent, make_input(runId="r2", tools=TOOLS, messages=messages))
+    assert events[-1].type == "RUN_FINISHED", events[-1]
+    assert any(event.type == "TEXT_MESSAGE_CONTENT" for event in events)
+    assert client.deleted == [session_id] and client.stored == {session_id}
+    assert client.session.prompts == ["Start over"]
+    assert create_only.items() <= client.options.items()
+    await agent.close()
 
 
 @pytest.mark.parametrize("mode", ["tool-replay", "resume-replay", "duplicate-results"])

@@ -89,6 +89,7 @@ class FakeClient:
         self.options: dict[str, Any] = {}
         self.stored: set[str] = set()  # session ids persisted, as the CLI does on disk
         self.resumed: list[str] = []
+        self.deleted: list[str] = []
 
     async def create_session(self, **options: Any) -> FakeSession:
         inspect.signature(CopilotClient.create_session).bind(self, **options)
@@ -105,6 +106,13 @@ class FakeClient:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
             raise ValueError(f"Invalid sessionId: {session_id!r}")
         return {"sessionId": session_id} if session_id in self.stored else None
+
+    async def delete_session(self, session_id: str) -> None:
+        inspect.signature(CopilotClient.delete_session).bind(self, session_id)
+        if session_id not in self.stored:
+            raise RuntimeError(f"Failed to delete session {session_id}")
+        self.stored.remove(session_id)
+        self.deleted.append(session_id)
 
     def _open(self, options: dict[str, Any]) -> FakeSession:
         self.options = options

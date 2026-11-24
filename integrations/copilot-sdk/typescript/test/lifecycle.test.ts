@@ -46,6 +46,43 @@ describe("session lifecycle", () => {
     }
   });
 
+  it("S2: deletes and recreates a native session that exists but cannot be resumed", async () => {
+    const script = [...TEXT_TURN];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 500 });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect((await run(agent, makeInput())).at(-1)!.type).toBe("RUN_FINISHED");
+      const [id] = client.stored;
+      script.splice(0, script.length,
+        { id: "r2-text", type: "assistant.message", data: { messageId: "m2", content: "Fresh start", toolRequests: [] } },
+        { id: "r2-idle", type: "session.idle", data: {} });
+      client.resumeSession = async (_sessionId, config) => {
+        config.onEvent!({ id: "stale", type: "session.idle", data: {} } as never);
+        throw new Error("Session file is corrupt");
+      };
+      // A different tool list re-opens the session, which resumes it by id.
+      const turn = [...makeInput().messages, { id: "u2", role: "user" as const, content: "Retry" }];
+      const replay = await run(agent, makeInput({
+        runId: "replay", tools: TOOLS, messages: [...turn, { id: "a2", role: "assistant", content: "..." }],
+      }));
+      expect(replay.at(-1)!.type).toBe("RUN_ERROR");
+      expect(client.deleted).toEqual([]);
+      const events = await run(agent, makeInput({
+        runId: "r2", tools: TOOLS,
+        messages: [...turn, { id: "a2", role: "assistant", content: "..." }, { id: "u3", role: "user", content: "Start over" }],
+      }));
+      expect(events.at(-1)!.type).toBe("RUN_FINISHED");
+      expect(events.some((event) => event.type === "TEXT_MESSAGE_CONTENT")).toBe(true);
+      expect(client.deleted).toEqual([id]);
+      expect([...client.stored]).toEqual([id]);
+      expect(client.session!.prompts).toEqual(["Start over"]);
+    } finally {
+      warn.mockRestore();
+      await agent.close();
+    }
+  });
+
   it("L3: ignores a replayed resume without discarding another pending call", async () => {
     const client = new FakeClient([
       ...FRONTEND_TOOL_TURN,
