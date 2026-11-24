@@ -1,4 +1,4 @@
-import type { Message, PartSource, TextPart } from "@ag-ui/client";
+import type { Message, PartSource, TextPart, ToolCall } from "@ag-ui/client";
 import { AbstractAgent, contentToText } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
 import type { Mastra } from "@mastra/core";
@@ -11,6 +11,10 @@ import {
   type MastraSubagentVisibility,
   MastraTracingOptions,
 } from "./mastra";
+import {
+  isReplayedToolResultMessage,
+  readToolResultObservability,
+} from "./client-observability";
 import {
   canOwnReasoning,
   decodeReasoningArtifact,
@@ -319,6 +323,46 @@ function placeReasoningBeforeToolCall(
   return false;
 }
 
+function findLookupMessageIndex(
+  lookupMessages: Message[],
+  message: Message,
+): number {
+  const byRef = lookupMessages.indexOf(message);
+  if (byRef !== -1) return byRef;
+  if (message.id === undefined) return -1;
+  return lookupMessages.findIndex(
+    (m) => m.id === message.id && m.role === message.role,
+  );
+}
+
+/**
+ * Resolves the issuing assistant `ToolCall` for `toolCallId`, preferring the
+ * nearest preceding assistant message in `lookupMessages` so reused call ids
+ * match their own turn's call.
+ */
+function findMatchingToolCall(
+  lookupMessages: Message[],
+  toolCallId: string,
+  fromIndex: number,
+): ToolCall | undefined {
+  const start = fromIndex !== -1 ? fromIndex - 1 : lookupMessages.length - 1;
+  for (let i = start; i >= 0; i--) {
+    const msg = lookupMessages[i];
+    if (msg?.role !== "assistant") continue;
+    for (const toolCall of msg.toolCalls ?? []) {
+      if (toolCall.id === toolCallId) return toolCall;
+    }
+  }
+  for (let i = start + 1; i < lookupMessages.length; i++) {
+    const msg = lookupMessages[i];
+    if (msg?.role !== "assistant") continue;
+    for (const toolCall of msg.toolCalls ?? []) {
+      if (toolCall.id === toolCallId) return toolCall;
+    }
+  }
+  return undefined;
+}
+
 export function convertAGUIMessagesToMastra(
   messages: Message[],
   // Messages to resolve a tool message's toolName against. Defaults to
@@ -327,6 +371,10 @@ export function convertAGUIMessagesToMastra(
   // may have been filtered out of `messages`, and resolving toolName to
   // "unknown" makes Mastra store a broken tool result (the model then re-calls).
   lookupMessages: Message[] = messages,
+  options?: {
+    /** Tool call IDs already answered in Mastra memory (skip replaying client spans). */
+    replayedToolCallIds?: ReadonlySet<string>;
+  },
 ): CoreMessageWithId[] {
   // Preserve AG-UI message IDs on the CoreMessage objects (see CoreMessageWithId).
   // Mastra's AIV4Adapter.fromCoreMessage reads `id` when present, which enables
@@ -344,6 +392,12 @@ export function convertAGUIMessagesToMastra(
   const skippedToolCallIds = new Set<string>();
   // Calls whose result has been converted, to find the step a span belongs to.
   const answeredToolCallIds = new Set<string>();
+  // Tool call IDs whose client observability payload has already been forwarded
+  // (either in Mastra memory or earlier in this conversion), so re-sent
+  // history does not replay spans.
+  const observabilityAttachedToolCallIds = new Set<string>(
+    options?.replayedToolCallIds,
+  );
   // Reasoning spans this bridge streamed, waiting for the message that owns
   // them (see reasoningArtifactToMastraParts): the assistant message that
   // follows, or, when a tool result follows, the step's tool call. Mastra
@@ -461,16 +515,21 @@ export function convertAGUIMessagesToMastra(
       } as CoreMessage);
     } else if (message.role === "tool") {
       answeredToolCallIds.add(message.toolCallId);
-      let toolName = "unknown";
-      for (const msg of lookupMessages) {
-        if (msg.role === "assistant") {
-          for (const toolCall of msg.toolCalls ?? []) {
-            if (toolCall.id === message.toolCallId) {
-              toolName = toolCall.function.name;
-              break;
-            }
-          }
-        }
+      const lookupIndex = findLookupMessageIndex(lookupMessages, message);
+      const matchedToolCall = findMatchingToolCall(
+        lookupMessages,
+        message.toolCallId,
+        lookupIndex,
+      );
+      const toolName = matchedToolCall?.function.name ?? "unknown";
+      const observability =
+        !skippedToolCallIds.has(message.toolCallId) &&
+        !observabilityAttachedToolCallIds.has(message.toolCallId) &&
+        !isReplayedToolResultMessage(lookupMessages, lookupIndex)
+          ? readToolResultObservability(matchedToolCall, message)
+          : undefined;
+      if (observability) {
+        observabilityAttachedToolCallIds.add(message.toolCallId);
       }
       // A result given as content parts reaches the model as Mastra's stored
       // model output (the form a tool's `toModelOutput` produces), with its
@@ -498,6 +557,9 @@ export function convertAGUIMessagesToMastra(
                     mastra: { modelOutput: contentPartsToModelOutput(parts) },
                   },
                 }
+              : {}),
+            ...(observability
+              ? { __mastraObservability: observability }
               : {}),
           },
         ],

@@ -69,6 +69,11 @@ import {
   toolResultContent,
 } from "./tool-results";
 import {
+  collectAnsweredToolCallIds,
+  observabilityMetadata,
+  readObservabilityCarrier,
+} from "./client-observability";
+import {
   type DelegatedUsage,
   type DelegationScope,
   type EventSink,
@@ -853,6 +858,8 @@ interface MastraAgentStreamOptions {
   onToolCallStart?: (streamPart: {
     toolCallId: string;
     toolName: string;
+    /** W3C trace context carrier for Mastra client-tool observability, if any. */
+    observability?: Record<string, unknown>;
   }) => void;
   /**
    * Emit a TOOL_CALL_ARGS delta. The bridge streams these incrementally as
@@ -865,7 +872,11 @@ interface MastraAgentStreamOptions {
     argsTextDelta: string;
   }) => void;
   /** Emit TOOL_CALL_END. Fired once per tool call, after all args. */
-  onToolCallEnd?: (streamPart: { toolCallId: string }) => void;
+  onToolCallEnd?: (streamPart: {
+    toolCallId: string;
+    /** Late W3C trace context carrier when `tool-call-input-streaming-start` lacked it. */
+    observability?: Record<string, unknown>;
+  }) => void;
   /**
    * A resumed tool call the client already holds under `parentMessageId`.
    * Nothing is emitted for the call itself; later text on that id is placed
@@ -2507,6 +2518,9 @@ export class MastraAgent extends AbstractAgent {
           parentMessageId,
           toolCallId: streamPart.toolCallId,
           toolCallName: streamPart.toolName,
+          ...(streamPart.observability
+            ? { metadata: observabilityMetadata(streamPart.observability) }
+            : {}),
         } as ToolCallStartEvent);
       },
       onToolCallArgs: (streamPart) => {
@@ -2520,6 +2534,9 @@ export class MastraAgent extends AbstractAgent {
         subscriber.next({
           type: EventType.TOOL_CALL_END,
           toolCallId: streamPart.toolCallId,
+          ...(streamPart.observability
+            ? { metadata: observabilityMetadata(streamPart.observability) }
+            : {}),
         } as ToolCallEndEvent);
       },
       onToolCallInHistory: ({ parentMessageId }) => {
@@ -2745,11 +2762,13 @@ export class MastraAgent extends AbstractAgent {
       toolCallId: string;
       toolName: string;
       args: any;
+      observability?: Record<string, unknown>;
     } | null = null;
     // Tool calls for which we have emitted TOOL_CALL_START via the streaming
     // (delta) path, and (separately) for which we have emitted TOOL_CALL_END.
     const streamedStarted = new Set<string>();
     const streamedEnded = new Set<string>();
+    const streamedObservabilitySent = new Set<string>();
     // Keep final arguments independently of the render buffer: a streamed
     // call may still become a background activity after its args have ended.
     const streamedToolCallArgs = new Map<string, unknown>();
@@ -2767,17 +2786,37 @@ export class MastraAgent extends AbstractAgent {
       console.warn(`[MastraAgent] ${message}: type=${key}`);
     };
 
-    const startStreamedToolCall = (toolCallId: string, toolName: string) => {
+    const startStreamedToolCall = (
+      toolCallId: string,
+      toolName: string,
+      observability?: Record<string, unknown>,
+    ) => {
       if (!streamedStarted.has(toolCallId)) {
         streamedStarted.add(toolCallId);
-        callbacks.onToolCallStart?.({ toolCallId, toolName });
+        if (observability) streamedObservabilitySent.add(toolCallId);
+        callbacks.onToolCallStart?.({
+          toolCallId,
+          toolName,
+          ...(observability ? { observability } : {}),
+        });
       }
     };
 
-    const endStreamedToolCall = (toolCallId: string) => {
+    const endStreamedToolCall = (
+      toolCallId: string,
+      observability?: Record<string, unknown>,
+    ) => {
       if (streamedStarted.has(toolCallId) && !streamedEnded.has(toolCallId)) {
         streamedEnded.add(toolCallId);
-        callbacks.onToolCallEnd?.({ toolCallId });
+        const carrier =
+          observability && !streamedObservabilitySent.has(toolCallId)
+            ? observability
+            : undefined;
+        if (carrier) streamedObservabilitySent.add(toolCallId);
+        callbacks.onToolCallEnd?.({
+          toolCallId,
+          ...(carrier ? { observability: carrier } : {}),
+        });
       }
     };
 
@@ -2875,9 +2914,13 @@ export class MastraAgent extends AbstractAgent {
 
     const flush = () => {
       if (pendingToolCall) {
-        const { toolCallId, toolName, args } = pendingToolCall;
+        const { toolCallId, toolName, args, observability } = pendingToolCall;
         pendingToolCall = null;
-        callbacks.onToolCallStart?.({ toolCallId, toolName });
+        callbacks.onToolCallStart?.({
+          toolCallId,
+          toolName,
+          ...(observability ? { observability } : {}),
+        });
         callbacks.onToolCallArgs?.({
           toolCallId,
           // The buffered path has the assembled args object — serialize the
@@ -3400,6 +3443,7 @@ export class MastraAgent extends AbstractAgent {
             startStreamedToolCall(
               chunk.payload.toolCallId,
               chunk.payload.toolName,
+              readObservabilityCarrier(chunk.payload.observability),
             );
           }
           break;
@@ -3472,19 +3516,27 @@ export class MastraAgent extends AbstractAgent {
             emitWorkingMemoryState(parseWorkingMemoryUpdate(args));
             break;
           }
+          const observability = readObservabilityCarrier(
+            chunk.payload.observability,
+          );
           if (toolCallId && streamedStarted.has(toolCallId)) {
             // Args were already streamed live via deltas — close
             // the call (the streaming-end chunk may have been absent) and don't
             // re-emit. Retain the assembled args for a background handoff.
             streamedToolCallArgs.set(toolCallId, args);
-            endStreamedToolCall(toolCallId);
+            endStreamedToolCall(toolCallId, observability);
             break;
           }
           // Server tool (or a client tool that emitted no deltas): buffer so a
           // following tool-call-suspended / background-task-started can suppress
           // it and reuse its args, matching the pre-streaming behavior.
           flush();
-          pendingToolCall = { toolCallId, toolName, args };
+          pendingToolCall = {
+            toolCallId,
+            toolName,
+            args,
+            ...(observability ? { observability } : {}),
+          };
           break;
         }
         case "tool-result": {
@@ -3999,13 +4051,13 @@ export class MastraAgent extends AbstractAgent {
     threadId: string,
     resourceId: string,
     messages: Message[],
-  ): Promise<Message[]> {
-    if (!this.isLocalMastraAgent(this.agent)) return messages;
+  ): Promise<{ messages: Message[]; replayedToolCallIds?: Set<string> }> {
+    if (!this.isLocalMastraAgent(this.agent)) return { messages };
     try {
       const memory = await this.agent.getMemory({
         requestContext: this.requestContext,
       });
-      if (!memory) return messages;
+      if (!memory) return { messages };
       const { messages: stored } = await memory.recall({
         threadId,
         resourceId,
@@ -4016,7 +4068,8 @@ export class MastraAgent extends AbstractAgent {
         if (!m?.id) continue;
         storedIds.add(m.id);
       }
-      if (storedIds.size === 0) return messages; // first turn / empty thread
+      if (storedIds.size === 0) return { messages }; // first turn / empty thread
+      const replayedToolCallIds = collectAnsweredToolCallIds(stored ?? []);
       // The bridge streams assistant text that follows a tool call under
       // continuation ids derived from the turn's base id — one per text segment
       // (see makeStreamCallbacks). Mastra stores the whole turn under the base
@@ -4055,7 +4108,7 @@ export class MastraAgent extends AbstractAgent {
       );
       // Never send an empty turn (a no-op run). If everything was already
       // stored, fall back to forwarding the full list.
-      if (fresh.length === 0) return messages;
+      if (fresh.length === 0) return { messages, replayedToolCallIds };
       const withReasoning = (keep: Set<Message>) =>
         messages.filter((m, index) => {
           if (m.role !== "reasoning") return keep.has(m);
@@ -4077,7 +4130,9 @@ export class MastraAgent extends AbstractAgent {
           .map((m) => (m as { toolCallId?: string }).toolCallId)
           .filter(Boolean),
       );
-      if (neededToolCallIds.size === 0) return withReasoning(freshSet);
+      if (neededToolCallIds.size === 0) {
+        return { messages: withReasoning(freshSet), replayedToolCallIds };
+      }
       const pairedCalls = messages.filter(
         (m) =>
           !freshSet.has(m) &&
@@ -4085,18 +4140,21 @@ export class MastraAgent extends AbstractAgent {
           (m.toolCalls ?? []).some((tc) => neededToolCallIds.has(tc.id)),
       );
       // Preserve original order so each tool-call precedes its result.
-      return withReasoning(new Set([...fresh, ...pairedCalls]));
+      return {
+        messages: withReasoning(new Set([...fresh, ...pairedCalls])),
+        replayedToolCallIds,
+      };
     } catch (error) {
       // recall() throws for a thread that does not exist yet. That is every
       // first turn, not a failure: nothing is stored, so the full list is the
       // right thing to send. Only warn when the thread exists (or the lookup
       // itself fails).
-      if (await this.threadIsMissing(threadId, resourceId)) return messages;
+      if (await this.threadIsMissing(threadId, resourceId)) return { messages };
       console.warn(
         `[MastraAgent] Failed to compute new-message diff for thread ${threadId}; sending full history:`,
         error,
       );
-      return messages;
+      return { messages };
     }
   }
 
@@ -4438,17 +4496,15 @@ export class MastraAgent extends AbstractAgent {
     // goes back to Mastra as this agent's own history (whatever the
     // visibility, as a client can hold it from an earlier configuration).
     const ownMessages = withoutSubagentMessages(messages);
-    const messagesToSend = await this.selectNewMessages(
-      threadId,
-      resourceId,
-      ownMessages,
-    );
+    const { messages: messagesToSend, replayedToolCallIds } =
+      await this.selectNewMessages(threadId, resourceId, ownMessages);
     // Convert only the new turn, but resolve tool-message names against the
     // full incoming history (the assistant tool-call may have been filtered
     // out of messagesToSend).
     const convertedMessages = convertAGUIMessagesToMastra(
       messagesToSend,
       ownMessages,
+      { replayedToolCallIds },
     );
     const requestContext = this.applyInputContext(inputContext);
 
