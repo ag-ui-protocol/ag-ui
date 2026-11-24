@@ -299,7 +299,8 @@ class CopilotAgent:
         session_id = f"{self._session_prefix}-{thread_hash}"
         options.pop("session_id", None)
         if await self.client.get_session_metadata(session_id):
-            options.pop("cloud", None)  # create-only option
+            for key in ("cloud", "name", "refresh_custom_instructions", "trust_working_directory"):
+                options.pop(key, None)  # create-only in SDK 1.0.28; resume rejects them
             return await self.client.resume_session(session_id, **options)
         return await self.client.create_session(session_id=session_id, **options)
 

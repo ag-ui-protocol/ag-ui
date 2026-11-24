@@ -79,7 +79,14 @@ async def test_l2_failed_run_resumes_the_same_native_session():
     assert "continue_pending_work" in signature.parameters
 
     client = FakeClient(TEXT_TURN)
-    agent = CopilotAgent(client, run_timeout=1)
+    # Create-only in SDK 1.0.28; the fake rejects them on resume like the SDK does.
+    create_only = {
+        "cloud": None,
+        "name": "chat",
+        "refresh_custom_instructions": True,
+        "trust_working_directory": "session",
+    }
+    agent = CopilotAgent(client, run_timeout=1, session_options=create_only)
     assert (await collect(agent, make_input()))[-1].type == "RUN_FINISHED"
     old_session = client.session
     old_session._stall = True
@@ -103,7 +110,7 @@ async def test_l2_failed_run_resumes_the_same_native_session():
     assert client.session.prompts == ["Recall our earlier conversation."]
     assert len(client.stored) == 1
     assert client.resumed == list(client.stored)
-    assert client.options.get("cloud") is None
+    assert not create_only.keys() & client.options.keys()
 
     # Another agent on the same client and threadId gets its own session.
     other = CopilotAgent(client, run_timeout=1)
