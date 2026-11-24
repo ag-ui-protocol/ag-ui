@@ -6,7 +6,7 @@ Python and TypeScript.
 
 | SDK | Package | Port |
 |-----|---------|------|
-| Python | [`python/`](./python) — `ag_ui_copilot_sdk` | 8031 |
+| Python | [`python/`](./python) — `ag_ui_copilot_sdk` | 8033 |
 | TypeScript | [`typescript/`](./typescript) — `@ag-ui/copilot-sdk` | 8032 |
 
 Both expose the same surface: one native Copilot session per AG-UI thread, with

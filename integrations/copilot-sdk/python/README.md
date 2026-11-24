@@ -66,7 +66,7 @@ SDK uses the logged-in Copilot account. Pending calls remain process-local.
 
 ```bash
 cd integrations/copilot-sdk/python/examples
-uv sync && uv run python server.py   # port 8031
+uv sync && uv run python server.py   # port 8033
 ```
 
 The example server listens on all interfaces (`HOST=0.0.0.0`) and is

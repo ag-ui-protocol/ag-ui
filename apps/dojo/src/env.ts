@@ -103,7 +103,7 @@ export default function getEnvVars(): envVars {
     openaiAgentsPythonUrl:
       process.env.OPENAI_AGENTS_PYTHON_URL || "http://localhost:8031",
     copilotSdkPythonUrl:
-      process.env.COPILOT_SDK_PYTHON_URL || "http://127.0.0.1:8031",
+      process.env.COPILOT_SDK_PYTHON_URL || "http://127.0.0.1:8033",
     copilotSdkTypescriptUrl:
       process.env.COPILOT_SDK_TYPESCRIPT_URL || "http://127.0.0.1:8032",
     claudeManagedAgentsDotnetUrl:
