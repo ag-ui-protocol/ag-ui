@@ -8,11 +8,9 @@
  * therefore never executes frontend tools server-side.
  *
  * The SDK `FunctionTool`s created here carry a stub `execute` that returns a
- * placeholder. In the normal Phase 5 HITL flow the adapter halts on
- * `tool_called` *before* the stub runs, so the stub is never invoked — it
- * exists purely as a safety net so a single run doesn't hang if a tool is
- * somehow executed server-side (e.g. a non-frontend/backend tool, or a caller
- * that consumes the adapter without the halt path).
+ * placeholder. The adapter may observe that stub's output while waiting for
+ * backend calls from the same model response; it discards the placeholder
+ * because the actual result must come from the frontend.
  *
  * State management mirrors the claude-agent-sdk pattern: an injected
  * `ag_ui_update_state` function tool the model calls to mutate the shared

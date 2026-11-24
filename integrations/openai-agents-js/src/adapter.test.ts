@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vite
 import { EventType, type BaseEvent, type MessagesSnapshotEvent, type RunAgentInput, type RunFinishedEvent } from "@ag-ui/core";
 
 import { OpenAIAgentsAdapter } from "./adapter";
+import { STUB_TOOL_RESULT } from "./tools";
 
 /**
  * Collect all events emitted by `adapter.run(input)` into an array, resolving
@@ -707,7 +708,7 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
     expect(finished?.outcome?.type).toBe(interrupt ? "interrupt" : "success");
   });
 
-  it("finishes backend tool outputs before halting on frontend calls in the same response", async () => {
+  it.each([true, false])("preserves backend results but discards frontend stub outputs (interrupt=%s)", async (interrupt) => {
     process.env.OPENAI_API_KEY = "sk-test";
     eventsRef.events = [
       { type: "raw_model_stream_event", data: { type: "response_done", response: { output: [
@@ -716,12 +717,13 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
       ] } } },
       { type: "run_item_stream_event", name: "tool_called", item: { rawItem: { callId: "front-1", name: "confirm", arguments: "{}" } } },
       { type: "run_item_stream_event", name: "tool_called", item: { rawItem: { callId: "back-1", name: "lookup", arguments: "{}" } } },
+      { type: "run_item_stream_event", name: "tool_output", item: { rawItem: { call_id: "front-1" }, output: STUB_TOOL_RESULT } },
       { type: "run_item_stream_event", name: "tool_output", item: { rawItem: { callId: "back-1" }, output: "found" } },
       { type: "raw_model_stream_event", data: { type: "output_text_delta", delta: "AFTER HALT" } },
     ];
 
     const events = await collectEvents(
-      new OpenAIAgentsAdapter(),
+      new OpenAIAgentsAdapter({ interruptOnFrontendToolCall: interrupt }),
       baseInput({
         state: null,
         tools: [{ name: "confirm", description: "", parameters: {} }],
@@ -730,12 +732,15 @@ describe("OpenAIAgentsAdapter — HITL halt + resume (Phase 5)", () => {
 
     expect(events.some((event) => event.type === EventType.TOOL_CALL_START && event.toolCallId === "front-1")).toBe(true);
     expect(events.some((event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === "back-1")).toBe(true);
+    expect(events.some((event) => event.type === EventType.TOOL_CALL_RESULT && event.toolCallId === "front-1")).toBe(false);
     expect(events.some((event) => event.type === EventType.TEXT_MESSAGE_CONTENT)).toBe(false);
     const snapshot = events.find((event) => event.type === EventType.MESSAGES_SNAPSHOT) as MessagesSnapshotEvent;
-    expect(snapshot.messages.find((message) => message.role === "tool")).toMatchObject({
+    expect(snapshot.messages.filter((message) => message.role === "tool")).toMatchObject([{
       toolCallId: "back-1",
       content: "found",
-    });
+    }]);
+    const finished = events.find((event) => event.type === EventType.RUN_FINISHED) as RunFinishedEvent;
+    expect(finished.outcome?.type).toBe(interrupt ? "interrupt" : "success");
   });
 
   it("aborts the SDK signal when the subscriber unsubscribes", async () => {

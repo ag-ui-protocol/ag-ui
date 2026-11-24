@@ -521,8 +521,8 @@ function handleToolCalled(item: any, ctx: StreamContext): BaseEvent[] {
   // text message so the stream ends in a valid state before the tool call,
   // emit the TOOL_CALL_* lifecycle, record the call, then halt the run with
   // an interrupt — do NOT emit TOOL_CALL_RESULT (the frontend provides it in a
-  // subsequent run) and do NOT track the call as "open" (no SDK tool_output
-  // will follow for it). (Phase 5.)
+  // subsequent run) and do NOT track the call as "open"; any SDK stub output
+  // is discarded. (Phase 5.)
   if (isFrontendTool) {
     if (ctx.messageOpen) {
       events.push({
@@ -601,6 +601,9 @@ function handleToolOutput(item: any, ctx: StreamContext): BaseEvent[] {
     ctx.stateToolCallIds.delete(callId);
     return [];
   }
+
+  const toolName = ctx.toolCallNames.get(callId);
+  if (toolName && ctx.frontendToolNames.has(toolName)) return [];
 
   if (ctx.pendingToolCallEnds.delete(callId)) {
     events.push({ type: EventType.TOOL_CALL_END, toolCallId: callId });
