@@ -108,6 +108,9 @@ dev = [
     # crewai, but a test-suite import is a direct use and is declared as one; the
     # floor is crewai 1.15's own requirement.
     "openai>=2.30,<3",
+    # The offline memory tests import Chroma's EmbeddingFunction directly.
+    # Newer CrewAI releases make Chroma optional, so it must be a test dependency.
+    "chromadb>=1.1.1,<2",
 ]
 
 [tool.uv.sources]
