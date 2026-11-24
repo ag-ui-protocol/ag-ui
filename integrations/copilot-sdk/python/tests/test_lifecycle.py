@@ -88,7 +88,7 @@ async def test_l2_failed_run_resumes_the_same_native_session():
     assert "continue_pending_work" in signature.parameters
 
     client = FakeClient(TEXT_TURN)
-    # Create-only in SDK 1.0.28; the fake rejects them on resume like the SDK does.
+    # Create-only in SDK 1.0.34; the fake rejects them on resume like the SDK does.
     create_only = {
         "cloud": None,
         "name": "chat",

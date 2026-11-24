@@ -330,7 +330,7 @@ class CopilotAgent:
         session_id = self._session_id(input_data.thread_id)
         options.pop("session_id", None)
         if await self.client.get_session_metadata(session_id):
-            # create-only in SDK 1.0.28; resume rejects them
+            # create-only in SDK 1.0.34; resume rejects them
             create_only = (
                 "cloud",
                 "name",

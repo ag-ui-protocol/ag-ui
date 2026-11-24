@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "ag-ui-protocol>=1.0.0",
-    "github-copilot-sdk==1.0.28",
+    "github-copilot-sdk==1.0.34",
 ]
 
 [project.optional-dependencies]
