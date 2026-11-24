@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsdown && vitest run",
     "test:coverage": "tsdown && vitest run --coverage",
-    "test:watch": "vitest",
+    "test:watch": "tsdown && vitest",
     "test:exports": "publint --strict && attw --pack",
     "link:global": "pnpm link --global",
     "unlink:global": "pnpm unlink --global"
