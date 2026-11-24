@@ -20,6 +20,33 @@ export interface ScriptedRun {
   agentInputs: RunAgentInput[];
 }
 
+export class MiddlewareAgent extends AbstractAgent {
+  constructor(
+    private readonly middleware: Middleware,
+    private readonly inner: AbstractAgent,
+  ) {
+    super();
+  }
+
+  override run(input: RunAgentInput): Observable<BaseEvent> {
+    return this.middleware.run(input, this.inner);
+  }
+}
+
+export function runInput(
+  forwardedProps: Record<string, unknown>,
+): RunAgentInput {
+  return {
+    threadId: randomUUID(),
+    runId: randomUUID(),
+    messages: [],
+    tools: [],
+    context: [],
+    state: {},
+    forwardedProps,
+  };
+}
+
 export class ScriptedAgent extends AbstractAgent {
   readonly inputs: RunAgentInput[] = [];
   private runCount = 0;

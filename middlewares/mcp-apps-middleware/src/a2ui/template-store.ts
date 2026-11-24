@@ -42,6 +42,7 @@ export class TemplateStore {
       return cached.template;
     }
 
+    this.evictExpired(now);
     const template = this.fetch(uri, read);
     const entry: TemplateCacheEntry = {
       expiresAt: now + this.options.ttlMs,
@@ -56,6 +57,18 @@ export class TemplateStore {
     });
 
     return template;
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  private evictExpired(now: number): void {
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(key);
+      }
+    }
   }
 
   private async fetch(

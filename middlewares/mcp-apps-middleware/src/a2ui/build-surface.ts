@@ -32,11 +32,23 @@ interface SurfaceDraft {
 
 const RESULT_OPERATIONS = ["updateComponents", "updateDataModel"] as const;
 
+type ValidationConfig = typeof STRICT_VALIDATION;
+
+const ACTION_VALIDATION: ValidationConfig = {
+  ...STRICT_VALIDATION,
+  allowDanglingReferences: true,
+  allowOrphanComponents: true,
+};
+
 export function buildSurfaceMessages(
   template: A2uiTemplate,
   result: CallToolResult,
   options: BuildSurfaceOptions,
 ): AgentToRendererMessage[] {
+  if (result.isError) {
+    throw new A2uiMcpError("The MCP tool reported an error.");
+  }
+
   const messages = structuredClone(template) as AgentToRendererMessage[];
   const surfaces = createSurfaces(messages, options.presentationId);
   const componentUpdates = foldComponentUpdates(messages, surfaces);
@@ -66,7 +78,7 @@ export function buildActionMessages(
   if (options.catalogs) {
     const creates = toCreateSurfaceMessages(surfaces);
     const output = [...creates, ...componentUpdates, ...resultOperations];
-    validateMessages(output, options.catalogs);
+    validateMessages(output, options.catalogs, ACTION_VALIDATION);
   }
   return resultOperations;
 }
@@ -276,9 +288,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validateMessages(
   messages: AgentToRendererMessage[],
   catalogs: A2uiCatalogs,
+  validationConfig: ValidationConfig = STRICT_VALIDATION,
 ): void {
   const processor = new MessageProcessor(catalogs, undefined, {
-    validationConfig: STRICT_VALIDATION,
+    validationConfig,
   });
   try {
     const copy = structuredClone(messages);

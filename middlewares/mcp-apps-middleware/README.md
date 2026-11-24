@@ -248,7 +248,9 @@ A `_meta.ui.resourceUri` on the result overrides the one on the tool.
    limit are checked.
 5. It replaces the snapshot with
    `{ activityType: "a2ui-surface-v1", messageId: "a2ui-surface-<toolCallId>", content: { a2ui_operations } }`.
-   On errors, the content is `{ a2ui_operations: [], error }`.
+   On errors, including tool results with `isError`, the content is
+   `{ a2ui_operations: [], error }`. Other fields of the source event, such as
+   `timestamp`, are kept.
 6. It adds `mcp: { serverHash, serverId, resourceUri, presentationId }` to the content.
    The client sends it back unchanged with each action.
 
@@ -267,8 +269,12 @@ The client sends a run with `forwardedProps.a2uiAction = { userAction, mcp }`
   is not invoked. The operations of the result go through the same size limit,
   renaming and validation as tool results and are appended to the activity with one
   `ACTIVITY_DELTA` (`/a2ui_operations/-`). If the server has no `a2ui_action`, the call
-  fails, the result has `isError` or its operations are invalid, the run passes on to
-  the agent as with `"agent"`.
+  fails or the result has `isError`, the run passes on to the agent as with `"agent"`.
+  Once `a2ui_action` has succeeded, the action is never passed on, so its effect cannot
+  run twice: if its operations exceed the size limit or are invalid, the middleware
+  sets `error` on the activity instead (`/error`).
+  With `catalogs`, action results are validated without requiring that referenced
+  components exist, because they can come from earlier actions.
 
 On the server, hide `a2ui_action` from the model with `_meta: { ui: { visibility: ["app"] } }`
 and return `isError: true` for actions it does not handle.
@@ -294,9 +300,11 @@ result:
   `MCPAppsMiddleware` treats the tool as a supporting tool and emits no snapshot.
 - `callRendererFunction` and `callAgentFunction` are not supported.
 - Actions need the activity message on the client: `ACTIVITY_DELTA` patches it by
-  `messageId`. The operation list grows with every handled action.
-- The template cache is invalidated by TTL only. It belongs to one middleware
-  instance, so use one instance per `MCPAppsMiddleware`.
+  `messageId`. The operation list grows with every handled action. Cancelling a run
+  before `a2ui_action` is called skips the call.
+- The template cache is invalidated by TTL only; expired entries are removed on the
+  next load. It belongs to one middleware instance, so use one instance per
+  `MCPAppsMiddleware`.
 
 ## License
 

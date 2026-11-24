@@ -155,6 +155,10 @@ const tools: ToolFixture[] = [
     content: [{ type: "text", text: "Plain." }],
     structuredContent: {},
   })),
+  a2uiTool("getFailing", "a2ui://customer-details", () => ({
+    isError: true,
+    content: [{ type: "text", text: "Failed." }],
+  })),
   {
     tool: {
       name: "getWeather",
@@ -201,6 +205,16 @@ const actionTool: ToolFixture = {
           surfaceId,
           path: "/customer/name",
           value: "x".repeat(4096),
+        },
+      });
+    }
+
+    if (input["name"] === "linkPanel") {
+      return a2uiActionResult({
+        version: "1.0",
+        updateComponents: {
+          surfaceId,
+          components: [{ id: "root", component: "Card", child: "panel" }],
         },
       });
     }

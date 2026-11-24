@@ -1,7 +1,15 @@
 import { basicCatalog } from "@a2ui/web_core/v1_0";
 import type { ActivitySnapshotEvent, BaseEvent } from "@ag-ui/client";
 import { MCPAppsMiddleware, type MCPClientConfig } from "../src/index";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   A2UI_ACTIVITY_TYPE,
@@ -20,7 +28,10 @@ import {
 } from "./a2ui/fixtures";
 import {
   activitySnapshots,
+  MiddlewareAgent,
+  runInput,
   runScripted,
+  ScriptedAgent,
   runWithMiddlewares,
   type ScriptedRun,
   type ScriptedToolCall,
@@ -349,6 +360,15 @@ describe("A2uiMcpMiddleware", () => {
     expect(resourceReads.get("a2ui://flaky")).toBe(2);
   });
 
+  it("reports failed tool results as an error surface", async () => {
+    const events = await runOnce([{ name: "getFailing", args: { id: "e" } }]);
+
+    expect(a2uiContent(activitySnapshots(events)[0])).toEqual({
+      a2ui_operations: [],
+      error: "The MCP tool reported an error.",
+    });
+  });
+
   it("passes resources with another MIME type through", async () => {
     const events = await runOnce([{ name: "getPlain", args: { id: "p" } }]);
 
@@ -456,7 +476,7 @@ describe("A2uiMcpMiddleware", () => {
     expect(run.agentInputs).toHaveLength(1);
   });
 
-  it("falls back to the agent for action results above the size limit", async () => {
+  it("reports action results above the size limit without passing the action on", async () => {
     const a2uiMcp = new A2uiMcpMiddleware({
       actions: "mcp",
       maxPayloadBytes: 2048,
@@ -466,10 +486,25 @@ describe("A2uiMcpMiddleware", () => {
     const run = await runAction(a2uiMcp, customerAction("oversized", origin));
 
     expect(actionCalls).toHaveLength(1);
-    expect(run.agentInputs).toHaveLength(1);
+    expect(run.agentInputs).toHaveLength(0);
+    expect(run.events.map((event) => event.type)).toEqual([
+      "RUN_STARTED",
+      "ACTIVITY_DELTA",
+      "RUN_FINISHED",
+    ]);
+    expect(run.events[1]).toMatchObject({
+      messageId: `a2ui-surface-${origin.presentationId}`,
+      patch: [
+        {
+          op: "add",
+          path: "/error",
+          value: "A2UI payload exceeds the limit of 2048 bytes.",
+        },
+      ],
+    });
   });
 
-  it("falls back to the agent for invalid action results", async () => {
+  it("reports invalid action results without passing the action on", async () => {
     const a2uiMcp = new A2uiMcpMiddleware({
       actions: "mcp",
       catalogs: [basicCatalog],
@@ -478,7 +513,62 @@ describe("A2uiMcpMiddleware", () => {
 
     const run = await runAction(a2uiMcp, customerAction("addBogus", origin));
 
+    const patch = (
+      run.events[1] as { patch: { path: string; value: string }[] }
+    ).patch;
     expect(actionCalls).toHaveLength(1);
-    expect(run.agentInputs).toHaveLength(1);
+    expect(run.agentInputs).toHaveLength(0);
+    expect(patch).toHaveLength(1);
+    expect(patch[0].path).toBe("/error");
+    expect(patch[0].value).toContain("Unknown component type 'Bogus'");
+  });
+
+  it("accepts action results that reference components of earlier actions", async () => {
+    const a2uiMcp = new A2uiMcpMiddleware({
+      actions: "mcp",
+      catalogs: [basicCatalog],
+    });
+    const origin = await renderCustomer(a2uiMcp);
+
+    const run = await runAction(a2uiMcp, customerAction("linkPanel", origin));
+
+    expect(run.agentInputs).toHaveLength(0);
+    expect(run.events[1]).toMatchObject({
+      type: "ACTIVITY_DELTA",
+      patch: [
+        {
+          op: "add",
+          path: "/a2ui_operations/-",
+          value: {
+            version: "1.0",
+            updateComponents: {
+              surfaceId: `customer-details-${origin.presentationId}`,
+              components: [{ id: "root", component: "Card", child: "panel" }],
+            },
+          },
+        },
+      ],
+    });
+  });
+
+  it("does not call a2ui_action once the run is cancelled", async () => {
+    const origin = await renderCustomer(
+      new A2uiMcpMiddleware({ actions: "mcp" }),
+    );
+    const a2uiMcp = new A2uiMcpMiddleware({ actions: "mcp" });
+    const mcpApps = new MCPAppsMiddleware({ mcpServers });
+    const next = new MiddlewareAgent(mcpApps, new ScriptedAgent([]));
+    const a2uiAction = customerAction("reloadCustomer", origin);
+
+    const subscription = a2uiMcp
+      .run(runInput({ a2uiAction }), next)
+      .subscribe();
+    subscription.unsubscribe();
+
+    await vi.waitFor(() => {
+      expect(resourceReads.get("a2ui://customer-details")).toBe(2);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(actionCalls).toHaveLength(0);
   });
 });

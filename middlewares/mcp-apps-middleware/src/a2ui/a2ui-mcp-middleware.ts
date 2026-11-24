@@ -8,7 +8,8 @@ import {
   type RunFinishedEvent,
   type RunStartedEvent,
 } from "@ag-ui/client";
-import { concatMap, from, type Observable, of } from "rxjs";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { concatMap, defer, finalize, from, type Observable, of } from "rxjs";
 
 import {
   A2UI_ACTION_TOOL,
@@ -16,7 +17,12 @@ import {
   type McpAction,
   readMcpAction,
 } from "./a2ui-actions";
-import { a2uiDelta, a2uiSnapshot, errorSnapshot } from "./activity-snapshots";
+import {
+  a2uiDelta,
+  a2uiSnapshot,
+  errorDelta,
+  errorSnapshot,
+} from "./activity-snapshots";
 import {
   type A2uiCatalogs,
   buildActionMessages,
@@ -74,15 +80,21 @@ export class A2uiMcpMiddleware extends Middleware {
       return this.renderSurfaces(input, next);
     }
 
-    const handled = this.handleAction(action, input, next);
-    return from(handled).pipe(
-      concatMap((events) => {
-        if (!events) {
-          return this.renderSurfaces(input, next);
-        }
-        return from(events);
-      }),
-    );
+    return defer(() => {
+      let cancelled = false;
+      const handled = this.handleAction(action, input, next, () => cancelled);
+      return from(handled).pipe(
+        concatMap((events) => {
+          if (!events) {
+            return this.renderSurfaces(input, next);
+          }
+          return from(events);
+        }),
+        finalize(() => {
+          cancelled = true;
+        }),
+      );
+    });
   }
 
   private renderSurfaces(
@@ -137,10 +149,19 @@ export class A2uiMcpMiddleware extends Middleware {
         resourceUri: source.resourceUri,
         presentationId,
       };
-      return a2uiSnapshot(presentationId, { a2ui_operations: operations, mcp });
+      return a2uiSnapshot(
+        presentationId,
+        { a2ui_operations: operations, mcp },
+        source.snapshot,
+      );
     } catch (error) {
       console.error(`A2UI over MCP failed for ${source.resourceUri}`, error);
-      return errorSnapshot(presentationId, source.resourceUri, error);
+      return errorSnapshot(
+        presentationId,
+        source.resourceUri,
+        error,
+        source.snapshot,
+      );
     }
   }
 
@@ -148,16 +169,19 @@ export class A2uiMcpMiddleware extends Middleware {
     action: McpAction,
     input: RunAgentInput,
     next: AbstractAgent,
+    isCancelled: () => boolean,
   ): Promise<BaseEvent[] | null> {
     const origin = action.mcp;
+    let template: A2uiTemplate | null;
+    let result: CallToolResult;
     try {
-      const template = await this.loadTemplate(
+      template = await this.loadTemplate(
         origin,
         origin.resourceUri,
         input,
         next,
       );
-      if (!template) {
+      if (!template || isCancelled()) {
         return null;
       }
 
@@ -167,28 +191,7 @@ export class A2uiMcpMiddleware extends Middleware {
         action.userAction.surfaceId,
       );
       const args = { ...action.userAction, surfaceId };
-      const result = await callMcpTool(
-        origin,
-        A2UI_ACTION_TOOL,
-        args,
-        input,
-        next,
-      );
-      const options = this.buildOptions(origin.presentationId);
-      const operations = buildActionMessages(template, result, options);
-
-      const started: RunStartedEvent = {
-        type: EventType.RUN_STARTED,
-        threadId: input.threadId,
-        runId: input.runId,
-      };
-      const finished: RunFinishedEvent = {
-        type: EventType.RUN_FINISHED,
-        threadId: input.threadId,
-        runId: input.runId,
-      };
-      const delta = a2uiDelta(origin.presentationId, operations);
-      return [started, delta, finished];
+      result = await callMcpTool(origin, A2UI_ACTION_TOOL, args, input, next);
     } catch (error) {
       console.warn(
         `A2UI action ${action.userAction.name} is passed on to the agent.`,
@@ -196,6 +199,34 @@ export class A2uiMcpMiddleware extends Middleware {
       );
       return null;
     }
+
+    try {
+      const options = this.buildOptions(origin.presentationId);
+      const operations = buildActionMessages(template, result, options);
+      const delta = a2uiDelta(origin.presentationId, operations);
+      return this.actionRun(input, delta);
+    } catch (error) {
+      console.error(
+        `The result of A2UI action ${action.userAction.name} could not be applied.`,
+        error,
+      );
+      const delta = errorDelta(origin.presentationId, error);
+      return this.actionRun(input, delta);
+    }
+  }
+
+  private actionRun(input: RunAgentInput, delta: BaseEvent): BaseEvent[] {
+    const started: RunStartedEvent = {
+      type: EventType.RUN_STARTED,
+      threadId: input.threadId,
+      runId: input.runId,
+    };
+    const finished: RunFinishedEvent = {
+      type: EventType.RUN_FINISHED,
+      threadId: input.threadId,
+      runId: input.runId,
+    };
+    return [started, delta, finished];
   }
 
   private loadTemplate(
