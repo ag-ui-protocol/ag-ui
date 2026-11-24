@@ -97,8 +97,9 @@ describe("peer dependency floors (#2418)", () => {
           return entry.name === "__tests__" ? [] : sourceFiles(path);
         return entry.name.endsWith(".ts") ? [path] : [];
       });
+    // Value imports and re-exports, bare side-effect imports, require() and import().
     const valueImport =
-      /import\s+(?!type\s)[^;]*?from\s+["']@mastra\/client-js["']|(?:require|import)\(\s*["']@mastra\/client-js["']\s*\)/;
+      /(?:import|export)\s+(?!type\s)[^;]*?from\s+["']@mastra\/client-js["']|import\s*["']@mastra\/client-js["']|(?:require|import)\(\s*["']@mastra\/client-js["']\s*\)/;
 
     const offenders = sourceFiles(srcDir).filter((file) =>
       valueImport.test(readFileSync(file, "utf8")),
