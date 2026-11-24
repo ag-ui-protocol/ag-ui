@@ -822,3 +822,228 @@ test("Kotlin prepare CLI rejects missing or invalid versions without writing", a
     }
   }
 });
+
+// The Python canary conversion, end to end through the real script: an
+// independent uv-managed scope shaped like integration-aws-strands-py
+// (sharedVersion: false) at 0.1.0. The pinned uv parser keeps a `.devN` in a
+// u64 and reserves u64::MAX, so N must be at most 18446744073709551614.
+const UV_MAX_DEV = 18446744073709551614n;
+
+function strandsFixture(): { root: string; pkg: string } {
+  const root = mkdtempSync(join(tmpdir(), "prepare-release-strands-"));
+  const pkg = join(root, "integrations/aws-strands/python");
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  mkdirSync(pkg, { recursive: true });
+  writeFileSync(
+    join(root, "scripts/release/release.config.json"),
+    JSON.stringify({
+      prereleaseTag: "alpha",
+      scopes: {
+        "integration-aws-strands-py": {
+          description: "Fixture shaped like integration-aws-strands-py",
+          sharedVersion: false,
+          packages: [
+            {
+              name: "ag_ui_strands",
+              path: "integrations/aws-strands/python",
+              ecosystem: "python",
+              buildSystem: "uv",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(pkg, "pyproject.toml"),
+    [
+      "[project]",
+      'name = "ag_ui_strands"',
+      'version = "0.1.0"',
+      'requires-python = ">=3.10"',
+      "dependencies = []",
+      "",
+    ].join("\n"),
+  );
+  return { root, pkg };
+}
+
+function pyprojectVersion(pkg: string): string {
+  return readFileSync(join(pkg, "pyproject.toml"), "utf8").match(
+    /^version = "([^"]+)"$/m,
+  )![1];
+}
+
+function uvAccepts(pkg: string): { status: number | null; out: string } {
+  const uv = spawnSync(
+    "uv",
+    ["--no-config", "--offline", "--no-cache", "version", "--project", pkg],
+    { encoding: "utf8" },
+  );
+  return { status: uv.status, out: (uv.stdout ?? "") + (uv.stderr ?? "") };
+}
+
+test("a Python canary .devN past uv's bound is refused after conversion, not written", async () => {
+  // The old blank-suffix preid: canary.<timestamp>.<run id>.<attempt>, whose
+  // components the converter joins into one N.
+  const { root, pkg } = strandsFixture();
+  try {
+    const r = await runPrepareRelease(
+      [
+        "--scope",
+        "integration-aws-strands-py",
+        "--bump",
+        "prerelease",
+        "--preid",
+        "canary.1700000000.33068467612.1",
+      ],
+      { PREPARE_RELEASE_ROOT: root },
+    );
+    assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+    assert.match(r.stderr, /0\.1\.1\.dev1700000000330684676121/);
+    assert.match(r.stderr, /18446744073709551614/);
+    assert.equal(pyprojectVersion(pkg), "0.1.0", "nothing written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [label, preid, expected] of [
+  // Control: a timestamp-only suffix, to tell an overflow from a fixture fault.
+  ["timestamp-only", "canary.1700000000", "0.1.1.dev1700000000"],
+  // The bounded blank-suffix form: run id x 1000 + attempt.
+  ["run id and attempt", "canary.33068467612001", "0.1.1.dev33068467612001"],
+] as const) {
+  test(`a Python canary preid (${label}) converts to a bounded .devN that uv accepts`, async () => {
+    const { root, pkg } = strandsFixture();
+    try {
+      const r = await runPrepareRelease(
+        [
+          "--scope",
+          "integration-aws-strands-py",
+          "--bump",
+          "prerelease",
+          "--preid",
+          preid,
+        ],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(JSON.parse(r.stdout).packages[0].newVersion, expected);
+      assert.equal(pyprojectVersion(pkg), expected);
+      const n = BigInt(expected.match(/\.dev([0-9]+)$/)![1]);
+      assert.ok(n <= UV_MAX_DEV);
+      if (haveUv()) {
+        const uv = uvAccepts(pkg);
+        assert.equal(uv.status, 0, uv.out);
+        assert.ok(uv.out.includes(expected), uv.out);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a Python canary preid that is not numeric is refused, not written", async () => {
+  const { root, pkg } = strandsFixture();
+  try {
+    const r = await runPrepareRelease(
+      [
+        "--scope",
+        "integration-aws-strands-py",
+        "--bump",
+        "prerelease",
+        "--preid",
+        "canary.fix-user-issue",
+      ],
+      { PREPARE_RELEASE_ROOT: root },
+    );
+    assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+    assert.match(r.stderr, /0\.1\.1\.devfix-user-issue/);
+    assert.equal(pyprojectVersion(pkg), "0.1.0", "nothing written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A scope that lists a TypeScript package before a Python one. The Python
+// .devN is checked only after the TS version is computed, so a check inside
+// the write loop would leave the TS package.json bumped when it refuses.
+function mixedScopeFixture(): { root: string; files: string[] } {
+  const root = mkdtempSync(join(tmpdir(), "prepare-release-mixed-"));
+  const ts = join(root, "sdks/typescript/pkg");
+  const py = join(root, "sdks/python");
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  mkdirSync(ts, { recursive: true });
+  mkdirSync(py, { recursive: true });
+  writeFileSync(
+    join(root, "scripts/release/release.config.json"),
+    JSON.stringify({
+      prereleaseTag: "alpha",
+      scopes: {
+        mixed: {
+          description: "Fixture with a TS package before a Python one",
+          sharedVersion: false,
+          packages: [
+            {
+              name: "@ag-ui/fixture",
+              path: "sdks/typescript/pkg",
+              ecosystem: "typescript",
+            },
+            {
+              name: "ag_ui_fixture",
+              path: "sdks/python",
+              ecosystem: "python",
+              buildSystem: "uv",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(ts, "package.json"),
+    JSON.stringify({ name: "@ag-ui/fixture", version: "0.1.0" }, null, 2) +
+      "\n",
+  );
+  writeFileSync(
+    join(py, "pyproject.toml"),
+    [
+      "[project]",
+      'name = "ag_ui_fixture"',
+      'version = "0.1.0"',
+      'requires-python = ">=3.10"',
+      "dependencies = []",
+      "",
+    ].join("\n"),
+  );
+  return {
+    root,
+    files: [join(ts, "package.json"), join(py, "pyproject.toml")],
+  };
+}
+
+for (const [label, preid] of [
+  ["not numeric", "canary.rc1"],
+  ["past uv's bound", "canary.1700000000.33068467612.1"],
+] as const) {
+  test(`a mixed scope whose Python .devN is ${label} is refused before any package is written`, async () => {
+    const { root, files } = mixedScopeFixture();
+    try {
+      const before = files.map((f) => readFileSync(f, "utf8"));
+      const r = await runPrepareRelease(
+        ["--scope", "mixed", "--bump", "prerelease", "--preid", preid],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+      assert.match(r.stderr, /ag_ui_fixture: Python version 0\.1\.1\.dev/);
+      assert.deepEqual(
+        files.map((f) => readFileSync(f, "utf8")),
+        before,
+        "no package file changed",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

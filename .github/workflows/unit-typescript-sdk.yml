@@ -45,50 +45,9 @@ on:
       - "package.json"
       - "nx.json"
       - ".github/workflows/unit-typescript-sdk.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "sdks/typescript/**"
-      - "typescript-sdk/**"
-      - "integrations/**"
-      - "middlewares/**"
-      # `pnpm run test` is `nx run-many -t test`, which includes @ag-ui/spec — but
-      # only once this workflow is triggered, so a change confined to the schema,
-      # a fixture or the harness would otherwise merge without the suite running.
-      - "spec/**"
-      # The spec suite's drift gate also compares the generated Python and C#
-      # files byte for byte, so a hand edit confined to them must trigger it
-      # too; the proto suite additionally decodes the committed .NET byte
-      # fixtures. AGUI.Abstractions is listed whole rather than just its
-      # Generated/ half because reconcile.ts walks the entire directory and the
-      # harness now gates its output, so a hand-written .cs file there can turn
-      # this suite red.
-      - "sdks/python/ag_ui/_generated/**"
-      # ...and the hand-written Python package beside it: the drift gate reads
-      # ag_ui/core/{events,types,capabilities}.py to prove the generated models
-      # are still the only protocol source there, so a hand-written model
-      # returning to that directory has to trigger this workflow.
-      - "sdks/python/ag_ui/core/**"
-      - "sdks/dotnet/src/AGUI.Abstractions/**"
-      - "sdks/dotnet/src/AGUI.Protobuf/Generated/**"
-      - "sdks/dotnet/tests/AGUI.Protobuf.UnitTests/Fixtures/**"
-      # The published schema is a generated file under the same drift gate, and
-      # the docs folder is the one place it can be edited or deleted without
-      # touching spec/ at all.
-      - "docs/spec/**"
-      # create-ag-ui-app's quickstart-docs test reads
-      # docs/quickstart/applications.mdx and asserts every template it offers is
-      # documented there, so a docs-only edit can turn that suite red.
-      - "docs/quickstart/**"
-      # The cross-language fixtures live outside every tree above and are read
-      # at runtime by the spec harness, @ag-ui/core and @ag-ui/encoder, so a
-      # fixture-only change would otherwise run no job at all.
-      - "sdks/fixtures/**"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "package.json"
-      - "nx.json"
-      - ".github/workflows/unit-typescript-sdk.yml"
+  # Pull requests run this through required-checks.yml (workflow_call), so
+  # the PR path list lives in .github/scripts/required-checks-areas.mjs.
+  workflow_call:
 
 permissions:
   contents: read
@@ -176,15 +135,27 @@ jobs:
   # advertises as supported.
   #
   # This lane closes it by resolving the newest published SDK and running the
-  # package's own suite and typecheck against it. A red build here means the SDK
-  # gained something the adapter has not been taught.
+  # package's own suite and typecheck against it. A red latest leg most often
+  # means the SDK gained something the adapter has not been taught; read the
+  # failure before assuming that.
+  #
+  # The declared-floor leg gates merges. The latest leg moves with every SDK
+  # release, so it is INFORMATIONAL: job-level continue-on-error shows its result
+  # without failing this workflow, so an upstream release cannot block unrelated
+  # PRs through required-checks.
   aws-strands-typescript-latest:
     name: aws-strands-typescript-${{ matrix.sdk }}
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.informational }}
     strategy:
       fail-fast: false
       matrix:
         sdk: [declared-floor, latest]
+        include:
+          - sdk: declared-floor
+            informational: false
+          - sdk: latest
+            informational: true
 
     steps:
       - name: Checkout code
@@ -232,10 +203,14 @@ jobs:
       - name: Build, typecheck and test the selected SDK
         run: pnpm exec nx run-many -p @ag-ui/aws-strands -t build typecheck test --skip-nx-cache
 
-  # The lockfile pins @google/adk 2.0.0; this lane tests the newest 2.x.
+  # The lockfile pins @google/adk 2.0.0; this lane tests the newest 2.x. Its input
+  # moves with every ADK release, so it is INFORMATIONAL: job-level
+  # continue-on-error shows its result without failing this workflow, so an
+  # upstream release cannot block unrelated PRs through required-checks.
   adk-js-latest:
     name: adk-js-latest
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - name: Checkout code
