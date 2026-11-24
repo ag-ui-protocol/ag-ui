@@ -206,6 +206,61 @@ async def test_l4b_cache_never_evicts_an_inflight_session(monkeypatch, capacity)
         await agent.close()
 
 
+async def test_l4c_double_submit_at_capacity_opens_one_session_and_evicts_one(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_THREADS", 2)
+    script = list(TEXT_TURN)
+    client = FakeClient(script)
+    agent = CopilotAgent(client, run_timeout=1)
+    for thread_id in ("a", "b"):
+        await collect(agent, make_input(threadId=thread_id))
+    idle = [agent._threads[thread_id].session for thread_id in ("a", "b")]
+    script.clear()  # the new thread's run stays in flight until it is resolved below
+    opened = []
+    open_session = client._open
+
+    def count_open(options):
+        opened.append(open_session(options))
+        return opened[-1]
+
+    client._open = count_open
+    runs = [
+        asyncio.create_task(collect(agent, make_input(threadId="x", runId=run_id)))
+        for run_id in ("r1", "r2")
+    ]
+    try:
+        done, _ = await asyncio.wait(runs, return_when=asyncio.FIRST_COMPLETED)
+        assert done.pop().result()[-1].message == "Thread already has an active run"
+        assert [session.aborted for session in idle].count(True) == 1
+        assert len(agent._threads) == 2
+        for payload in TEXT_TURN:
+            opened[0].emit(payload)
+        assert "RUN_FINISHED" in [events[-1].type for events in await asyncio.gather(*runs)]
+        assert len(opened) == 1
+    finally:
+        await agent.close()
+
+
+async def test_l4d_retrying_the_eviction_victim_is_refused_until_it_is_closed(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_THREADS", 1)
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=1)
+    await collect(agent, make_input(threadId="a"))
+    victim = client.session
+    retry = make_input(
+        threadId="a", runId="r2", messages=[{"id": "u2", "role": "user", "content": "Again"}]
+    )
+    try:
+        evicting, retried = await asyncio.gather(
+            collect(agent, make_input(threadId="b")), collect(agent, retry)
+        )
+        assert retried[-1].message == "Thread already has an active run"
+        assert victim.aborted
+        assert victim.prompts == ["Say hello."]
+        assert evicting[-1].type == "RUN_FINISHED"
+    finally:
+        await agent.close()
+
+
 @pytest.mark.parametrize("stop", ["close", "cancel"])
 @pytest.mark.parametrize("yield_count", [1, 2], ids=["run-started", "predict-state"])
 async def test_l5_early_generator_exit_releases_thread(stop, yield_count):
@@ -318,6 +373,30 @@ async def test_thread_stays_reserved_until_failed_session_is_disconnected():
     assert client.resumed == []
     assert (await first)[-1].type == "RUN_ERROR"
     await agent.close()
+
+
+async def test_close_during_a_run_keeps_the_thread_reserved_until_disconnected():
+    client = FakeClient(TEXT_TURN, stall=True)
+    detach = asyncio.Event()
+    create = client.create_session
+
+    async def create_with_gated_disconnect(**options):
+        session = await create(**options)
+        session.disconnect = detach.wait
+        return session
+
+    client.create_session = create_with_gated_disconnect
+    agent = CopilotAgent(client, run_timeout=0.02)
+    first = asyncio.create_task(collect(agent, make_input()))
+    while client.session is None:
+        await asyncio.sleep(0)
+    closing = asyncio.create_task(agent.close())
+    await asyncio.sleep(0.1)  # the run times out and its finally runs while close() is detaching
+    retry = await collect(agent, make_input(runId="r2"))
+    assert retry[-1].message == "Thread already has an active run"
+    detach.set()
+    await closing
+    assert (await first)[-1].type == "RUN_ERROR"
 
 
 async def test_cancelled_teardown_still_releases_the_thread():

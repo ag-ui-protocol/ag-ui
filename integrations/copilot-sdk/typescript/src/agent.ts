@@ -210,8 +210,7 @@ export class CopilotAgent extends AbstractAgent {
     await Promise.allSettled([...this.threads.keys()].map((id) => this.dispose(id)));
   }
 
-  private async dispose(threadId: string): Promise<void> {
-    const thread = this.threads.get(threadId);
+  private async dispose(threadId: string, thread = this.threads.get(threadId)): Promise<void> {
     if (!thread) return;
     thread.closing ??= (async () => {
       const session = thread.session;
@@ -219,7 +218,10 @@ export class CopilotAgent extends AbstractAgent {
         // Stay reserved until closed, so a retry cannot resume the same native session mid-teardown.
         thread.busy = true;
         for (const close of [() => session.abort(), () => session.disconnect()]) {
-          await this.withDeadline(close(), Date.now() + 5000, "").catch(() => {});
+          // try/catch, not .catch(): a closer that throws synchronously must not skip removal.
+          try {
+            await this.withDeadline(close(), Date.now() + 5000, "");
+          } catch {}
         }
       }
       if (this.threads.get(threadId) === thread) this.threads.delete(threadId);
@@ -250,26 +252,29 @@ export class CopilotAgent extends AbstractAgent {
     let thread = this.threads.get(input.threadId);
     // Re-inserting keeps the Map in least-recently-used order.
     this.threads.delete(input.threadId);
-    if (!thread) {
-      if (this.threads.size >= MAX_THREADS) {
-        // Never evict a thread mid-run: that would abort a live stream.
-        const idle = [...this.threads].find(([, entry]) => !entry.busy)?.[0];
-        if (idle === undefined) {
-          yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
-          yield { type: E.RUN_ERROR, message: "Thread capacity reached; every thread has an active run", code: "COPILOT_SDK_ERROR" };
-          return;
-        }
-        await this.dispose(idle);
+    while (!thread && this.threads.size >= MAX_THREADS) {
+      // Join a teardown already freeing a slot before evicting another thread,
+      // and never evict a thread mid-run: that would abort a live stream.
+      const entries = [...this.threads];
+      const victim = (entries.find(([, entry]) => entry.closing) ?? entries.find(([, entry]) => !entry.busy))?.[0];
+      if (victim === undefined) {
+        yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+        yield { type: E.RUN_ERROR, message: "Thread capacity reached; every thread has an active run", code: "COPILOT_SDK_ERROR" };
+        return;
       }
-      thread = {
-        mapper: new CopilotEventMapper(),
-        pending: new Map(),
-        sentUserIds: new Set(),
-        events: [],
-        state: undefined,
-        busy: false,
-      };
+      await this.dispose(victim);
+      // A concurrent run for this thread may have opened it while we waited.
+      thread = this.threads.get(input.threadId);
+      this.threads.delete(input.threadId);
     }
+    thread ??= {
+      mapper: new CopilotEventMapper(),
+      pending: new Map(),
+      sentUserIds: new Set(),
+      events: [],
+      state: undefined,
+      busy: false,
+    };
     this.threads.set(input.threadId, thread);
     if (thread.busy) {
       // Refuse outside the try below: its finally would release the active run's flag.
@@ -403,10 +408,11 @@ export class CopilotAgent extends AbstractAgent {
       yield* thread.mapper.finish();
       yield { type: E.RUN_ERROR, message: failure, code: "COPILOT_SDK_ERROR" };
     } finally {
-      thread.busy = false;
+      // A thread being closed stays reserved, so a retry cannot reuse its session.
+      if (!thread.closing) thread.busy = false;
       // A failed run leaves the native session in an unknown state; drop it rather
       // than leaking the thread's session and its suspended RPCs.
-      if (failure !== undefined) await this.dispose(input.threadId);
+      if (failure !== undefined) await this.dispose(input.threadId, thread);
     }
   }
 

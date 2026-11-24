@@ -203,26 +203,31 @@ class CopilotAgent:
         for thread_id in list(self._threads):
             await self._dispose(thread_id)
 
-    async def _dispose(self, thread_id: str) -> None:
-        thread = self._threads.get(thread_id)
+    async def _dispose(self, thread_id: str, thread: _Thread | None = None) -> None:
+        if thread is None:
+            thread = self._threads.get(thread_id)
         if thread is None:
             return
         if thread.closing is None:
+            # Stay reserved until closed, so a retry cannot resume the same native session
+            # mid-teardown. Set before scheduling: the teardown task starts a loop step later.
+            thread.busy = True
             thread.closing = asyncio.ensure_future(self._teardown(thread_id, thread))
         # Shielded so a cancelled caller cannot leave the thread reserved forever.
         await asyncio.shield(thread.closing)
 
     async def _teardown(self, thread_id: str, thread: _Thread) -> None:
-        if thread.session is not None:
-            # Stay reserved until closed, so a retry cannot resume the same native session mid-teardown.
-            thread.busy = True
-            for closer in (thread.session.abort, thread.session.disconnect):
-                try:
-                    await asyncio.wait_for(closer(), 5)
-                except Exception:  # noqa: BLE001, S110 -- cleanup is best effort.
-                    pass
-        if self._threads.get(thread_id) is thread:
-            self._threads.pop(thread_id, None)
+        try:
+            if thread.session is not None:
+                for closer in (thread.session.abort, thread.session.disconnect):
+                    try:
+                        await asyncio.wait_for(closer(), 5)
+                    except Exception:  # noqa: BLE001, S110 -- cleanup is best effort.
+                        pass
+        finally:
+            # Even a cancelled teardown frees the slot; admissions join `closing` entries.
+            if self._threads.get(thread_id) is thread:
+                self._threads.pop(thread_id, None)
 
     def _bind(self, thread: _Thread, tool: AGUITool) -> Tool:
         """Server-side handlers get the AG-UI run context; handler-less tools pause."""
@@ -369,18 +374,23 @@ class CopilotAgent:
 
         # Re-inserting keeps the dict in least-recently-used order.
         thread = self._threads.pop(input_data.thread_id, None)
+        while thread is None and len(self._threads) >= MAX_THREADS:
+            # Join a teardown already freeing a slot before evicting another thread,
+            # and never evict a thread mid-run: that would abort a live stream.
+            victim = next((key for key, entry in self._threads.items() if entry.closing), None)
+            if victim is None:
+                victim = next((key for key, entry in self._threads.items() if not entry.busy), None)
+            if victim is None:
+                yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
+                yield RunErrorEvent(
+                    message="Thread capacity reached; every thread has an active run",
+                    code="COPILOT_SDK_ERROR",
+                )
+                return
+            await self._dispose(victim)
+            # A concurrent run for this thread may have opened it while we waited.
+            thread = self._threads.pop(input_data.thread_id, None)
         if thread is None:
-            if len(self._threads) >= MAX_THREADS:
-                # Never evict a thread mid-run: that would abort a live stream.
-                idle = next((key for key, entry in self._threads.items() if not entry.busy), None)
-                if idle is None:
-                    yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
-                    yield RunErrorEvent(
-                        message="Thread capacity reached; every thread has an active run",
-                        code="COPILOT_SDK_ERROR",
-                    )
-                    return
-                await self._dispose(idle)
             thread = _Thread()
         self._threads[input_data.thread_id] = thread
         if thread.busy:
@@ -547,8 +557,10 @@ class CopilotAgent:
                 yield event
             yield RunErrorEvent(message=str(exc) or type(exc).__name__, code="COPILOT_SDK_ERROR")
         finally:
-            thread.busy = False
+            # A thread being closed stays reserved, so a retry cannot reuse its session.
+            if thread.closing is None:
+                thread.busy = False
             # A failed run leaves the native session in an unknown state; drop it
             # rather than leaking the thread and its suspended RPCs.
             if failed:
-                await self._dispose(input_data.thread_id)
+                await self._dispose(input_data.thread_id, thread)

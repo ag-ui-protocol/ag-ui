@@ -162,6 +162,30 @@ describe("session lifecycle", () => {
     }
   });
 
+  it("L4d: a double submit at capacity opens one session and evicts one thread", async () => {
+    const script: Payload[] = [{ id: "idle", type: "session.idle", data: {} }];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 1_000 });
+    const idle: FakeSession[] = [];
+    try {
+      for (let index = 0; index < 32; index++) {
+        await run(agent, makeInput({ threadId: `thread-${index}` }));
+        idle.push(client.session!);
+      }
+      script.length = 0; // the new thread's run stays in flight until it is resolved below
+      const opens = [vi.spyOn(client, "createSession"), vi.spyOn(client, "resumeSession")];
+      const runs = [run(agent, makeInput({ threadId: "x" })), run(agent.clone(), makeInput({ threadId: "x", runId: "r2" }))];
+      const refused = await Promise.race(runs);
+      expect(refused.at(-1)).toMatchObject({ type: E.RUN_ERROR, message: "Thread already has an active run" });
+      expect(idle.filter((session) => session.aborted)).toHaveLength(1);
+      client.session!.emit({ id: "done", type: "session.idle", data: {} });
+      expect((await Promise.all(runs)).map((events) => events.at(-1)!.type)).toContain(E.RUN_FINISHED);
+      expect(opens.reduce((count, spy) => count + spy.mock.calls.length, 0)).toBe(1);
+    } finally {
+      await agent.close();
+    }
+  });
+
   it("L5: releases busy when a consumer closes the stream at its first yield", async () => {
     vi.useFakeTimers();
     const client = new FakeClient(TEXT_TURN);
