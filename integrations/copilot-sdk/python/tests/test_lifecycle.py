@@ -204,7 +204,8 @@ async def test_s7_close_deletes_the_native_history_of_every_thread_it_opened():
     agent = CopilotAgent(client, run_timeout=1)
     assert (await collect(agent, make_input(threadId="a")))[-1].type == "RUN_ERROR"
     client._script = TEXT_TURN
-    assert (await collect(agent, make_input(threadId="b")))[-1].type == "RUN_FINISHED"
+    # An id outside [A-Za-z0-9_-] still opens and deletes: the session id is hashed.
+    assert (await collect(agent, make_input(threadId="a/b c:é")))[-1].type == "RUN_FINISHED"
     assert len(client.stored) == 2
     await agent.close()
     assert client.stored == set() and len(client.deleted) == 2

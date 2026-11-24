@@ -164,7 +164,8 @@ describe("session lifecycle", () => {
     const agent = new CopilotAgent({ client, runTimeoutMs: 500 });
     expect((await run(agent, makeInput({ threadId: "a" }))).at(-1)).toMatchObject({ type: "RUN_ERROR", message: "Run cancelled" });
     script.splice(0, script.length, ...TEXT_TURN);
-    expect((await run(agent.clone(), makeInput({ threadId: "b" }))).at(-1)!.type).toBe("RUN_FINISHED");
+    // An id outside [A-Za-z0-9_-] still opens and deletes: the session id is hashed.
+    expect((await run(agent.clone(), makeInput({ threadId: "a/b c:é" }))).at(-1)!.type).toBe("RUN_FINISHED");
     expect(client.stored.size).toBe(2);
     await agent.close();
     expect(client.stored.size).toBe(0);
