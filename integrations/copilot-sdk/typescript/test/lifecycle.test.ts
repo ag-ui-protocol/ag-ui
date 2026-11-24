@@ -385,6 +385,19 @@ describe("tools changing between turns", () => {
     expect(events.at(-1)).toMatchObject({ type: E.RUN_ERROR, message: "Session re-open timed out" });
     expect(client.resumed).toEqual([]);
   });
+
+  it.each(["change_background", ""])("rejects duplicate tool name %j before resume recovery can delete the history", async (name) => {
+    const client = new FakeClient(TEXT_TURN);
+    const agent = new CopilotAgent({ client });
+    await run(agent, makeInput());
+    const second = [{ id: "u2", role: "user" as const, content: "Now change the background." }];
+    const tools = [{ ...TOOLS[0], name }, { ...TOOLS[0], name }];
+    const events = await run(agent, makeInput({ runId: "r2", tools, messages: second }));
+    expect(events.at(-1)).toMatchObject({ type: E.RUN_ERROR, message: `Duplicate tool name: ${name}` });
+    expect(client.resumed).toEqual([]);
+    expect(client.deleted).toEqual([]);
+    expect(client.stored.size).toBe(1);
+  });
 });
 
 describe("teardown after a failed run", () => {

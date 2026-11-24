@@ -510,6 +510,10 @@ export class CopilotAgent extends AbstractAgent {
       skipPermission: true,
     }));
     const tools = [...this.bindTools(thread), ...frontendTools];
+    // The runtime rejects duplicate names; failing first keeps resume recovery from deleting the history.
+    const names = tools.map((tool) => tool.name);
+    const duplicate = names.find((name, i) => names.indexOf(name) !== i);
+    if (duplicate !== undefined) throw new Error(`Duplicate tool name: ${duplicate}`);
     thread.tools = JSON.stringify(input.tools);
     const config = {
       model: this.config.model ?? "gpt-5.4-mini",

@@ -519,6 +519,20 @@ async def test_reopen_fails_the_run_when_the_old_session_does_not_detach(detach,
     await agent.close()
 
 
+@pytest.mark.parametrize("name", ["change_background", ""])
+async def test_duplicate_tool_names_fail_before_resume_recovery_can_delete_the_history(name):
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=1)
+    await collect(agent, make_input())
+    second = [{"id": "u2", "role": "user", "content": "Now change the background."}]
+    tools = [{**TOOLS[0], "name": name}] * 2
+    events = await collect(agent, make_input(runId="r2", tools=tools, messages=second))
+    assert events[-1].type == "RUN_ERROR"
+    assert events[-1].message == f"Duplicate tool name: {name}"
+    assert client.resumed == [] and client.deleted == [] and len(client.stored) == 1
+    await agent.close()
+
+
 async def test_thread_stays_reserved_until_failed_session_is_disconnected():
     client = FakeClient(TEXT_TURN, stall=True)
     closing = asyncio.Event()

@@ -302,6 +302,11 @@ class CopilotAgent:
             )
             for tool in input_data.tools
         ]
+        # The runtime rejects duplicate names; failing first keeps resume recovery
+        # from deleting the history.
+        names = [tool.name for tool in tools]
+        if (duplicate := next((n for n in names if names.count(n) > 1), None)) is not None:
+            raise ValueError(f"Duplicate tool name: {duplicate}")
         thread.tools = deepcopy(input_data.tools)
         # Only the tools registered here, plus the `task` built-in when custom
         # agents exist (it is what dispatches them). Required by mode="empty".
