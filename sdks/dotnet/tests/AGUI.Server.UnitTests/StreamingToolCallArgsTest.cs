@@ -290,4 +290,53 @@ public sealed class StreamingToolCallArgsTest
         Assert.Single(events.OfType<ToolCallStartEvent>(), e => e.ToolCallId == "call_a");
         Assert.Single(events.OfType<ToolCallEndEvent>(), e => e.ToolCallId == "call_a");
     }
+
+    [Fact]
+    public async Task ZeroArgCall_NoArgumentFragments_EmitsEmptyObjectArgsAsync()
+    {
+        // Arrange: a zero-argument call whose provider streams only the first fragment (id +
+        // name, empty delta), then its coalesced FunctionCallContent with null Arguments.
+        var updates = new[]
+        {
+            Fragment(0, "call_a", "get_time", ""),
+            Coalesced("call_a", "get_time"),
+        };
+
+        // Act
+        var events = await RunAsync(updates);
+
+        // Assert: the call still carries "{}" as its arguments, like the atomic path.
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e => Assert.Equal("call_a", Assert.IsType<ToolCallStartEvent>(e).ToolCallId),
+            e =>
+            {
+                var args = Assert.IsType<ToolCallArgsEvent>(e);
+                Assert.Equal("call_a", args.ToolCallId);
+                Assert.Equal("{}", args.Delta);
+            },
+            e => Assert.Equal("call_a", Assert.IsType<ToolCallEndEvent>(e).ToolCallId),
+            e => Assert.IsType<RunFinishedEvent>(e));
+    }
+
+    [Fact]
+    public async Task ZeroArgCall_ReusingIdOfStaleStreamedCall_StillEmitsEmptyObjectArgsAsync()
+    {
+        // Arrange: a call streams arguments but is never coalesced; a new first fragment reuses
+        // its index and id with no argument fragments, then coalesces with null Arguments.
+        var updates = new[]
+        {
+            Fragment(0, "call_a", "render", "{\"a\":1}"),
+            Fragment(0, "call_a", "get_time", ""),
+            Coalesced("call_a", "get_time"),
+        };
+
+        // Act
+        var events = await RunAsync(updates);
+
+        // Assert: the reopened call does not inherit the stale call's streamed arguments.
+        var args = events.OfType<ToolCallArgsEvent>().Select(a => a.Delta).ToList();
+        Assert.Equal(["{\"a\":1}", "{}"], args);
+        Assert.Equal(2, events.OfType<ToolCallEndEvent>().Count(e => e.ToolCallId == "call_a"));
+    }
 }

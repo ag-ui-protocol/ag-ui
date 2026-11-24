@@ -278,6 +278,8 @@ public static class ChatResponseUpdateAGUIExtensions
         bool streamToolArgs = options.TryGetToolCallArgumentExtractor(out var extractToolArgFragments);
         Dictionary<int, string> rawToolCallIdsByIndex = streamToolArgs ? new() : null!;
         Dictionary<string, int> rawToolCallIndexById = streamToolArgs ? new(StringComparer.Ordinal) : null!;
+        // Raw-streamed calls that have emitted at least one argument delta.
+        HashSet<string> rawToolCallsWithArgs = streamToolArgs ? new(StringComparer.Ordinal) : null!;
 
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -339,6 +341,7 @@ public static class ChatResponseUpdateAGUIExtensions
                     {
                         yield return ToolCallEndEvent.Create(rawToolCallId!, raw);
                         rawToolCallIndexById.Remove(rawToolCallId!);
+                        rawToolCallsWithArgs.Remove(rawToolCallId!);
                         rawToolCallIdsByIndex.Remove(fragment.Index);
                         haveIndex = false;
                     }
@@ -361,6 +364,7 @@ public static class ChatResponseUpdateAGUIExtensions
 
                         rawToolCallIdsByIndex[fragment.Index] = rawToolCallId;
                         rawToolCallIndexById[rawToolCallId] = fragment.Index;
+                        rawToolCallsWithArgs.Remove(rawToolCallId);
 
                         // Close any open text/reasoning block before emitting tool events.
                         if (messageTracker.Close(raw) is { } fragTextEndEvt)
@@ -378,6 +382,7 @@ public static class ChatResponseUpdateAGUIExtensions
 
                     if (fragment.ArgumentsDelta.Length > 0)
                     {
+                        rawToolCallsWithArgs.Add(rawToolCallId!);
                         yield return ToolCallArgsEvent.Create(rawToolCallId!, fragment.ArgumentsDelta, raw);
                     }
                 }
@@ -457,6 +462,15 @@ public static class ChatResponseUpdateAGUIExtensions
                             foreach (var reasonRawCloseEvt in reasoningTracker.Close())
                             {
                                 yield return reasonRawCloseEvt;
+                            }
+
+                            // A zero-argument call can stream no argument fragments at all.
+                            // Emit its arguments the way the atomic path does, so it does not
+                            // end with no TOOL_CALL_ARGS (an empty argument string).
+                            if (!rawToolCallsWithArgs.Remove(fcc.CallId))
+                            {
+                                var rawArgs = JsonSerializer.Serialize(fcc.Arguments ?? new Dictionary<string, object?>(), jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                                yield return ToolCallArgsEvent.Create(fcc.CallId, rawArgs, raw);
                             }
 
                             yield return ToolCallEndEvent.Create(fcc.CallId, raw);

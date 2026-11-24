@@ -568,9 +568,22 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
 
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
-        var toolArgs = events.OfType<ToolCallArgsEvent>().Single();
-        Assert.Equal("call_1", toolArgs.ToolCallId);
-        Assert.Equal("{}", toolArgs.Delta);
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e =>
+            {
+                var start = Assert.IsType<ToolCallStartEvent>(e);
+                Assert.Equal("call_1", start.ToolCallId);
+                Assert.Equal("get_time", start.ToolCallName);
+            },
+            e =>
+            {
+                var args = Assert.IsType<ToolCallArgsEvent>(e);
+                Assert.Equal("call_1", args.ToolCallId);
+                Assert.Equal("{}", args.Delta);
+            },
+            e => Assert.Equal("call_1", Assert.IsType<ToolCallEndEvent>(e).ToolCallId),
+            e => Assert.IsType<RunFinishedSuccessOutcome>(Assert.IsType<RunFinishedEvent>(e).Outcome));
     }
 
     [Fact]
@@ -586,9 +599,28 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
 
         var events = await CollectEvents(ToAsyncEnumerable(update));
 
-        var toolArgs = events.OfType<ToolCallArgsEvent>().Single();
-        Assert.Equal("call_1", toolArgs.ToolCallId);
-        Assert.Equal("{}", toolArgs.Delta);
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e =>
+            {
+                var start = Assert.IsType<ToolCallStartEvent>(e);
+                Assert.Equal("call_1", start.ToolCallId);
+                Assert.Equal("get_time", start.ToolCallName);
+            },
+            e =>
+            {
+                var args = Assert.IsType<ToolCallArgsEvent>(e);
+                Assert.Equal("call_1", args.ToolCallId);
+                Assert.Equal("{}", args.Delta);
+            },
+            e => Assert.Equal("call_1", Assert.IsType<ToolCallEndEvent>(e).ToolCallId),
+            e =>
+            {
+                var outcome = Assert.IsType<RunFinishedInterruptOutcome>(Assert.IsType<RunFinishedEvent>(e).Outcome);
+                var interrupt = Assert.Single(outcome.Interrupts);
+                Assert.Equal("req-1", interrupt.Id);
+                Assert.Equal("call_1", interrupt.ToolCallId);
+            });
     }
 
     [Fact]
