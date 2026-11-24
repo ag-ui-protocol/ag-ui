@@ -74,6 +74,10 @@ from .recovery import unresolved_tool_uses, historical_tool_results, SessionBind
 
 logger = logging.getLogger(__name__)
 
+# How long timeout cleanup waits for the CLI to acknowledge an interrupt. The
+# SDK's control request waits up to 60s, and cleanup holds the thread's run lock.
+TIMEOUT_INTERRUPT_SECONDS = 5.0
+
 if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
@@ -667,7 +671,13 @@ class ClaudeAgentAdapter:
             else:
                 timed_out_entry = self._workers.pop(thread_id, None)
                 if timed_out_entry:
-                    await timed_out_entry["worker"].interrupt()
+                    try:
+                        await asyncio.wait_for(timed_out_entry["worker"].interrupt(), TIMEOUT_INTERRUPT_SECONDS)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"Interrupt of timed-out run on thread={thread_id} got no answer within "
+                            f"{TIMEOUT_INTERRUPT_SECONDS}s; stopping the worker"
+                        )
                     await timed_out_entry["worker"].stop()
                 self._state_locks.pop(thread_id, None)
             for activity_event in close_open_task_activities(open_task_activities):

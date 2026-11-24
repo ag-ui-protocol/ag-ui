@@ -232,6 +232,47 @@ async def test_timed_out_run_does_not_take_next_runs_context(monkeypatch, make_i
     await adapter.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_timeout_cleanup_bounds_a_hanging_interrupt(monkeypatch, make_input):
+    """The SDK interrupt request can wait 60s for the CLI. Timeout cleanup must
+    not wait that long while it holds the thread's run lock."""
+    import asyncio
+    from claude_agent_sdk import SystemMessage
+    workers = []
+
+    class Worker:
+        def __init__(self, thread, options):
+            self.stopped = False
+            workers.append(self)
+        async def start(self): pass
+        async def interrupt(self): await asyncio.sleep(3600)
+        async def stop(self): self.stopped = True
+        def is_alive(self): return True
+        async def query(self, prompt, session_id):
+            yield SystemMessage(subtype="init", data={"session_id": "native"})
+            if prompt == "slow":
+                await asyncio.sleep(3600)
+            yield result_message()
+
+    monkeypatch.setattr(module, "SessionWorker", Worker)
+    monkeypatch.setattr(module, "TIMEOUT_INTERRUPT_SECONDS", 0.05, raising=False)
+    adapter = ClaudeAgentAdapter("test", query_timeout_seconds=0.05)
+    slow = make_input(run_id="m1", messages=[{"id": "m1", "role": "user", "content": "slow"}])
+
+    async def collect(run_input):
+        return [e async for e in adapter.run(run_input)]
+
+    events = await asyncio.wait_for(collect(slow), timeout=2)
+    assert events[-1].type == "RUN_ERROR"
+    assert workers[0].stopped
+    assert "thread-1" not in adapter._workers
+    # The run lock was released: the next run on the thread starts and finishes.
+    events = await asyncio.wait_for(collect(ask(make_input, "m2", "green")), timeout=2)
+    assert events[-1].type == "RUN_FINISHED"
+    assert len(workers) == 2
+    await adapter.shutdown()
+
+
 class TestBuildOptions:
     def test_string_system_prompt_left_as_configured(self, make_input):
         opts = ClaudeAgentAdapter("t", options={"system_prompt": "BASE"}).build_options(
