@@ -115,7 +115,8 @@ async def test_resumed_session_gets_each_runs_context(monkeypatch, make_input):
 
 
 @pytest.mark.asyncio
-async def test_frontend_tool_result_only_run_gets_context(monkeypatch, make_input):
+@pytest.mark.parametrize("failed", [False, True])
+async def test_frontend_tool_result_only_run_gets_context(monkeypatch, make_input, failed):
     from mcp import ClientSession
     import httpx
     from mcp.client.streamable_http import streamable_http_client
@@ -153,11 +154,17 @@ async def test_frontend_tool_result_only_run_gets_context(monkeypatch, make_inpu
                     async with ClientSession(read, write) as client:
                         await client.initialize()
                         result = await client.call_tool("confirm", {})
-            delivered.append(await fire(self.options.hooks, "PostToolUse", tool_name=call["name"],
-                                        tool_use_id=call["id"], tool_input={},
-                                        tool_response=result.model_dump()["content"]))
+            assert result.isError is failed
+            # The CLI runs PostToolUseFailure, not PostToolUse, for an isError result.
+            if result.isError:
+                delivered.append(await fire(self.options.hooks, "PostToolUseFailure", tool_name=call["name"],
+                                            tool_use_id=call["id"], tool_input={}, error=result.content[0].text))
+            else:
+                delivered.append(await fire(self.options.hooks, "PostToolUse", tool_name=call["name"],
+                                            tool_use_id=call["id"], tool_input={},
+                                            tool_response=result.model_dump()["content"]))
             yield UserMessage(content=[ToolResultBlock(tool_use_id=call["id"], content=result.content[0].text,
-                                                       is_error=False)])
+                                                       is_error=result.isError)])
             yield result_message()
 
     monkeypatch.setattr(module, "SessionWorker", Worker)
@@ -170,7 +177,8 @@ async def test_frontend_tool_result_only_run_gets_context(monkeypatch, make_inpu
         {"id": "m1", "role": "user", "content": "What is my favorite color?"},
         {"id": "assistant", "role": "assistant", "toolCalls": [
             {"id": call["id"], "type": "function", "function": {"name": "confirm", "arguments": "{}"}}]},
-        {"id": "result", "role": "tool", "toolCallId": call["id"], "content": "confirmed"},
+        {"id": "result", "role": "tool", "toolCallId": call["id"], "content": "confirmed",
+         **({"error": "declined"} if failed else {})},
     ]))]
 
     assert [e for e in second if e.type == "RUN_ERROR"] == []
@@ -178,6 +186,49 @@ async def test_frontend_tool_result_only_run_gets_context(monkeypatch, make_inpu
     assert prompts[1] is None
     assert "- Favorite color: red" in delivered[0]
     assert "- Favorite color: blue" in delivered[1]
+    await adapter.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_timed_out_run_does_not_take_next_runs_context(monkeypatch, make_input):
+    """A timed-out run must not leave its CLI turn running on the worker: a
+    tool call it finishes late would take the next run's state/context."""
+    import asyncio
+    from claude_agent_sdk import SystemMessage
+    workers, seen = [], []
+
+    class Worker:
+        # Like SessionWorker, the CLI turn keeps running when the consumer
+        # stops reading; only interrupt() or stop() ends it.
+        def __init__(self, thread, options):
+            self.options, self.turn_running = options, False
+            workers.append(self)
+        async def start(self): pass
+        async def interrupt(self): self.turn_running = False
+        async def stop(self): self.turn_running = False
+        def is_alive(self): return True
+        async def query(self, prompt, session_id):
+            if self.turn_running:
+                # The previous turn's tool call finishes before this query starts.
+                await fire(self.options.hooks, "PostToolUse", tool_name="Read", tool_use_id="late")
+                self.turn_running = False
+            yield SystemMessage(subtype="init", data={"session_id": "native"})
+            if prompt == "slow":
+                self.turn_running = True
+                await asyncio.sleep(3600)
+            seen.append(await fire(self.options.hooks, "UserPromptSubmit", prompt=prompt))
+            yield result_message()
+
+    monkeypatch.setattr(module, "SessionWorker", Worker)
+    adapter = ClaudeAgentAdapter("test", query_timeout_seconds=0.05)
+    slow = make_input(run_id="m1", context=color("red"), messages=[{"id": "m1", "role": "user", "content": "slow"}])
+    events = [e async for e in adapter.run(slow)]
+    assert events[-1].type == "RUN_ERROR"
+
+    events = [e async for e in adapter.run(ask(make_input, "m2", "green"))]
+    assert events[-1].type == "RUN_FINISHED"
+    assert "- Favorite color: green" in seen[0]
+    assert len(workers) == 2 and not workers[0].turn_running
     await adapter.shutdown()
 
 
@@ -201,7 +252,15 @@ class TestBuildOptions:
         assert "- Favorite color: red" in context
         assert '"count": 1' in context
         assert await fire(opts.hooks, "PostToolUse", tool_name="Read", tool_use_id="t") == ""
+        assert await fire(opts.hooks, "PostToolUseFailure", tool_name="Read", tool_use_id="t", error="e") == ""
         assert await fire(opts.hooks, "UserPromptSubmit", prompt="again") == ""
+
+    @pytest.mark.asyncio
+    async def test_failed_tool_call_carries_context(self, make_input):
+        opts = ClaudeAgentAdapter("t").build_options(make_input(context=color("red")))
+        context = await fire(opts.hooks, "PostToolUseFailure", tool_name="Read", tool_use_id="t", error="e")
+        assert "- Favorite color: red" in context
+        assert await fire(opts.hooks, "PostToolUse", tool_name="Read", tool_use_id="t") == ""
 
     def test_caller_hooks_kept(self, make_input):
         from claude_agent_sdk import HookMatcher
@@ -209,8 +268,11 @@ class TestBuildOptions:
         opts = ClaudeAgentAdapter("t", options={"hooks": {
             "UserPromptSubmit": [HookMatcher(hooks=[own])],
             "PostToolUse": [HookMatcher(matcher="Read", hooks=[own])],
+            "PostToolUseFailure": [HookMatcher(matcher="Read", hooks=[own])],
         }}).build_options(make_input(context=color("red")))
         assert opts.hooks["UserPromptSubmit"][0].hooks == [own]
         assert opts.hooks["PostToolUse"][0].matcher == "Read"
         assert len(opts.hooks["UserPromptSubmit"]) == 2
         assert len(opts.hooks["PostToolUse"]) == 2
+        assert opts.hooks["PostToolUseFailure"][0].matcher == "Read"
+        assert len(opts.hooks["PostToolUseFailure"]) == 2

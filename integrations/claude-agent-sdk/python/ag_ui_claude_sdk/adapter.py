@@ -654,6 +654,22 @@ class ClaudeAgentAdapter:
             
         except asyncio.TimeoutError as e:
             logger.error(f"Query timeout in run for thread={thread_id}: {e}")
+            # The CLI turn keeps running after this run stops reading it. On a
+            # reused worker it would finish during the next run, and its late
+            # hooks would take that run's state/context. End it before the
+            # run-lock is released. (Same peer guard as the error path below.)
+            entry = self._workers.get(thread_id)
+            if entry is not None and entry.get("active_runs", 1) > 1:
+                logger.warning(
+                    f"Run timed out but a peer run is still active on thread={thread_id}; "
+                    f"keeping shared worker (active_runs={entry.get('active_runs')})"
+                )
+            else:
+                timed_out_entry = self._workers.pop(thread_id, None)
+                if timed_out_entry:
+                    await timed_out_entry["worker"].interrupt()
+                    await timed_out_entry["worker"].stop()
+                self._state_locks.pop(thread_id, None)
             for activity_event in close_open_task_activities(open_task_activities):
                 yield activity_event
             yield RunErrorEvent(
@@ -788,7 +804,8 @@ class ClaudeAgentAdapter:
         prompt alone keeps it stable for prompt caching. ``UserPromptSubmit``
         covers every run that submits a user prompt; a run that only carries a
         frontend tool result submits none, so the first ``PostToolUse`` (the
-        resumed call) carries it there.
+        resumed call) carries it there, or ``PostToolUseFailure`` when that
+        result is an error.
         """
         from claude_agent_sdk import HookMatcher
 
@@ -804,7 +821,7 @@ class ClaudeAgentAdapter:
             return hook
 
         hooks = dict(hooks or {})
-        for event_name in ("UserPromptSubmit", "PostToolUse"):
+        for event_name in ("UserPromptSubmit", "PostToolUse", "PostToolUseFailure"):
             hooks[event_name] = [*hooks.get(event_name, []), HookMatcher(hooks=[deliver(event_name)])]
         return hooks
 

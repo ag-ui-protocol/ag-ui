@@ -123,7 +123,9 @@ describe("state/context delivery", () => {
     ]);
   });
 
-  it("delivers context on a run that only carries a frontend tool result", async () => {
+  // A frontend tool result that is an error comes back from the MCP tool with
+  // isError, and the CLI then runs PostToolUseFailure instead of PostToolUse.
+  async function frontendToolResultOnlyRun(failed: boolean) {
     const call = { id: "confirm-call", name: "mcp__ag_ui__confirm", input: {} };
     const confirm = {
       name: "confirm",
@@ -187,13 +189,21 @@ describe("state/context delivery", () => {
         } finally {
           await client.close();
         }
+        expect(!!result.isError).toBe(failed);
         delivered.push(
-          await fire(options.hooks, "PostToolUse", {
-            tool_use_id: call.id,
-            tool_name: call.name,
-            tool_input: call.input,
-            tool_response: result.content,
-          }),
+          result.isError
+            ? await fire(options.hooks, "PostToolUseFailure", {
+                tool_use_id: call.id,
+                tool_name: call.name,
+                tool_input: call.input,
+                error: "declined",
+              })
+            : await fire(options.hooks, "PostToolUse", {
+                tool_use_id: call.id,
+                tool_name: call.name,
+                tool_input: call.input,
+                tool_response: result.content,
+              }),
         );
         yield {
           type: "user",
@@ -253,6 +263,7 @@ describe("state/context delivery", () => {
             role: "tool",
             toolCallId: call.id,
             content: "confirmed",
+            ...(failed ? { error: "declined" } : {}),
           },
         ],
       }),
@@ -263,7 +274,13 @@ describe("state/context delivery", () => {
     expect(runs).toBe(2);
     expect(delivered[0]).toContain("- Favorite color: red");
     expect(delivered[1]).toContain("- Favorite color: blue");
-  });
+  }
+
+  it("delivers context on a run that only carries a frontend tool result", () =>
+    frontendToolResultOnlyRun(false));
+
+  it("delivers context on a run that only carries a failed frontend tool result", () =>
+    frontendToolResultOnlyRun(true));
 });
 
 describe("ClaudeAgentAdapter.buildOptions state/context hooks", () => {
@@ -304,7 +321,30 @@ describe("ClaudeAgentAdapter.buildOptions state/context hooks", () => {
     expect(
       await fire(hooks, "PostToolUse", { tool_use_id: "t", tool_name: "Read" }),
     ).toBe("");
+    expect(
+      await fire(hooks, "PostToolUseFailure", {
+        tool_use_id: "t",
+        tool_name: "Read",
+        error: "e",
+      }),
+    ).toBe("");
     expect(await fire(hooks, "UserPromptSubmit", { prompt: "again" })).toBe("");
+  });
+
+  it("delivers context through a failed tool call's PostToolUseFailure", async () => {
+    const options = new ClaudeAgentAdapter().buildOptions(input);
+    const hooks = options.hooks as unknown as Hooks;
+
+    expect(
+      await fire(hooks, "PostToolUseFailure", {
+        tool_use_id: "t",
+        tool_name: "Read",
+        error: "e",
+      }),
+    ).toContain("- Favorite color: red");
+    expect(
+      await fire(hooks, "PostToolUse", { tool_use_id: "t", tool_name: "Read" }),
+    ).toBe("");
   });
 
   it("keeps hooks the caller configured", async () => {
@@ -313,6 +353,7 @@ describe("ClaudeAgentAdapter.buildOptions state/context hooks", () => {
       hooks: {
         UserPromptSubmit: [{ hooks: [own] }],
         PostToolUse: [{ matcher: "Read", hooks: [own] }],
+        PostToolUseFailure: [{ matcher: "Read", hooks: [own] }],
       },
     }).buildOptions(input);
 
@@ -320,6 +361,10 @@ describe("ClaudeAgentAdapter.buildOptions state/context hooks", () => {
     expect(options.hooks?.PostToolUse?.[0]).toMatchObject({ matcher: "Read" });
     expect(options.hooks?.UserPromptSubmit).toHaveLength(2);
     expect(options.hooks?.PostToolUse).toHaveLength(2);
+    expect(options.hooks?.PostToolUseFailure?.[0]).toMatchObject({
+      matcher: "Read",
+    });
+    expect(options.hooks?.PostToolUseFailure).toHaveLength(2);
   });
 
   it("adds no hooks when the run has no context or state", () => {

@@ -514,7 +514,8 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
  * Hooks run on fresh and resumed sessions alike, and leaving the system prompt
  * alone keeps it stable for prompt caching. `UserPromptSubmit` covers every run
  * that submits a user prompt; a run that only carries a frontend tool result
- * submits none, so the first `PostToolUse` (the resumed call) carries it there.
+ * submits none, so the first `PostToolUse` (the resumed call) carries it there,
+ * or `PostToolUseFailure` when that result is an error.
  */
 export function withStateContextHooks(
   hooks: Options["hooks"],
@@ -522,7 +523,9 @@ export function withStateContextHooks(
 ): NonNullable<Options["hooks"]> {
   let delivered = false;
   const deliver =
-    (hookEventName: "UserPromptSubmit" | "PostToolUse"): HookCallback =>
+    (
+      hookEventName: "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure",
+    ): HookCallback =>
     async () => {
       if (delivered) return {};
       delivered = true;
@@ -539,6 +542,10 @@ export function withStateContextHooks(
     PostToolUse: [
       ...(hooks?.PostToolUse ?? []),
       { hooks: [deliver("PostToolUse")] },
+    ],
+    PostToolUseFailure: [
+      ...(hooks?.PostToolUseFailure ?? []),
+      { hooks: [deliver("PostToolUseFailure")] },
     ],
   };
 }

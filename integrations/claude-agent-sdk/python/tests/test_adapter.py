@@ -1769,6 +1769,9 @@ class TestTaskActivityTeardown:
 
                 return _gen()
 
+            async def interrupt(self):
+                pass
+
             async def stop(self):
                 pass
 
