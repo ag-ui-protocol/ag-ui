@@ -680,6 +680,9 @@ const NEWER_SDK_FIELD_PLAN = {
   // eligible for it again. The config is plain data, so per-thread background
   // execution is set through threadAgentConfig instead.
   backgroundTasks: "notForwarded",
+  // Consumed by the tool registry; the Agent keeps no readable copy of the
+  // flag. Set it explicitly through threadAgentConfig instead.
+  sortTools: "notForwarded",
   // Both hold conversation-scoped data. Handing one instance to every thread
   // is the same hazard as sharing the conversation manager, so they are
   // dropped and recorded rather than cross-wired.
