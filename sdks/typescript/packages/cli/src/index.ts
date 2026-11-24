@@ -8,6 +8,7 @@ import { rewriteWorkspaceDependencies } from "./workspace-deps";
 import fs from "fs";
 import path from "path";
 import { downloadTemplate } from "giget";
+import { version } from "../package.json";
 
 const program = new Command();
 
@@ -189,7 +190,7 @@ async function handleCliClient() {
 }
 
 // Metadata
-program.name("create-ag-ui-app").description(description).version("0.0.36");
+program.name("create-ag-ui-app").description(description).version(version);
 
 // Add framework flags
 program
