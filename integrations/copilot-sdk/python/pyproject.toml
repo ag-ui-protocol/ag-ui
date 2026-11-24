@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Native GitHub Copilot SDK adapter for AG-UI"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "ag-ui-protocol>=1.0.0",
