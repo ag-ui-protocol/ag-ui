@@ -77,7 +77,8 @@ class _Thread:
     session: Any = None
     #: AG-UI toolCallId -> the suspended external tool call this process still holds.
     pending: dict[str, _Pending] = field(default_factory=dict)
-    sent_user_ids: set[str] = field(default_factory=set)
+    #: ``u:`` user ids and ``t:`` tool call ids the native session consumed; outlives dispose.
+    delivered: set[str] = field(default_factory=set)
     #: Native events and, tagged as ``{"type": "agui", "event": ...}``, handler-emitted ones.
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     state: Any = None
@@ -196,6 +197,8 @@ class CopilotAgent:
         self.run_timeout = run_timeout
         self.max_pending_tools = max_pending_tools
         self._threads: dict[str, _Thread] = {}
+        # ponytail: never pruned (a few ids per turn), like the native sessions it mirrors.
+        self._delivered: dict[str, set[str]] = {}
         # A disposed thread resumes its own native session, never another agent's.
         self._session_prefix = str(uuid.uuid4())
 
@@ -363,6 +366,7 @@ class CopilotAgent:
         )
         if not response.success:
             raise RuntimeError("Native pending tool call could not be resolved")
+        thread.delivered.add(f"t:{message.tool_call_id}")
 
     def _interrupt_outcome(self, thread: _Thread) -> RunFinishedInterruptOutcome | None:
         """Suspended interrupt tools turn the finish into an outcome the client must resume."""
@@ -395,6 +399,18 @@ class CopilotAgent:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.run_timeout
 
+        # A stale answer must not take a cache slot or tear down the live session's other pending calls.
+        known = self._threads.get(input_data.thread_id)
+        delivered = self._delivered.get(input_data.thread_id, set())
+        if any(
+            (known is None or entry.interrupt_id not in known.pending)
+            and f"t:{entry.interrupt_id}" not in delivered
+            for entry in input_data.resume or []
+        ):
+            yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
+            yield RunErrorEvent(message="Unknown or expired interrupt", code="COPILOT_SDK_ERROR")
+            return
+
         # Re-inserting keeps the dict in least-recently-used order.
         thread = self._threads.pop(input_data.thread_id, None)
         while thread is None and len(self._threads) >= MAX_THREADS:
@@ -414,7 +430,7 @@ class CopilotAgent:
             # A concurrent run for this thread may have opened it while we waited.
             thread = self._threads.pop(input_data.thread_id, None)
         if thread is None:
-            thread = _Thread()
+            thread = _Thread(delivered=self._delivered.setdefault(input_data.thread_id, set()))
         self._threads[input_data.thread_id] = thread
         if thread.busy:
             # Refuse outside the try below: its finally would release the active run's flag.
@@ -447,17 +463,13 @@ class CopilotAgent:
             last_user = users[-1] if users else None
             new_user = (
                 _user_input(last_user.content)
-                if last_user is not None and last_user.id not in thread.sent_user_ids
+                if last_user is not None and f"u:{last_user.id}" not in thread.delivered
                 else None
             )
 
             for entry in input_data.resume or []:
                 if entry.interrupt_id not in thread.pending:
-                    # A replayed resume for a call this live session already resolved is
-                    # a no-op; failing would dispose the session and every other pending call.
-                    if thread.session is not None:
-                        continue
-                    raise RuntimeError("Unknown or expired interrupt")
+                    continue  # A replay of an answer already delivered.
                 if not any(r.tool_call_id == entry.interrupt_id for r in results):
                     results.append(
                         ToolMessage(
@@ -476,6 +488,7 @@ class CopilotAgent:
                 thread.session is None
                 and input_data.messages
                 and input_data.messages[-1].role == "tool"
+                and f"t:{input_data.messages[-1].tool_call_id}" not in thread.delivered
             ):
                 raise RuntimeError("Pending tool session was lost; start a new thread")
             # Tools are fixed when a session opens: a new turn with a different tool
@@ -508,7 +521,6 @@ class CopilotAgent:
                     max(deadline - loop.time(), 0),
                 )
             elif new_user:
-                thread.sent_user_ids.add(last_user.id)
                 text, attachments = new_user
                 await asyncio.wait_for(
                     thread.session.send(
@@ -520,6 +532,9 @@ class CopilotAgent:
                     ),
                     max(deadline - loop.time(), 0),
                 )
+                # After the ack, so a failed send stays retryable.
+                # ponytail: a timed-out send that did arrive is sent again on retry.
+                thread.delivered.add(f"u:{last_user.id}")
             else:
                 # Nothing new to do: a replayed transcript with no unresolved work.
                 for event in thread.mapper.finish():

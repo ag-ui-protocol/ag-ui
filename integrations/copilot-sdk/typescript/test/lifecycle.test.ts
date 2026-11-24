@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { firstValueFrom, from } from "rxjs";
 import { EventType as E, type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { CopilotAgent } from "../src/index.js";
-import { FakeClient, FRONTEND_TOOL_TURN, TEXT_TURN, TOOLS, makeInput, run, type FakeSession, type Payload } from "./helpers.js";
+import { FakeClient, FakeSession, FRONTEND_TOOL_TURN, TEXT_TURN, TOOLS, makeInput, run, type Payload } from "./helpers.js";
 
 describe("session lifecycle", () => {
   it("L1+L2: resumes the native session after a failed run, despite resolved tool messages", async () => {
@@ -124,6 +124,71 @@ describe("session lifecycle", () => {
       }))).at(-1)!.type).toBe("RUN_FINISHED");
       expect(createSession).toHaveBeenCalledTimes(1);
       expect(session.resolved).toEqual(["req-1", "req-2"]);
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("S4: a retry after dispose neither re-sends a delivered prompt nor loses a failed one", async () => {
+    const script: Payload[] = [{ id: "cancel", type: "abort", data: {} }];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({ client, runTimeoutMs: 500 });
+    try {
+      const send = vi.spyOn(FakeSession.prototype, "send").mockRejectedValueOnce(new Error("send failed"));
+      expect((await run(agent, makeInput({ runId: "rejected" }))).at(-1)).toMatchObject({ type: "RUN_ERROR", message: "send failed" });
+      send.mockRestore();
+      expect((await run(agent, makeInput({ runId: "acked" }))).at(-1)).toMatchObject({ type: "RUN_ERROR", message: "Run cancelled" });
+      const acked = client.session!;
+      expect(acked.prompts).toEqual(["Say hello."]);
+
+      script.splice(0, script.length, ...TEXT_TURN);
+      expect((await run(agent, makeInput({ runId: "replay" }))).at(-1)!.type).toBe("RUN_FINISHED");
+      expect(client.session).not.toBe(acked);
+      expect(client.session!.prompts).toEqual([]);
+
+      // An acknowledged replay is not a new turn, so a broken resume must not delete history.
+      await agent.close();
+      client.resumeSession = async () => {
+        throw new Error("Session file is corrupt");
+      };
+      expect((await run(agent, makeInput({ runId: "corrupt" }))).at(-1)!.type).toBe("RUN_ERROR");
+      expect(client.deleted).toEqual([]);
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it("S5: rejects an expired interrupt without disturbing the live one", async () => {
+    const script: Payload[] = [...FRONTEND_TOOL_TURN, { id: "cancel", type: "abort", data: {} }];
+    const client = new FakeClient(script);
+    const agent = new CopilotAgent({
+      client, tools: TOOLS, interrupts: { change_background: (answer) => answer }, runTimeoutMs: 500,
+    });
+    try {
+      expect((await run(agent, makeInput())).at(-1)).toMatchObject({ type: "RUN_ERROR", message: "Run cancelled" });
+      script.splice(0, script.length, {
+        ...FRONTEND_TOOL_TURN[0]!, id: "second-call",
+        data: { ...FRONTEND_TOOL_TURN[0]!.data, toolCallId: "call-2", requestId: "req-2" },
+      });
+      const messages = [...makeInput().messages, { id: "u2", role: "user" as const, content: "Try again" }];
+      expect((await run(agent, makeInput({ runId: "new-turn", messages }))).at(-1)).toMatchObject({
+        type: "RUN_FINISHED", outcome: { type: "interrupt", interrupts: [{ id: "call-2" }] },
+      });
+      const session = client.session!;
+      expect((await run(agent, makeInput({
+        runId: "stale", messages, resume: [{ interruptId: "call-1", status: "resolved", payload: "ok" }],
+      }))).at(-1)).toMatchObject({ type: "RUN_ERROR", message: "Unknown or expired interrupt" });
+      expect(session.aborted).toBe(false);
+      expect((await run(agent, makeInput({
+        runId: "live", messages, resume: [{ interruptId: "call-2", status: "resolved", payload: "ok" }],
+      }))).at(-1)!.type).toBe("RUN_FINISHED");
+      expect(session.resolved).toEqual(["req-2"]);
+      // An acknowledged answer replayed after the session is disposed is a no-op, not a lost session.
+      await agent.close();
+      expect((await run(agent, makeInput({
+        runId: "replay", resume: [{ interruptId: "call-2", status: "resolved", payload: "ok" }],
+        messages: [...messages, { id: "r2", role: "tool", toolCallId: "call-2", content: "ok" }],
+      }))).at(-1)!.type).toBe("RUN_FINISHED");
     } finally {
       await agent.close();
     }

@@ -98,7 +98,8 @@ interface Thread {
   mapper: CopilotEventMapper;
   /** AG-UI toolCallId -> the suspended external tool call this process still holds. */
   pending: Map<string, PendingCall>;
-  sentUserIds: Set<string>;
+  /** `u:`user ids and `t:`tool call ids the native session consumed; outlives dispose like the session. */
+  delivered: Set<string>;
   events: Array<SessionEvent | EmittedEvent>;
   state: unknown;
   wake?: () => void;
@@ -189,6 +190,8 @@ function userInput(content: UserMessage["content"]): { text: string; attachments
  */
 export class CopilotAgent extends AbstractAgent {
   private readonly threads = new Map<string, Thread>();
+  // ponytail: never pruned (a few ids per turn), like the native sessions it mirrors.
+  private readonly delivered = new Map<string, Set<string>>();
   /** Shared with clones so a disposed thread resumes its own native session, never another agent's. */
   private readonly sessionPrefix = randomUUID();
   private readonly config: CopilotAgentConfig;
@@ -202,6 +205,7 @@ export class CopilotAgent extends AbstractAgent {
     return Object.assign(super.clone(), {
       config: this.config,
       threads: this.threads,
+      delivered: this.delivered,
       sessionPrefix: this.sessionPrefix,
     });
   }
@@ -251,6 +255,13 @@ export class CopilotAgent extends AbstractAgent {
     const deadline = Date.now() + timeoutMs;
 
     let thread = this.threads.get(input.threadId);
+    // A stale answer must not take a cache slot or tear down the live session's other pending calls.
+    const delivered = this.delivered.get(input.threadId);
+    if (input.resume?.some((entry) => !thread?.pending.has(entry.interruptId) && !delivered?.has(`t:${entry.interruptId}`))) {
+      yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+      yield { type: E.RUN_ERROR, message: "Unknown or expired interrupt", code: "COPILOT_SDK_ERROR" };
+      return;
+    }
     // Re-inserting keeps the Map in least-recently-used order.
     this.threads.delete(input.threadId);
     while (!thread && this.threads.size >= MAX_THREADS) {
@@ -268,10 +279,11 @@ export class CopilotAgent extends AbstractAgent {
       thread = this.threads.get(input.threadId);
       this.threads.delete(input.threadId);
     }
+    if (!this.delivered.has(input.threadId)) this.delivered.set(input.threadId, new Set());
     thread ??= {
       mapper: new CopilotEventMapper(),
       pending: new Map(),
-      sentUserIds: new Set(),
+      delivered: this.delivered.get(input.threadId)!,
       events: [],
       state: undefined,
       busy: false,
@@ -305,15 +317,10 @@ export class CopilotAgent extends AbstractAgent {
         .reverse()
         .find((message): message is UserMessage => message.role === "user");
       const newUser =
-        lastUser && !thread.sentUserIds.has(lastUser.id) ? userInput(lastUser.content) : undefined;
+        lastUser && !thread.delivered.has(`u:${lastUser.id}`) ? userInput(lastUser.content) : undefined;
 
       for (const entry of input.resume ?? []) {
-        if (!thread.pending.has(entry.interruptId)) {
-          // A replayed resume for a call this live session already resolved is a
-          // no-op; failing would dispose the session and every other pending call.
-          if (thread.session) continue;
-          throw new Error("Unknown or expired interrupt");
-        }
+        if (!thread.pending.has(entry.interruptId)) continue; // A replay of an answer already delivered.
         if (!results.some((result) => result.toolCallId === entry.interruptId)) {
           results.push({
             id: `resume:${entry.interruptId}`, role: "tool", toolCallId: entry.interruptId,
@@ -323,7 +330,8 @@ export class CopilotAgent extends AbstractAgent {
       }
       // Only a run that continues a tool call needs the old session; resolved
       // tool messages stay in the replayed transcript forever.
-      if (!thread.session && input.messages.at(-1)?.role === "tool") {
+      const tail = input.messages.at(-1);
+      if (!thread.session && tail && isToolMessage(tail) && !thread.delivered.has(`t:${tail.toolCallId}`)) {
         throw new Error("Pending tool session was lost; start a new thread");
       }
       // Tools are fixed when a session opens: a new turn with a different tool list
@@ -349,7 +357,6 @@ export class CopilotAgent extends AbstractAgent {
           "Pending tool resolution timed out",
         );
       } else if (newUser) {
-        thread.sentUserIds.add(lastUser!.id);
         const { text, attachments } = newUser;
         await this.withDeadline(
           thread.session.send({
@@ -359,6 +366,9 @@ export class CopilotAgent extends AbstractAgent {
           deadline,
           "Prompt dispatch timed out",
         );
+        // After the ack, so a failed send stays retryable.
+        // ponytail: a timed-out send that did arrive is sent again on retry.
+        thread.delivered.add(`u:${lastUser!.id}`);
       } else {
         // Nothing new to do: a replayed transcript with no unresolved work.
         yield* thread.mapper.finish();
@@ -538,6 +548,7 @@ export class CopilotAgent extends AbstractAgent {
           : JSON.stringify(content),
     });
     if (!response.success) throw new Error("Native pending tool call could not be resolved");
+    thread.delivered.add(`t:${result.toolCallId}`);
   }
 
   /**

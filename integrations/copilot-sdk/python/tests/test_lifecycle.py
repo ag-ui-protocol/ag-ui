@@ -4,8 +4,17 @@ import asyncio
 import inspect
 
 import pytest
+from ag_ui.core import ToolMessage
 from copilot import CopilotClient
-from test_agent import FRONTEND_TOOL_TURN, TEXT_TURN, FakeClient, FakeEvent, collect, make_input
+from test_agent import (
+    FRONTEND_TOOL_TURN,
+    TEXT_TURN,
+    FakeClient,
+    FakeEvent,
+    FakeSession,
+    collect,
+    make_input,
+)
 
 from ag_ui_copilot_sdk import CopilotAgent
 from ag_ui_copilot_sdk import agent as agent_module
@@ -155,6 +164,73 @@ async def test_s2_unresumable_session_is_deleted_and_recreated():
     assert client.deleted == [session_id] and client.stored == {session_id}
     assert client.session.prompts == ["Start over"]
     assert create_only.items() <= client.options.items()
+    await agent.close()
+
+
+async def test_s4_retry_after_dispose_neither_resends_nor_loses_the_prompt(monkeypatch):
+    client = FakeClient([{"id": "cancel", "type": "abort", "data": {}}])
+    agent = CopilotAgent(client, run_timeout=1)
+    send = FakeSession.send
+
+    async def reject_once(self, prompt, **kwargs):
+        monkeypatch.setattr(FakeSession, "send", send)
+        raise RuntimeError("send failed")
+
+    monkeypatch.setattr(FakeSession, "send", reject_once)
+    assert (await collect(agent, make_input(runId="rejected")))[-1].type == "RUN_ERROR"
+    assert (await collect(agent, make_input(runId="acked")))[-1].type == "RUN_ERROR"
+    acked = client.session
+    assert acked.prompts == ["Say hello."]
+
+    client._script = TEXT_TURN
+    replay = await collect(agent, make_input(runId="replay"))
+    assert replay[-1].type == "RUN_FINISHED", replay[-1]
+    assert client.session is not acked and client.session.prompts == []
+
+    # An acknowledged replay is not a new turn, so a broken resume must not delete history.
+    await agent.close()
+
+    async def corrupt_resume(session_id, **options):
+        raise RuntimeError("Session file is corrupt")
+
+    client.resume_session = corrupt_resume
+    assert (await collect(agent, make_input(runId="corrupt")))[-1].type == "RUN_ERROR"
+    assert client.deleted == []
+    await agent.close()
+
+
+async def test_s5_expired_interrupt_is_rejected_without_disturbing_the_live_one():
+    client = FakeClient([*FRONTEND_TOOL_TURN, {"id": "cancel", "type": "abort", "data": {}}])
+    agent = CopilotAgent(
+        client,
+        interrupts={"change_background": lambda answer, args: answer},
+        run_timeout=1,
+    )
+    assert (await collect(agent, make_input(tools=TOOLS)))[-1].type == "RUN_ERROR"
+    second = {**FRONTEND_TOOL_TURN[0], "id": "second-call"}
+    second["data"] = {**second["data"], "toolCallId": "call-2", "requestId": "req-2"}
+    client._script = [second]
+    messages = [USER, {"id": "u2", "role": "user", "content": "Try again"}]
+    turn = await collect(agent, make_input(runId="new-turn", tools=TOOLS, messages=messages))
+    assert [i.id for i in turn[-1].outcome.interrupts] == ["call-2"], turn[-1]
+    session = client.session
+
+    def answer(call_id: str, run_id: str):
+        resume = [{"interruptId": call_id, "status": "resolved", "payload": "ok"}]
+        return make_input(runId=run_id, tools=TOOLS, messages=messages, resume=resume)
+
+    stale = await collect(agent, answer("call-1", "stale"))
+    assert stale[-1].type == "RUN_ERROR" and stale[-1].message == "Unknown or expired interrupt"
+    assert not session.aborted
+    unknown = await collect(agent, make_input(threadId="t2", resume=answer("x", "x").resume))
+    assert unknown[-1].type == "RUN_ERROR" and "t2" not in agent._threads
+    assert (await collect(agent, answer("call-2", "live")))[-1].type == "RUN_FINISHED"
+    assert [request.request_id for request in session.resolved] == ["req-2"]
+    # An acknowledged answer replayed after the session is disposed is a no-op, not a lost session.
+    await agent.close()
+    replay = answer("call-2", "replay")
+    replay.messages.append(ToolMessage(id="r2", role="tool", tool_call_id="call-2", content="ok"))
+    assert (await collect(agent, replay))[-1].type == "RUN_FINISHED"
     await agent.close()
 
 
