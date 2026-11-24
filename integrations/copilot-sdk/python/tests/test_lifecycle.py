@@ -496,6 +496,28 @@ async def test_tools_changing_between_turns_reach_the_session():
     await agent.close()
 
 
+@pytest.mark.parametrize(
+    ("detach", "message"),
+    [("stall", "Session re-open timed out"), ("fail", "detach failed")],
+)
+async def test_reopen_fails_the_run_when_the_old_session_does_not_detach(detach, message):
+    client = FakeClient(TEXT_TURN)
+    agent = CopilotAgent(client, run_timeout=0.05)
+    await collect(agent, make_input())
+
+    async def disconnect() -> None:
+        if detach == "fail":
+            raise RuntimeError("detach failed")
+        await asyncio.sleep(0.2)
+
+    client.session.disconnect = disconnect
+    second = [{"id": "u2", "role": "user", "content": "Now change the background."}]
+    events = await collect(agent, make_input(runId="r2", tools=TOOLS, messages=second))
+    assert events[-1].type == "RUN_ERROR" and events[-1].message == message
+    assert client.resumed == []
+    await agent.close()
+
+
 async def test_thread_stays_reserved_until_failed_session_is_disconnected():
     client = FakeClient(TEXT_TURN, stall=True)
     closing = asyncio.Event()

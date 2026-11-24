@@ -381,7 +381,8 @@ describe("tools changing between turns", () => {
     client.session!.disconnect = () => new Promise((resolve) => setTimeout(resolve, 200));
     const second = [{ id: "u2", role: "user" as const, content: "Now change the background." }];
     const events = await run(agent, makeInput({ runId: "r2", tools: TOOLS, messages: second }));
-    expect(events.at(-1)?.type).toBe(E.RUN_ERROR);
+    expect(events.at(-1)).toMatchObject({ type: E.RUN_ERROR, message: "Session re-open timed out" });
+    expect(client.resumed).toEqual([]);
   });
 });
 

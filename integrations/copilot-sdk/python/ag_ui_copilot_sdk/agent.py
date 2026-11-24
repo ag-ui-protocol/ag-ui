@@ -521,10 +521,14 @@ class CopilotAgent:
                 and not thread.pending
                 and thread.tools != input_data.tools
             ):
+                # Resuming while the old connection may still deliver events could end
+                # the new run early, so a failed detach fails the run.
                 try:
-                    await asyncio.wait_for(thread.session.disconnect(), 5)
-                except Exception:  # noqa: BLE001, S110 -- cleanup is best effort.
-                    pass
+                    await asyncio.wait_for(
+                        thread.session.disconnect(), max(deadline - loop.time(), 0)
+                    )
+                except TimeoutError as exc:
+                    raise TimeoutError("Session re-open timed out") from exc
                 thread.session = None
                 thread.queue = asyncio.Queue()
             if thread.session is None:
