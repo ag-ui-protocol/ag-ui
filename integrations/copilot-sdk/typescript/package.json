@@ -11,7 +11,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist", "dist-example", "examples", "README.md"],
+  "files": ["dist/**", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build-example": "tsc -p tsconfig.example.json",
