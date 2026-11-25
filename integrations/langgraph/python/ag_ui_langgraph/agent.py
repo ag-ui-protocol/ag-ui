@@ -4361,6 +4361,8 @@ class LangGraphAgent:
 
         Existing run-config keys always win over forwarded ones, so
         adapter-owned values can never be overwritten from the frontend.
+        This deliberately differs from the TypeScript adapter, which is
+        last-wins and replaces ``configurable``; do not "restore parity".
         A malformed ``config`` value changes nothing; the run never fails
         because of what the frontend sent here.
         """
