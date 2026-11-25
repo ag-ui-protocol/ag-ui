@@ -462,22 +462,30 @@ void main() {
 
       test('accepts the exact line limit and rejects the next code unit',
           () async {
+        // Comment lines exercise the framing limit without using the data cap.
         final exact = SseParser(maxDataCodeUnits: 8);
         expect(exact.maxLineCodeUnits, 15);
-        expect(
-          (await exact
-                  .parseBytes(Stream.value(utf8.encode('data: 12345678')))
-                  .toList())
-              .single
-              .data,
-          '12345678',
-        );
+        final messages = await exact
+            .parseBytes(
+              Stream.value(utf8.encode(':12345678901234\ndata: ok\n\n')),
+            )
+            .toList();
+        expect(messages.map((message) => message.data), ['ok']);
 
         await expectLater(
           SseParser(maxDataCodeUnits: 8).parseBytes(
-            Stream.value(utf8.encode('data: 123456789')),
+            Stream.value(utf8.encode(':123456789012345\ndata: ok\n\n')),
           ),
-          emitsError(isA<FormatException>()),
+          emitsInOrder([
+            emitsError(
+              isA<FormatException>().having(
+                (error) => error.message,
+                'message',
+                'SSE line exceeds 15-code-unit limit',
+              ),
+            ),
+            emitsDone,
+          ]),
         );
       });
 
@@ -510,6 +518,25 @@ void main() {
               )
               .toList();
           expect(messages.single.data, '😀', reason: 'split $split');
+        }
+      });
+
+      test('keeps multiline data in one event across CRLF splits', () async {
+        final bytes = utf8.encode('data: a\r\ndata: b\r\n\r\n');
+        for (var split = 0; split <= bytes.length; split++) {
+          final messages = await SseParser()
+              .parseBytes(
+                Stream.fromIterable([
+                  bytes.sublist(0, split),
+                  bytes.sublist(split),
+                ]),
+              )
+              .toList();
+          expect(
+            messages.map((message) => message.data),
+            ['a\nb'],
+            reason: 'split $split',
+          );
         }
       });
 
