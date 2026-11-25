@@ -8,6 +8,18 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
+class _CallbackBackoff implements BackoffStrategy {
+  _CallbackBackoff(this.delay);
+
+  final Duration Function() delay;
+
+  @override
+  Duration nextDelay(int attempt) => delay();
+
+  @override
+  void reset() {}
+}
+
 void main() {
   group('SseClient connection lifecycle', () {
     final oldUrl = Uri.parse('https://synthetic.invalid/old');
@@ -33,12 +45,29 @@ void main() {
           200,
         );
       });
+      const retryDelay = Duration(milliseconds: 17);
       final client = SseClient(
         httpClient: transport,
-        backoffStrategy: const ConstantBackoff(Duration.zero),
+        backoffStrategy: const ConstantBackoff(retryDelay),
       );
       final oldEvent = Completer<SseMessage>();
-      final first = client.connect(oldUrl).listen(oldEvent.complete);
+      final retryEntered = Completer<void>();
+      final first = runZoned(
+        () => client.connect(oldUrl).listen(oldEvent.complete),
+        zoneSpecification: ZoneSpecification(
+          createTimer: (self, parent, zone, duration, callback) {
+            if (duration != retryDelay) {
+              return parent.createTimer(zone, duration, callback);
+            }
+            return parent.createTimer(zone, Duration.zero, () {
+              callback();
+              if (!retryEntered.isCompleted) {
+                retryEntered.complete();
+              }
+            });
+          },
+        ),
+      );
       StreamSubscription<SseMessage>? second;
       addTearDown(() async {
         if (!releaseCancellation.isCompleted) {
@@ -56,9 +85,7 @@ void main() {
       expect((await oldEvent.future.timeout(timeout)).data, 'from-old');
       oldBody.add([0xFF]);
       await cancellationStarted.future.timeout(timeout);
-      // Let the zero-delay retry enter its pending subscription cancellation.
-      await Future<void>.delayed(Duration.zero);
-      await Future<void>.delayed(Duration.zero);
+      await retryEntered.future.timeout(timeout);
       expect(requests.map((request) => request.url), [oldUrl]);
 
       final newEvent = Completer<SseMessage>();
@@ -135,6 +162,143 @@ void main() {
       expect(requests, [oldUrl, newUrl]);
       expect(received, ['from-new']);
       expect(client.isConnected, isTrue);
+    });
+
+    for (final pauseListener in [false, true]) {
+      test(
+          'close completes with a ${pauseListener ? 'paused' : 'missing'} '
+          'listener', () async {
+        final bodyStarted = Completer<void>();
+        final bodyCancelled = Completer<void>();
+        final body = StreamController<List<int>>(
+          onListen: bodyStarted.complete,
+          onCancel: bodyCancelled.complete,
+        );
+        final transport = MockClient.streaming(
+          (_, __) async => http.StreamedResponse(body.stream, 200),
+        );
+        final client = SseClient(httpClient: transport);
+        final stream = client.connect(oldUrl);
+        final done = Completer<void>();
+        final listener = pauseListener
+            ? (stream.listen((_) {}, onDone: done.complete)..pause())
+            : null;
+        addTearDown(() async {
+          if (listener == null && !done.isCompleted) {
+            await stream.drain<void>();
+          } else {
+            await listener?.cancel();
+          }
+          await client.close();
+          unawaited(body.close());
+          transport.close();
+        });
+
+        await bodyStarted.future.timeout(timeout);
+        await client.close().timeout(timeout);
+        expect(bodyCancelled.isCompleted, isTrue);
+        expect(client.isConnected, isFalse);
+        if (listener == null) {
+          await stream.drain<void>().timeout(timeout);
+          done.complete();
+        } else {
+          expect(done.isCompleted, isFalse);
+          listener.resume();
+          await done.future.timeout(timeout);
+        }
+      });
+    }
+
+    test('timeout unblocks await for and cancels the eventual response',
+        () async {
+      final lateResponse = Completer<http.StreamedResponse>();
+      final lateBodyCancelled = Completer<void>();
+      final lateBody = StreamController<List<int>>(
+        onCancel: lateBodyCancelled.complete,
+      );
+      final freshBody = StreamController<List<int>>();
+      final transport = MockClient.streaming((request, _) async {
+        if (request.url == oldUrl) {
+          return lateResponse.future;
+        }
+        return http.StreamedResponse(freshBody.stream, 200);
+      });
+      final client = SseClient(httpClient: transport);
+      addTearDown(() async {
+        if (!lateResponse.isCompleted) {
+          lateResponse.complete(http.StreamedResponse(lateBody.stream, 200));
+        }
+        unawaited(lateBody.close());
+        unawaited(freshBody.close());
+        transport.close();
+      });
+
+      Future<void> consume() async {
+        await for (final _ in client.connect(oldUrl,
+            requestTimeout: const Duration(milliseconds: 10))) {
+          fail('timed-out request emitted a message');
+        }
+      }
+
+      await expectLater(
+          consume().timeout(timeout),
+          throwsA(isA<TimeoutException>().having(
+            (error) => error.duration,
+            'duration',
+            const Duration(milliseconds: 10),
+          )));
+      final freshEvent = client
+          .connect(newUrl, requestTimeout: timeout)
+          .first
+          .timeout(timeout);
+      lateBody.add(utf8.encode('data: stale\n\n'));
+      lateResponse.complete(http.StreamedResponse(lateBody.stream, 200));
+      freshBody.add(utf8.encode('data: fresh\n\n'));
+      await lateBodyCancelled.future.timeout(timeout);
+      expect((await freshEvent).data, 'fresh');
+      await client.close().timeout(timeout);
+    });
+
+    test('backoff that closes an old session cannot block a new retry',
+        () async {
+      final requests = <Uri>[];
+      final reopened = Completer<void>();
+      final activeBody = StreamController<List<int>>();
+      final transport = MockClient.streaming((request, _) async {
+        requests.add(request.url);
+        if (requests.length == 3) {
+          return http.StreamedResponse(activeBody.stream, 200);
+        }
+        return http.StreamedResponse(const Stream<List<int>>.empty(), 200);
+      });
+      late SseClient client;
+      var backoffCalls = 0;
+      client = SseClient(
+        httpClient: transport,
+        backoffStrategy: _CallbackBackoff(() {
+          if (backoffCalls++ == 0) {
+            unawaited(client.close().then(reopened.complete));
+            return const Duration(seconds: 30);
+          }
+          return Duration.zero;
+        }),
+      );
+      final first = client.connect(oldUrl).listen((_) {});
+      StreamSubscription<SseMessage>? second;
+      addTearDown(() async {
+        await first.cancel();
+        await second?.cancel();
+        await client.close();
+        unawaited(activeBody.close());
+        transport.close();
+      });
+      await reopened.future.timeout(timeout);
+      final message = Completer<SseMessage>();
+      second = client.connect(newUrl).listen(message.complete);
+      activeBody.add(utf8.encode('data: recovered\n\n'));
+      expect((await message.future.timeout(timeout)).data, 'recovered');
+      expect(requests, [oldUrl, newUrl, newUrl]);
+      expect(backoffCalls, 2);
     });
   });
 

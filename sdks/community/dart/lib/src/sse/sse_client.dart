@@ -160,12 +160,22 @@ class SseClient {
       // Send the request with optional timeout
       final responseFuture = _httpClient.send(request);
       final response = requestTimeout != null
-          ? await responseFuture.timeout(requestTimeout)
+          ? await responseFuture.timeout(
+              requestTimeout,
+              onTimeout: () {
+                // A Future timeout does not cancel the underlying HTTP request.
+                unawaited(responseFuture.then<void>(
+                  _discardResponse,
+                  onError: (Object _, StackTrace __) {},
+                ));
+                throw TimeoutException('Future not completed', requestTimeout);
+              },
+            )
           : await responseFuture;
 
       if (!_isCurrent(controller)) {
         // The HTTP client may finish an old request after this session closed.
-        await response.stream.listen((_) {}, onError: (Object _) {}).cancel();
+        await _discardResponse(response);
         return;
       }
       _currentResponse = response;
@@ -241,6 +251,14 @@ class SseClient {
   // The controller identifies a single public connect()/close() session.
   bool _isCurrent(StreamController<SseMessage> controller) =>
       !_isClosed && identical(_controller, controller);
+
+  Future<void> _discardResponse(http.StreamedResponse response) async {
+    try {
+      await response.stream.listen((_) {}, onError: (Object _) {}).cancel();
+    } on Object {
+      // An abandoned response must not affect the active connection.
+    }
+  }
 
   /// Reset the idle timer.
   void _resetIdleTimer(StreamController<SseMessage> controller) {
@@ -318,6 +336,10 @@ class SseClient {
     _reconnectAttempt++;
     final delay =
         _serverRetryDuration ?? _backoffStrategy.nextDelay(_reconnectAttempt);
+    // A caller-supplied strategy may synchronously close this connection.
+    if (!_isCurrent(controller)) {
+      return;
+    }
 
     // Schedule reconnection. Store the timer so close() can cancel it and
     // avoid a connect() call racing against a concurrent close().
@@ -352,16 +374,15 @@ class SseClient {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     try {
-      try {
-        await _subscription?.cancel();
-      } finally {
-        _subscription = null;
-        _currentResponse = null;
-        await _controller?.close();
-      }
+      await _subscription?.cancel();
     } finally {
+      final controller = _controller;
+      _subscription = null;
+      _currentResponse = null;
       _controller = null;
       _closing = null;
+      // A paused or absent consumer cannot hold transport cleanup open.
+      unawaited(controller?.close());
       _backoffStrategy.reset();
     }
   }
