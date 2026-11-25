@@ -29,3 +29,11 @@ export const DEFAULT_TURN_TIMEOUT_MS = 5 * 60 * 1000;
  * that a stalled connection cannot hold the thread's run gate open.
  */
 export const BEST_EFFORT_SEND_TIMEOUT_MS = 15_000;
+/**
+ * The previews a turn's stream asks for. "agent.thinking" opts into the live
+ * thinking indicator (event_start); thinking carries no text deltas today.
+ */
+export const STREAM_DELTA_TYPES: ("agent.message" | "agent.thinking")[] = [
+  "agent.message",
+  "agent.thinking",
+];

@@ -10,6 +10,7 @@ import type { BaseEvent } from "@ag-ui/client";
 import type { SessionRecord } from "./types";
 import { textOf } from "./text";
 import { toolContent } from "./content";
+import { STREAM_DELTA_TYPES } from "./constants";
 
 export class RecoveryError extends Error {
   constructor(
@@ -34,6 +35,7 @@ export async function recoverSession(
   knownToolCalls: Set<string> = new Set(),
   clientTools: Map<string, string> = new Map(),
   knownMessages: Map<string, unknown> = new Map(),
+  options: { streamDeltas?: boolean } = {},
 ) {
   if (record.ended)
     throw new RecoveryError(
@@ -52,15 +54,20 @@ export async function recoverSession(
         "session_ended",
         "The original managed session has ended.",
       );
+    // A follow-up turn on an existing thread runs through recovery too, so it
+    // asks for the same previews a first turn does.
+    const deltas = options.streamDeltas
+      ? { event_deltas: STREAM_DELTA_TYPES }
+      : {};
     stream = record.sessionThreadId
       ? await client.beta.sessions.threads.events.stream(
           record.sessionThreadId,
-          { session_id: record.sessionId },
+          { session_id: record.sessionId, ...deltas },
           { signal },
         )
       : await client.beta.sessions.events.stream(
           record.sessionId,
-          {},
+          deltas,
           { signal },
         );
     const history = record.sessionThreadId
@@ -218,8 +225,18 @@ export async function recoverSession(
         controller: opened.controller,
         async *[Symbol.asyncIterator]() {
           for await (const event of opened) {
-            if (event.type === "event_start" || event.type === "event_delta")
+            // A preview is passed on only for a message history has not
+            // already replayed whole; previews carry no id of their own.
+            if (event.type === "event_start") {
+              if (options.streamDeltas && !seen.has(event.event.id))
+                yield event;
               continue;
+            }
+            if (event.type === "event_delta") {
+              if (options.streamDeltas && !seen.has(event.event_id))
+                yield event;
+              continue;
+            }
             if (seen.has(event.id)) continue;
             seen.add(event.id);
             yield event;
