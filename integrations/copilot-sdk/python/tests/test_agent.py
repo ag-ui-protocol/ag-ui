@@ -6,6 +6,8 @@ import asyncio
 import inspect
 import json
 import re
+import subprocess
+import sys
 from copy import deepcopy
 from typing import Any
 
@@ -293,6 +295,17 @@ def test_fastapi_endpoint_streams_sse():
         response = http.post("/agentic_chat", json=make_input().model_dump(by_alias=True))
         assert response.status_code == 200
         assert "RUN_FINISHED" in response.text
+
+
+def test_base_import_does_not_require_fastapi():
+    code = (
+        "import sys; sys.modules['fastapi'] = None\n"
+        "from ag_ui_copilot_sdk import CopilotAgent, EventMapper\n"
+        "import ag_ui_copilot_sdk as m\n"
+        "try:\n    m.add_copilot_fastapi_endpoint\nexcept ImportError:\n    pass\n"
+        "else:\n    raise SystemExit('endpoint loaded without fastapi')\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 @pytest.mark.parametrize("kind", ["tool.execution_start", "external_tool.requested"])
