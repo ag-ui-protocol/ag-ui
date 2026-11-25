@@ -66,3 +66,28 @@ func TestPatchPathPresenceResetsWhenDecodingAgain(t *testing.T) {
 	require.NoError(t, validateJSONPatchOperation(operation))
 	require.Error(t, json.Unmarshal([]byte(`{"op":"replace","value":{}}`), &operation))
 }
+
+func TestPatchValueWirePresence(t *testing.T) {
+	for _, container := range []struct {
+		name   string
+		prefix string
+	}{
+		{"state", `{"type":"STATE_DELTA","delta":`},
+		{"activity", `{"type":"ACTIVITY_DELTA","messageId":"m","activityType":"a","patch":`},
+	} {
+		for _, op := range []string{"add", "replace", "test"} {
+			t.Run(container.name+"/"+op, func(t *testing.T) {
+				operation := `[{"op":"` + op + `","path":""`
+				_, err := EventFromJSON([]byte(container.prefix + operation + `}]}`))
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "value field is required")
+				event, err := EventFromJSON([]byte(container.prefix + operation + `,"value":null}]}`))
+				require.NoError(t, err)
+				require.NoError(t, event.Validate())
+				encoded, err := event.ToJSON()
+				require.NoError(t, err)
+				require.Contains(t, string(encoded), `"value":null`)
+			})
+		}
+	}
+}

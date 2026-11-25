@@ -26,6 +26,9 @@ func (op *JSONPatchOperation) UnmarshalJSON(data []byte) error {
 	if (decoded.Op == "add" || decoded.Op == "replace" || decoded.Op == "test") && fields.Value == nil {
 		return fmt.Errorf("value field is required for %s operation", decoded.Op)
 	}
+	if decoded.Value == nil && fields.Value != nil {
+		decoded.Value = fields.Value
+	}
 	*op = JSONPatchOperation(decoded)
 	return nil
 }
