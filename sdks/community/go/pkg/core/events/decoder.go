@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/internal/wire"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,6 +29,13 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 	if !isValidEventType(eventType) {
 		ed.logger.WithField("event", eventName).Warn("Unknown event type")
 		return nil, fmt.Errorf("unknown event type: %s", eventName)
+	}
+
+	switch eventType {
+	case EventTypeTextMessageContent, EventTypeToolCallArgs, EventTypeReasoningMessageContent:
+		if err := wire.RequireContentDelta(data); err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", eventType, err)
+		}
 	}
 
 	// Decode based on event type

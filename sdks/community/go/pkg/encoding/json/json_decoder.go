@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/internal/wire"
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding"
 )
@@ -248,7 +249,9 @@ func (d *JSONDecoder) createEvent(eventType events.EventType, data []byte) (even
 
 	case events.EventTypeTextMessageContent:
 		var e events.TextMessageContentEvent
-		err = decoder.Decode(&e)
+		if err = wire.RequireContentDelta(data); err == nil {
+			err = decoder.Decode(&e)
+		}
 		if err == nil {
 			event = &e
 		}
@@ -269,7 +272,9 @@ func (d *JSONDecoder) createEvent(eventType events.EventType, data []byte) (even
 
 	case events.EventTypeToolCallArgs:
 		var e events.ToolCallArgsEvent
-		err = decoder.Decode(&e)
+		if err = wire.RequireContentDelta(data); err == nil {
+			err = decoder.Decode(&e)
+		}
 		if err == nil {
 			event = &e
 		}
