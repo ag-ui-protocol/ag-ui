@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/internal/wire"
 	"github.com/sirupsen/logrus"
 )
 
@@ -117,6 +118,9 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 		return &evt, nil
 
 	case EventTypeStateDelta:
+		if err := wire.RequirePatchFields(data, "delta"); err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", eventType, err)
+		}
 		var evt StateDeltaEvent
 		if err := json.Unmarshal(data, &evt); err != nil {
 			return nil, fmt.Errorf("failed to decode STATE_DELTA: %w", err)
@@ -138,6 +142,9 @@ func (ed *EventDecoder) DecodeEvent(eventName string, data []byte) (Event, error
 		return &evt, nil
 
 	case EventTypeActivityDelta:
+		if err := wire.RequirePatchFields(data, "patch"); err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", eventType, err)
+		}
 		var evt ActivityDeltaEvent
 		if err := json.Unmarshal(data, &evt); err != nil {
 			return nil, fmt.Errorf("failed to decode ACTIVITY_DELTA: %w", err)

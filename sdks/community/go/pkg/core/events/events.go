@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/internal/wire"
 	"github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/types"
 )
 
@@ -55,19 +56,19 @@ const (
 
 	// Reasoning events support the reasoning message lifecycle.
 	// EventTypeReasoningStart marks the start of a reasoning phase.
-	EventTypeReasoningStart              EventType = "REASONING_START"
+	EventTypeReasoningStart EventType = "REASONING_START"
 	// EventTypeReasoningMessageStart signals the start of a reasoning message.
-	EventTypeReasoningMessageStart       EventType = "REASONING_MESSAGE_START"
+	EventTypeReasoningMessageStart EventType = "REASONING_MESSAGE_START"
 	// EventTypeReasoningMessageContent represents a chunk of reasoning message content.
-	EventTypeReasoningMessageContent     EventType = "REASONING_MESSAGE_CONTENT"
+	EventTypeReasoningMessageContent EventType = "REASONING_MESSAGE_CONTENT"
 	// EventTypeReasoningMessageEnd signals the end of a reasoning message.
-	EventTypeReasoningMessageEnd         EventType = "REASONING_MESSAGE_END"
+	EventTypeReasoningMessageEnd EventType = "REASONING_MESSAGE_END"
 	// EventTypeReasoningMessageChunk is a convenience event that streams reasoning message chunks.
-	EventTypeReasoningMessageChunk       EventType = "REASONING_MESSAGE_CHUNK"
+	EventTypeReasoningMessageChunk EventType = "REASONING_MESSAGE_CHUNK"
 	// EventTypeReasoningEnd marks the end of a reasoning phase.
-	EventTypeReasoningEnd                EventType = "REASONING_END"
+	EventTypeReasoningEnd EventType = "REASONING_END"
 	// EventTypeReasoningEncryptedValue attaches an encrypted reasoning value.
-	EventTypeReasoningEncryptedValue     EventType = "REASONING_ENCRYPTED_VALUE"
+	EventTypeReasoningEncryptedValue EventType = "REASONING_ENCRYPTED_VALUE"
 
 	// Subagent events attribute a segment of the stream to a nested agent.
 	// EventTypeSubagentStarted indicates a subagent has started within the run.
@@ -518,12 +519,18 @@ func EventFromJSON(data []byte) (Event, error) {
 	case EventTypeStateSnapshot:
 		event = &StateSnapshotEvent{}
 	case EventTypeStateDelta:
+		if err := wire.RequirePatchFields(data, "delta"); err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", base.Type, err)
+		}
 		event = &StateDeltaEvent{}
 	case EventTypeMessagesSnapshot:
 		event = &MessagesSnapshotEvent{}
 	case EventTypeActivitySnapshot:
 		event = &ActivitySnapshotEvent{}
 	case EventTypeActivityDelta:
+		if err := wire.RequirePatchFields(data, "patch"); err != nil {
+			return nil, fmt.Errorf("failed to decode %s: %w", base.Type, err)
+		}
 		event = &ActivityDeltaEvent{}
 	case EventTypeRaw:
 		event = &RawEvent{}

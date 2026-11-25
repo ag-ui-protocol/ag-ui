@@ -1,7 +1,6 @@
 package events
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -61,9 +60,15 @@ func TestConstructedNullPatchValuesRemainValid(t *testing.T) {
 	}
 }
 
-func TestPatchValuePresenceResetsWhenDecodingAgain(t *testing.T) {
-	var operation JSONPatchOperation
-	require.NoError(t, json.Unmarshal([]byte(`{"op":"add","path":"/x","value":null}`), &operation))
-	require.NoError(t, validateJSONPatchOperation(operation))
-	require.Error(t, json.Unmarshal([]byte(`{"op":"add","path":"/x"}`), &operation))
+func TestPatchValuePresenceIsCheckedOnEveryEvent(t *testing.T) {
+	decoder := NewEventDecoder(nil)
+	event, err := decoder.DecodeEvent("STATE_DELTA", []byte(
+		`{"type":"STATE_DELTA","delta":[{"op":"add","path":"/x","value":null}]}`,
+	))
+	require.NoError(t, err)
+	require.NoError(t, event.Validate())
+	_, err = decoder.DecodeEvent("STATE_DELTA", []byte(
+		`{"type":"STATE_DELTA","delta":[{"op":"add","path":"/x"}]}`,
+	))
+	require.Error(t, err)
 }
