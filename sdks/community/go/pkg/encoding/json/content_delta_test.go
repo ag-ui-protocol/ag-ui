@@ -31,7 +31,7 @@ func TestContentDeltaStrictFields(t *testing.T) {
 			require.Contains(t, err.Error(), "unknown field")
 			_, err = permissive.Decode(context.Background(), data)
 			require.NoError(t, err)
-			for _, field := range []string{"", `,"delta":null`, `,"delta":42`} {
+			for _, field := range []string{"", `,"delta":null`, `,"delta":42`, `,"Delta":""`} {
 				malformed := []byte(fmt.Sprintf(`{"type":%q,%q:"id"%s}`, fixture.eventType, fixture.id, field))
 				_, err := strict.Decode(context.Background(), malformed)
 				require.Error(t, err)

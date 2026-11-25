@@ -22,6 +22,7 @@ func TestContentDeltaWirePresence(t *testing.T) {
 			valid bool
 		}{
 			{"missing", "", false},
+			{"uppercase_key", `,"Delta":""`, false},
 			{"null", `,"delta":null`, false},
 			{"number", `,"delta":42`, false},
 			{"empty", `,"delta":""`, true},
