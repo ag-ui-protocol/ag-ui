@@ -1,10 +1,143 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:ag_ui/src/sse/backoff_strategy.dart';
 import 'package:ag_ui/src/sse/sse_client.dart';
+import 'package:ag_ui/src/sse/sse_message.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('SseClient connection lifecycle', () {
+    final oldUrl = Uri.parse('https://synthetic.invalid/old');
+    final newUrl = Uri.parse('https://synthetic.invalid/new');
+    const timeout = Duration(seconds: 3);
+
+    test('close waits for retry cleanup and reopen uses only the new endpoint',
+        () async {
+      final cancellationStarted = Completer<void>();
+      final releaseCancellation = Completer<void>();
+      final oldBody = StreamController<List<int>>(
+        onCancel: () {
+          cancellationStarted.complete();
+          return releaseCancellation.future;
+        },
+      );
+      final newBody = StreamController<List<int>>();
+      final requests = <http.BaseRequest>[];
+      final transport = MockClient.streaming((request, _) async {
+        requests.add(request);
+        return http.StreamedResponse(
+          requests.length == 1 ? oldBody.stream : newBody.stream,
+          200,
+        );
+      });
+      final client = SseClient(
+        httpClient: transport,
+        backoffStrategy: const ConstantBackoff(Duration.zero),
+      );
+      final oldEvent = Completer<SseMessage>();
+      final first = client.connect(oldUrl).listen(oldEvent.complete);
+      StreamSubscription<SseMessage>? second;
+      addTearDown(() async {
+        if (!releaseCancellation.isCompleted) {
+          releaseCancellation.complete();
+        }
+        await first.cancel();
+        await second?.cancel();
+        await client.close();
+        unawaited(oldBody.close());
+        unawaited(newBody.close());
+        transport.close();
+      });
+
+      oldBody.add(utf8.encode('id: old-id\ndata: from-old\n\n'));
+      expect((await oldEvent.future.timeout(timeout)).data, 'from-old');
+      oldBody.add([0xFF]);
+      await cancellationStarted.future.timeout(timeout);
+      // Let the zero-delay retry enter its pending subscription cancellation.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(requests.map((request) => request.url), [oldUrl]);
+
+      final newEvent = Completer<SseMessage>();
+      var closed = false;
+      var secondCloseReturned = false;
+      final closing = client.close().then((_) => closed = true);
+      final alsoClosing =
+          client.close().then((_) => secondCloseReturned = true);
+      final reopen = Future.wait([closing, alsoClosing]).then((_) {
+        second = client.connect(newUrl).listen(newEvent.complete);
+      });
+      await Future<void>.delayed(Duration.zero);
+      final closedBeforeCleanup = closed || secondCloseReturned;
+      releaseCancellation.complete();
+      await reopen.timeout(timeout);
+      newBody.add(utf8.encode('data: from-reopen\n\n'));
+      expect((await newEvent.future.timeout(timeout)).data, 'from-reopen');
+      expect(requests.map((request) => request.url), [oldUrl, newUrl]);
+      expect(requests.last.headers['last-event-id'], isNull);
+      expect(closedBeforeCleanup, isFalse);
+    });
+
+    test('a late HTTP response cannot deliver events after close and reopen',
+        () async {
+      final sentOldRequest = Completer<void>();
+      final sentNewRequest = Completer<void>();
+      final oldResponse = Completer<http.StreamedResponse>();
+      final oldBodyCancelled = Completer<void>();
+      final oldBody = StreamController<List<int>>(
+        onCancel: oldBodyCancelled.complete,
+      );
+      final newBody = StreamController<List<int>>();
+      final requests = <Uri>[];
+      final transport = MockClient.streaming((request, _) async {
+        requests.add(request.url);
+        if (request.url == oldUrl) {
+          sentOldRequest.complete();
+          return oldResponse.future;
+        }
+        sentNewRequest.complete();
+        return http.StreamedResponse(newBody.stream, 200);
+      });
+      final client = SseClient(httpClient: transport);
+      final first = client.connect(oldUrl).listen((_) {});
+      StreamSubscription<SseMessage>? second;
+      addTearDown(() async {
+        if (!oldResponse.isCompleted) {
+          oldResponse.complete(http.StreamedResponse(oldBody.stream, 200));
+        }
+        await first.cancel();
+        await second?.cancel();
+        await client.close();
+        unawaited(oldBody.close());
+        unawaited(newBody.close());
+        transport.close();
+      });
+
+      await sentOldRequest.future.timeout(timeout);
+      await client.close().timeout(timeout);
+      final received = <String?>[];
+      final newEvent = Completer<void>();
+      second = client.connect(newUrl).listen((message) {
+        received.add(message.data);
+        if (message.data == 'from-new') {
+          newEvent.complete();
+        }
+      });
+      await sentNewRequest.future.timeout(timeout);
+      oldBody.add(utf8.encode('data: stale\n\n'));
+      oldResponse.complete(http.StreamedResponse(oldBody.stream, 200));
+      newBody.add(utf8.encode('data: from-new\n\n'));
+      await newEvent.future.timeout(timeout);
+      await oldBodyCancelled.future.timeout(timeout);
+      expect(requests, [oldUrl, newUrl]);
+      expect(received, ['from-new']);
+      expect(client.isConnected, isTrue);
+    });
+  });
+
   group('SseClient Stream Parsing', () {
     test('resolves and forwards the line limit', () async {
       final derived = SseClient(maxDataCodeUnits: 8);

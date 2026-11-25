@@ -26,6 +26,7 @@ class SseClient {
 
   StreamController<SseMessage>? _controller;
   StreamSubscription<SseMessage>? _subscription;
+  Future<void>? _closing;
   http.StreamedResponse? _currentResponse;
   Timer? _idleTimer;
   Timer? _reconnectTimer;
@@ -80,14 +81,22 @@ class SseClient {
     }
 
     _isClosed = false;
-    _controller = StreamController<SseMessage>(
-      onCancel: () => close(),
-    );
+    _lastEventId = null;
+    _serverRetryDuration = null;
+    _hasEverConnected = false;
+    _reconnectAttempt = 0;
+    final controller = StreamController<SseMessage>();
+    _controller = controller;
+    controller.onCancel = () async {
+      if (_isCurrent(controller)) {
+        await close();
+      }
+    };
 
     // Start the connection
     _connect(url, headers, requestTimeout);
 
-    return _controller!.stream;
+    return controller.stream;
   }
 
   /// Parse an existing byte stream as SSE messages.
@@ -116,18 +125,21 @@ class SseClient {
     Map<String, String>? headers,
     Duration? requestTimeout,
   ) async {
-    if (_isClosed || _isConnecting) return;
+    final controller = _controller;
+    if (controller == null || !_isCurrent(controller) || _isConnecting) {
+      return;
+    }
 
     _isConnecting = true;
 
     try {
-      final previousSubscription = _subscription;
-      _subscription = null;
-      await previousSubscription?.cancel();
-      if (_isClosed) {
-        _isConnecting = false;
+      // Keep the subscription reachable until cancellation finishes so close()
+      // can await the same cleanup while a retry is suspended here.
+      await _subscription?.cancel();
+      if (!_isCurrent(controller)) {
         return;
       }
+      _subscription = null;
 
       // Prepare headers
       final requestHeaders = <String, String>{
@@ -151,6 +163,11 @@ class SseClient {
           ? await responseFuture.timeout(requestTimeout)
           : await responseFuture;
 
+      if (!_isCurrent(controller)) {
+        // The HTTP client may finish an old request after this session closed.
+        await response.stream.listen((_) {}, onError: (Object _) {}).cancel();
+        return;
+      }
       _currentResponse = response;
 
       // Check for successful response
@@ -171,7 +188,7 @@ class SseClient {
       );
 
       // Set up idle timeout
-      _resetIdleTimer();
+      _resetIdleTimer(controller);
 
       // Parse the stream
       final messageStream = parser.parseBytes(response.stream);
@@ -179,6 +196,9 @@ class SseClient {
       // Listen to messages
       _subscription = messageStream.listen(
         (message) {
+          if (!_isCurrent(controller)) {
+            return;
+          }
           // Update last event ID if present
           if (message.id != null) {
             _lastEventId = message.id;
@@ -190,31 +210,45 @@ class SseClient {
           }
 
           // Reset idle timer on each message
-          _resetIdleTimer();
+          _resetIdleTimer(controller);
 
           // Forward the message
-          _controller?.add(message);
+          controller.add(message);
         },
         onError: (Object error) {
-          _handleError(error, url, headers, requestTimeout);
+          if (_isCurrent(controller)) {
+            _handleError(error, url, headers, requestTimeout);
+          }
         },
         onDone: () {
-          _handleDisconnection(url, headers, requestTimeout);
+          if (_isCurrent(controller)) {
+            _handleDisconnection(url, headers, requestTimeout);
+          }
         },
         cancelOnError: false,
       );
-
-      _isConnecting = false;
-    } catch (error) {
-      _isConnecting = false;
-      _handleError(error, url, headers, requestTimeout);
+    } on Object catch (error) {
+      if (_isCurrent(controller)) {
+        _handleError(error, url, headers, requestTimeout);
+      }
+    } finally {
+      if (_isCurrent(controller)) {
+        _isConnecting = false;
+      }
     }
   }
 
+  // The controller identifies a single public connect()/close() session.
+  bool _isCurrent(StreamController<SseMessage> controller) =>
+      !_isClosed && identical(_controller, controller);
+
   /// Reset the idle timer.
-  void _resetIdleTimer() {
+  void _resetIdleTimer(StreamController<SseMessage> controller) {
     _idleTimer?.cancel();
     _idleTimer = Timer(_idleTimeout, () {
+      if (!_isCurrent(controller)) {
+        return;
+      }
       // Idle timeout reached, trigger reconnection
       _subscription?.cancel();
       _currentResponse = null;
@@ -273,7 +307,10 @@ class SseClient {
     Map<String, String>? headers,
     Duration? requestTimeout,
   ) {
-    if (_isClosed || _reconnectTimer != null) {
+    final controller = _controller;
+    if (controller == null ||
+        !_isCurrent(controller) ||
+        _reconnectTimer != null) {
       return;
     }
 
@@ -285,26 +322,48 @@ class SseClient {
     // Schedule reconnection. Store the timer so close() can cancel it and
     // avoid a connect() call racing against a concurrent close().
     _reconnectTimer = Timer(delay, () {
-      _reconnectTimer = null;
-      if (!_isClosed) {
-        _connect(url, headers, requestTimeout);
+      if (!_isCurrent(controller)) {
+        return;
       }
+      _reconnectTimer = null;
+      _connect(url, headers, requestTimeout);
     });
   }
 
   /// Close the connection and clean up resources.
-  Future<void> close() async {
-    if (_isClosed) return;
+  Future<void> close() {
+    final pending = _closing;
+    if (pending != null) {
+      return pending;
+    }
+    if (_isClosed) {
+      return Future<void>.value();
+    }
+    final closed = Completer<void>();
+    _closing = closed.future;
+    closed.complete(_closeConnection());
+    return closed.future;
+  }
 
+  Future<void> _closeConnection() async {
     _isClosed = true;
+    _isConnecting = false;
     _idleTimer?.cancel();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    await _subscription?.cancel();
-    _currentResponse = null;
-    await _controller?.close();
-    _controller = null;
-    _backoffStrategy.reset();
+    try {
+      try {
+        await _subscription?.cancel();
+      } finally {
+        _subscription = null;
+        _currentResponse = null;
+        await _controller?.close();
+      }
+    } finally {
+      _controller = null;
+      _closing = null;
+      _backoffStrategy.reset();
+    }
   }
 
   /// Check if the client is currently connected.
