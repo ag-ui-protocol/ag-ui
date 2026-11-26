@@ -57,4 +57,17 @@ describe("TypeScript/Python adapter parity", () => {
       "TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT",
     ]);
   });
+
+  it("P7: an empty streamed tool name waits for the first nonempty one", () => {
+    const mapper = new CopilotEventMapper();
+    const delta = (id: string, toolName: string, inputDelta: string) =>
+      ({ id, type: "assistant.tool_call_delta", data: { toolCallId: "c", toolName, inputDelta } }) as SessionEvent;
+    expect(mapper.mapEvent(delta("1", "", '{"a"'))).toEqual([]);
+    expect(mapper.mapEvent(delta("2", "paint", ":1}"))).toMatchObject([
+      { type: "TOOL_CALL_START", toolCallName: "paint" },
+      { type: "TOOL_CALL_ARGS", delta: '{"a":1}' },
+    ]);
+    const final = { id: "3", type: "tool.execution_start", data: { toolCallId: "c", toolName: "", arguments: {} } };
+    expect(mapper.mapEvent(final as SessionEvent)).toMatchObject([{ type: "TOOL_CALL_END" }]);
+  });
 });

@@ -164,7 +164,7 @@ export class CopilotEventMapper {
       }
       case "assistant.tool_call_delta": {
         const tool = this.tool(event.data.toolCallId, agentId);
-        tool.name ??= event.data.toolName;
+        tool.name ||= event.data.toolName;
         this.streamToolArgs(tool, event.data.inputDelta, out);
         break;
       }
@@ -176,7 +176,7 @@ export class CopilotEventMapper {
         }
         for (const request of event.data.toolRequests ?? []) {
           const tool = this.tool(request.toolCallId, agentId);
-          tool.name = request.name;
+          tool.name ||= request.name;
           this.emitToolCall(tool, request.arguments, out);
         }
         break;
@@ -184,7 +184,7 @@ export class CopilotEventMapper {
       case "tool.execution_start":
       case "external_tool.requested": {
         const tool = this.tool(event.data.toolCallId, agentId);
-        tool.name = event.data.toolName;
+        tool.name ||= event.data.toolName;
         this.emitToolCall(tool, event.data.arguments, out);
         break;
       }
