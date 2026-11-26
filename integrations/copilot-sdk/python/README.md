@@ -76,7 +76,9 @@ uv sync && uv run python server.py   # port 8033
 The example server listens on all interfaces (`HOST=0.0.0.0`) and is
 unauthenticated — it is a demo, not a deployment template. Without
 `OPENAI_BASE_URL` it uses your signed-in Copilot account, so set
-`HOST=127.0.0.1` when running it on a shared network.
+`HOST=127.0.0.1` when running it on a shared network. On a shared host,
+authenticate callers and check they own the `threadId` before invoking the
+agent.
 
 ## Tests
 

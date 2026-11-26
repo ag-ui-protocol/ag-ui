@@ -11,8 +11,9 @@ OpenAI-compatible endpoint through the SDK's BYOK provider — that is how the
 Dojo e2e suites drive this server against the pinned mock model server. Without
 it the SDK uses the machine's logged-in Copilot account.
 
-The example binds to loopback and is unauthenticated; it is a demo, not a
-deployment template.
+The example binds to all interfaces (HOST=0.0.0.0, for container deploys)
+and is unauthenticated; it is a demo, not a deployment template. Set
+HOST=127.0.0.1 on a shared network.
 """
 
 import os
