@@ -20,6 +20,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from tests._helpers import make_agent
+from ag_ui_langgraph.agent import LangGraphAgent
 
 
 def _make_input(thread_id="t1", forwarded_props=None):
@@ -275,6 +276,94 @@ class TestPrepareRegenerateStreamMergesForwardedConfig(unittest.IsolatedAsyncioT
         )
 
         self.assertEqual(captured["config"]["configurable"].get("authToken"), "tok-123")
+
+
+class TestForwardedConfigRunPath(unittest.IsolatedAsyncioTestCase):
+    """Full ``run()`` path with a real compiled StateGraph + checkpointer.
+
+    The unit tests above call ``prepare_stream`` directly with a bare config,
+    so they skip ``ensure_config`` — which is exactly where the run path
+    injected defaults and relocated unknown top-level keys. These tests drive
+    ``LangGraphAgent.run()`` so all three blocking review findings stay fixed.
+    """
+
+    async def _run_with_forwarded(self, forwarded, server_config=None):
+        from langchain_core.messages import HumanMessage
+        from langchain_core.runnables import RunnableConfig
+        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.graph import END, START, StateGraph
+
+        from ag_ui.core import RunAgentInput
+
+        observed = {}
+
+        def node(state, config: RunnableConfig):
+            configurable = config.get("configurable") or {}
+            observed["authToken"] = configurable.get("authToken")
+            observed["thread_id"] = configurable.get("thread_id")
+            observed["checkpoint_id"] = configurable.get("checkpoint_id")
+            observed["recursion_limit"] = config.get("recursion_limit")
+            observed["checkpointer"] = configurable.get("__pregel_checkpointer")
+            return {"messages": [HumanMessage(content="ok")]}
+
+        graph = StateGraph(dict)
+        graph.add_node("n", node)
+        graph.add_edge(START, "n")
+        graph.add_edge("n", END)
+        agent = LangGraphAgent(name="test", graph=graph.compile(checkpointer=InMemorySaver()), config=server_config)
+
+        inp = RunAgentInput(
+            thread_id="t1",
+            run_id="r1",
+            state={},
+            messages=[],
+            tools=[],
+            context=[],
+            forwarded_props={"config": forwarded},
+        )
+        async for _ in agent.run(inp):
+            pass
+        return observed
+
+    async def test_run_path_forwards_configurable_and_applies_recursion_limit(self):
+        observed = await self._run_with_forwarded(
+            {
+                "configurable": {"authToken": "tok-123"},
+                # Top-level thread_id/checkpoint_id would be relocated into
+                # configurable by ensure_config and must be dropped.
+                "thread_id": "evil",
+                "checkpoint_id": "evil-checkpoint",
+                # A forwarded recursion_limit must replace the injected 25.
+                "recursion_limit": 50,
+            }
+        )
+        self.assertEqual(observed["authToken"], "tok-123")
+        self.assertEqual(observed["thread_id"], "t1")
+        self.assertNotEqual(observed["checkpoint_id"], "evil-checkpoint")
+        self.assertEqual(observed["recursion_limit"], 50)
+
+    async def test_run_path_rejects_langgraph_internal_configurable_keys(self):
+        # If __pregel_checkpointer reached LangGraph it would disable the
+        # checkpointer and the run would fail with "No checkpointer set".
+        observed = await self._run_with_forwarded(
+            {
+                "configurable": {
+                    "authToken": "tok-123",
+                    "__pregel_checkpointer": False,
+                    "checkpoint_map": {"": "evil"},
+                }
+            }
+        )
+        self.assertEqual(observed["authToken"], "tok-123")
+        self.assertNotEqual(observed["checkpoint_id"], "evil")
+
+    async def test_explicit_server_config_wins_over_forwarded_default(self):
+        observed = await self._run_with_forwarded(
+            {"recursion_limit": 50, "configurable": {"authToken": "tok-123"}},
+            server_config={"recursion_limit": 7},
+        )
+        self.assertEqual(observed["recursion_limit"], 7)
+        self.assertEqual(observed["authToken"], "tok-123")
 
 
 if __name__ == "__main__":

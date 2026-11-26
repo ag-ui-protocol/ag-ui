@@ -1645,7 +1645,16 @@ class LangGraphAgent:
 
             self.active_run["manually_emitted_state"] = None
 
+            # Record which run-config keys the server operator set explicitly
+            # BEFORE ensure_config fills in defaults (recursion_limit, tags,
+            # metadata). _merge_forwarded_config uses this so a forwarded value
+            # may replace an injected default but never an explicit server
+            # value. See #2812.
+            self.active_run["config_explicit_keys"] = frozenset(self.config or {})
             config = ensure_config(self.config.copy() if self.config else {})
+            self.active_run["config_injected_defaults"] = frozenset(
+                k for k in self._FORWARDED_TOP_LEVEL_ALLOWED if k not in self.active_run["config_explicit_keys"]
+            )
             config["configurable"] = {**(config.get('configurable', {})), "thread_id": thread_id}
 
             agent_state = await self.graph.aget_state(config)
@@ -4317,17 +4326,29 @@ class LangGraphAgent:
         self.active_run.get("step_owners", {}).pop(lane, None)
         return event
 
-    # Probe the graph's astream_events signature for version-specific support
-    # (notably the ``context`` parameter, added in newer LangGraph releases)
-    # so this adapter remains backwards-compatible across LangGraph versions.
     # LangGraph-owned ``configurable`` keys. They select or address a
     # checkpoint and are set by the adapter (or a graph-declared schema), never
     # by frontend ``forwardedProps``: a frontend that could write
     # ``checkpoint_id``/``checkpoint_ns``/``checkpoint_ts`` would replay an
     # arbitrary past state, and ``thread_id`` would cross threads.
+    # ``checkpoint_map`` addresses a checkpoint the same way; ``__``-prefixed
+    # keys (notably ``__pregel_checkpointer``) are LangGraph internals that a
+    # client must never be able to disable or redirect.
     _FRONTEND_FORBIDDEN_CONFIGURABLE = frozenset(
-        {"thread_id", "checkpoint_id", "checkpoint_ns", "checkpoint_ts"}
+        {
+            "thread_id",
+            "checkpoint_id",
+            "checkpoint_ns",
+            "checkpoint_ts",
+            "checkpoint_map",
+        }
     )
+    # Only these top-level ``forwardedProps.config`` keys are allowed through.
+    # An allow-list matters: ``ensure_config`` moves every top-level key that
+    # is not a CONFIG_KEYS member into ``configurable`` and overwrites what is
+    # already there, so a forwarded ``thread_id`` or ``checkpoint_id`` at the
+    # top level would otherwise bypass every configurable filter below.
+    _FORWARDED_TOP_LEVEL_ALLOWED = frozenset({"recursion_limit", "tags", "metadata"})
 
     def _merge_forwarded_config(self, config: RunnableConfig, forwarded_props: Dict[str, Any]) -> None:
         """Merge ``forwardedProps.config`` into the run ``config`` in place.
@@ -4365,6 +4386,14 @@ class LangGraphAgent:
         last-wins and replaces ``configurable``; do not "restore parity".
         A malformed ``config`` value changes nothing; the run never fails
         because of what the frontend sent here.
+
+        LangGraph-owned ``checkpoint_*``/``thread_id`` keys, ``checkpoint_map``
+        and every ``__``-prefixed internal key are rejected on both schema
+        branches. Only ``recursion_limit``/``tags``/``metadata`` are accepted
+        at the top level: ``ensure_config`` relocates every other top-level
+        key into ``configurable``, bypassing the filters above. A forwarded
+        value may replace a default injected by ``ensure_config`` but never a
+        key the server operator set explicitly in ``self.config``.
         """
         if not isinstance(forwarded_props, dict):
             return
@@ -4377,17 +4406,33 @@ class LangGraphAgent:
 
         forwarded_configurable = forwarded_config.get("configurable")
         if isinstance(forwarded_configurable, dict):
-            allowed = declared - self._FRONTEND_FORBIDDEN_CONFIGURABLE if declared else (
-                set(forwarded_configurable) - self._FRONTEND_FORBIDDEN_CONFIGURABLE
-            )
+            # Reject LangGraph-owned and internal keys on BOTH branches, before
+            # any declared-key intersection: an undeclared schema must not let
+            # a client disable the checkpointer or forge a checkpoint address.
+            candidates = {
+                k
+                for k in forwarded_configurable
+                if k not in self._FRONTEND_FORBIDDEN_CONFIGURABLE
+                and not k.startswith("__")
+            }
+            allowed = (declared & candidates) if declared else candidates
             config_configurable = config.setdefault("configurable", {})
             for k, v in forwarded_configurable.items():
                 if k in allowed and k not in config_configurable:
                     config_configurable[k] = v
 
+        injected_defaults = (self.active_run or {}).get("config_injected_defaults") or ()
+        explicit_server_keys = (self.active_run or {}).get("config_explicit_keys") or ()
         for k, v in forwarded_config.items():
-            if k != "configurable" and k not in config:
-                config[k] = v
+            if k not in self._FORWARDED_TOP_LEVEL_ALLOWED:
+                continue
+            # A value the server operator explicitly set in self.config always
+            # wins. A value ensure_config injected as a default may be replaced
+            # by the frontend — otherwise a forwarded recursion_limit can never
+            # take effect (ensure_config already put 25 there).
+            if k in explicit_server_keys or (k in config and k not in injected_defaults):
+                continue
+            config[k] = v
 
     def get_stream_kwargs(
             self,
@@ -4404,6 +4449,9 @@ class LangGraphAgent:
             version=version,
         )
 
+        # Probe the graph's astream_events signature for version-specific support
+        # (notably the ``context`` parameter, added in newer LangGraph releases)
+        # so this adapter remains backwards-compatible across LangGraph versions.
         # LangGraph may expose context either as a named parameter or through
         # **kwargs, depending on the installed version.
         sig = inspect.signature(self.graph.astream_events)
