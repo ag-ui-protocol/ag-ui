@@ -37,7 +37,7 @@ def add_copilot_fastapi_endpoint(
 
         return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
 
-    @app.get(f"{path}/health")
+    @app.get(f"{path.rstrip('/')}/health")
     def health():
         """Health check."""
         return {"status": "ok", "agent": {"name": agent.name}}

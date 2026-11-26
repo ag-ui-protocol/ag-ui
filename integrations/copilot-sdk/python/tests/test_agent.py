@@ -297,6 +297,13 @@ def test_fastapi_endpoint_streams_sse():
         assert "RUN_FINISHED" in response.text
 
 
+def test_fastapi_health_route_at_root_path():
+    app = FastAPI()
+    add_copilot_fastapi_endpoint(app=app, agent=CopilotAgent(FakeClient(TEXT_TURN)))
+    with TestClient(app) as http:
+        assert http.get("/health").status_code == 200
+
+
 def test_base_import_does_not_require_fastapi():
     code = (
         "import sys; sys.modules['fastapi'] = None\n"

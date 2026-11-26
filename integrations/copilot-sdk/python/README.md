@@ -23,7 +23,8 @@ agent = CopilotAgent(client, name="agentic_chat", model="gpt-5.4-mini")
 add_copilot_fastapi_endpoint(app=app, agent=agent, path="/agentic_chat")
 ```
 
-`add_copilot_fastapi_endpoint` registers the agent route plus a `/health` route,
+`add_copilot_fastapi_endpoint` registers the agent route plus a health route at
+`{path}/health` (`/agentic_chat/health` here, `/health` for the default `path="/"`),
 and forwards extra keyword arguments to `app.post`.
 
 At shutdown, stop admitting runs and drain active ones, then await `agent.close()`
