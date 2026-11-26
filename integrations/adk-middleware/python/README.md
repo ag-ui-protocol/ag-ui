@@ -417,6 +417,14 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+> **Note:** If you call `add_adk_fastapi_endpoint` several times on one app,
+> give every call the same `dependencies`. The helper registers
+> `POST /agents/state` at a fixed path, and FastAPI uses only the first
+> registration of a path. If the calls pass different `dependencies`, the guard
+> of the first call (or the absence of a guard) applies to `/agents/state` for
+> all agents. The same applies to `/capabilities` when two calls use the same
+> `path`.
+
 ## Context Support
 
 The middleware automatically passes `context` from `RunAgentInput` to your ADK agents, following the pattern established by LangGraph. Context is stored in session state under the `_ag_ui_context` key and is accessible in both tools and instruction providers.
