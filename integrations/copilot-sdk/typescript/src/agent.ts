@@ -106,6 +106,8 @@ interface Thread {
   busy: boolean;
   /** The frontend tool list the live session was opened with. */
   tools?: string;
+  /** Names the live session registered without a handler: their calls suspend. */
+  paused?: Set<string>;
   /** The one teardown every concurrent dispose of this thread awaits. */
   closing?: Promise<void>;
 }
@@ -416,10 +418,10 @@ export class CopilotAgent extends AbstractAgent {
         if ((event.type as string) === "agent.interrupted") throw new Error("Run was interrupted");
         if (event.type === "external_tool.requested") {
           const { toolCallId, requestId, toolName, arguments: args } = event.data;
-          if (!thread.pending.has(toolCallId) && thread.pending.size >= maxPending) {
-            throw new Error("Pending frontend tool limit exceeded");
-          }
-          if (this.isPausedTool(input, toolName)) {
+          if (thread.paused?.has(toolName)) {
+            if (!thread.pending.has(toolCallId) && thread.pending.size >= maxPending) {
+              throw new Error("Pending frontend tool limit exceeded");
+            }
             const subagentRunId = (event as { agentId?: string }).agentId;
             thread.pending.set(toolCallId, { requestId, toolName, args, subagentRunId });
           }
@@ -447,11 +449,6 @@ export class CopilotAgent extends AbstractAgent {
       // than leaking the thread's session and its suspended RPCs.
       if (failure !== undefined) await this.dispose(input.threadId, thread);
     }
-  }
-
-  /** Frontend tools and interrupt tools both suspend until a later run resolves them. */
-  private isPausedTool(input: RunAgentInput, name: string): boolean {
-    return input.tools.some((tool) => tool.name === name) || this.interruptHandler(name) !== undefined;
   }
 
   /** Own-entry lookup, so names like `toString` are not inherited handlers. */
@@ -521,6 +518,7 @@ export class CopilotAgent extends AbstractAgent {
     const duplicate = names.find((name, i) => names.indexOf(name) !== i);
     if (duplicate !== undefined) throw new Error(`Duplicate tool name: ${duplicate}`);
     thread.tools = JSON.stringify(input.tools);
+    thread.paused = new Set(tools.filter((tool) => !(tool as Tool).handler).map((tool) => tool.name));
     const config = {
       model: this.config.model ?? "gpt-5.4-mini",
       streaming: true,

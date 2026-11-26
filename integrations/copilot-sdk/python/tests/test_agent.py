@@ -604,6 +604,25 @@ async def test_predict_state_and_immutable_snapshots_across_mutable_backend_hand
     ]
 
 
+async def test_handlerless_configured_tool_pauses_and_resolves_on_next_run():
+    client = FakeClient(FRONTEND_TOOL_TURN)
+    agent = CopilotAgent(client, tools=[AGUITool("change_background", "change it")], run_timeout=5)
+    first = await collect(agent, make_input())
+    assert first[-1].type == "RUN_FINISHED"
+    assert first[-1].outcome is None
+    await collect(
+        agent,
+        make_input(
+            runId="r2",
+            messages=[
+                {"id": "u1", "role": "user", "content": "Say hello."},
+                {"id": "t-1", "role": "tool", "toolCallId": "call-1", "content": "ok"},
+            ],
+        ),
+    )
+    assert [r.request_id for r in client.session.resolved] == ["req-1"]
+
+
 @pytest.mark.parametrize("mode", ["tool", "resume", "error"])
 async def test_interrupt_resolves_original_native_request_and_preserves_errors(mode):
     client = FakeClient([{**e, "agentId": "approval-agent"} for e in FRONTEND_TOOL_TURN])

@@ -85,6 +85,8 @@ class _Thread:
     busy: bool = False
     #: The frontend tool list the live session was opened with.
     tools: list[Any] | None = None
+    #: Names the live session registered without a handler: their calls suspend.
+    paused: set[str] = field(default_factory=set)
     #: The one teardown every concurrent dispose of this thread awaits.
     closing: asyncio.Task | None = None
 
@@ -308,6 +310,7 @@ class CopilotAgent:
         if (duplicate := next((n for n in names if names.count(n) > 1), None)) is not None:
             raise ValueError(f"Duplicate tool name: {duplicate}")
         thread.tools = deepcopy(input_data.tools)
+        thread.paused = {tool.name for tool in tools if tool.handler is None}
         # Only the tools registered here, plus the `task` built-in when custom
         # agents exist (it is what dispatches them). Required by mode="empty".
         available = ["custom:*"] + (
@@ -579,8 +582,6 @@ class CopilotAgent:
                 )
                 return
 
-            # Frontend tools and interrupt tools both suspend until a later run resolves them.
-            paused = {tool.name for tool in input_data.tools} | set(self.interrupts)
             while True:
                 raw = await self._next_event(thread, deadline)
                 if raw is None:
@@ -596,7 +597,7 @@ class CopilotAgent:
                     raise RuntimeError(data.get("message") or "SDK session failed")
                 if kind in ("abort", "agent.interrupted"):
                     raise RuntimeError("Run was interrupted")
-                if kind == "external_tool.requested" and data["toolName"] in paused:
+                if kind == "external_tool.requested" and data["toolName"] in thread.paused:
                     call_id = data["toolCallId"]
                     if call_id not in thread.pending and (
                         len(thread.pending) >= self.max_pending_tools

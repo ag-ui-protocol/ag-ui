@@ -156,6 +156,21 @@ describe("CopilotAgent", () => {
     });
   });
 
+  it("pauses a handler-less configured tool and resolves it on the next run", async () => {
+    const client = new FakeClient(FRONTEND_TOOL_TURN);
+    const agent = new CopilotAgent({
+      client, runTimeoutMs: 1_000,
+      tools: [{ name: "change_background", description: "change it", parameters: { type: "object" } }],
+    });
+    const first = await run(agent, makeInput());
+    expect(first.at(-1)).toEqual({ type: "RUN_FINISHED", threadId: "t1", runId: "r1" });
+    await run(agent, makeInput({
+      runId: "r2",
+      messages: [...makeInput().messages, { id: "t-1", role: "tool", toolCallId: "call-1", content: "ok" }],
+    } as Partial<RunAgentInput>));
+    expect(client.session!.resolved).toEqual(["req-1"]);
+  });
+
   it("does not treat inherited names like toString as interrupt handlers", async () => {
     const turn = FRONTEND_TOOL_TURN.map((event) => ({ ...event, data: { ...event.data, toolName: "toString" } }));
     const client = new FakeClient(turn);
