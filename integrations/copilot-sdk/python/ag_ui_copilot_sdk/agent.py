@@ -470,7 +470,7 @@ class CopilotAgent:
             )
             return
 
-        failed = False
+        failed = finished = False
         try:
             # Inside the try so a client disconnect at any yield still releases busy.
             thread.busy = True
@@ -575,6 +575,7 @@ class CopilotAgent:
                     yield event
                 for event in thread.mapper.suspend():
                     yield event
+                finished = True
                 yield RunFinishedEvent(
                     thread_id=input_data.thread_id,
                     run_id=input_data.run_id,
@@ -618,13 +619,15 @@ class CopilotAgent:
                 yield event
             for event in thread.mapper.suspend():
                 yield event
+            finished = True
             yield RunFinishedEvent(
                 thread_id=input_data.thread_id,
                 run_id=input_data.run_id,
                 outcome=self._interrupt_outcome(thread),
             )
         except (GeneratorExit, asyncio.CancelledError):
-            failed = True
+            # Closing after RUN_FINISHED keeps the handoff; only an unfinished run is dropped.
+            failed = not finished
             raise
         except Exception as exc:  # noqa: BLE001 -- surfaced to the client as RUN_ERROR.
             failed = True

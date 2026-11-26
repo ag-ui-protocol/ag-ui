@@ -604,6 +604,28 @@ async def test_predict_state_and_immutable_snapshots_across_mutable_backend_hand
     ]
 
 
+async def test_closing_the_stream_after_run_finished_keeps_the_handoff():
+    client = FakeClient(FRONTEND_TOOL_TURN)
+    agent = CopilotAgent(client, tools=[AGUITool("change_background", "change it")], run_timeout=5)
+    stream = agent.run(make_input())
+    async for event in stream:
+        if event.type == "RUN_FINISHED":
+            break
+    await stream.aclose()
+    assert not client.session.aborted
+    await collect(
+        agent,
+        make_input(
+            runId="r2",
+            messages=[
+                {"id": "u1", "role": "user", "content": "Say hello."},
+                {"id": "t-1", "role": "tool", "toolCallId": "call-1", "content": "ok"},
+            ],
+        ),
+    )
+    assert [r.request_id for r in client.session.resolved] == ["req-1"]
+
+
 async def test_handlerless_configured_tool_pauses_and_resolves_on_next_run():
     client = FakeClient(FRONTEND_TOOL_TURN)
     agent = CopilotAgent(client, tools=[AGUITool("change_background", "change it")], run_timeout=5)
