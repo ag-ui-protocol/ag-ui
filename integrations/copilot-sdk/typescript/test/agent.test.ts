@@ -185,6 +185,30 @@ describe("CopilotAgent", () => {
     expect(client.session!.lastResult).toBe("ok");
   });
 
+  it("does not report success for a turn consumed after the run deadline", async () => {
+    const client = new FakeClient(TEXT_TURN);
+    const create = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await create(config);
+      const send = session.send.bind(session);
+      session.send = async (options) => {
+        await send(options);
+        // The whole turn is queued, then the clock passes the deadline before it is consumed.
+        const now = Date.now();
+        vi.spyOn(Date, "now").mockReturnValue(now + 10_000);
+        return undefined as never;
+      };
+      return session;
+    };
+    const agent = new CopilotAgent({ client, runTimeoutMs: 1_000 });
+    try {
+      const events = await run(agent, makeInput());
+      expect(events.at(-1)).toMatchObject({ type: "RUN_ERROR", message: "Run timed out" });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("ends the run instead of awaiting a wedged native call", async () => {
     const client = new FakeClient(TEXT_TURN, true);
     const agent = new CopilotAgent({ client, runTimeoutMs: 100 });

@@ -607,7 +607,8 @@ export class CopilotAgent extends AbstractAgent {
       if (quiet && thread.pending.size) return undefined;
       if (quiet && Date.now() >= deadline) return undefined;
     }
-    return signal.aborted ? undefined : thread.events.shift();
+    // Checked even with events queued: a turn consumed after the deadline must not report success.
+    return signal.aborted || Date.now() >= deadline ? undefined : thread.events.shift();
   }
 
   /** Abandons the native promise on expiry instead of awaiting a stuck RPC. */
