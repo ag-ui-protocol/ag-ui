@@ -38,8 +38,9 @@ validation failures retain their existing error behavior.
 
 ### Customizing run errors
 
-The default error message is `str(exc)`. Pass `on_error` to customize error handling.
-It receives the exception and returns the `RunErrorEvent` to emit.
+The default error message is `str(exc)`. Pass `on_error` to customize error
+handling. It must be a regular (non-async) function that receives the exception
+and returns the `RunErrorEvent` to emit.
 
 If `on_error` raises, the exception escapes `run()` and no `RUN_ERROR` is
 emitted. Only do this when you iterate `run()` yourself and handle the
