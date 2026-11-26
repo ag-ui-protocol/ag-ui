@@ -2,8 +2,9 @@
 
 When DEBUG logging is disabled, the Strands event loop must not eagerly evaluate
 ``repr(event)`` (or other per-event payloads) via f-strings. When DEBUG logging
-is enabled, huge event payloads must be truncated with ``reprlib.repr`` so a
-single multi-agent graph result cannot stall the run or exhaust memory.
+is enabled, huge event payloads (containers, large ``bytes``, and opaque objects
+with expensive ``__repr__``) must be summarized in bounded time and memory
+without invoking ``__repr__`` on opaque objects or formatting full byte buffers.
 """
 
 from __future__ import annotations
@@ -129,3 +130,36 @@ async def test_debug_enabled_truncates_large_event_repr(caplog: pytest.LogCaptur
     assert len(raw_logs) == 1
     assert "..." in raw_logs[0]
     assert len(raw_logs[0]) < 500
+
+
+async def test_debug_enabled_avoids_custom_repr_and_full_bytes_formatting(
+    caplog: pytest.LogCaptureFixture,
+):
+    """With DEBUG enabled, opaque objects are not repr()'d and large bytes are bounded."""
+    result_spy = _ReprSpy("graph-result")
+    tool_spy = _ReprSpy("tool-payload")
+    huge_bytes = b"\xab" * (2 * 1024 * 1024)
+
+    events_to_stream: list[dict[str, Any]] = [
+        {"reasoning": True, "reasoningRedactedContent": huge_bytes},
+        {"custom_unmapped": {"payload": tool_spy}},
+        {"result": result_spy},
+    ]
+
+    agent = _make_agent(events_to_stream)
+    with caplog.at_level(logging.DEBUG, logger="ag_ui_strands.agent"):
+        emitted = [e async for e in agent.run(_make_input())]
+
+    assert any(e.type == EventType.RUN_FINISHED for e in emitted)
+    assert result_spy.repr_calls == 0 and result_spy.str_calls == 0
+    assert tool_spy.repr_calls == 0 and tool_spy.str_calls == 0
+
+    received_logs = [
+        r.getMessage() for r in caplog.records if r.getMessage().startswith("Received event:")
+    ]
+    assert len(received_logs) == 3
+    assert "<bytes len=2097152" in received_logs[0]
+    assert "..." in received_logs[0]
+    assert len(received_logs[0]) < 500
+    assert "<_ReprSpy>" in received_logs[1]
+    assert "<_ReprSpy>" in received_logs[2]

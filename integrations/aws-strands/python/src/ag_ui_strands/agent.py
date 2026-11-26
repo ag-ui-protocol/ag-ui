@@ -11,7 +11,6 @@ import inspect
 import json
 import logging
 import math
-import reprlib
 import collections.abc
 from copy import deepcopy
 import types
@@ -66,6 +65,101 @@ _AGUI_EXPLICIT_PARAMS = {
 
 _MISSING = object()
 _AGENT_BOUND = object()
+
+
+def _bounded_debug_preview(
+    value: Any,
+    *,
+    max_depth: int = 3,
+    max_items: int = 8,
+    max_str: int = 80,
+    _seen: Optional[set[int]] = None,
+) -> str:
+    """Return a bounded, allocation-safe string preview for DEBUG logs.
+
+    Unlike ``reprlib.repr``, this helper never invokes ``builtins.repr()`` on
+    full ``bytes``/``bytearray``/``memoryview`` payloads or arbitrary opaque
+    objects whose ``__repr__`` may walk multi-agent graph results.
+    """
+    value_type = type(value)
+    if value is None or value_type in (bool, float):
+        return repr(value)
+    if value_type is int:
+        if value.bit_length() <= 256:
+            return repr(value)
+        return f"<int bits={value.bit_length()}>"
+    if value_type is str:
+        if len(value) <= max_str:
+            return repr(value)
+        half = max_str // 2
+        return f"{value[:half]!r}...({len(value)} chars)...{value[-half:]!r}"
+    if isinstance(value, (bytes, bytearray)):
+        raw_len = len(value)
+        type_name = value_type.__name__
+        if raw_len <= 16:
+            return f"<{type_name} len={raw_len} {bytes(value)!r}>"
+        return f"<{type_name} len={raw_len} {bytes(value[:12])!r}...>"
+    if isinstance(value, memoryview):
+        return f"<memoryview nbytes={value.nbytes}>"
+
+    if value_type in (dict, list, tuple, set, frozenset):
+        obj_id = id(value)
+        if _seen is None:
+            _seen = set()
+        if obj_id in _seen:
+            return f"<{value_type.__name__} ...>"
+        if max_depth <= 0:
+            return f"<{value_type.__name__} len={len(value)}>"
+        _seen.add(obj_id)
+        try:
+            if value_type is dict:
+                parts: List[str] = []
+                for idx, (k, v) in enumerate(value.items()):
+                    if idx >= max_items:
+                        parts.append(f"... (+{len(value) - max_items} more)")
+                        break
+                    k_repr = _bounded_debug_preview(
+                        k,
+                        max_depth=max_depth - 1,
+                        max_items=max_items,
+                        max_str=max_str,
+                        _seen=_seen,
+                    )
+                    v_repr = _bounded_debug_preview(
+                        v,
+                        max_depth=max_depth - 1,
+                        max_items=max_items,
+                        max_str=max_str,
+                        _seen=_seen,
+                    )
+                    parts.append(f"{k_repr}: {v_repr}")
+                return "{" + ", ".join(parts) + "}"
+            open_b, close_b = (
+                ("[", "]")
+                if value_type is list
+                else ("(", ")")
+                if value_type is tuple
+                else ("{", "}")
+            )
+            parts = []
+            for idx, item in enumerate(value):
+                if idx >= max_items:
+                    parts.append(f"... (+{len(value) - max_items} more)")
+                    break
+                parts.append(
+                    _bounded_debug_preview(
+                        item,
+                        max_depth=max_depth - 1,
+                        max_items=max_items,
+                        max_str=max_str,
+                        _seen=_seen,
+                    )
+                )
+            return open_b + ", ".join(parts) + close_b
+        finally:
+            _seen.discard(obj_id)
+
+    return f"<{value_type.__name__}>"
 
 
 def _copy_template_conversation_manager(manager: Any) -> Any:
@@ -6397,7 +6491,7 @@ class StrandsAgent:
                         break
 
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug("Received event: %s", reprlib.repr(event))
+                        logger.debug("Received event: %s", _bounded_debug_preview(event))
 
                     # Skip lifecycle events. ``start`` is Strands' deprecated
                     # alias of ``start_event_loop`` and is emitted alongside it;
@@ -7783,7 +7877,7 @@ class StrandsAgent:
                             logger.debug(
                                 "Unmapped Strands event forwarded as RAW (thread_id=%s): %s",
                                 input_data.thread_id,
-                                reprlib.repr(raw_payload),
+                                _bounded_debug_preview(raw_payload),
                             )
                         yield RawEvent(
                             type=EventType.RAW,
