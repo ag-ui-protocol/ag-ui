@@ -451,13 +451,19 @@ export class CopilotAgent extends AbstractAgent {
 
   /** Frontend tools and interrupt tools both suspend until a later run resolves them. */
   private isPausedTool(input: RunAgentInput, name: string): boolean {
-    return input.tools.some((tool) => tool.name === name) || name in (this.config.interrupts ?? {});
+    return input.tools.some((tool) => tool.name === name) || this.interruptHandler(name) !== undefined;
+  }
+
+  /** Own-entry lookup, so names like `toString` are not inherited handlers. */
+  private interruptHandler(name: string): ((payload: unknown, args: unknown) => unknown) | undefined {
+    const interrupts = this.config.interrupts;
+    return interrupts && Object.hasOwn(interrupts, name) ? interrupts[name] : undefined;
   }
 
   /** Suspended interrupt tools turn the finish into an interrupt outcome the client must resume. */
   private interruptOutcome(thread: Thread): Pick<RunFinishedEvent, "outcome"> | Record<string, never> {
     const interrupts = [...thread.pending]
-      .filter(([, call]) => call.toolName in (this.config.interrupts ?? {}))
+      .filter(([, call]) => this.interruptHandler(call.toolName) !== undefined)
       .map(([toolCallId, call]) => ({
         id: toolCallId,
         reason: "tool_call" as const,
@@ -559,7 +565,7 @@ export class CopilotAgent extends AbstractAgent {
     const call = thread.pending.get(result.toolCallId);
     if (!call) return; // A duplicate result for a call that was already resolved.
     thread.pending.delete(result.toolCallId);
-    const resume = this.config.interrupts?.[call.toolName];
+    const resume = this.interruptHandler(call.toolName);
     // An interrupt's answer arrives as the tool result; the mapper decides what the model reads.
     const text = contentToText(result.content);
     const content = resume && !result.error ? resume(parseJson(text), call.args) : text;

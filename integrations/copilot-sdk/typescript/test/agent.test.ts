@@ -156,6 +156,20 @@ describe("CopilotAgent", () => {
     });
   });
 
+  it("does not treat inherited names like toString as interrupt handlers", async () => {
+    const turn = FRONTEND_TOOL_TURN.map((event) => ({ ...event, data: { ...event.data, toolName: "toString" } }));
+    const client = new FakeClient(turn);
+    const agent = new CopilotAgent({ client, interrupts: { other: (answer) => answer }, runTimeoutMs: 5_000 });
+    const tools = [{ ...TOOLS[0]!, name: "toString" }];
+    const first = await run(agent, makeInput({ tools } as Partial<RunAgentInput>));
+    expect(first.at(-1)).toEqual({ type: "RUN_FINISHED", threadId: "t1", runId: "r1" });
+    await run(agent, makeInput({
+      runId: "r2", tools,
+      messages: [...makeInput().messages, { id: "t-1", role: "tool", toolCallId: "call-1", content: "ok" }],
+    } as Partial<RunAgentInput>));
+    expect(client.session!.lastResult).toBe("ok");
+  });
+
   it("ends the run instead of awaiting a wedged native call", async () => {
     const client = new FakeClient(TEXT_TURN, true);
     const agent = new CopilotAgent({ client, runTimeoutMs: 100 });
