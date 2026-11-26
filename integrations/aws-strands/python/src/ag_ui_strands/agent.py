@@ -1960,8 +1960,9 @@ def _sanitize_raw_event(
         return json.loads(json.dumps(payload))
     except (TypeError, ValueError) as exc:
         logger.warning(
-            "Dropping unserializable Strands event from RAW forwarding "
-            f"(keys={sorted(payload)}): {exc}"
+            "Dropping unserializable Strands event from RAW forwarding (keys=%s): %s",
+            sorted(payload),
+            exc,
         )
         return None
 
@@ -2840,7 +2841,7 @@ def _persist_frontend_wait_bridge(
         if callable(sync_agent):
             sync_agent(strands_agent)
     except Exception as e:  # noqa: BLE001 — persistence is best-effort
-        logger.warning(f"Failed to persist frontend wait bridge: {e}")
+        logger.warning("Failed to persist frontend wait bridge: %s", e)
 
 
 def _load_persisted_interrupt_bookkeeping(
@@ -2919,7 +2920,7 @@ def _persist_interrupt_bookkeeping(
         if callable(sync_agent):
             sync_agent(strands_agent)
     except Exception as e:  # noqa: BLE001 — persistence is best-effort
-        logger.warning(f"Failed to persist interrupt bookkeeping: {e}")
+        logger.warning("Failed to persist interrupt bookkeeping: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -4401,7 +4402,7 @@ class StrandsAgent:
               )
           except Exception as e:
               code = _terminal_error_code(e)
-              logger.error(f"_run_orchestrator failed: {e}", exc_info=True)
+              logger.error("_run_orchestrator failed: %s", e, exc_info=True)
               # A Graph fails fast: the first node exception cancels its siblings
               # and re-raises, so a raise landing mid-text is routine. Without
               # this the run would end on a dangling message envelope and a step
@@ -4686,7 +4687,8 @@ class StrandsAgent:
                             # in the provider surface clearly rather than
                             # looking like an infrastructure problem.
                             logger.error(
-                                f"session_manager_provider failed: {e}",
+                                "session_manager_provider failed: %s",
+                                e,
                                 exc_info=True,
                             )
                             ev_started, ev_error = _error_events(
@@ -5085,7 +5087,7 @@ class StrandsAgent:
         try:
             strands_agent.state.set("agui_context", agui_context)
         except Exception as e:
-            logger.warning(f"Failed to set agui_context on strands_agent.state: {e}")
+            logger.warning("Failed to set agui_context on strands_agent.state: %s", e)
 
         # Filter the tools the template contributed, per request. Applied to
         # the registry this thread's live agent already owns: that instance
@@ -5353,8 +5355,9 @@ class StrandsAgent:
             # Pass interruptResponse dicts as the prompt — Strands resumes from
             # its checkpoint without replaying the full conversation.
             logger.debug(
-                f"Resuming interrupted run: thread_id={input_data.thread_id}, "
-                f"interrupt_responses={interrupt_responses}"
+                "Resuming interrupted run: thread_id=%s, interrupt_responses=%s",
+                input_data.thread_id,
+                interrupt_responses,
             )
             _resume_prompt = interrupt_responses
             # Bookkeeping is cleared only after successful processing below so
@@ -5472,7 +5475,10 @@ class StrandsAgent:
                         break
                 if pending_tool_result_ids:
                     logger.debug(
-                        f"Has pending tool results detected: tool_call_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
+                        "Has pending tool results detected: tool_call_ids=%s, "
+                        "thread_id=%s",
+                        pending_tool_result_ids,
+                        input_data.thread_id,
                     )
 
             # Rule 8: suppress ToolCallStart/Args/End for resumed tool-bound
@@ -5546,7 +5552,12 @@ class StrandsAgent:
                         or msg.tool_call_id not in expected_tool_call_ids
                     ) and not is_pending_frontend_result:
                         logger.debug(
-                            f"Skipping orphaned tool message: tool_call_id={msg.tool_call_id}, last_msg_had_tool_calls={last_msg_had_tool_calls}, valid_ids={expected_tool_call_ids}, thread_id={input_data.thread_id}"
+                            "Skipping orphaned tool message: tool_call_id=%s, "
+                            "last_msg_had_tool_calls=%s, valid_ids=%s, thread_id=%s",
+                            msg.tool_call_id,
+                            last_msg_had_tool_calls,
+                            expected_tool_call_ids,
+                            input_data.thread_id,
                         )
                         continue
 
@@ -5781,7 +5792,7 @@ class StrandsAgent:
                         strands_messages[-1]["content"] = [{"text": user_message}]
                 except Exception as e:
                     # If the builder fails, keep the original message
-                    logger.warning(f"State context builder failed: {e}", exc_info=True)
+                    logger.warning("State context builder failed: %s", e, exc_info=True)
                     yield _hook_error("state_context_builder", CUSTOM_HOOK_ERROR_PROMPT_TOOL, e)
 
             # Generate unique message ID
@@ -5854,7 +5865,13 @@ class StrandsAgent:
             reasoning_message_id = None
 
             logger.debug(
-                f"Starting agent run: thread_id={input_data.thread_id}, run_id={input_data.run_id}, pending_tool_result_ids={pending_tool_result_ids}, message_count={len(input_data.messages)}, strands_message_count={len(strands_messages)}"
+                "Starting agent run: thread_id=%s, run_id=%s, pending_tool_result_ids=%s,"
+                " message_count=%s, strands_message_count=%s",
+                input_data.thread_id,
+                input_data.run_id,
+                pending_tool_result_ids,
+                len(input_data.messages),
+                len(strands_messages),
             )
 
             # Collect the real results the client produced for proxied
@@ -5992,8 +6009,9 @@ class StrandsAgent:
                     yield _interrupt_reconciliation_error()
                     return
                 logger.warning(
-                    "Frontend tool result reconciliation failed; falling back to "
-                    f"the legacy continuation path: {reconciliation_setup_error}",
+                    "Frontend tool result reconciliation failed; falling back to the "
+                    "legacy continuation path: %s",
+                    reconciliation_setup_error,
                     exc_info=reconciliation_setup_error,
                 )
 
@@ -6127,7 +6145,9 @@ class StrandsAgent:
                                     native_msg["content"][0]["text"] = augmented
                             except Exception as e:
                                 logger.warning(
-                                    f"state_context_builder failed: {e}", exc_info=True
+                                    "state_context_builder failed: %s",
+                                    e,
+                                    exc_info=True,
                                 )
                                 yield _hook_error(
                                     "state_context_builder",
@@ -6168,8 +6188,9 @@ class StrandsAgent:
                         yield _interrupt_reconciliation_error()
                         return
                     logger.warning(
-                        "Frontend tool result reconciliation failed; falling back to "
-                        f"the legacy continuation path: {e}",
+                        "Frontend tool result reconciliation failed; falling back to the "
+                        "legacy continuation path: %s",
+                        e,
                         exc_info=True,
                     )
                 missing_corrections = active_proxy_native_ids - corrected_native_ids
@@ -6395,7 +6416,7 @@ class StrandsAgent:
                     if halt_event_stream:
                         break
 
-                    logger.debug(f"Received event: {event}")
+                    logger.debug("Received event: %s", event)
 
                     # Skip lifecycle events. ``start`` is Strands' deprecated
                     # alias of ``start_event_loop`` and is emitted alongside it;
@@ -6706,7 +6727,9 @@ class StrandsAgent:
                                             yield _tse_event
                                 except Exception as _tse_exc:
                                     logger.warning(
-                                        f"tool_stream_event_handler failed for {_tse_tool_name}: {_tse_exc}",
+                                        "tool_stream_event_handler failed for %s: %s",
+                                        _tse_tool_name,
+                                        _tse_exc,
                                         exc_info=True,
                                     )
                                     # Keyed on the tool as well as the call: an
@@ -6835,7 +6858,12 @@ class StrandsAgent:
                             )
 
                             logger.debug(
-                                f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, pending_tool_result_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
+                                "Processing tool result: tool_name=%s, result_tool_id=%s,"
+                                " pending_tool_result_ids=%s, thread_id=%s",
+                                tool_name,
+                                result_tool_id,
+                                pending_tool_result_ids,
+                                input_data.thread_id,
                             )
 
                             # Skip emitting the placeholder result for forwarded/proxy tools
@@ -6965,7 +6993,9 @@ class StrandsAgent:
                                         )
                                 except Exception as e:
                                     logger.warning(
-                                        f"state_from_result failed for {tool_name}: {e}",
+                                        "state_from_result failed for %s: %s",
+                                        tool_name,
+                                        e,
                                         exc_info=True,
                                     )
                                     yield _hook_error("state_from_result", tool_name, e)
@@ -6979,7 +7009,9 @@ class StrandsAgent:
                                             yield custom_event
                                 except Exception as e:
                                     logger.warning(
-                                        f"custom_result_handler failed for {tool_name}: {e}",
+                                        "custom_result_handler failed for %s: %s",
+                                        tool_name,
+                                        e,
                                         exc_info=True,
                                     )
                                     yield _hook_error("custom_result_handler", tool_name, e)
@@ -7458,7 +7490,9 @@ class StrandsAgent:
                                                 )
                                         except Exception as e:
                                             logger.warning(
-                                                f"state_from_args failed for {tool_name}: {e}",
+                                                "state_from_args failed for %s: %s",
+                                                tool_name,
+                                                e,
                                                 exc_info=True,
                                             )
                                             yield _hook_error("state_from_args", tool_name, e)
@@ -7540,7 +7574,9 @@ class StrandsAgent:
                                                 )
                                         except Exception as e:
                                             logger.warning(
-                                                f"state_from_args failed for {tool_name}: {e}",
+                                                "state_from_args failed for %s: %s",
+                                                tool_name,
+                                                e,
                                                 exc_info=True,
                                             )
                                             yield _hook_error("state_from_args", tool_name, e)
@@ -7563,7 +7599,9 @@ class StrandsAgent:
                                                 )
                                         except Exception as e:
                                             logger.warning(
-                                                f"state_from_args failed for {tool_name}: {e}",
+                                                "state_from_args failed for %s: %s",
+                                                tool_name,
+                                                e,
                                                 exc_info=True,
                                             )
                                             yield _hook_error("state_from_args", tool_name, e)
@@ -7640,7 +7678,10 @@ class StrandsAgent:
                                             )
                                     except Exception as e:
                                         logger.warning(
-                                            f"args_streamer failed for {tool_name}, falling back to full args: {e}"
+                                            "args_streamer failed for %s, falling back to"
+                                            " full args: %s",
+                                            tool_name,
+                                            e,
                                         )
                                         yield _hook_error("args_streamer", tool_name, e)
                                         yield ToolCallArgsEvent(
@@ -7746,7 +7787,9 @@ class StrandsAgent:
                         if raw_payload is None:
                             continue
                         logger.debug(
-                            f"Unmapped Strands event forwarded as RAW (thread_id={input_data.thread_id}): {raw_payload}"
+                            "Unmapped Strands event forwarded as RAW (thread_id=%s): %s",
+                            input_data.thread_id,
+                            raw_payload,
                         )
                         yield RawEvent(
                             type=EventType.RAW,
@@ -7808,7 +7851,7 @@ class StrandsAgent:
                     pass
                 except Exception as e:
                     # Log other errors but don't fail
-                    logger.warning(f"Error closing agent stream: {e}")
+                    logger.warning("Error closing agent stream: %s", e)
                 finally:
                     _restore_transient_model_context(strands_agent)
 
@@ -7912,11 +7955,12 @@ class StrandsAgent:
                 pending_interrupt_outcome = self._record_pending_interrupts(
                     strands_agent, thread_id, visible_native_interrupts
                 )
-                logger.debug(
-                    f"Strands interrupt detected: thread_id={input_data.thread_id}, "
-                    "interrupt_ids="
-                    f"{[i.id for i in pending_interrupt_outcome.interrupts]}"
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Strands interrupt detected: thread_id=%s, interrupt_ids=%s",
+                        input_data.thread_id,
+                        [i.id for i in pending_interrupt_outcome.interrupts],
+                    )
 
             # Every started subagent is closed before RUN_FINISHED. One still
             # open here was never answered by its spawning call: the run paused
