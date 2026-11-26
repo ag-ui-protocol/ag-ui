@@ -60,7 +60,7 @@ function handleRequest(
   agents: Record<string, CopilotAgent>,
 ): http.RequestListener {
   return (req, res) => {
-    void (async () => {
+    (async () => {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "*");
@@ -70,7 +70,14 @@ function handleRequest(
         return;
       }
 
-      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+      let url: URL;
+      try {
+        url = new URL(req.url ?? "/", "http://localhost");
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid request URL" }));
+        return;
+      }
       const path = url.pathname.replace(/^\//, "");
 
       if (req.method === "GET" && path === "health") {
@@ -106,21 +113,40 @@ function handleRequest(
         "X-Accel-Buffering": "no",
       });
 
-      const subscription = agent.run(input).subscribe({
-        next: (event) => res.write(encoder.encode(event)),
+      // Observer callbacks must not throw: RxJS rethrows them asynchronously,
+      // which would crash the process. An unencodable event drops the stream.
+      let subscription: { unsubscribe(): void } | undefined;
+      const send = (event: Parameters<typeof encoder.encode>[0]): boolean => {
+        if (res.destroyed) return false;
+        try {
+          res.write(encoder.encode(event));
+          return true;
+        } catch {
+          subscription?.unsubscribe();
+          res.destroy();
+          return false;
+        }
+      };
+      subscription = agent.run(input).subscribe({
+        next: (event) => void send(event),
         error: (error: unknown) => {
-          res.write(
-            encoder.encode({
-              type: "RUN_ERROR",
-              message: error instanceof Error ? error.message : String(error),
-            } as never),
-          );
-          res.end();
+          const message = error instanceof Error ? error.message : String(error);
+          if (send({ type: "RUN_ERROR", message } as never)) res.end();
         },
-        complete: () => res.end(),
+        complete: () => {
+          if (!res.destroyed) res.end();
+        },
       });
-      res.on("close", () => subscription.unsubscribe());
-    })();
+      if (res.destroyed) subscription.unsubscribe();
+      res.on("close", () => subscription?.unsubscribe());
+    })().catch(() => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal error" }));
+    });
   };
 }
 
