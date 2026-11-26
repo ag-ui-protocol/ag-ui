@@ -3,7 +3,7 @@ import re
 import uuid
 import json
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from functools import lru_cache
 from typing import Optional, List, Any, Union, AsyncGenerator, Generator, Literal, Dict, TypedDict
 from typing_extensions import NotRequired, Self
@@ -4727,7 +4727,7 @@ class LangGraphAgent:
         if accepts_context:
             base_context = {}
             if isinstance(config, dict) and 'configurable' in config and isinstance(config['configurable'], dict):
-                base_context.update(config['configurable'])
+                base_context.update(self._configurable_for_context(config['configurable']))
             if context:  # context might be None or {}
                 base_context.update(context)
             if base_context:  # only add if there's something to pass
@@ -4740,6 +4740,16 @@ class LangGraphAgent:
             kwargs.update(fork)
 
         return kwargs
+
+    def _configurable_for_context(self, configurable: Dict[str, Any]) -> Dict[str, Any]:
+        # LangGraph builds a dataclass context with ``context_schema(**context)``,
+        # so configurable keys the dataclass doesn't declare (thread_id, at
+        # minimum) would raise TypeError. They still reach the graph via config.
+        context_schema = getattr(self.graph, "context_schema", None)
+        if not (isinstance(context_schema, type) and is_dataclass(context_schema)):
+            return configurable
+        init_fields = {f.name for f in fields(context_schema) if f.init}
+        return {k: v for k, v in configurable.items() if k in init_fields}
 
     async def get_state_and_messages_snapshots(self, config: RunnableConfig) -> AsyncGenerator[ProcessedEvents, None]:
         """Emit STATE_SNAPSHOT + MESSAGES_SNAPSHOT for the current checkpoint."""
