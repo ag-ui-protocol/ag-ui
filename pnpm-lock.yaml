@@ -15,6 +15,10 @@ overrides:
   zod: 3.25.76
   '@google/adk>zod': ^4.2.1
   '@strands-agents/sdk>zod': ^4.4.3
+  '@ag-ui/core>zod': ^4.6.7
+  '@ag-ui/client>zod': ^4.6.7
+  '@ag-ui/encoder>zod': ^4.6.7
+  '@ag-ui/proto>zod': ^4.6.7
   '@ag-ui/aws-strands>zod': ^4.4.3
   '@ag-ui/aws-strands-examples>zod': ^4.4.3
   '@omnara/sdk>zod': ^4.4.3
@@ -1843,8 +1847,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   sdks/typescript/packages/core:
     devDependencies:
@@ -1873,8 +1877,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   sdks/typescript/packages/encoder:
     dependencies:
@@ -1907,8 +1911,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   sdks/typescript/packages/proto:
     dependencies:
@@ -1950,8 +1954,8 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.21)(jiti@2.6.1)(lightningcss@1.30.1)(tsx@4.20.6)(yaml@2.8.4)
       zod:
-        specifier: 3.25.76
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
 
   spec:
     devDependencies:
@@ -2042,12 +2046,12 @@ packages:
   '@ag-ui/client@1.0.4':
     resolution: {integrity: sha512-bACZj5CG/B6coQL54/LT0b29RjoyZf7k+XTs1c4+PBpsZbCYCNQ/TVDE5ffvmZvZ4NnH2Zc+JjbIeGdNdYJu8w==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
 
   '@ag-ui/core@1.0.0':
     resolution: {integrity: sha512-yCRhsQvb4+lmGMrDsi4TOJxqKpm/kb3H64wwL+Z90jNVrkhy17RErfzsNgybfbjNKLM0nenEDYDVJsZHJJSigQ==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
     peerDependenciesMeta:
       zod:
         optional: true
@@ -2055,7 +2059,7 @@ packages:
   '@ag-ui/core@1.0.1':
     resolution: {integrity: sha512-Q6pxgI7gcey/0pHfM37S7GNrsYqTrrjjFLpi1dckHNGX2l9VTL0CjnyNc44lwPfHIzFmmEvQfbrAeEPINGGg/Q==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
     peerDependenciesMeta:
       zod:
         optional: true
@@ -2063,7 +2067,7 @@ packages:
   '@ag-ui/core@1.0.2':
     resolution: {integrity: sha512-lb0YfvHY4eTHcXthTWzXjsElLqycGWDhaXGTejwMkUV5TtJVZircRS12/tMpqzd32sL+WZ2PWQ4m0+ThKrGF8A==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
     peerDependenciesMeta:
       zod:
         optional: true
@@ -2071,7 +2075,7 @@ packages:
   '@ag-ui/core@1.0.4':
     resolution: {integrity: sha512-Z/G3UXYRyZ/1LcOtCCf6RJiFPTjRqaNublW/kQ7wsfiP4Qw5oIVmvO6NkUQYoqCoMXuXggyD3MMH2Td5OVKECQ==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
     peerDependenciesMeta:
       zod:
         optional: true
@@ -2085,7 +2089,7 @@ packages:
   '@ag-ui/encoder@1.0.4':
     resolution: {integrity: sha512-fq5kqj+kCFtpLhBhfLjv55DRTKdbduFg6Wcsw4VL3uCABSQhH+PLC36vMjbjZdDp9q+mgVrGhRvaW+JdkdfVog==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
 
   '@ag-ui/langgraph@0.0.43':
     resolution: {integrity: sha512-eG8FBd7jQeo7lfraAz9fbuYM/sFJILnO7yFioCa/++cFygd5CpqpvVoUI1d/WEOzHYTwiuXYM5fPOQ8ZzQuYog==}
@@ -2120,7 +2124,7 @@ packages:
   '@ag-ui/proto@1.0.4':
     resolution: {integrity: sha512-+OAa2w1ELijSwNgNGvMDCIx5rFO+1NQDpwzoq1oXwE4L0qWciZnhIisocVzAKjtH7Ac/ONSyYR1t4qG3kMzRkw==}
     peerDependencies:
-      zod: 3.25.76
+      zod: ^4.6.7
 
   '@ai-sdk/anthropic@2.0.74':
     resolution: {integrity: sha512-1Z7142GVIF4XkcSvQpL6ij2c7J51dtm4/Z84P+O0bGBDZI1Nbvz897hXkJf2cfNhq5XdpvUYbI+oExXM7Ko8Zw==}
@@ -14392,6 +14396,9 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
@@ -14478,8 +14485,8 @@ snapshots:
 
   '@ag-ui/client@1.0.1':
     dependencies:
-      '@ag-ui/core': 1.0.1(zod@3.25.76)
-      '@ag-ui/encoder': 1.0.1(zod@3.25.76)
+      '@ag-ui/core': 1.0.1(zod@4.6.7)
+      '@ag-ui/encoder': 1.0.1(zod@4.6.7)
       '@ag-ui/proto': 1.0.1
       '@types/uuid': 10.0.0
       compare-versions: 6.1.1
@@ -14487,12 +14494,12 @@ snapshots:
       rxjs: 7.8.1
       untruncate-json: 0.0.1
       uuid: 11.1.0
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/client@1.0.2':
     dependencies:
-      '@ag-ui/core': 1.0.2(zod@3.25.76)
-      '@ag-ui/encoder': 1.0.2(zod@3.25.76)
+      '@ag-ui/core': 1.0.2(zod@4.6.7)
+      '@ag-ui/encoder': 1.0.2(zod@4.6.7)
       '@ag-ui/proto': 1.0.2
       '@types/uuid': 10.0.0
       compare-versions: 6.1.1
@@ -14500,7 +14507,7 @@ snapshots:
       rxjs: 7.8.1
       untruncate-json: 0.0.1
       uuid: 11.1.0
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/client@1.0.4(zod@3.25.76)':
     dependencies:
@@ -14523,9 +14530,17 @@ snapshots:
     optionalDependencies:
       zod: 3.25.76
 
+  '@ag-ui/core@1.0.1(zod@4.6.7)':
+    optionalDependencies:
+      zod: 4.6.7
+
   '@ag-ui/core@1.0.2(zod@3.25.76)':
     optionalDependencies:
       zod: 3.25.76
+
+  '@ag-ui/core@1.0.2(zod@4.6.7)':
+    optionalDependencies:
+      zod: 4.6.7
 
   '@ag-ui/core@1.0.4(zod@3.25.76)':
     optionalDependencies:
@@ -14538,9 +14553,23 @@ snapshots:
     transitivePeerDependencies:
       - zod
 
+  '@ag-ui/encoder@1.0.1(zod@4.6.7)':
+    dependencies:
+      '@ag-ui/core': 1.0.1(zod@4.6.7)
+      '@ag-ui/proto': 1.0.1
+    transitivePeerDependencies:
+      - zod
+
   '@ag-ui/encoder@1.0.2(zod@3.25.76)':
     dependencies:
       '@ag-ui/core': 1.0.2(zod@3.25.76)
+      '@ag-ui/proto': 1.0.2
+    transitivePeerDependencies:
+      - zod
+
+  '@ag-ui/encoder@1.0.2(zod@4.6.7)':
+    dependencies:
+      '@ag-ui/core': 1.0.2(zod@4.6.7)
       '@ag-ui/proto': 1.0.2
     transitivePeerDependencies:
       - zod
@@ -14659,17 +14688,17 @@ snapshots:
 
   '@ag-ui/proto@1.0.1':
     dependencies:
-      '@ag-ui/core': 1.0.1(zod@3.25.76)
+      '@ag-ui/core': 1.0.1(zod@4.6.7)
       '@bufbuild/protobuf': 2.9.0
       '@protobuf-ts/protoc': 2.11.1
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/proto@1.0.2':
     dependencies:
-      '@ag-ui/core': 1.0.2(zod@3.25.76)
+      '@ag-ui/core': 1.0.2(zod@4.6.7)
       '@bufbuild/protobuf': 2.9.0
       '@protobuf-ts/protoc': 2.11.1
-      zod: 3.25.76
+      zod: 4.6.7
 
   '@ag-ui/proto@1.0.4(zod@3.25.76)':
     dependencies:
@@ -30795,5 +30824,7 @@ snapshots:
   zod@3.25.76: {}
 
   zod@4.4.3: {}
+
+  zod@4.6.7: {}
 
   zwitch@2.0.4: {}
