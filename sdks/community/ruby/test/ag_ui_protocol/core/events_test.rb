@@ -392,6 +392,11 @@ class EventsTest < Minitest::Test
         assert_equal 1, payload["event"]["raw_data"]["deep_key"]
         refute payload["event"].key?("upstreamId")
       end
+
+      should "serialize a nil event as null instead of dropping the required key" do
+        event = AgUiProtocol::Core::Events::RawEvent.new(event: nil)
+        assert_event_payload(event, { "type" => "RAW", "event" => nil })
+      end
     end
 
     context "CustomEvent" do
@@ -415,6 +420,11 @@ class EventsTest < Minitest::Test
         assert_equal "x", payload["value"]["user_data"]["agent_id"]
         assert_equal true, payload["value"]["user_data"]["feature_flag"]
         refute payload["value"].key?("userData")
+      end
+
+      should "serialize a nil value as null instead of dropping the required key" do
+        event = AgUiProtocol::Core::Events::CustomEvent.new(name: "app.ping", value: nil)
+        assert_event_payload(event, { "type" => "CUSTOM", "name" => "app.ping", "value" => nil })
       end
     end
 

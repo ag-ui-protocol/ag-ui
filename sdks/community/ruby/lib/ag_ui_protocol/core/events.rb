@@ -818,7 +818,9 @@ module AgUiProtocol
         sig { returns(T::Hash[Symbol, T.untyped]) }
         def to_h
           # `event` is the raw upstream event payload — preserve keys verbatim.
-          super.merge(event: @event.nil? ? nil : AgUiProtocol::Util::Opaque.new(@event), source: @source)
+          # It is required but may be null, so wrap nil too: Opaque survives the
+          # nil compaction in `as_json` and is written as `"event": null`.
+          super.merge(event: AgUiProtocol::Util::Opaque.new(@event), source: @source)
         end
       end
 
@@ -850,7 +852,8 @@ module AgUiProtocol
         sig { returns(T::Hash[Symbol, T.untyped]) }
         def to_h
           # `value` is an application-specific payload — preserve keys verbatim.
-          super.merge(name: @name, value: @value.nil? ? nil : AgUiProtocol::Util::Opaque.new(@value))
+          # Required but may be null; see RawEvent#to_h.
+          super.merge(name: @name, value: AgUiProtocol::Util::Opaque.new(@value))
         end
       end
 

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - [`RunStartedEvent`](https://docs.ag-ui.com/spec/draft/schema#runstartedevent), [`RunAgentInput`](https://docs.ag-ui.com/spec/draft/schema#runagentinput) can be created with an optional `protocol_version` parameter as defined by the specification.
 
+### Fixed
+
+- `CustomEvent` with `value: nil` and `RawEvent` with `event: nil` now serialize the key as `null` instead of omitting it. Both keys are required by the specification and may be null.
+
 ## [0.2.0] - 2026-05-26
 
 ### Added
