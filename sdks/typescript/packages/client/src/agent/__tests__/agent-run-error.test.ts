@@ -9,8 +9,13 @@
  *
  * The agent INSTANCE is likewise untouched: a new run on the same object starts
  * clean.
+ *
+ * A producer that also errors its stream after the RUN_ERROR (the shape the
+ * Mastra and LangGraph adapters use) does fail the run, but only after every
+ * event it sent first has been delivered to subscribers and applied.
  */
 import { Observable, Subject, of } from "rxjs";
+import { concatMap } from "rxjs/operators";
 import { transformHttpEventStream } from "@/transform/http";
 import { HttpEventType, type HttpEvent } from "@/run/http-request";
 import { AbstractAgent } from "../agent";
@@ -21,7 +26,7 @@ import {
   RunFinishedEvent,
   RunStartedEvent,
 } from "@ag-ui/core";
-import type { AgentSubscriber } from "../subscriber";
+import type { AgentStateMutation, AgentSubscriber } from "../subscriber";
 import type { RunAgentResult } from "../agent";
 
 /** Replays a different scripted stream on each successive run. */
@@ -262,5 +267,133 @@ describe("the abort contract", () => {
     await agent.runAgent({ runId: "r1" });
     expect(seen).toBe(abortError);
     expect(seen instanceof Error).toBe(true);
+  });
+});
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Sends `events`, then errors the stream with `error`, all synchronously. */
+function failingStream(events: BaseEvent[], error: Error): Observable<BaseEvent> {
+  return new Observable<BaseEvent>((subscriber) => {
+    events.forEach((event) => subscriber.next(event));
+    subscriber.error(error);
+  });
+}
+
+class FailingStreamAgent extends AbstractAgent {
+  constructor(
+    private events: BaseEvent[],
+    private error: Error,
+  ) {
+    super();
+    this.debug = false;
+  }
+  run(_input: RunAgentInput): Observable<BaseEvent> {
+    return failingStream(this.events, this.error);
+  }
+  protected connect(_input: RunAgentInput): Observable<BaseEvent> {
+    return failingStream(this.events, this.error);
+  }
+}
+
+/** Slow subscribers: each callback yields to a timer before returning. */
+function slowRecorder() {
+  const seen: string[] = [];
+  const runErrors: BaseEvent[] = [];
+  const subscriber = {
+    onEvent: async ({ event }) => {
+      await delay(10);
+      seen.push(event.type);
+    },
+    onRunErrorEvent: async ({ event }) => {
+      await delay(10);
+      runErrors.push(event);
+    },
+    onRunFailed: vi.fn(),
+    onRunFinalized: vi.fn(),
+  } satisfies AgentSubscriber;
+  return { seen, runErrors, subscriber };
+}
+
+describe("a stream that errors after sending events", () => {
+  const runError = { type: EventType.RUN_ERROR, message: "model failed" } as BaseEvent;
+  const failedRun = [started("r1"), ...message("m1", "partial answer"), runError];
+
+  it.each(["runAgent", "connectAgent"] as const)(
+    "%s delivers the RUN_ERROR and everything before it, then rejects with the stream's error",
+    async (method) => {
+      const error = new Error("stream failed after RUN_ERROR");
+      const agent = new FailingStreamAgent(failedRun, error);
+      const { seen, runErrors, subscriber } = slowRecorder();
+
+      const logged = await loggedErrorsDuring(async () => {
+        await expect(agent[method]({ runId: "r1" }, subscriber)).rejects.toBe(error);
+      });
+
+      expect(seen).toEqual([
+        EventType.RUN_STARTED,
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.RUN_ERROR,
+      ]);
+      expect(runErrors).toEqual([runError]);
+      expect(agent.messages).toEqual([{ id: "m1", role: "assistant", content: "partial answer" }]);
+      expect(subscriber.onRunFailed).toHaveBeenCalledTimes(1);
+      expect(subscriber.onRunFailed.mock.calls[0][0].error).toBe(error);
+      await vi.waitFor(() => expect(subscriber.onRunFinalized).toHaveBeenCalledTimes(1));
+      expect(agent.isRunning).toBe(false);
+      expect(logged).toContain("Agent execution failed");
+    },
+  );
+
+  it("applies every event before a plain stream error, with no RUN_ERROR", async () => {
+    const error = new Error("connection dropped");
+    const agent = new FailingStreamAgent([started("r1"), ...message("m1", "cut off")], error);
+    const { seen, runErrors, subscriber } = slowRecorder();
+
+    await loggedErrorsDuring(async () => {
+      await expect(agent.runAgent({ runId: "r1" }, subscriber)).rejects.toBe(error);
+    });
+
+    expect(seen).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_CONTENT,
+      EventType.TEXT_MESSAGE_END,
+    ]);
+    expect(runErrors).toEqual([]);
+    expect(agent.messages).toEqual([{ id: "m1", role: "assistant", content: "cut off" }]);
+    expect(subscriber.onRunFailed).toHaveBeenCalledTimes(1);
+    expect(agent.isRunning).toBe(false);
+  });
+
+  it("holds for a subclass that overrides apply", async () => {
+    class SlowApplyAgent extends FailingStreamAgent {
+      public applied: string[] = [];
+      protected apply(
+        input: RunAgentInput,
+        events$: Observable<BaseEvent>,
+        subscribers: AgentSubscriber[],
+      ): Observable<AgentStateMutation> {
+        const slowed$ = events$.pipe(
+          concatMap(async (event) => {
+            await delay(5);
+            this.applied.push(event.type);
+            return event;
+          }),
+        );
+        return super.apply(input, slowed$, subscribers);
+      }
+    }
+    const error = new Error("stream failed after RUN_ERROR");
+    const agent = new SlowApplyAgent(failedRun, error);
+
+    await loggedErrorsDuring(async () => {
+      await expect(agent.runAgent({ runId: "r1" })).rejects.toBe(error);
+    });
+
+    expect(agent.applied).toEqual(failedRun.map((event) => event.type));
+    expect(agent.messages.map((m) => m.id)).toEqual(["m1"]);
   });
 });

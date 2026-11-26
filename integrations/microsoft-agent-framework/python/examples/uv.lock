@@ -7,6 +7,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "ag-ui-a2ui-toolkit"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/ce/85f3960a83d962e5690bc0f27a3baf3bf1602edc2b0603085928c964ea14/ag_ui_a2ui_toolkit-0.0.4.tar.gz", hash = "sha256:172e2724e53df8173685a3fb896a6e5175eea06e1dc166c715db110ba4beba76", size = 18960, upload-time = "2026-06-17T13:34:28.695Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/7a/acf85b01cd996bd011b71e181fd9f3daff5396fc3b7d78ba9445bfc08ecf/ag_ui_a2ui_toolkit-0.0.4-py3-none-any.whl", hash = "sha256:236fc511e1ec2399bcda0c14a109b3fb0a0c3e3988c18ef1918745b1c1535e30", size = 21315, upload-time = "2026-06-17T13:34:29.505Z" },
+]
+
+[[package]]
 name = "ag-ui-protocol"
 version = "0.1.19"
 source = { registry = "https://pypi.org/simple" }
@@ -20,7 +29,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.1.0"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -30,25 +39,31 @@ dependencies = [
     { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fd/48/e47a702ad1449798c99d3e845a16e4ac058fb3ed37a6afe9fe8f5da9a640/agent_framework_ag_ui-1.1.0.tar.gz", hash = "sha256:bac5f7a22ad09c349f7c543b8ea97a72a5d8c6b608093764d5823a64cf088cb7", size = 292963, upload-time = "2026-08-14T02:39:26.285Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/f9/618caed77e53fdd3e493d3e79b9fd65dca953ed8dd9b31ce19b05172f1a4/agent_framework_ag_ui-1.4.0.tar.gz", hash = "sha256:bb8ac4a58f31be7f5a286a9d52d3819a75cd35219082e3d07e8a45c3c8105fb9", size = 428538, upload-time = "2026-09-18T10:59:56.983Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/4a/99a00f092618245d7bcc156616d923dd7193c4194f43212b3431d83e855b/agent_framework_ag_ui-1.1.0-py3-none-any.whl", hash = "sha256:8d1751ebfefdcb1608398a7bd857265730588931a034f070858560e9eb9d98f8", size = 146880, upload-time = "2026-08-14T02:39:01.514Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/77/226ba66e82ae06600b8e8d804d8c508b62e0c7748ad70f3673662c971f5b/agent_framework_ag_ui-1.4.0-py3-none-any.whl", hash = "sha256:432eaf114130d91d103a9bb79ebe49a66f78b7fdc5045a382ba791869fb925ee", size = 208658, upload-time = "2026-09-18T10:57:32.432Z" },
+]
+
+[package.optional-dependencies]
+a2ui = [
+    { name = "ag-ui-a2ui-toolkit" },
 ]
 
 [[package]]
 name = "agent-framework-core"
-version = "1.14.0"
+version = "1.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "msgspec" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/15/ffdf3450fcf6f7f623463b60abddf498a3c85e8724eb168aa8584325f8db/agent_framework_core-1.14.0.tar.gz", hash = "sha256:e8c3abdae48df50ce9aa26818f7b3c9f3170672ce607eb73a69b6413fbb753b3", size = 563625, upload-time = "2026-08-14T02:39:31.548Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/4a/7aa2feee4c17864e49d83b368b4740940e00551a035ba12d3bc2678d4c87/agent_framework_core-1.19.0.tar.gz", hash = "sha256:b483482551f56ff465d2633cadbe344791390f03c5f715ec0939e55b865bc86f", size = 703611, upload-time = "2026-09-18T11:00:03.137Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/cc/f392fcca95f3f51e8ae95b8060d36b95355d24cd647a49f4f239cef95732/agent_framework_core-1.14.0-py3-none-any.whl", hash = "sha256:0d161490bb26bde185dd325fcdbb3b109d85e91076ef6ed5df118c4e5f715cba", size = 620760, upload-time = "2026-08-14T02:39:08.763Z" },
+    { url = "https://files.pythonhosted.org/packages/22/af/6ed9435277f39373eee1b88f1aff42ea7809d0b520f1932ff59dbf49fd5b/agent_framework_core-1.19.0-py3-none-any.whl", hash = "sha256:c887e6d5380b5ab21731b981f4c3e6b342f211bda20526ab82fa20c34a9bddbd", size = 764283, upload-time = "2026-09-18T10:57:40.824Z" },
 ]
 
 [[package]]
@@ -361,15 +376,15 @@ name = "microsoft-agent-framework-dojo"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "agent-framework-ag-ui" },
+    { name = "agent-framework-ag-ui", extra = ["a2ui"] },
     { name = "agent-framework-openai" },
     { name = "python-dotenv" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework-ag-ui", specifier = ">=1.0.1" },
-    { name = "agent-framework-openai", specifier = ">=1.0.1" },
+    { name = "agent-framework-ag-ui", extras = ["a2ui"], specifier = ">=1.2.0" },
+    { name = "agent-framework-openai", specifier = ">=1.13.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 

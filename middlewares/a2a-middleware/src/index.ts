@@ -7,14 +7,13 @@ import {
   ToolCallResultEvent,
   Message,
   ToolCallStartEvent,
+  ToolCallArgsEvent,
   transformChunks,
-  AgentSubscriber,
   RunFinishedEvent,
   RunErrorEvent,
   TextMessageStartEvent,
   TextMessageEndEvent,
 } from "@ag-ui/client";
-import { RunFinishedEventSchema } from "@ag-ui/core/schemas";
 
 import { A2AClient } from "@a2a-js/sdk/client";
 import {
@@ -48,6 +47,22 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     this.orchestrationAgent = config.orchestrationAgent;
   }
 
+  /**
+   * AbstractAgent.clone() copies only the base agent's fields, and runtimes
+   * such as CopilotKit run a clone per request, so without this the clone has
+   * no agent cards or orchestrator and its first run fails. The A2A clients and
+   * the fetched cards are shared; the orchestrator is cloned because the run
+   * adds the A2A replies to its messages.
+   */
+  public clone(): A2AMiddlewareAgent {
+    const cloned = super.clone() as A2AMiddlewareAgent;
+    cloned.instructions = this.instructions;
+    cloned.agentClients = this.agentClients;
+    cloned.agentCards = this.agentCards;
+    cloned.orchestrationAgent = this.orchestrationAgent.clone();
+    return cloned;
+  }
+
   finishTextMessages(
     observer: Subscriber<{
       type: EventType;
@@ -76,20 +91,11 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     }>,
     input: RunAgentInput,
   ): any {
-    const applyAndProcessEvents = (source$: Observable<BaseEvent>) => {
-      // Apply events to get mutations
-      const mutations$ = this.apply(input, source$, this.subscribers);
-      // Process the mutations
-      const processedMutations$ = this.processApplyEvents(
-        input,
-        mutations$,
-        this.subscribers,
-      );
-      // Subscribe to the processed mutations to trigger side effects
-      processedMutations$.subscribe();
-      // Return the original stream to maintain BaseEvent type
-      return source$;
-    };
+    // The arguments of each delegated call, collected from this stream's own
+    // TOOL_CALL_ARGS. Reading them back from `this.messages` instead needed a
+    // second subscription to apply the events, which re-ran the orchestrator
+    // and raced the RUN_FINISHED below (PNI-549).
+    const streamedArgs = new Map<string, string>();
 
     const markTextMessageAsPending = (event: BaseEvent) => {
       if (event.type === EventType.TEXT_MESSAGE_START) {
@@ -105,11 +111,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     };
 
     return stream
-      .pipe(
-        transformChunks(this.debugLogger),
-        applyAndProcessEvents,
-        tap(markTextMessageAsPending),
-      )
+      .pipe(transformChunks(this.debugLogger), tap(markTextMessageAsPending))
       .subscribe({
         next: (event: BaseEvent) => {
           // Handle tool call start events for send_message_to_a2a_agent
@@ -123,7 +125,18 @@ export class A2AMiddlewareAgent extends AbstractAgent {
           ) {
             // Track this as a pending A2A call
             pendingA2ACalls.add(event.toolCallId as string);
+            streamedArgs.set(event.toolCallId as string, "");
             // Proxy the start event normally
+            observer.next(event);
+            return;
+          }
+
+          if (
+            event.type === EventType.TOOL_CALL_ARGS &&
+            streamedArgs.has((event as ToolCallArgsEvent).toolCallId)
+          ) {
+            const { toolCallId, delta } = event as ToolCallArgsEvent;
+            streamedArgs.set(toolCallId, streamedArgs.get(toolCallId) + delta);
             observer.next(event);
             return;
           }
@@ -171,12 +184,15 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                * a failed run. Everything below is somebody else's JSON, so it has to fail inward.
                */
               const callProms = [...pendingA2ACalls].map(async (toolCallId) => {
-                const toolCallsFromMessages = this.messages
-                  .filter((message) => message.role === "assistant")
-                  .flatMap((message) => message.toolCalls || [])
-                  .filter((toolCall) => toolCall.id === toolCallId);
-
-                const toolArgs = toolCallsFromMessages[0]?.function.arguments;
+                // Messages a caller seeded before the run can carry the call
+                // too, when the stream itself sent no arguments.
+                const toolArgs =
+                  streamedArgs.get(toolCallId) ||
+                  this.messages
+                    .filter((message) => message.role === "assistant")
+                    .flatMap((message) => message.toolCalls || [])
+                    .find((toolCall) => toolCall.id === toolCallId)?.function
+                    .arguments;
                 if (!toolArgs) {
                   throw new Error(
                     `Tool arguments not found for tool call id ${toolCallId}`,
@@ -225,7 +241,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                   );
                 }
 
-                if (this.debug) {
+                if (this.debug.enabled) {
                   console.debug("sending message to a2a agent", {
                     agentName,
                     message: task,
@@ -239,7 +255,7 @@ export class A2AMiddlewareAgent extends AbstractAgent {
                       toolCallId: toolCallId,
                       content: a2aResponse,
                     };
-                    if (this.debug) {
+                    if (this.debug.enabled) {
                       console.debug("newMessage From a2a agent", newMessage);
                     }
                     this.addMessage(newMessage);

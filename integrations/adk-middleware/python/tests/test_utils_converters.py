@@ -841,6 +841,150 @@ class TestConvertAGUIMessagesToADK:
             assert "Error converting message bad" in str(mock_logger.error.call_args)
 
 
+_MEDIA_CASES = [
+    (ImageInputContent, "image", "image/png", "photo.png"),
+    (AudioInputContent, "audio", "audio/wav", "voice memo.wav"),
+    (VideoInputContent, "video", "video/mp4", "clip.mp4"),
+    (DocumentInputContent, "document", "application/pdf", "Q3 report.pdf"),
+]
+_MEDIA_CASE_IDS = [case[1] for case in _MEDIA_CASES]
+
+
+def _media_item(content_cls, type_name, mime_type, *, source_kind, as_dict, metadata):
+    """Build a media content item as a model instance or as a plain dict."""
+    raw = f"{type_name}-bytes".encode()
+    if source_kind == "data":
+        source = {"type": "data", "value": base64.b64encode(raw).decode("ascii"), "mimeType": mime_type}
+    else:
+        source = {"type": "url", "value": f"https://example.com/{type_name}", "mimeType": mime_type}
+
+    if as_dict:
+        item = {"type": type_name, "source": source}
+        if metadata is not None:
+            item["metadata"] = metadata
+        return item
+
+    source_model = (
+        InputContentDataSource(value=source["value"], mime_type=mime_type)
+        if source_kind == "data"
+        else InputContentUrlSource(value=source["value"], mime_type=mime_type)
+    )
+    kwargs = {"source": source_model}
+    if metadata is not None:
+        kwargs["metadata"] = metadata
+    return content_cls(**kwargs)
+
+
+def _display_name(part):
+    return (part.inline_data or part.file_data).display_name
+
+
+class TestMediaFilenameToDisplayName:
+    """The original filename in a media part's metadata becomes the native display_name."""
+
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["model", "dict"])
+    @pytest.mark.parametrize("content_cls,type_name,mime_type,filename", _MEDIA_CASES, ids=_MEDIA_CASE_IDS)
+    def test_inline_source_filename_becomes_blob_display_name(
+        self, content_cls, type_name, mime_type, filename, as_dict
+    ):
+        item = _media_item(
+            content_cls, type_name, mime_type,
+            source_kind="data", as_dict=as_dict, metadata={"filename": filename},
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        blob = parts[0].inline_data
+        assert blob.data == f"{type_name}-bytes".encode()
+        assert blob.mime_type == mime_type
+        assert blob.display_name == filename
+
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["model", "dict"])
+    @pytest.mark.parametrize("content_cls,type_name,mime_type,filename", _MEDIA_CASES, ids=_MEDIA_CASE_IDS)
+    def test_url_source_filename_becomes_file_data_display_name(
+        self, content_cls, type_name, mime_type, filename, as_dict
+    ):
+        item = _media_item(
+            content_cls, type_name, mime_type,
+            source_kind="url", as_dict=as_dict, metadata={"filename": filename},
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        file_data = parts[0].file_data
+        assert file_data.file_uri == f"https://example.com/{type_name}"
+        assert file_data.mime_type == mime_type
+        assert file_data.display_name == filename
+
+    @pytest.mark.parametrize("source_kind", ["data", "url"])
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["model", "dict"])
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            None,
+            {},
+            {"filename": ""},
+            {"filename": 42},
+            {"filename": None},
+            {"name": "photo.png", "size": 10083},
+            "photo.png",
+        ],
+        ids=["absent", "empty-dict", "empty-string", "non-string", "null", "unrelated-keys", "not-a-dict"],
+    )
+    def test_no_usable_filename_leaves_display_name_unset(self, metadata, as_dict, source_kind):
+        item = _media_item(
+            ImageInputContent, "image", "image/png",
+            source_kind=source_kind, as_dict=as_dict, metadata=metadata,
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert len(parts) == 1
+        assert _display_name(parts[0]) is None
+
+    def test_only_filename_is_taken_from_metadata(self):
+        item = _media_item(
+            DocumentInputContent, "document", "application/pdf",
+            source_kind="data", as_dict=False,
+            metadata={"filename": "report.pdf", "size": 2486, "uploadedBy": "someone"},
+        )
+
+        parts = convert_message_content_to_parts([item])
+
+        assert parts[0].inline_data.display_name == "report.pdf"
+        dumped = parts[0].model_dump(exclude_none=True)
+        assert "2486" not in json.dumps(dumped, default=str)
+        assert "someone" not in json.dumps(dumped, default=str)
+
+    def test_filenames_follow_their_own_parts_in_a_mixed_message(self):
+        user_msg = UserMessage(
+            id="user_mixed_named",
+            role="user",
+            content=[
+                TextInputContent(text="Look at these."),
+                _media_item(
+                    ImageInputContent, "image", "image/png",
+                    source_kind="data", as_dict=False, metadata={"filename": "a.png"},
+                ),
+                _media_item(
+                    AudioInputContent, "audio", "audio/wav",
+                    source_kind="data", as_dict=False, metadata=None,
+                ),
+                _media_item(
+                    DocumentInputContent, "document", "application/pdf",
+                    source_kind="url", as_dict=False, metadata={"filename": "b.pdf"},
+                ),
+            ],
+        )
+
+        parts = convert_ag_ui_messages_to_adk([user_msg])[0].content.parts
+
+        assert parts[0].text == "Look at these."
+        assert [_display_name(p) for p in parts[1:]] == ["a.png", None, "b.pdf"]
+
+
 class TestConvertADKEventToAGUIMessage:
     """Tests for convert_adk_event_to_ag_ui_message function."""
 

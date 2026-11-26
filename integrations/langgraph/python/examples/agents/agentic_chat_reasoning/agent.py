@@ -43,7 +43,11 @@ async def chat_node(state: AgentState, config: Optional[RunnableConfig] = None):
             thinking={"type": "adaptive"}
         )
     elif selected_model == "Gemini":
-        model = ChatGoogleGenerativeAI(model="gemini-2.5-pro", thinking_budget=1024)
+        model = ChatGoogleGenerativeAI(
+            model="gemini-3.1-pro-preview",
+            thinking_level="low",
+            include_thoughts=True,
+        )
     else:
         model = ChatOpenAI(
             model="o4-mini",

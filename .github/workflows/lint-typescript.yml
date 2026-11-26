@@ -23,20 +23,15 @@ on:
       - "package.json"
       - "nx.json"
       - ".github/workflows/lint-typescript.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "sdks/typescript/**"
-      - "apps/**"
-      - "eslint.config.base.mjs"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "package.json"
-      - "nx.json"
-      - ".github/workflows/lint-typescript.yml"
+  # Pull requests run this through required-checks.yml (workflow_call), so
+  # the PR path list lives in .github/scripts/required-checks-areas.mjs.
+  workflow_call:
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
+  # Literal name, not github.workflow: under workflow_call that is the
+  # caller's name, so every workflow that required-checks.yml calls and
+  # that declares a group would share one group.
+  group: ${{ github.repository }}-lint-typescript-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -69,7 +64,7 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 

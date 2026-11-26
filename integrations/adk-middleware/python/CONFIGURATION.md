@@ -37,7 +37,7 @@ agent = ADKAgent(
     user_id="user123",               # Required: User identifier
     session_timeout_seconds=1200,    # Optional: Session timeout (default: 20 minutes)
     cleanup_interval_seconds=300,    # Optional: Cleanup interval (default: 5 minutes)
-    max_sessions_per_user=10,        # Optional: Max sessions per user (default: 10)
+    max_sessions_per_user=10,        # Optional: Max sessions per user (default: None, unlimited)
     use_in_memory_services=True,     # Optional: Use in-memory services (default: True)
     execution_timeout_seconds=600,   # Optional: Execution timeout (default: 10 minutes)
     tool_timeout_seconds=300,        # Optional: Tool timeout (default: 5 minutes)
@@ -63,51 +63,76 @@ agent = ADKAgent(
 
 ### Dynamic Identification
 
-Recommended for multi-tenant applications:
+Recommended for multi-tenant applications. Do not trust client-supplied context
+or state for identity: the client controls them. Take the user ID from the
+authenticated request instead:
 
 ```python
+from fastapi import FastAPI, HTTPException, Request
 from ag_ui.core import RunAgentInput
-
-def extract_app(input: RunAgentInput) -> str:
-    """Extract app name from request context."""
-    for ctx in input.context:
-        if ctx.description == "app":
-            return ctx.value
-    return "default_app"
-
-def extract_user(input: RunAgentInput) -> str:
-    """Extract user ID from request context."""
-    for ctx in input.context:
-        if ctx.description == "user":
-            return ctx.value
-    return f"anonymous_{input.thread_id}"
-
-agent = ADKAgent(
-    adk_agent=my_agent,
-    app_name_extractor=extract_app,
-    user_id_extractor=extract_user
-)
-```
-
-### Using Extracted Headers
-
-When combined with `extract_headers` (see [Header Extraction](#header-extraction)), extractors can use HTTP headers for identification:
-
-```python
-from fastapi import FastAPI
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
 
+
+async def extract_identity(request: Request, input_data: RunAgentInput) -> dict:
+    """Take the user ID from a header set by your authenticating gateway."""
+    user_id = request.headers.get("x-user-id")
+    if not user_id:
+        raise HTTPException(status_code=401)
+    return {"user_id": user_id}
+
+
 agent = ADKAgent(
     adk_agent=my_agent,
-    user_id_extractor=lambda input: input.state.get("headers", {}).get("user_id", "anonymous"),
+    app_name="my_app",
+    user_id_extractor=lambda input: input.state["user_id"],
 )
 
 app = FastAPI()
 add_adk_fastapi_endpoint(
     app, agent, "/chat",
-    extract_headers=["x-user-id"]  # x-user-id header becomes state.headers.user_id
+    extract_state_from_request=extract_identity,
 )
 ```
+
+### Using Request Headers for Identity
+
+To take the user ID from a trusted request header (for example one set by an
+authenticating gateway), read it from `request.headers` in a custom
+`extract_state_from_request` and write it as a top-level state key. Values that
+the extractor returns replace client-supplied state keys with the same name.
+If the header is missing, reject the request so that the run never falls back
+to a shared or client-supplied identity:
+
+```python
+from fastapi import FastAPI, HTTPException, Request
+from ag_ui.core import RunAgentInput
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+
+async def extract_identity(request: Request, input_data: RunAgentInput) -> dict:
+    # The request header is the only source of the user ID.
+    user_id = request.headers.get("x-user-id")
+    if not user_id:
+        raise HTTPException(status_code=401)
+    return {"user_id": user_id}
+
+
+agent = ADKAgent(
+    adk_agent=my_agent,
+    user_id_extractor=lambda input: input.state["user_id"],
+)
+
+app = FastAPI()
+add_adk_fastapi_endpoint(
+    app, agent, "/chat",
+    extract_state_from_request=extract_identity,
+)
+```
+
+Do not read identity or authorization data from client-supplied run state. With
+`extract_headers` (see [Header Extraction](#header-extraction)), only the
+`state.headers` keys of the configured headers come from the request; all other
+`state.headers` keys are client-supplied.
 
 ## Session Management
 
@@ -128,17 +153,51 @@ agent = ADKAgent(
 
 ### Session Lifecycle
 
-1. **Creation**: New session created on first request from a user
+1. **Creation**: New session created on the first request for a thread, unless an existing mapped or native session is found (see [Continuing native ADK sessions](USAGE.md#continuing-native-adk-sessions))
 2. **Maintenance**: Session kept alive with each interaction
 3. **Timeout**: Session marked for cleanup after timeout period
 4. **Cleanup**: Expired sessions removed during cleanup intervals
-5. **Memory**: If memory service configured, expired sessions saved before deletion
+5. **Memory**: If memory service configured, expired sessions saved to memory before cleanup deletes or untracks them
+
+Cleanup and eviction never delete a session without the `_ag_ui_thread_id` stamp (one created outside the middleware, or by a version before the 0.4.1 release of 2026-01-06); they only stop tracking it. Only sessions this process tracks expire: those `SessionManager.get_or_create_session()` returned in this process, which includes every session a run creates. A session a run continues (for example, after a restart) is not tracked by that process, unless the run found it after the session cached for the thread was gone.
+
+### Disabling Cleanup and Session Tracking
+
+The cleanup task reads every tracked session from the session service on each
+interval. With a persistent session service (for example `DatabaseSessionService`)
+where sessions should be kept, that is load on the database for nothing. Two
+options turn it off:
+
+```python
+agent = ADKAgent(
+    adk_agent=my_agent,
+    app_name="my_app",
+    user_id="user123",
+    session_service=DatabaseSessionService(db_url="postgresql://..."),
+
+    # Sessions never expire: the cleanup task is never started.
+    # Sessions are still tracked in memory, so max_sessions_per_user keeps working.
+    session_timeout_seconds=None,
+
+    # Or go further: no in-memory session index and no cleanup task.
+    track_sessions=False,
+)
+```
+
+With `track_sessions=False`, `max_sessions_per_user` cannot be set (a `ValueError`
+is raised), and `SessionManager.get_session_count()`, `get_user_session_count()`
+and `bulk_update_user_state()` see no sessions. Sessions stay in the session
+service until something else deletes them. Per-run behaviour is unchanged:
+session lookup, state updates and processed-message tracking still work.
+
+If you pass your own `session_manager=`, set these options on the `SessionManager`
+instead; `ADKAgent` ignores its own session-cleanup arguments in that case.
 
 ### State and Session Mapping
 
 #### Thread ID → Session ID
 
-The `threadId` from `RunAgentInput` maps directly to the ADK `session_id`. Each unique `threadId` corresponds to a unique ADK session, maintaining conversation continuity across multiple runs.
+Each `threadId` from `RunAgentInput` corresponds to one ADK session within an app and user, maintaining conversation continuity across multiple runs. By default, a session the middleware creates gets a backend-generated `session_id` and records the thread in its `_ag_ui_thread_id` state. With `use_thread_id_as_session_id=True`, the `session_id` is the `threadId` when the backend accepts it and no other thread's session has that ID. When no session is mapped to the thread, an existing native session whose `session_id` is the `threadId` is continued, unless it is mapped to another thread or stamped by another app. On a backend that can list sessions, it is continued only when `list_sessions` returns it for the current user, in the default mode and on Vertex AI in both modes. A backend that cannot list sessions reads it directly, except on Vertex AI, where it is not found. See [Continuing native ADK sessions](USAGE.md#continuing-native-adk-sessions) and [Thread ID vs Session ID Mapping](USAGE.md#thread-id-vs-session-id-mapping).
 
 #### Initial State
 
@@ -148,6 +207,17 @@ The `state` field in `RunAgentInput` initializes and synchronizes session state:
 - **Existing Session**: `state` is merged with existing session state on each request
 
 This enables passing frontend context (user preferences, selected items, UI state) to the backend agent before execution begins.
+
+#### Initial History
+
+`RunAgentInput.messages` is the complete history the client shows. On the first run of a thread that has no ADK session yet, the messages before the latest user message are written into the new session, so the model sees them and later runs keep them. This covers a conversation started from something that happened elsewhere, such as a greeting or earlier turns imported from another system.
+
+- Assistant turns are attributed to the root agent.
+- A tool call is kept only together with its result, since Gemini rejects one without the other.
+- ADK protocol calls (`adk_request_confirmation`, `adk_request_credential`, `adk_request_input`) and the middleware's `confirm_changes` are left out, as are system, developer, reasoning and activity messages.
+- An existing session is the source of truth: history sent for a thread that already has a session is not written into it.
+
+Set `seed_first_run_history=False` to start a new session from the latest user message only.
 
 ## Service Configuration
 
@@ -226,10 +296,12 @@ agent = ADKAgent(
     use_in_memory_services=False
 )
 
-# Session preservation flow:
+# Session preservation flow (for sessions this process tracks):
 # 1. Session expires after timeout
 # 2. Session data added to memory via memory_service.add_session_to_memory()
-# 3. Session removed from active storage
+# 3. Session deleted from the session service, if the middleware created it
+#    (it has the _ag_ui_thread_id stamp) and delete_session_on_cleanup=True;
+#    otherwise kept and only untracked
 # 4. Historical context available for future conversations
 ```
 
@@ -314,7 +386,7 @@ agent = ADKAgent(
 
     # Concurrency settings
     max_concurrent_executions=5,     # Max concurrent agent executions (default: 5)
-    max_sessions_per_user=10         # Max sessions per user (default: 10)
+    max_sessions_per_user=10         # Max sessions per user (default: None, unlimited)
 )
 ```
 
@@ -358,6 +430,14 @@ add_adk_fastapi_endpoint(
 add_adk_fastapi_endpoint(app, general_agent, path="/agents/general")
 add_adk_fastapi_endpoint(app, technical_agent, path="/agents/technical")
 ```
+
+> **Note:** If you call `add_adk_fastapi_endpoint` several times on one app,
+> give every call the same `dependencies`. The helper registers
+> `POST /agents/state` at a fixed path, and FastAPI uses only the first
+> registration of a path. If the calls pass different `dependencies`, the guard
+> of the first call (or the absence of a guard) applies to `/agents/state` for
+> all agents. The same applies to `/capabilities` when two calls use the same
+> `path`.
 
 ### Endpoint Agent Resolver
 
@@ -403,9 +483,9 @@ tool-history messages or arbitrary run-body state.
 
 For trusted tenant, authorization, or data-boundary routing, read from
 `request.headers` directly or use a custom `extract_state_from_request` that
-writes authoritative top-level routing keys. Do not route from `state.headers`
-when using legacy `extract_headers`; client-provided `state.headers` values take
-precedence over extracted header values for backwards compatibility.
+writes authoritative top-level routing keys. With legacy `extract_headers`, a
+configured header decides its `state.headers` key and a value the run body sent
+under that key is dropped; other `state.headers` keys remain client-supplied.
 
 This is useful for tenant routing, request-header routing, and agent registries
 where each target owns a separate middleware configuration. It does not replace
@@ -459,23 +539,12 @@ add_adk_fastapi_endpoint(
 - `x-` prefix is stripped: `x-user-id` → `user_id`
 - Hyphens converted to underscores: `x-tenant-id` → `tenant_id`
 - Missing headers are silently skipped
-- Client-provided `state.headers` values take precedence
+- A configured header decides its key: a `state.headers` value the client sent under that key is dropped, also when the header is missing
 
-**Example with user_id extractor:**
-
-```python
-from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
-
-agent = ADKAgent(
-    adk_agent=my_agent,
-    user_id_extractor=lambda input: input.state.get("headers", {}).get("user_id", "anonymous"),
-)
-
-add_adk_fastapi_endpoint(
-    app, agent, "/chat",
-    extract_headers=["x-user-id", "x-tenant-id"]
-)
-```
+To take the user ID from a request header, do not read it from `state.headers`
+in a `user_id_extractor`. Use a custom `extract_state_from_request` that reads
+`request.headers` and writes a top-level `user_id` key, as shown in
+[Using Request Headers for Identity](#using-request-headers-for-identity).
 
 Client request:
 ```

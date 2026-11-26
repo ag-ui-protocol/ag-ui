@@ -57,6 +57,11 @@ from ag_ui_strands.config import StrandsAgentConfig
 
 from tests.interrupt_state_stub import InterruptStateStub
 
+# Strands >= 1.63 reads get_config() itself (Model.stateful -> model_info) while
+# building the Agent and around every invocation, so there a model whose
+# get_config raises fails inside Strands before the adapter labels any usage.
+_STRANDS_READS_GET_CONFIG = "model_info" in vars(Model)
+
 # Every field a usage entry is allowed to carry. Anything outside this set on an
 # emitted entry is a telemetry leak, whatever else the provider sent.
 ALLOWED_USAGE_FIELDS = {
@@ -800,6 +805,17 @@ class TestUsageLabels:
 
         assert _model_usage_labels(stand_in) == ("bedrock", "nova")
 
+    def test_a_get_config_that_raises_omits_only_the_model_label(self):
+        """Covers the defensive read on every Strands version, including those
+        where such a model can no longer run end to end."""
+
+        def get_config(self):
+            raise RuntimeError("no config for you")
+
+        stand_in = type("BedrockModel", (), {"get_config": get_config})()
+
+        assert _model_usage_labels(stand_in) == ("bedrock", None)
+
     def test_the_google_model_is_labelled_google_not_gemini(self):
         """The label is the vendor, so both bridges can report the same one.
 
@@ -860,6 +876,10 @@ class TestUsageLabels:
         assert entry.provider is None
         assert entry.model == "scripted-1"
 
+    @pytest.mark.skipif(
+        _STRANDS_READS_GET_CONFIG,
+        reason="Strands >= 1.63 calls get_config() itself, so such a model cannot run",
+    )
     @pytest.mark.asyncio
     async def test_a_model_whose_get_config_raises_still_reports_its_counts(self):
         class _HostileModel(ScriptedModel):

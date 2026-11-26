@@ -1,0 +1,345 @@
+{
+  "source": "Published-package validation capture, 2026-11-11: ag-ui-adk candidate f889498 (PR #3378) + gemini-3.8-flash, Express inference, native A2UI 1.0 basic catalog. Reasoning and state events removed; IDs, activity content, result payloads and order preserved.",
+  "runs": [
+    {
+      "name": "create",
+      "events": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "5faf38cb-33fc-4383-9083-a6940bc2072f",
+          "runId": "e374b288-4b54-4fe3-a4a8-90475142bde6",
+          "protocolVersion": "1.0"
+        },
+        {
+          "type": "TOOL_CALL_START",
+          "toolCallId": "call_18150436523629070694",
+          "toolCallName": "generate_a2ui"
+        },
+        {
+          "type": "TOOL_CALL_ARGS",
+          "toolCallId": "call_18150436523629070694",
+          "delta": "{\"intent\":\"create\"}"
+        },
+        {
+          "type": "TOOL_CALL_END",
+          "toolCallId": "call_18150436523629070694"
+        },
+        {
+          "type": "ACTIVITY_SNAPSHOT",
+          "messageId": "a2ui-surface-call_18150436523629070694",
+          "activityType": "a2ui-surface",
+          "content": {
+            "a2ui_operations": [
+              {
+                "version": "1.0",
+                "createSurface": {
+                  "surfaceId": "validation-surface",
+                  "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+                  "sendDataModel": true,
+                  "metadata": {
+                    "extensions": {
+                      "source": "adk-update-validation"
+                    }
+                  }
+                }
+              },
+              {
+                "version": "1.0",
+                "updateComponents": {
+                  "surfaceId": "validation-surface",
+                  "components": [
+                    {
+                      "text": {
+                        "@path": "/title"
+                      },
+                      "id": "heading",
+                      "component": "Text"
+                    },
+                    {
+                      "text": {
+                        "@path": "name"
+                      },
+                      "id": "row",
+                      "component": "Text"
+                    },
+                    {
+                      "children": {
+                        "path": "/items",
+                        "componentId": "row"
+                      },
+                      "id": "items",
+                      "component": "List"
+                    },
+                    {
+                      "children": [
+                        "heading",
+                        "items"
+                      ],
+                      "id": "root",
+                      "component": "Column"
+                    }
+                  ]
+                }
+              },
+              {
+                "version": "1.0",
+                "updateDataModel": {
+                  "surfaceId": "validation-surface",
+                  "path": "/",
+                  "value": {
+                    "title": "CPK187_CREATE",
+                    "items": [
+                      {
+                        "name": "Alpha"
+                      },
+                      {
+                        "name": "Beta"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "inferenceFormat": "express"
+          },
+          "replace": true
+        },
+        {
+          "type": "TOOL_CALL_RESULT",
+          "messageId": "cf6656c4-3a11-47f0-b009-30a58a6a3fdc",
+          "toolCallId": "call_18150436523629070694",
+          "content": "{\"a2ui_operations\": [{\"version\": \"1.0\", \"createSurface\": {\"surfaceId\": \"validation-surface\", \"catalogId\": \"https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json\", \"sendDataModel\": true, \"metadata\": {\"extensions\": {\"source\": \"adk-update-validation\"}}}}, {\"version\": \"1.0\", \"updateComponents\": {\"surfaceId\": \"validation-surface\", \"components\": [{\"text\": {\"@path\": \"/title\"}, \"id\": \"heading\", \"component\": \"Text\"}, {\"text\": {\"@path\": \"name\"}, \"id\": \"row\", \"component\": \"Text\"}, {\"children\": {\"path\": \"/items\", \"componentId\": \"row\"}, \"id\": \"items\", \"component\": \"List\"}, {\"children\": [\"heading\", \"items\"], \"id\": \"root\", \"component\": \"Column\"}]}}, {\"version\": \"1.0\", \"updateDataModel\": {\"surfaceId\": \"validation-surface\", \"path\": \"/\", \"value\": {\"title\": \"CPK187_CREATE\", \"items\": [{\"name\": \"Alpha\"}, {\"name\": \"Beta\"}]}}}]}"
+        },
+        {
+          "type": "TEXT_MESSAGE_START",
+          "messageId": "41946b7a-e00e-406a-983c-cb5167f58e48",
+          "role": "assistant"
+        },
+        {
+          "type": "TEXT_MESSAGE_CONTENT",
+          "messageId": "41946b7a-e00e-406a-983c-cb5167f58e48",
+          "delta": "Done"
+        },
+        {
+          "type": "TEXT_MESSAGE_END",
+          "messageId": "41946b7a-e00e-406a-983c-cb5167f58e48"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "5faf38cb-33fc-4383-9083-a6940bc2072f",
+          "runId": "e374b288-4b54-4fe3-a4a8-90475142bde6"
+        }
+      ]
+    },
+    {
+      "name": "update",
+      "events": [
+        {
+          "type": "RUN_STARTED",
+          "threadId": "5faf38cb-33fc-4383-9083-a6940bc2072f",
+          "runId": "9051fcda-09ca-4893-8b2e-4a720c04e90b",
+          "protocolVersion": "1.0"
+        },
+        {
+          "type": "TOOL_CALL_START",
+          "toolCallId": "call_15887266662988947785",
+          "toolCallName": "generate_a2ui"
+        },
+        {
+          "type": "TOOL_CALL_ARGS",
+          "toolCallId": "call_15887266662988947785",
+          "delta": "{\"target_surface_id\":\"validation-surface\",\"intent\":\"update\",\"changes\":\"update title and items as requested\"}"
+        },
+        {
+          "type": "TOOL_CALL_END",
+          "toolCallId": "call_15887266662988947785"
+        },
+        {
+          "type": "ACTIVITY_SNAPSHOT",
+          "messageId": "a2ui-surface-call_15887266662988947785",
+          "activityType": "a2ui-surface",
+          "content": {
+            "a2ui_operations": [
+              {
+                "version": "1.0",
+                "createSurface": {
+                  "surfaceId": "validation-surface",
+                  "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+                  "sendDataModel": true,
+                  "metadata": {
+                    "extensions": {
+                      "source": "adk-update-validation"
+                    }
+                  }
+                }
+              },
+              {
+                "version": "1.0",
+                "updateComponents": {
+                  "surfaceId": "validation-surface",
+                  "components": [
+                    {
+                      "text": {
+                        "@path": "/title"
+                      },
+                      "id": "heading",
+                      "component": "Text"
+                    },
+                    {
+                      "text": {
+                        "@path": "name"
+                      },
+                      "id": "row",
+                      "component": "Text"
+                    },
+                    {
+                      "children": {
+                        "path": "/items",
+                        "componentId": "row"
+                      },
+                      "id": "items",
+                      "component": "List"
+                    },
+                    {
+                      "children": [
+                        "heading",
+                        "items"
+                      ],
+                      "id": "root",
+                      "component": "Column"
+                    }
+                  ]
+                }
+              },
+              {
+                "version": "1.0",
+                "updateDataModel": {
+                  "surfaceId": "validation-surface",
+                  "path": "/",
+                  "value": {
+                    "title": "CPK187_UPDATED",
+                    "items": [
+                      {
+                        "name": "Alpha"
+                      },
+                      {
+                        "name": "Beta"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "inferenceFormat": "express"
+          },
+          "replace": true
+        },
+        {
+          "type": "ACTIVITY_SNAPSHOT",
+          "messageId": "a2ui-surface-call_15887266662988947785",
+          "activityType": "a2ui-surface",
+          "content": {
+            "a2ui_operations": [
+              {
+                "version": "1.0",
+                "createSurface": {
+                  "surfaceId": "validation-surface",
+                  "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+                  "sendDataModel": true,
+                  "metadata": {
+                    "extensions": {
+                      "source": "adk-update-validation"
+                    }
+                  }
+                }
+              },
+              {
+                "version": "1.0",
+                "updateComponents": {
+                  "surfaceId": "validation-surface",
+                  "components": [
+                    {
+                      "text": {
+                        "@path": "/title"
+                      },
+                      "id": "heading",
+                      "component": "Text"
+                    },
+                    {
+                      "text": {
+                        "@path": "name"
+                      },
+                      "id": "row",
+                      "component": "Text"
+                    },
+                    {
+                      "children": {
+                        "path": "/items",
+                        "componentId": "row"
+                      },
+                      "id": "items",
+                      "component": "List"
+                    },
+                    {
+                      "children": [
+                        "heading",
+                        "items"
+                      ],
+                      "id": "root",
+                      "component": "Column"
+                    }
+                  ]
+                }
+              },
+              {
+                "version": "1.0",
+                "updateDataModel": {
+                  "surfaceId": "validation-surface",
+                  "path": "/",
+                  "value": {
+                    "title": "CPK187_UPDATED",
+                    "items": [
+                      {
+                        "name": "Gamma"
+                      },
+                      {
+                        "name": "Delta"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "inferenceFormat": "express"
+          },
+          "replace": true
+        },
+        {
+          "type": "TOOL_CALL_RESULT",
+          "messageId": "933b123f-da1d-4307-9b99-3d24f14d4f8a",
+          "toolCallId": "call_15887266662988947785",
+          "content": "{\"a2ui_operations\": [{\"version\": \"1.0\", \"updateComponents\": {\"surfaceId\": \"validation-surface\", \"components\": [{\"text\": {\"@path\": \"/title\"}, \"id\": \"heading\", \"component\": \"Text\"}, {\"text\": {\"@path\": \"name\"}, \"id\": \"row\", \"component\": \"Text\"}, {\"children\": {\"path\": \"/items\", \"componentId\": \"row\"}, \"id\": \"items\", \"component\": \"List\"}, {\"children\": [\"heading\", \"items\"], \"id\": \"root\", \"component\": \"Column\"}]}}, {\"version\": \"1.0\", \"updateDataModel\": {\"surfaceId\": \"validation-surface\", \"path\": \"/\", \"value\": {\"title\": \"CPK187_UPDATED\", \"items\": [{\"name\": \"Gamma\"}, {\"name\": \"Delta\"}]}}}]}"
+        },
+        {
+          "type": "TEXT_MESSAGE_START",
+          "messageId": "dcd1b5f0-1807-4368-9f4f-dcdccf4244c8",
+          "role": "assistant"
+        },
+        {
+          "type": "TEXT_MESSAGE_CONTENT",
+          "messageId": "dcd1b5f0-1807-4368-9f4f-dcdccf4244c8",
+          "delta": "Done"
+        },
+        {
+          "type": "TEXT_MESSAGE_END",
+          "messageId": "dcd1b5f0-1807-4368-9f4f-dcdccf4244c8"
+        },
+        {
+          "type": "RUN_FINISHED",
+          "threadId": "5faf38cb-33fc-4383-9083-a6940bc2072f",
+          "runId": "9051fcda-09ca-4893-8b2e-4a720c04e90b"
+        }
+      ]
+    }
+  ]
+}

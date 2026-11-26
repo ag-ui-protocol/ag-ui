@@ -10,9 +10,17 @@ import Ajv2020, {
 // when this file is loaded through a CommonJS transpile such as tsx's.
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 
-export const SPEC_DIR = join(HERE, "..", "1.0");
+/**
+ * Which version folder this run checks. The suite runs once per folder (see
+ * vitest.config.ts): the latest frozen version, which the SDKs are generated
+ * from, and the working draft, which must stay as sound as what it will
+ * become.
+ */
+export const SPEC_VERSION = process.env.AGUI_SPEC_VERSION ?? "1.0";
 
-export const SCHEMA_ID = "https://ag-ui.com/spec/1.0/schema.json";
+export const SPEC_DIR = join(HERE, "..", SPEC_VERSION);
+
+export const SCHEMA_ID = `https://ag-ui.com/spec/${SPEC_VERSION}/schema.json`;
 
 export const schema = JSON.parse(
   readFileSync(join(SPEC_DIR, "schema.json"), "utf8"),

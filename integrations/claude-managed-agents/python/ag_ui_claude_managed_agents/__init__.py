@@ -29,6 +29,8 @@ from .turn import run_turn
 from .types import (
     BackendTool,
     ErrorHandler,
+    SessionBinding,
+    SessionResolver,
     SessionRecord,
     SessionStore,
     TurnOutcome,
@@ -51,6 +53,8 @@ __all__ = [
     "ErrorHandler",
     "InMemorySessionStore",
     "ManagedAgentsAgent",
+    "SessionBinding",
+    "SessionResolver",
     "SessionRecord",
     "SessionStore",
     "TurnOutcome",

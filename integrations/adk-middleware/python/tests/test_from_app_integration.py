@@ -278,8 +278,8 @@ async def test_from_app_with_unsupported_mime_type(sample_app):
     )
 
 @pytest.mark.asyncio
-async def test_runner_supports_plugin_close_timeout():
-    """Test that runtime detection of plugin_close_timeout works."""
+async def test_runner_receives_plugin_close_timeout():
+    """Test that the configured plugin timeout reaches Runner."""
     agent = LlmAgent(
         name="test_agent",
         model=LIVE_TEST_MODEL,
@@ -288,6 +288,9 @@ async def test_runner_supports_plugin_close_timeout():
     app = App(name="test_app", root_agent=agent)
     adk_agent = ADKAgent.from_app(app, user_id="test_user")
 
-    # This should return True or False based on ADK version
-    result = adk_agent._runner_supports_plugin_close_timeout()
-    assert isinstance(result, bool)
+    from unittest.mock import patch
+
+    adk_agent._plugin_close_timeout = 12.0
+    with patch("ag_ui_adk.adk_agent.Runner") as runner:
+        adk_agent._create_runner(agent, "test_user", "test_app")
+    assert runner.call_args.kwargs["plugin_close_timeout"] == 12.0

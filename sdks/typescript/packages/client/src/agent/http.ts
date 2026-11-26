@@ -97,7 +97,10 @@ export class HttpAgent extends AbstractAgent {
     // transmits enforced input. Unknown material is stripped with a warning;
     // a malformed known field fails the run before a byte leaves the process.
     const httpEvents = runHttpRequest(() =>
-      this.fetch(this.url, this.requestInit(enforceOutgoingInput(input))),
+      this.fetch(
+        this.url,
+        this.requestInit(enforceOutgoingInput(input, { maxEntries: this.maxEnforcedEntries })),
+      ),
     );
     return transformHttpEventStream(httpEvents, this.debugLogger);
   }

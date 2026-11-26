@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.0.5 — 2026-11-17
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 1.0.4 — 2026-11-05
+
+- `zod` is now a required peer dependency (`^3.25.18 || ^4.0.0`), ensuring consumers use a single application-provided zod.
+
+### Breaking changes
+
+- `zod` must be installed by the consuming application as a peer dependency (`^3.25.18 || ^4.0.0`).
+
+## 1.0.3 — 2026-10-15
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 1.0.2 — 2026-10-05
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
+## 1.0.1 — 2026-09-29
+
+- Maintenance release; no consumer-facing changes identified.
+
+### Breaking changes
+
+None.
+
 ## 1.0.0 — 2026-09-17
 
 - Rebuilt on generated types; the main entry is now zod-free with validators moved to @ag-ui/core/schemas, making zod an optional peer.

@@ -40,6 +40,20 @@ export type ManagedAgentsErrorHandler = (
 /** Persistent mapping between an AG-UI thread and a managed session. */
 export interface SessionRecord {
   sessionId: string;
+  /** Last successfully delivered runtime context snapshot; persist across restarts. */
+  runtimeContext?: string;
+  /** Last native-committed shared state. */
+  primaryThreadId?: string;
+  sharedState?: import("./state").StateCommit;
+  sessionThreadId?: string;
+  lastEventId?: string;
+  /** Adopted sessions retain the tools configured by their owner. */
+  preserveTools?: boolean;
+  ended?: boolean;
+  pendingConfirmations?: PendingConfirmation[];
+  /** Native child ownership and delivery state, independent of the root cursor. */
+  childToolCalls?: Record<string, string>;
+  deliveredChildResultIds?: string[];
   /** Custom tool names currently registered on the session's agent. */
   toolNames: string[];
   /** Fingerprint of the canonical custom tool definitions registered on the session's agent. */
@@ -65,12 +79,21 @@ export interface SessionRecord {
  * store that partitions by caller if you need multi-tenant isolation.
  */
 export interface SessionStore {
-  get(key: string): Promise<SessionRecord | undefined> | SessionRecord | undefined;
+  get(
+    key: string,
+  ): Promise<SessionRecord | undefined> | SessionRecord | undefined;
   set(key: string, record: SessionRecord): Promise<void> | void;
   delete(key: string): Promise<void> | void;
 }
 
 export interface ManagedAgentsAgentConfig extends AgentConfig {
+  /** Resolve and authorize an existing native session in the current caller's scope.
+   * Never return a binding solely because a client supplied a session ID.
+   * Return undefined only for a genuinely new thread; throw for forbidden/missing imports.
+   */
+  resolveSession?: (
+    threadId: string,
+  ) => SessionBinding | undefined | Promise<SessionBinding | undefined>;
   /**
    * ID of the Anthropic managed agent (`agent_...`) that powers each session.
    * Named apart from AG-UI's own `agentId` so the two never collide.
@@ -100,8 +123,8 @@ export interface ManagedAgentsAgentConfig extends AgentConfig {
   vaultIds?: string[];
   /**
    * When a built-in tool is gated on user confirmation (`evaluated_permission: "ask"`),
-   * answer it automatically. `undefined` (default) ends the run with an error
-   * instead, since there is no confirmation UI wired up yet.
+   * answer it automatically on fresh runs. `undefined` (default) exposes an
+   * AG-UI approval interrupt. Reconnect always preserves explicit decisions.
    */
   toolConfirmation?: "allow" | "deny";
   /** Abort a turn that runs longer than this. Defaults to 5 minutes. */
@@ -117,4 +140,19 @@ export interface ManagedAgentsAgentConfig extends AgentConfig {
    * Set to false to receive each reply as a whole message only. Default true.
    */
   streamDeltas?: boolean;
+}
+
+export interface SessionBinding {
+  sessionId: string;
+  sessionThreadId?: string;
+  /** Last native event already saved by the importing application. */
+  lastEventId?: string;
+  /** Last imported AG-UI user message ID. Needed to distinguish a new follow-up. */
+  lastUserMessageId?: string;
+}
+
+export interface PendingConfirmation {
+  id: string;
+  toolName: string;
+  sessionThreadId?: string;
 }

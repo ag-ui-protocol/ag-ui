@@ -1,5 +1,6 @@
 package com.agui.core.types
 
+import kotlinx.serialization.modules.contextual
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
@@ -9,6 +10,9 @@ import kotlinx.serialization.modules.subclass
  */
 val AgUiSerializersModule by lazy {
     SerializersModule {
+        // Inferred serialization of the deprecated singleton spelling has the
+        // companion's type. Register it without shadowing the class serializer.
+        contextual(RunFinishedSuccessOutcome.Companion::class, LegacySuccessOutcomeSerializer)
         // Polymorphic serialization for events
         polymorphic(BaseEvent::class) {
             // Lifecycle Events (5)
@@ -27,6 +31,7 @@ val AgUiSerializersModule by lazy {
             subclass(ToolCallStartEvent::class)
             subclass(ToolCallArgsEvent::class)
             subclass(ToolCallEndEvent::class)
+            subclass(ToolCallResultEvent::class)
 
             // State Management Events (3)
             subclass(StateSnapshotEvent::class)
@@ -36,6 +41,21 @@ val AgUiSerializersModule by lazy {
             // Special Events (2)
             subclass(RawEvent::class)
             subclass(CustomEvent::class)
+
+            subclass(TextMessageChunkEvent::class)
+            subclass(ToolCallChunkEvent::class)
+            subclass(ActivitySnapshotEvent::class)
+            subclass(ActivityDeltaEvent::class)
+            subclass(ReasoningStartEvent::class)
+            subclass(ReasoningMessageStartEvent::class)
+            subclass(ReasoningMessageContentEvent::class)
+            subclass(ReasoningMessageEndEvent::class)
+            subclass(ReasoningMessageChunkEvent::class)
+            subclass(ReasoningEndEvent::class)
+            subclass(ReasoningEncryptedValueEvent::class)
+            subclass(SubagentStartedEvent::class)
+            subclass(SubagentFinishedEvent::class)
+            subclass(SubagentErrorEvent::class)
         }
 
         polymorphic(Message::class) {
@@ -44,12 +64,20 @@ val AgUiSerializersModule by lazy {
             subclass(AssistantMessage::class)
             subclass(UserMessage::class)
             subclass(ToolMessage::class)
+            subclass(ActivityMessage::class)
+            subclass(ReasoningMessage::class)
         }
 
         // Polymorphic serialization for RUN_FINISHED outcomes
         polymorphic(RunFinishedOutcome::class) {
             subclass(RunFinishedSuccessOutcome::class)
             subclass(RunFinishedInterruptOutcome::class)
+            subclass(RunFinishedCancelledOutcome::class)
+        }
+
+        polymorphic(SubagentFinishedOutcome::class) {
+            subclass(SubagentFinishedSuccessOutcome::class)
+            subclass(SubagentFinishedSuspendedOutcome::class)
         }
     }
 }

@@ -10,9 +10,11 @@ import { EventSchema } from "@ag-ui/core/schemas";
 import { stripUnknown } from "../strip";
 
 function eventSchema(type: EventType): z.ZodType {
-  const option = (EventSchema.options as unknown as Array<{
-    shape: { type: { value: string } };
-  }>).find((candidate) => candidate.shape.type.value === type);
+  const option = (
+    EventSchema.options as unknown as Array<{
+      shape: { type: { value: string } };
+    }>
+  ).find((candidate) => candidate.shape.type.value === type);
   if (option === undefined) throw new Error(`no schema for ${type}`);
   return option as unknown as z.ZodType;
 }
@@ -40,6 +42,9 @@ describe("a wrong-typed value in a discriminated-union slot", () => {
       [{ type: "interrupt", interrupts: [{ id: "i1", reason: "why" }] }],
       "received array",
     ],
+    ["an object missing its discriminator", {}, '"type"'],
+    ["an object with a numeric discriminator", { type: 1 }, '"type"'],
+    ["an object with a null discriminator", { type: null }, '"type"'],
   ];
 
   for (const [label, outcome, received] of cases) {
@@ -58,6 +63,34 @@ describe("a wrong-typed value in a discriminated-union slot", () => {
       expect(() => RUN_FINISHED.parse(value)).toThrow(received);
     });
   }
+
+  it("shadows an inherited discriminator so validation cannot select its variant", () => {
+    const outcome = Object.assign(Object.create({ type: "success" }), { xExtra: 1 });
+    const event = { type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1", outcome };
+    const { value, stripped } = stripUnknown(event, RUN_FINISHED);
+    const strippedOutcome = (value as { outcome: Record<string, unknown> }).outcome;
+
+    expect(stripped).toEqual([]);
+    expect(Object.hasOwn(strippedOutcome, "type")).toBe(true);
+    expect(strippedOutcome.type).toBeUndefined();
+    expect(() => RUN_FINISHED.parse(value)).toThrow('"type"');
+  });
+
+  it("still strips an object whose string discriminator names an unrecognised variant", () => {
+    const event = {
+      type: EventType.RUN_FINISHED,
+      threadId: "t1",
+      runId: "r1",
+      outcome: { type: "future" },
+    };
+    const { value, stripped } = stripUnknown(event, RUN_FINISHED);
+    expect(stripped).toEqual(["/outcome"]);
+    expect(value).toEqual({
+      type: EventType.RUN_FINISHED,
+      threadId: "t1",
+      runId: "r1",
+    });
+  });
 });
 
 describe("the reported paths", () => {
@@ -110,10 +143,7 @@ describe("a structural union of two object options", () => {
     // option's own keys as unrecognised material. No generated schema has this
     // shape today; the guard is what keeps one from acquiring it silently.
     const schema = z.looseObject({
-      payload: z.union([
-        z.looseObject({ a: z.string() }),
-        z.looseObject({ b: z.string() }),
-      ]),
+      payload: z.union([z.looseObject({ a: z.string() }), z.looseObject({ b: z.string() })]),
     });
     const { value, stripped } = stripUnknown({ payload: { b: "x" } }, schema);
     expect(stripped).toEqual([]);

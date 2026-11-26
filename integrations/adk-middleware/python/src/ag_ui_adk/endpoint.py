@@ -5,8 +5,11 @@
 import logging
 import uuid
 import warnings
+from contextlib import aclosing
 from collections.abc import Sequence
 from typing import Any, Awaitable, Callable, Coroutine, List, Mapping, Optional
+
+from anyio import CancelScope
 
 from ag_ui.core import (
     AssistantMessage,
@@ -17,8 +20,9 @@ from ag_ui.core import (
     ToolMessage,
 )
 from ag_ui.encoder import EventEncoder
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from google.adk.sessions.state import State as _ADKState
 from pydantic import BaseModel
 
 # Use ``sse-starlette`` for the SSE response so we can return a fully-formed
@@ -35,8 +39,13 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from .adk_agent import ADKAgent
 from .event_translator import adk_events_to_messages
+from .session_manager import _is_processed_message_state_key
 
 logger = logging.getLogger(__name__)
+
+# ADK routes state keys carrying these prefixes to app-wide and user-wide
+# scope instead of to the session.
+_SCOPED_STATE_PREFIXES = (_ADKState.APP_PREFIX, _ADKState.USER_PREFIX)
 
 AgentResolver = Callable[[Request, RunAgentInput], Awaitable[ADKAgent | None]]
 
@@ -78,6 +87,44 @@ def resolve_agent_from_message_history(
     return None
 
 
+_SESSION_READ_ERROR_MESSAGE = (
+    "Failed to read the session for this thread from the session backend."
+)
+
+
+def _session_read_error_response(thread_id: str) -> JSONResponse:
+    """The /agents/state failure response for a session backend read.
+
+    Backend errors can name internal resources or other users' sessions, so
+    callers log the exception and the client gets this stable message.
+    """
+    return JSONResponse(
+        status_code=500,
+        content={
+            "threadId": thread_id,
+            "threadExists": False,
+            "state": {},
+            "messages": [],
+            "error": _SESSION_READ_ERROR_MESSAGE,
+        },
+    )
+
+
+_NON_OBJECT_STATE_MESSAGE = "state must be a JSON object or null."
+
+
+class _NonObjectStateError(ValueError):
+    """``RunAgentInput.state`` is neither a JSON object nor null."""
+
+
+def _non_object_state_response() -> JSONResponse:
+    """Reject run state that is not a JSON object with a 422."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _NON_OBJECT_STATE_MESSAGE},
+    )
+
+
 def _build_run_error(message: str, code: str) -> RunErrorEvent:
     """Construct a ``RunErrorEvent`` with the given message and code.
 
@@ -95,7 +142,47 @@ async def _merge_extractor_state(
         Callable[[Request, RunAgentInput], Coroutine[dict[str, Any], Any, Any]]
     ],
 ) -> RunAgentInput:
-    """Run the request extractor and merge returned state over input state."""
+    """Scope client state to the session, then merge extractor state over it.
+
+    ``app:``/``user:``-prefixed keys in the client-supplied state are removed
+    first, before the extractor runs and before anything is merged. Running the
+    removal ahead of both early returns matters: most deployments configure no
+    extractor at all, and a removal placed after those returns would never run
+    for them. It also means any prefixed key still present once this returns
+    came from ``extract_state_from_request``, which is server-side.
+
+    Raises:
+        _NonObjectStateError: ``state`` is not a JSON object or null.
+            ``RunAgentInput.state`` is typed ``Any``, so an array of
+            ``[key, value]`` pairs passes validation. The prefix check below
+            only reads object keys, and ``dict()`` on the array would rebuild
+            the prefixed keys later, so only an object (or null, for no
+            state) is accepted. Only the run endpoint can raise this:
+            ``/capabilities`` and ``/agents/state`` build their input with
+            ``state={}``.
+    """
+    if input_data.state is not None and not isinstance(input_data.state, dict):
+        raise _NonObjectStateError(_NON_OBJECT_STATE_MESSAGE)
+    existing_state = input_data.state if isinstance(input_data.state, dict) else {}
+    scoped_key_count = sum(
+        1
+        for key in existing_state
+        if isinstance(key, str) and key.startswith(_SCOPED_STATE_PREFIXES)
+    )
+    if scoped_key_count:
+        logger.warning(
+            "Dropped %d app/user scoped key(s) from client-supplied state; "
+            "state sent with a run is scoped to the session. Supply app- or "
+            "user-scoped keys from extract_state_from_request instead.",
+            scoped_key_count,
+        )
+        existing_state = {
+            key: value
+            for key, value in existing_state.items()
+            if not (isinstance(key, str) and key.startswith(_SCOPED_STATE_PREFIXES))
+        }
+        input_data = input_data.model_copy(update={"state": existing_state})
+
     if not extract_state_fn:
         return input_data
 
@@ -103,7 +190,6 @@ async def _merge_extractor_state(
     if not extracted_state_dict:
         return input_data
 
-    existing_state = input_data.state if isinstance(input_data.state, dict) else {}
     merged_state = {**existing_state, **extracted_state_dict}
     return input_data.model_copy(update={"state": merged_state})
 
@@ -141,6 +227,39 @@ def _sse_event(raw_data: str, *, event: Optional[str] = None) -> ServerSentEvent
     return ServerSentEvent(data=raw_data, event=event, sep="\n")
 
 
+class _ClosingEventSourceResponse(EventSourceResponse):
+    """Close the body in its streaming task, including a cancelled send()."""
+
+    async def stream_response(self, send):
+        # sse-starlette 2.1 uses this public hook; newer releases use the
+        # underscored hook below. Preserve the declared dependency floor.
+        try:
+            await super().stream_response(send)
+        finally:
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+    async def _stream_response(self, send):
+        try:
+            await super()._stream_response(send)
+        finally:
+            # The iterator owns ContextVar tokens from this task. Closing it
+            # from a disconnect listener or GC finalizer uses another Context.
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """Apply the same deterministic closure to the legacy encoded stream."""
+
+    async def stream_response(self, send):
+        try:
+            await super().stream_response(send)
+        finally:
+            with CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
 async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     """Yield ``ServerSentEvent``s for an SSE consumer.
 
@@ -151,31 +270,32 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
     always sees a structured stream tail.
     """
     try:
-        async for event in agent.run(input_data):
-            try:
-                encoded = event.model_dump_json(by_alias=True, exclude_none=True)
-                logger.debug(f"HTTP Response: {encoded}")
-                yield _sse_event(encoded)
-            except Exception as encoding_error:
-                logger.error(
-                    f"❌ Event encoding error: {encoding_error}", exc_info=True
-                )
-                error_event = _build_run_error(
-                    message=f"Event encoding failed: {str(encoding_error)}",
-                    code="ENCODING_ERROR",
-                )
+        async with aclosing(agent.run(input_data)) as events:
+            async for event in events:
                 try:
-                    yield _sse_event(
-                        error_event.model_dump_json(by_alias=True, exclude_none=True)
-                    )
-                except Exception:
+                    encoded = event.model_dump_json(by_alias=True)
+                    logger.debug(f"HTTP Response: {encoded}")
+                    yield _sse_event(encoded)
+                except Exception as encoding_error:
                     logger.error(
-                        "Failed to encode error event, yielding basic SSE error"
+                        f"❌ Event encoding error: {encoding_error}", exc_info=True
                     )
-                    yield _sse_event(
-                        '{"error": "Event encoding failed"}', event="error"
+                    error_event = _build_run_error(
+                        message=f"Event encoding failed: {str(encoding_error)}",
+                        code="ENCODING_ERROR",
                     )
-                return
+                    try:
+                        yield _sse_event(
+                            error_event.model_dump_json(by_alias=True)
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to encode error event, yielding basic SSE error"
+                        )
+                        yield _sse_event(
+                            '{"error": "Event encoding failed"}', event="error"
+                        )
+                    return
     except Exception as agent_error:
         logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
         try:
@@ -184,7 +304,7 @@ async def _sse_stream(agent: "ADKAgent", input_data: RunAgentInput):
                 code="AGENT_ERROR",
             )
             yield _sse_event(
-                error_event.model_dump_json(by_alias=True, exclude_none=True)
+                error_event.model_dump_json(by_alias=True)
             )
         except Exception:
             logger.error("Failed to encode agent error event, yielding basic SSE error")
@@ -204,27 +324,28 @@ async def _legacy_stream(
     encoder later doesn't require a separate endpoint change.
     """
     try:
-        async for event in agent.run(input_data):
-            try:
-                encoded = encoder.encode(event)
-                logger.debug(f"HTTP Response: {encoded}")
-                yield encoded
-            except Exception as encoding_error:
-                logger.error(
-                    f"❌ Event encoding error: {encoding_error}", exc_info=True
-                )
-                error_event = _build_run_error(
-                    message=f"Event encoding failed: {str(encoding_error)}",
-                    code="ENCODING_ERROR",
-                )
+        async with aclosing(agent.run(input_data)) as events:
+            async for event in events:
                 try:
-                    yield encoder.encode(error_event)
-                except Exception:
+                    encoded = encoder.encode(event)
+                    logger.debug(f"HTTP Response: {encoded}")
+                    yield encoded
+                except Exception as encoding_error:
                     logger.error(
-                        "Failed to encode error event, yielding basic SSE error"
+                        f"❌ Event encoding error: {encoding_error}", exc_info=True
                     )
-                    yield 'data: {"error": "Event encoding failed"}\n\n'
-                return
+                    error_event = _build_run_error(
+                        message=f"Event encoding failed: {str(encoding_error)}",
+                        code="ENCODING_ERROR",
+                    )
+                    try:
+                        yield encoder.encode(error_event)
+                    except Exception:
+                        logger.error(
+                            "Failed to encode error event, yielding basic SSE error"
+                        )
+                        yield 'data: {"error": "Event encoding failed"}\n\n'
+                    return
     except Exception as agent_error:
         logger.error(f"❌ ADKAgent error: {agent_error}", exc_info=True)
         try:
@@ -291,17 +412,33 @@ def make_extract_headers(headers_to_extract: list[str]) -> Callable[[Request, Ru
         # Extract headers into state.headers if list provided
         if headers_to_extract:
             headers_dict = {}
+            configured_keys = set()
             for header_name in headers_to_extract:
+                state_key = _header_to_key(header_name)
+                configured_keys.add(state_key)
                 value = request.headers.get(header_name)
                 if value is not None:
-                    state_key = _header_to_key(header_name)
                     headers_dict[state_key] = value
 
-            if headers_dict:
-                existing_state = input_data.state if isinstance(input_data.state, dict) else {}
-                existing_headers = existing_state.get("headers", {}) if isinstance(existing_state.get("headers"), dict) else {}
-                # Client headers take precedence over extracted headers
-                merged_headers = {**headers_dict, **existing_headers}
+            existing_state = (
+                input_data.state if isinstance(input_data.state, dict) else {}
+            )
+            existing_headers = existing_state.get("headers")
+            if not isinstance(existing_headers, dict):
+                existing_headers = {}
+            # A configured header is the server's to set. The request header
+            # decides its key, and a value the run body put in
+            # ``state.headers`` under that key is dropped, also when the
+            # header is absent: extractors read identity from here
+            # (``user_id``, ``tenant_id``), so a body value that survived
+            # would let a client name another user.
+            client_headers = {
+                key: value
+                for key, value in existing_headers.items()
+                if key not in configured_keys
+            }
+            if headers_dict or len(client_headers) != len(existing_headers):
+                merged_headers = {**client_headers, **headers_dict}
                 merged_state = {**existing_state, "headers": merged_headers}
                 return merged_state
 
@@ -334,9 +471,17 @@ def add_adk_fastapi_endpoint(
             the default agent.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
             ``tags``, ``operation_id``, ``dependencies``, ``include_in_schema``,
-            ...). They do not apply to the other routes this helper registers,
+            ...). ``dependencies`` also guards ``/capabilities`` and
+            ``/agents/state``. The other kwargs apply to the agent route only,
             because values such as ``operation_id`` and ``name`` must stay
             unique per operation.
+
+            ``/agents/state`` is registered at a fixed path, and FastAPI uses
+            only the first registration of a path. If you call this helper
+            several times on one app, give every call the same
+            ``dependencies``. Otherwise the guard of the first call (or the
+            absence of a guard) applies to ``/agents/state`` for all agents.
+            The same applies to ``/capabilities`` when calls share a ``path``.
 
     Note:
         This function also adds an experimental POST /agents/state endpoint for
@@ -391,6 +536,14 @@ def add_adk_fastapi_endpoint(
 
     default_agent = agent
 
+    # Route dependencies are how applications attach authentication, so they
+    # must guard every route this helper registers, not only the agent route.
+    # Identity kwargs such as ``name`` and ``operation_id`` stay on the agent
+    # route because they must be unique per operation.
+    guard_kwargs: dict[str, Any] = {}
+    if "dependencies" in kwargs:
+        guard_kwargs["dependencies"] = kwargs["dependencies"]
+
     @app.post(path, **kwargs)
     async def adk_endpoint(input_data: RunAgentInput, request: Request):
         """ADK middleware endpoint.
@@ -410,7 +563,12 @@ def add_adk_fastapi_endpoint(
           continue to work without keep-alive pings (which are SSE-specific).
         """
 
-        input_data = await _merge_extractor_state(input_data, request, extract_state_fn)
+        try:
+            input_data = await _merge_extractor_state(
+                input_data, request, extract_state_fn
+            )
+        except _NonObjectStateError:
+            return _non_object_state_response()
         agent = await _resolve_agent(
             default_agent, request, input_data, agent_resolver
         )
@@ -423,15 +581,15 @@ def add_adk_fastapi_endpoint(
         content_type = encoder.get_content_type()
 
         if content_type == "text/event-stream":
-            return EventSourceResponse(_sse_stream(agent, input_data))
-        return StreamingResponse(
+            return _ClosingEventSourceResponse(_sse_stream(agent, input_data))
+        return _ClosingStreamingResponse(
             _legacy_stream(agent, input_data, encoder),
             media_type=content_type,
         )
 
     capabilities_path = f"{path.rstrip('/')}/capabilities" if path != "/" else "/capabilities"
 
-    @app.get(capabilities_path)
+    @app.get(capabilities_path, **guard_kwargs)
     async def capabilities_endpoint(request: Request):
         """Return the agent's declared capabilities.
 
@@ -462,6 +620,8 @@ def add_adk_fastapi_endpoint(
                 logger.debug("Capabilities endpoint called but no capabilities configured on agent")
                 return JSONResponse(content={})
             return JSONResponse(content=caps)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in capabilities endpoint: {e}", exc_info=True)
             return JSONResponse(
@@ -469,7 +629,7 @@ def add_adk_fastapi_endpoint(
                 content={"error": f"Failed to retrieve capabilities: {str(e)}"}
             )
 
-    @app.post("/agents/state")
+    @app.post("/agents/state", **guard_kwargs)
     async def agents_state_endpoint(request_data: AgentStateRequest, request: Request):
         """EXPERIMENTAL: Retrieve thread state and message history.
 
@@ -570,59 +730,63 @@ def add_adk_fastapi_endpoint(
             session_id = None
 
             # Fast path: check cache first
-            metadata = agent._get_session_metadata(thread_id, user_id)
+            metadata = agent._get_session_metadata(thread_id, user_id, app_name=app_name)
             if metadata:
                 session_id, cached_app_name, cached_user_id = metadata
-                session = await agent._session_manager._session_service.get_session(
-                    session_id=session_id,
-                    app_name=cached_app_name,
-                    user_id=cached_user_id
-                )
+                try:
+                    service = agent._session_manager._session_service
+                    session = await service.get_session(
+                        session_id=session_id,
+                        app_name=cached_app_name,
+                        user_id=cached_user_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Cached session read failed in /agents/state "
+                        "for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
                 # Use cached values for subsequent operations
                 app_name = cached_app_name
                 user_id = cached_user_id
 
-            # Cache miss - search backend by thread_id
+            # Both cold history reads and runs use the same scoped identity policy.
             if not session:
-                # O(1) direct lookup when use_thread_id_as_session_id is enabled
-                if getattr(agent._session_manager, '_use_thread_id_as_session_id', False) is True:
-                    session = await agent._session_manager.get_session(
-                        thread_id, app_name, user_id
+                try:
+                    session = await agent._session_manager.resolve_existing_session(
+                        thread_id=thread_id, app_name=app_name, user_id=user_id
                     )
-                    if session:
-                        session_id = session.id
-                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                # Fallback to O(n) scan (always used when flag is False,
-                # also used as legacy fallback when flag is True but direct lookup misses)
-                if not session:
-                    session = await agent._session_manager._find_session_by_thread_id(
-                        app_name=app_name,
-                        user_id=user_id,
-                        thread_id=thread_id
+                except Exception:
+                    logger.exception(
+                        "Session lookup failed in /agents/state for thread %s",
+                        thread_id,
                     )
-                    if session:
-                        # Found - cache for future lookups
-                        session_id = session.id
-                        agent._session_lookup_cache[(thread_id, user_id)] = (session_id, app_name, user_id)
-
-                        # Reload session to populate events (list_sessions returns metadata only)
-                        session = await agent._session_manager._session_service.get_session(
-                            session_id=session_id,
-                            app_name=app_name,
-                            user_id=user_id
-                        )
+                    return _session_read_error_response(thread_id)
+                if session:
+                    session_id = session.id
+                    agent._session_lookup_cache[(thread_id, user_id, app_name)] = (
+                        session_id, app_name, user_id
+                    )
 
             thread_exists = session is not None
 
-            # Get state
+            # A failed read must surface as an error, not as an empty thread.
             state = {}
             if thread_exists:
-                state = await agent._session_manager.get_session_state(
-                    session_id=session_id,
-                    app_name=app_name,
-                    user_id=user_id
-                ) or {}
+                try:
+                    state = await agent._session_manager.get_session_state(
+                        session_id=session_id,
+                        app_name=app_name,
+                        user_id=user_id,
+                        raise_on_error=True,
+                    ) or {}
+                except Exception:
+                    logger.exception(
+                        "State read failed in /agents/state for thread %s",
+                        thread_id,
+                    )
+                    return _session_read_error_response(thread_id)
 
             # Get messages from session events
             messages = []
@@ -635,10 +799,15 @@ def add_adk_fastapi_endpoint(
             return JSONResponse(content={
                 "threadId": thread_id,
                 "threadExists": thread_exists,
-                "state": state,
+                "state": {
+                    key: value for key, value in state.items()
+                    if not _is_processed_message_state_key(key)
+                },
                 "messages": messages_dict
             })
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in /agents/state endpoint: {e}", exc_info=True)
             return JSONResponse(
@@ -676,7 +845,9 @@ def create_adk_app(
             the default agent.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
             ``tags``, ``operation_id``, ``dependencies``, ``include_in_schema``,
-            ...). They do not apply to the other routes this helper registers,
+            ...). ``dependencies`` also guards ``/capabilities`` and
+            ``/agents/state``, so authentication applies to every route this
+            helper registers. The other kwargs apply to the agent route only,
             because values such as ``operation_id`` and ``name`` must stay
             unique per operation.
 

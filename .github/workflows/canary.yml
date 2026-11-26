@@ -19,10 +19,39 @@ name: canary / publish
 #   short-lived `canary/<slug>` ref, dispatches publish-release.yml ON that ref
 #   (clearing the env gate), waits for it, then deletes the ref.
 #
-# Token: the branch create/delete and the cross-workflow dispatch use the
-# devops-bot GitHub App token, NOT the default GITHUB_TOKEN. Events authenticated
-# with GITHUB_TOKEN do not start new workflow runs (recursion prevention), so the
-# delegated publish-release run would silently never fire.
+# Tokens: the branch create and the cross-workflow dispatch use a devops-bot
+# GitHub App token, NOT the default GITHUB_TOKEN. Events authenticated with
+# GITHUB_TOKEN do not start new workflow runs (recursion prevention), so the
+# delegated publish-release run would silently never fire. The branch delete
+# uses a second devops-bot App token, minted just before cleanup (see Waiting).
+#
+# Waiting: the publish run can wait for a deployment approval. The "Wait for the
+# publish run" step's WAIT_SECONDS (160 minutes) is that approval window. A run
+# not finished at the end of the window is NEVER cancelled by this workflow: an
+# approval can arrive at any moment, and a cancel sent on a status read made
+# before it would stop a package push partway. The observer times out
+# instead: the canary fails with a message that names the run, keeps it and
+# the canary ref, and gives the command to cancel it by hand while it still
+# waits for approval. Every non-main prerelease shares one concurrency group
+# in publish-release.yml, so a run left waiting blocks every later canary
+# until someone approves or cancels it. The step's and the job's
+# timeout-minutes sit above the window to leave room for setup and cleanup.
+# App tokens expire after one hour, so the wait reads the run with this job's
+# own GITHUB_TOKEN (actions: read), which lasts for the whole job, and the
+# cleanup mints a fresh app token instead of reusing the first one.
+#
+# Leftover canary refs: the cleanup never deletes the ref while the publish run
+# can still use it. If that run is still not finished (for example, it timed
+# out waiting for approval, or it is still publishing), or the cleanup cannot
+# read its status, mint its token or delete the ref, the ref stays and the job
+# prints the exact command to delete it. Run that command once the publish run
+# has finished:
+#   gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/canary/<slug>-<run>-<attempt>
+# To find leftovers: gh api repos/<owner>/<repo>/git/matching-refs/heads/canary/
+# A re-run is a new attempt, so it creates and cleans up its own ref
+# (...-<run>-<attempt+1>). It never touches a ref an earlier attempt left
+# behind; delete those with the command above. If the ref is already gone,
+# the cleanup step only logs that.
 
 on:
   workflow_dispatch:
@@ -33,11 +62,14 @@ on:
         type: choice
         options:
           - integration-a2a
+          - integration-adk-js
           - integration-adk-py
           - integration-adk-ts
           - integration-ag2
           - integration-agent-spec
           - integration-agno
+          - integration-antigravity-py
+          - integration-antigravity-ts
           - integration-aws-strands-py
           - integration-aws-strands-ts
           - integration-claude-agent-sdk-py
@@ -54,6 +86,9 @@ on:
           - integration-langroid
           - integration-llama-index
           - integration-mastra
+          - integration-omnara
+          - integration-openai-agents-py
+          - integration-openai-agents-ts
           - integration-pydantic-ai
           - integration-spring-ai
           - integration-spring-ai-java
@@ -68,11 +103,12 @@ on:
           - sdk-py-a2ui-toolkit
           - sdk-dotnet
           - sdk-java
+          - sdk-kotlin
           - sdk-ts
           - sdk-ts-a2ui-toolkit
           - create-ag-ui-app
       suffix:
-        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = unix timestamp. Allowed: [a-zA-Z0-9._-]+. Reuse a suffix only if the base version moved, else the publish collides."
+        description: "Prerelease suffix (e.g. 'fix-user-issue'); blank = publish-release uses its own run id x 1000 + attempt. Allowed: [a-zA-Z0-9._-]+. Reuse a suffix only if the base version moved, else the publish collides."
         required: false
         type: string
       dry_run:
@@ -82,29 +118,49 @@ on:
         type: boolean
 
 concurrency:
-  # Serialize repeated dispatches on the same source branch. Cross-branch ref
-  # races are independently prevented by making the canary ref unique per run
-  # (slug + github.run_id, see the slug step below).
-  group: canary-publish-${{ github.ref }}
+  # One group per run, so runs never wait on or displace each other. GitHub
+  # keeps at most one pending run per group and a newer run replaces it, so a
+  # shared per-branch group would silently drop a queued canary (runs can last
+  # 180 minutes). Each run owns a unique canary ref (slug + run id + attempt,
+  # see the slug step below), so runs need no serialization here. publish-release.yml
+  # serializes the delegated prerelease runs in one shared group (see its
+  # concurrency block); the wait step never cancels a run, so a canary that
+  # times out names the run to approve or cancel by hand to free that group.
+  group: canary-publish-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:
-  # The job's own GITHUB_TOKEN does nothing privileged — every write goes through
-  # the App token minted below.
+  # Workflow default: read-only. The canary job adds only actions: read (to read
+  # the publish run; it never cancels it). Every write goes through the
+  # devops-bot App tokens that the job mints — one for the create + dispatch,
+  # one for the cleanup delete.
   contents: read
 
 jobs:
   canary:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Must exceed the "Wait for the publish run" step's timeout-minutes (which
+    # sits above its WAIT_SECONDS approval window) by enough for the setup steps
+    # and the cleanup. Raise them together.
+    timeout-minutes: 180
+    # DEVOPS_BOT_PRIVATE_KEY lives in this environment, not in repo secrets,
+    # so only jobs bound to it can read the key. Its branch rules must allow
+    # the non-main branches canary runs from (Guard ref rejects main).
+    environment: devops-bot-canary
+    permissions:
+      contents: read
+      # The job has no checkout and runs no repo code.
+      actions: read # read the publish run (wait + cleanup guard); never cancel it
     steps:
       - name: Guard ref
         # Canary publishes are for non-main BRANCHES only. Block main (use the
         # stable release flow) and block non-branch refs such as tags (a tag
         # dispatch would otherwise canary-publish from the tagged commit).
         if: github.ref == 'refs/heads/main' || !startsWith(github.ref, 'refs/heads/')
+        env:
+          RELEASE_REF: ${{ github.ref }}
         run: |
-          echo "::error::Canary publishes are for non-main branches only (got '${{ github.ref }}'). To release from main, use the 'release / publish' workflow with mode=stable."
+          echo "::error::Canary publishes are for non-main branches only (got '$RELEASE_REF'). To release from main, use the 'release / publish' workflow with mode=stable."
           exit 1
 
       - name: Validate suffix
@@ -118,20 +174,21 @@ jobs:
           # the WHOLE string (grep matches per line and would accept a multi-line
           # value whose first line is valid).
           if ! [[ "$SUFFIX" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-            echo "::error::Invalid suffix '$SUFFIX'. Allowed: [a-zA-Z0-9._-]+ (blank = unix timestamp)."
+            echo "::error::Invalid suffix '$SUFFIX'. Allowed: [a-zA-Z0-9._-]+ (blank = the publish run id x 1000 + attempt)."
             exit 1
           fi
 
       - name: Mint devops-bot token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: "3877599"
+          client-id: "Iv23liBNyieHVFKABrJ3"
           private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
           # Scope the app token to only what this workflow uses, instead of
           # inheriting the app installation's blanket permissions (zizmor
-          # github-app). contents:write creates/deletes the canary ref;
-          # actions:write dispatches publish-release.yml and reads its run.
+          # github-app). contents:write creates the canary ref (the cleanup
+          # step mints its own token to delete it); actions:write dispatches
+          # publish-release.yml and locates its run.
           permission-contents: write
           permission-actions: write
 
@@ -168,9 +225,9 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Point canary/<slug> at the dispatched ref's HEAD. The ref is unique
-          # per run, so it should not pre-exist; only force-update on the specific
-          # "already exists" case (e.g. a re-run reusing the run id). Any OTHER
+          # Point canary/<slug>-<run>-<attempt> at the dispatched ref's HEAD. The
+          # name includes the run id and attempt, so it should never pre-exist;
+          # the force-update on "already exists" is defensive only. Any OTHER
           # failure (auth, rate limit, 5xx) must surface, not be silently retried.
           ERR=$(mktemp)
           if gh api --silent -X POST "repos/${GITHUB_REPOSITORY}/git/refs" \
@@ -186,7 +243,7 @@ jobs:
             exit 1
           fi
 
-      - name: Dispatch publish-release.yml on the canary ref and wait
+      - name: Dispatch publish-release.yml on the canary ref
         id: dispatch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -232,10 +289,11 @@ jobs:
             exit 1
           fi
 
-          # Mark located BEFORE the watch so cleanup runs even if the publish
+          # Mark located BEFORE the wait so cleanup runs even if the publish
           # fails — but is skipped entirely if we never tracked a run (so we
           # never delete a ref a still-pending run may need).
           echo "located=true" >> "$GITHUB_OUTPUT"
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
 
           RUN_URL=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
           echo "Delegated publish run: ${RUN_URL}"
@@ -247,8 +305,120 @@ jobs:
             echo "- **Delegated run:** ${RUN_URL}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # --exit-status propagates the publish run's failure to this job.
-          gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
+      - name: Wait for the publish run
+        # The publish run can wait for a deployment approval. WAIT_SECONDS is
+        # that approval window. A run not finished when it ends is never
+        # cancelled here: approval can land between any status read and a
+        # cancel, and a cancel then stops a running publish partway. The step
+        # times out instead and fails, naming the run and the canary ref it
+        # keeps, so a canary ends either green with its publish done or red.
+        # timeout-minutes sits a little above the window, so the runner never
+        # kills the step first, and the job's timeout-minutes stays above that.
+        # It reads with this job's GITHUB_TOKEN, which does not expire mid-job
+        # (an app token would after one hour). --interval 60 keeps the polling
+        # well under the GITHUB_TOKEN rate limit.
+        id: wait
+        timeout-minutes: 165
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+          BRANCH: ${{ steps.slug.outputs.branch }}
+          WAIT_SECONDS: "9600"
+          RETRY_BASE_SECONDS: "30"
+          MAX_WATCH_ATTEMPTS: "5"
+        run: |
+          # The runner runs this step with `bash -e`, so a failing command ends
+          # the step unless it is tested. Each command that may fail on purpose
+          # (the watch, the status read) is in an `if` or an `||`.
+          set -uo pipefail
+          DEADLINE=$((SECONDS + WAIT_SECONDS))
+          ATTEMPT=0
+          while :; do
+            ATTEMPT=$((ATTEMPT + 1))
+            LEFT=$((DEADLINE - SECONDS))
+            WATCH_RC=124
+            if [ "$LEFT" -gt 0 ]; then
+              # --exit-status exits 0 only when the publish run succeeded. A
+              # failed run and a GitHub API error both exit non-zero, so the
+              # run's own status (read below) decides which one happened.
+              WATCH_RC=0
+              timeout "$LEFT" gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status --interval 60 || WATCH_RC=$?
+            fi
+            if [ "$WATCH_RC" -eq 0 ]; then
+              echo "Publish run ${RUN_ID} succeeded."
+              exit 0
+            fi
+            STATUS=""
+            CONCLUSION=""
+            if VIEW=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '.status + " " + (.conclusion // "")'); then
+              read -r STATUS CONCLUSION <<<"$VIEW"
+            fi
+            CANCEL_CMD="gh run cancel ${RUN_ID} --repo ${GITHUB_REPOSITORY}"
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "Publish run ${RUN_ID} succeeded."
+                exit 0
+              fi
+              if [ "$CONCLUSION" = "cancelled" ]; then
+                echo "::error::Publish run ${RUN_ID} was cancelled before it finished. Most likely a newer prerelease displaced it from the shared release-publish-prerelease concurrency group (only one prerelease can wait there at a time), or someone cancelled it by hand. Re-run this canary."
+                exit 1
+              fi
+              echo "::error::Publish run ${RUN_ID} failed (conclusion: ${CONCLUSION:-unknown}). See that run for the cause."
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              # The approval window is over. This step never cancels the run: an
+              # approval can land right after any status read, so a cancel sent on
+              # that read could stop a package push partway. It times out instead,
+              # keeps the run and the canary ref, and says what to do by hand.
+              WINDOW="$((WAIT_SECONDS / 60))-minute approval window"
+              KEEP="Run ${RUN_ID} and the canary ref ${BRANCH} are kept."
+              HOLD="Until it ends it holds the release-publish-prerelease concurrency group and blocks every later canary."
+              case "$STATUS" in
+                "")
+                  MSG="Timed out waiting for publish run ${RUN_ID}: stopped after the ${WINDOW} and could not read its status (GitHub API error). It was not cancelled. ${KEEP} Check that run: if it is still waiting for approval, approve it or cancel it with: ${CANCEL_CMD}. ${HOLD}"
+                  ;;
+                waiting|queued|pending|requested)
+                  MSG="Timed out waiting for publish run ${RUN_ID}: not approved within the ${WINDOW} (status: ${STATUS}). It was not cancelled, as an approval can start the publish at any moment. ${KEEP} Approve it to publish, or, only while it still waits for approval, cancel it with: ${CANCEL_CMD}. ${HOLD} Then re-run this canary."
+                  ;;
+                in_progress)
+                  MSG="Publish run ${RUN_ID} was approved and is still publishing at the end of the ${WINDOW} (status: ${STATUS}). Not cancelled, so the publish is not stopped partway. ${KEEP} Check that run for its outcome."
+                  ;;
+                *)
+                  MSG="Publish run ${RUN_ID} is in an unexpected status at the end of the ${WINDOW} (status: ${STATUS}). Not cancelled. ${KEEP} Check that run; if it is still waiting for approval, cancel it with: ${CANCEL_CMD}"
+                  ;;
+              esac
+              echo "::error::${MSG}"
+              echo "- **Publish:** ${MSG}" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            if [ "$ATTEMPT" -ge "$MAX_WATCH_ATTEMPTS" ]; then
+              echo "::error::Watching publish run ${RUN_ID} failed ${ATTEMPT} times on GitHub API errors (last watch exit ${WATCH_RC}, run status: ${STATUS:-unreadable}). This is a watch failure, NOT a publish failure: the publish run may still succeed, so check that run."
+              exit 1
+            fi
+            DELAY=$((RETRY_BASE_SECONDS * (1 << (ATTEMPT - 1))))
+            LEFT=$((DEADLINE - SECONDS))
+            if [ "$DELAY" -gt "$LEFT" ]; then
+              DELAY=$LEFT
+            fi
+            echo "::warning::Watching publish run ${RUN_ID} stopped early (exit ${WATCH_RC}, run status: ${STATUS:-unreadable}), likely a GitHub API error; retrying in ${DELAY}s (attempt ${ATTEMPT}/${MAX_WATCH_ATTEMPTS})."
+            sleep "$DELAY"
+          done
+
+      - name: Mint devops-bot token for canary cleanup
+        # Fresh token: the first one may be past its one-hour life by now.
+        id: cleanup-token
+        # Only the cleanup is left, so a mint failure must not fail the canary.
+        # The Delete step reads this step's outcome and leaves the ref with a
+        # warning.
+        continue-on-error: true
+        if: always() && steps.dispatch.outputs.located == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: "Iv23liBNyieHVFKABrJ3"
+          private-key: ${{ secrets.DEVOPS_BOT_PRIVATE_KEY }}
+          # contents:write deletes the canary ref. Nothing else.
+          permission-contents: write
 
       - name: Delete canary ref
         # Clean up only when we actually tracked a dispatched run (located=true),
@@ -257,18 +427,40 @@ jobs:
         # under a publish run that is still about to start.
         if: always() && steps.dispatch.outputs.located == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.cleanup-token.outputs.token }}
+          MINT_OUTCOME: ${{ steps.cleanup-token.outcome }}
+          STATUS_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.slug.outputs.branch }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
         run: |
           # Best-effort cleanup: never fail the job on a delete hiccup, but do
           # surface a real error instead of masking every failure as "gone".
           set -uo pipefail
+          # Keep the ref, say why, and give the command to delete it later (see
+          # "Leftover canary refs" in the header).
+          leave() {
+            local cmd="gh api -X DELETE repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}"
+            echo "::warning::$1 Leaving ${BRANCH} in place. Once publish run ${RUN_ID} has finished, delete it with: ${cmd}"
+            echo "- **Canary ref left in place:** \`${BRANCH}\` ($1) Delete it once the publish run has finished: \`${cmd}\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          if [ "$MINT_OUTCOME" != "success" ] || [ -z "$GH_TOKEN" ]; then
+            leave "The cleanup token could not be minted (outcome: ${MINT_OUTCOME:-unknown}), so the ref was not deleted."
+          fi
+          # Never delete the ref while the publish run can still run on it (for
+          # example, still waiting for approval after the wait step timed out,
+          # or approved and publishing). This read is fresh, made right here.
           ERR=$(mktemp)
+          if ! STATUS=$(GH_TOKEN="$STATUS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq .status 2>"$ERR"); then
+            leave "Could not read the status of publish run ${RUN_ID} (GitHub API error: $(head -c 300 "$ERR" | tr '\n' ' ')), so it may still be running."
+          fi
+          if [ "$STATUS" != "completed" ]; then
+            leave "Publish run ${RUN_ID} is not finished (status: ${STATUS:-empty}); it may still be awaiting approval."
+          fi
           if gh api --silent -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" 2>"$ERR"; then
             echo "Deleted ${BRANCH}"
           elif grep -qiE "not found|does not exist" "$ERR"; then
             echo "Branch ${BRANCH} already gone"
           else
-            echo "::warning::Failed to delete canary ref ${BRANCH} (manual cleanup may be needed):"
-            cat "$ERR" >&2
+            leave "Failed to delete canary ref ${BRANCH} (GitHub API error: $(head -c 300 "$ERR" | tr '\n' ' '))."
           fi

@@ -4,7 +4,96 @@ This Python middleware enables [Google ADK](https://google.github.io/adk-docs/) 
 
 ## Prerequisites
 
+The middleware supports CPython 3.10–3.15 (`>=3.10,<3.16`). It depends on
+`ag-ui-a2ui-toolkit>=0.0.6`, which also supports Python 3.15. The locked environment uses Google ADK 1.35.0; the supported
+dependency range remains `google-adk>=1.28.1,<3.0.0`.
+
+A2UI uses `a2ui-agent-sdk>=0.10.0,<0.11.0` and `a2ui-core>=0.5.0,<0.6.0`
+([#3121](https://github.com/ag-ui-protocol/ag-ui/issues/3121)). The helper now
+uses the published `Catalog` and Direct JSON processor/prompt APIs, so the
+adapter can share an environment with SDK 0.10's Express and Direct JSON
+consumers. Legacy SDK 0.2.x is no longer supported: its removed `a2ui.schema`
+API and bundled framework integrations require a different implementation.
+This migration supersedes the 0.2.2 pin from #3089 rather than reverting it.
+
+Both `direct_json` and `express` follow the catalog's `protocolVersion`: A2UI
+0.9 or 1.0. Omitting the declaration retains the 0.9 default; explicit malformed
+or unsupported versions return an error before model invocation. SDK version
+aliases are normalized to the canonical wire values `"v0.9"` and `"1.0"`.
+Updating an existing surface with a different protocol version is rejected;
+create a new surface to change protocols.
+
+In the default `direct_json` mode, catalog prompts preserve client components,
+definitions and instructions and include the relevant protocol/common types,
+without the SDK's text-tag delivery rules. JSON parsing and repair use the
+SDK's `read_json` via `heal_json_arg`. The 0.9 path retains toolkit validation
+and raw prompt fallback for catalogs with unresolved refs; SDK rendering
+failures log a warning before that fallback. Version errors never fall back.
+The 1.0 path uses SDK payload validation and native `@path` bindings, with
+validation diagnostics fed into bounded generation retries.
+
+### Opt-in A2UI Express streaming
+
+Select `a2ui={"inference_format": "express"}` on `ADKAgent`, or pass
+`"inference_format": "express"` to `get_a2ui_tool` for backend-owned tools.
+The default remains `"direct_json"`. A request can override either default with
+`forwarded_props={"a2ui": {"inferenceFormat": "express"}}`; selections are
+validated and bound to per-run tool clones so concurrent requests remain isolated.
+
+Express sends a text-only model request without forced function calling. The
+official SDK compiles and validates the streamed DSL, including progressive
+text, data bindings and actions. The adapter publishes coherent operations in the catalog's protocol
+version through existing `ACTIVITY_SNAPSHOT` events (`activityType:
+"a2ui-surface"`, `content.a2ui_operations`, `replace: true`). The activity and
+final tool result share `a2ui-surface-<outer-tool-call-id>`, so middleware handling
+the existing A2UI activity contract replaces one chat entry. The generation tool
+supports one surface per call, create/update operations, and object data models;
+unsupported delete, multi-surface and standalone-function output is rejected.
+
+Activities emitted by the actual SDK Express path carry
+`content.inferenceFormat: "express"` for diagnostics. Attempt callbacks receive
+the actual per-run `inference_format` for both modes; legacy Direct JSON does
+not add an activity-format tag.
+
+Compiler errors and truncated blocks enter the bounded recovery loop with SDK
+diagnostics. Previously emitted valid partial snapshots cannot be rolled back;
+the same activity is replaced by retry/failure status, then a successful retry.
+Express requires a usable 0.9 or 1.0 catalog and strict SDK validation;
+unresolved catalog refs produce an explicit catalog error. In 1.0, surface
+metadata/extensions are preserved, and updates can reconstruct initial state
+from inline `createSurface.components` and `createSurface.dataModel` history.
+
+`compile_a2ui_express(source, *, catalog=..., surface_id=...)` exposes the same
+official compiler for fixed backend-owned layouts. It accepts raw, unwrapped
+Express and returns validated standard message dictionaries; compilation errors
+raise `ValueError`.
+
+Incremental Express streaming uses `a2ui-agent-sdk>=0.10.0,<0.11.0`, which
+ships `ExpressResponseStream`.
+
+Retrying Express compiler diagnostics relies on the typed recovery contract
+(`A2UIGenerationError`) from
+[AG-UI PR #3274](https://github.com/ag-ui-protocol/ag-ui/pull/3274), released in
+`ag-ui-a2ui-toolkit` 0.0.6; the dependency floor requires that version.
+
+AG-UI needs neither the separate `a2ui-adk` integration nor `a2ui-a2a` and adds
+no A2A version constraint. Applications that use Google's `a2ui.adk` tools
+directly must separately install `a2ui-adk` and follow its requirements.
+Before the SDK 0.10/core 0.5 migration, the SDK-backed A2UI tests and clean
+wheel installation were verified on CPython 3.13.13 with SDK 0.9.0, core 0.4.0,
+Google ADK 2.12.0 and Google GenAI 2.31.0. This does not change the existing
+ADK 2.x full-suite limitations described below.
+
+CI runs the full suite on Python 3.12 and 3.15. The 3.15 job also builds the
+sdist and wheel, installs the wheel with pip in a clean environment, and runs
+the suite outside the source checkout. Google ADK 2.x has a separate
+informational full-suite job with known failures; Python 3.15 support does
+not resolve those existing compatibility limitations. Free-threaded Python
+and Windows have not been verified.
+
 The examples use ADK Agents using various Gemini models along with the AG-UI Dojo.
+The separate `examples/` application currently requires Python 3.10–3.14;
+its environment has not yet been updated for Python 3.15.
 
 - A [Gemini API Key](https://makersuite.google.com/app/apikey). The examples assume that this is exported via the GOOGLE_API_KEY environment variable.
 
@@ -14,55 +103,56 @@ To use this integration you need to:
 
 1. Clone the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui).
 
-    ```bash
-    git clone https://github.com/ag-ui-protocol/ag-ui.git
-    ```
+   ```bash
+   git clone https://github.com/ag-ui-protocol/ag-ui.git
+   ```
 
 2. Change to the `integrations/adk-middleware/python` directory.
 
-    ```bash
-    cd integrations/adk-middleware/python
-    ```
+   ```bash
+   cd integrations/adk-middleware/python
+   ```
 
-3. Install the `adk-middleware` package from the local directory.  For example,
+3. Install the `adk-middleware` package from the local directory. For example,
 
-    ```bash
-    pip install .
-    ```
+   ```bash
+   pip install .
+   ```
 
-    or
+   or
 
-    ```bash
-    uv pip install .
-    ```
+   ```bash
+   uv pip install .
+   ```
 
-    This installs the package from the current directory which contains:
-    - `src/ag_ui_adk/` - The middleware source code
-    - `examples/` - Example servers and agents
-    - `tests/` - Test suite
+   This installs the package from the current directory which contains:
+
+   - `src/ag_ui_adk/` - The middleware source code
+   - `examples/` - Example servers and agents
+   - `tests/` - Test suite
 
 4. Install the requirements for the `examples`, for example:
 
-    ```bash
-    uv pip install -r requirements.txt
-    ```
+   ```bash
+   uv pip install -r requirements.txt
+   ```
 
 5. Run the example fast_api server.
 
-    ```bash
-    export GOOGLE_API_KEY=<My API Key>
-    cd examples
-    uv sync
-    uv run dev
-    ```
+   ```bash
+   export GOOGLE_API_KEY=<My API Key>
+   cd examples
+   uv sync
+   uv run dev
+   ```
 
 6. Open another terminal in the root directory of the ag-ui repository clone.
 
 7. Start the integration ag-ui dojo:
 
-    ```bash
-    pnpm install && pnpm run dev
-    ```
+   ```bash
+   pnpm install && pnpm run dev
+   ```
 
 8. Visit [http://localhost:3000/adk-middleware](http://localhost:3000/adk-middleware).
 
@@ -70,7 +160,7 @@ To use this integration you need to:
 
 ### Development Setup
 
-If you want to contribute to ADK Middleware development, you'll need to take some additional steps.  You can either use the following script of the manual development setup.
+If you want to contribute to ADK Middleware development, you'll need to take some additional steps. You can either use the following script of the manual development setup.
 
 ```bash
 # From the adk-middleware directory
@@ -108,9 +198,11 @@ pytest --cov=src/ag_ui_adk
 # Specific test file
 pytest tests/test_adk_agent.py
 ```
+
 ## Usage options
 
 ### Option 1: Direct Usage
+
 ```python
 from ag_ui_adk import ADKAgent
 from google.adk.agents import Agent
@@ -216,18 +308,20 @@ add_adk_fastapi_endpoint(app, agent, path="/chat")
 
 1. The agent calls a client-side tool (e.g., `generate_task_steps`) — ADK persists the `FunctionCall` event and pauses execution
 2. The middleware emits `TOOL_CALL_START`, `TOOL_CALL_ARGS`, and `TOOL_CALL_END` events to the frontend
-3. The user reviews and responds (approve/reject) — the frontend sends a `ToolMessage` with the result
+3. The user reviews and responds (approve/reject), and the frontend sends a `ToolMessage` with the result, or a `resume` entry (see [TOOLS.md](./TOOLS.md#interrupts-and-resume))
 4. The middleware resumes ADK execution with the stored `invocation_id`, restoring the agent's position
 5. The agent continues from where it left off with the user's response
 
+With `emit_interrupt_outcome=True` (default `False`), a tool confirmation (`tool_context.request_confirmation()`) additionally ends its run with an interrupt outcome on `RUN_FINISHED`. Enable it only with a frontend that resumes via `RunAgentInput.resume`; see [TOOLS.md](./TOOLS.md#interrupts-and-resume).
+
 **When to use `from_app()` vs direct `ADKAgent()`:**
 
-| Feature | `ADKAgent(adk_agent=...)` | `ADKAgent.from_app(app)` |
-|---|---|---|
-| Basic HITL | ~~Yes (fire-and-forget)~~ **Deprecated** | Yes (native resumability) |
-| Session persistence across pause/resume | Manual | Automatic |
-| SequentialAgent sub-agent position restore | No | Yes |
-| Requires `google-adk` | Any version | >= 1.16.0 |
+| Feature                                    | `ADKAgent(adk_agent=...)`                | `ADKAgent.from_app(app)`  |
+| ------------------------------------------ | ---------------------------------------- | ------------------------- |
+| Basic HITL                                 | ~~Yes (fire-and-forget)~~ **Deprecated** | Yes (native resumability) |
+| Session persistence across pause/resume    | Manual                                   | Automatic                 |
+| SequentialAgent sub-agent position restore | No                                       | Yes                       |
+| Requires `google-adk`                      | Any version                              | >= 1.16.0                 |
 
 > **Deprecation notice:** The fire-and-forget HITL flow via `ADKAgent(adk_agent=...)` is deprecated and will be removed in a future version. For human-in-the-loop workflows, use `ADKAgent.from_app()` with `ResumabilityConfig(is_resumable=True)`. The direct constructor remains fully supported for agents without client-side tools. See [USAGE.md](./USAGE.md#migrating-to-resumable-hitl) for migration instructions.
 
@@ -256,8 +350,8 @@ from ag_ui.core import RunAgentInput, UserMessage
 async def main():
     # Setup
     my_agent = Agent(
-        name="assistant", 
-        instruction="You are a helpful assistant.", 
+        name="assistant",
+        instruction="You are a helpful assistant.",
         tools=[
             AGUIToolset(), # Add the tools provided by the AG-UI client
         ]
@@ -323,6 +417,14 @@ add_adk_fastapi_endpoint(app, technical_agent_wrapper, path="/agents/technical")
 add_adk_fastapi_endpoint(app, creative_agent_wrapper, path="/agents/creative")
 ```
 
+> **Note:** If you call `add_adk_fastapi_endpoint` several times on one app,
+> give every call the same `dependencies`. The helper registers
+> `POST /agents/state` at a fixed path, and FastAPI uses only the first
+> registration of a path. If the calls pass different `dependencies`, the guard
+> of the first call (or the absence of a guard) applies to `/agents/state` for
+> all agents. The same applies to `/capabilities` when two calls use the same
+> `path`.
+
 ## Context Support
 
 The middleware automatically passes `context` from `RunAgentInput` to your ADK agents, following the pattern established by LangGraph. Context is stored in session state under the `_ag_ui_context` key and is accessible in both tools and instruction providers.
@@ -361,13 +463,13 @@ agent = LlmAgent(
 )
 ```
 
-### Alternative: Via RunConfig custom_metadata (ADK 1.22.0+)
+### Alternative: Via RunConfig custom_metadata
 
-For users on ADK 1.22.0 or later, context is also available via `RunConfig.custom_metadata`:
+Context is also available via `RunConfig.custom_metadata`:
 
 ```python
 def dynamic_instructions(ctx: ReadonlyContext) -> str:
-    # Alternative access via custom_metadata (ADK 1.22.0+)
+    # Alternative access via custom_metadata
     if ctx.run_config and ctx.run_config.custom_metadata:
         context_items = ctx.run_config.custom_metadata.get('ag_ui_context', [])
 ```
@@ -426,12 +528,11 @@ agent = LlmAgent(
         # This agent doesn't see any tools provided by the AG-UI client
     ],
     sub_agents=[
-        hello_agent, 
+        hello_agent,
         goodbye_agent,
     ],
 )
 ```
-
 
 For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
 
@@ -444,7 +545,7 @@ For detailed information about tool support, see [TOOLS.md](./TOOLS.md).
 
 ## Migration Guide
 
-### Migrating from v0.4.x 
+### Migrating from v0.4.x
 
 If you are upgrading from version 0.4.x, please note the following changes:
 
@@ -454,14 +555,14 @@ If you are upgrading from version 0.4.x, please note the following changes:
 
 - If you want to maintain the previous behavior of only the root agent having access to AG-UI tools, and ensure no name conflicts, you can add the `AGUIToolset` with a custom filter as the first tool in the root agent like this:
 
-    ```python
-    tools=[
-        AGUIToolset(
-            tool_filter=lambda tool, readonly_context=None: tool.name not in [
-                "transfer_to_agent", 
-                "any other tools provided to this agent that overlap with agui tools...",
-            ],
-        ),
-        ...other tools...
-    ]
-    ```
+  ```python
+  tools=[
+      AGUIToolset(
+          tool_filter=lambda tool, readonly_context=None: tool.name not in [
+              "transfer_to_agent",
+              "any other tools provided to this agent that overlap with agui tools...",
+          ],
+      ),
+      ...other tools...
+  ]
+  ```

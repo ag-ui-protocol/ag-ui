@@ -5,6 +5,8 @@ Helper functions for message processing, tool conversion, and prompt building.
 """
 
 import json
+import base64
+import inspect
 import logging
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any, Dict, List, Optional, Tuple
@@ -80,28 +82,8 @@ def extract_tool_names(tools: List[Any]) -> List[str]:
 
 
 def strip_mcp_prefix(tool_name: str) -> str:
-    """
-    Strip mcp__servername__ prefix from Claude SDK tool names.
-    
-    Claude SDK prefixes all MCP tools: mcp__weather__get_weather, mcp__ag_ui__generate_haiku
-    Frontend registers unprefixed: get_weather, generate_haiku
-    
-    Args:
-        tool_name: Full MCP-prefixed tool name
-        
-    Returns:
-        Unprefixed tool name for client matching
-        
-    Examples:
-        "mcp__weather__get_weather" -> "get_weather"
-        "mcp__ag_ui__generate_haiku" -> "generate_haiku"
-        "local_tool" -> "local_tool" (unchanged)
-    """
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 3:  # mcp__servername__toolname
-            return "__".join(parts[2:])  # Keep just toolname (handles double underscores in names)
-    return tool_name
+    """Map only adapter-owned tools to frontend names; preserve native MCP names."""
+    return tool_name.removeprefix("mcp__ag_ui__")
 
 
 SUPPORTED_IMAGE_MEDIA_TYPES = {
@@ -144,11 +126,8 @@ def _is_provider_file_source(source: Any) -> bool:
     opaque and is expressly NOT a URL.
 
     Matched by its ``type`` DISCRIMINATOR rather than by ``isinstance`` against
-    ``ag_ui.core.FileSource``, because this package floors at
-    ``ag-ui-protocol>=0.1.15`` and the published wheels do not export that class
-    yet — importing it here would break every install until the SDK carrying it
-    ships. The discriminator is the part of the shape the spec fixes, so it is
-    the safe thing to match on.
+    ``ag_ui.core.FileSource``: the discriminator is the part of the shape the
+    spec fixes, so it is the safe thing to match on.
     """
     return getattr(source, "type", None) == "file"
 
@@ -184,6 +163,8 @@ def _image_block(source: Any, field: str) -> Dict[str, Any]:
 def _document_block(source: Any, field: str) -> Dict[str, Any]:
     media_type = _normalized_media_type(getattr(source, "mime_type", None))
     if isinstance(source, InputContentDataSource):
+        if media_type == "text/plain":
+            return {"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": base64.b64decode(source.value, validate=True).decode("utf-8")}}
         if media_type != "application/pdf":
             raise ValueError(f"{field}.mime_type must be application/pdf")
         return {
@@ -258,11 +239,24 @@ def _convert_content_block(block: Any, index: int) -> Optional[Dict[str, Any]]:
             return None
         if isinstance(block, ImageInputContent):
             return _image_block(block.source, f"content[{index}].source")
-        return _document_block(block.source, f"content[{index}].source")
+        document = _document_block(block.source, f"content[{index}].source")
+        filename = block.metadata.get("filename") if isinstance(block.metadata, dict) else None
+        if isinstance(filename, str):
+            document["title"] = filename
+        return document
     if isinstance(block, BinaryInputContent):
         return _legacy_binary_block(block, index)
     if isinstance(block, (AudioInputContent, VideoInputContent)):
-        raise ValueError(f"content[{index}] type {block.type} is not supported")
+        # Claude takes neither audio nor video input. Per the spec a producer
+        # that cannot use a content part MUST NOT fail the run because of it:
+        # it skips the part and SHOULD warn.
+        logger.warning(
+            "Dropping %s content[%d]: Claude does not accept %s input",
+            block.type,
+            index,
+            block.type,
+        )
+        return None
     raise ValueError(f"content[{index}] has an unsupported type")
 
 
@@ -279,6 +273,18 @@ async def _structured_user_message(
 
 
 ClaudePrompt = str | AsyncIterable[Dict[str, Any]]
+
+
+def recovery_user_messages(input_data: RunAgentInput, pending_id: str):
+    """Only users after the deferred call are new, including before its result."""
+    messages = input_data.messages or []
+    boundary = next((i for i, message in enumerate(messages)
+                     if message.role == "assistant" and any(
+                         call.id == pending_id for call in (getattr(message, "tool_calls", None) or []))), -1)
+    if boundary < 0:
+        boundary = next((i for i in range(len(messages) - 1, -1, -1)
+                         if messages[i].role == "assistant"), -1)
+    return [message for message in messages[boundary + 1:] if message.role == "user"]
 
 
 def process_messages(input_data: RunAgentInput) -> Tuple[ClaudePrompt, bool]:
@@ -406,7 +412,7 @@ def build_state_context_addendum(input_data: RunAgentInput) -> str:
     return "\n".join(parts)
 
 
-def convert_agui_tool_to_claude_sdk(tool_def: Any) -> Any:
+def convert_agui_tool_to_claude_sdk(tool_def: Any, resolve_frontend_result: Any = None) -> Any:
     """
     Convert an AG-UI tool definition to a Claude SDK MCP tool.
     
@@ -453,9 +459,20 @@ def convert_agui_tool_to_claude_sdk(tool_def: Any) -> Any:
         Stub implementation - actual execution happens on client side.
         When Claude calls this tool, we emit TOOL_CALL events and client executes.
         """
-        return {
-            "content": [{"type": "text", "text": "Tool call forwarded to client"}]
-        }
+        if resolve_frontend_result is None:
+            raise RuntimeError("Frontend tool result requires a matched deferred tool call")
+        result = resolve_frontend_result(tool_name, args)
+        if inspect.isawaitable(result):
+            result = await result
+        envelope = result if isinstance(result, dict) else None
+        content = frontend_result_blocks(envelope["content"] if envelope is not None else result)
+        error = envelope.get("error") if envelope is not None else None
+        if error:
+            if content == [{"type": "text", "text": ""}]:
+                content = []
+            if not any(block.get("type") == "text" and block.get("text") == error for block in content):
+                content.append({"type": "text", "text": error})
+        return {"content": content, **({"is_error": True} if error is not None else {})}
     
     return frontend_tool_stub
 
@@ -475,7 +492,7 @@ def create_state_management_tool() -> Any:
     @tool(
         "ag_ui_update_state",
         "Update the shared application state. Use this to persist changes that should be visible in the UI. "
-        "Pass the complete updated state object.",
+        "Pass a partial object: keys are shallow-merged into current state; nested values replace existing values. The emitted snapshot contains the full merged state.",
         {"state_updates": dict}
     )
     async def update_state_tool(args: dict) -> dict:
@@ -608,61 +625,118 @@ def build_agui_assistant_message(
     )
 
 
-def build_agui_tool_message(
-    tool_use_id: str,
-    content: Any,
-) -> ToolMessage:
-    """
-    Build an AG-UI ToolMessage from a Claude SDK tool result block.
+def serialize_tool_result(content: Any, is_error: bool = False) -> str:
+    """Preserve rich blocks as JSON; unwrap only one plain text block."""
+    value = content if content is not None else ""
+    if isinstance(value, list) and len(value) == 1:
+        block = value[0]
+        if (isinstance(block, dict) and block.get("type") == "text"
+                and isinstance(block.get("text"), str)
+                and set(block) <= {"type", "text"}):
+            value = block["text"]
+    if is_error:
+        parsed = value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (ValueError, TypeError):
+                pass
+        value = {**parsed, "error": True} if isinstance(parsed, dict) else {"error": True, "content": value}
+    value = fix_surrogates_deep(value)
+    return value if isinstance(value, str) else json.dumps(value)
 
-    Extracts the text content from the SDK's content block format and
-    normalises it into a simple string for the AG-UI message.
 
-    Args:
-        tool_use_id: ID of the tool call this result belongs to
-        content: Raw content from the ToolResultBlock
-
-    Returns:
-        AG-UI ToolMessage
-    """
-    def _normalize_text(text: str) -> str:
-        """Canonical textual-payload encoding: parse JSON when possible (so the
-        frontend can access fields) else pass the raw text through UNQUOTED.
-
-        This mirrors ``handlers.py``'s ``_normalize_text`` for the live
-        TOOL_CALL_RESULT path (Item 5). Routing both the list-of-text-blocks
-        branch and the bare-string branch through here keeps MESSAGES_SNAPSHOT
-        encoding identical to TOOL_CALL_RESULT: the SAME logical tool result
-        reaches the frontend with the SAME encoding regardless of which SDK
-        shape (list vs. bare string) delivered it — in particular a bare string
-        is NOT json.dumps-quoted into '"plain"'."""
-        try:
-            return json.dumps(json.loads(text))
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON — raw passthrough (NOT json.dumps, which would quote it
-            # and diverge from the list-text-block path).
-            return text
-
-    result_str = ""
-    try:
-        if isinstance(content, list) and len(content) > 0:
-            first_block = content[0]
-            if isinstance(first_block, dict) and first_block.get("type") == "text":
-                result_str = _normalize_text(first_block.get("text", ""))
-            else:
-                result_str = json.dumps(content)
-        elif isinstance(content, str):
-            # Bare-string content: normalise identically to the inner text of a
-            # text block (Item 5) instead of json.dumps-quoting it.
-            result_str = _normalize_text(content)
-        elif content is not None:
-            result_str = json.dumps(content)
-    except (TypeError, ValueError):
-        result_str = str(content or "")
-
+def build_agui_tool_message(tool_use_id: str, content: Any, is_error: bool = False) -> ToolMessage:
     return ToolMessage(
         id=f"{tool_use_id}-result",
         role="tool",
-        content=result_str,
+        content=native_tool_content(content, is_error),
         tool_call_id=tool_use_id,
+        error="Tool execution failed" if is_error else None,
     )
+
+
+def merge_state_update(current_state: Any, tool_input: dict) -> dict:
+    """Shallow-merge object keys. Run input.state remains a full snapshot."""
+    updates = tool_input.get("state_updates", tool_input)
+    if isinstance(updates, str):
+        updates = json.loads(updates)
+    if not isinstance(updates, dict):
+        raise ValueError("state_updates must be an object")
+    return fix_surrogates_deep({**(current_state if isinstance(current_state, dict) else {}), **updates})
+
+
+def native_tool_content(content: Any, is_error: bool = False) -> Any:
+    content = fix_surrogates_deep(content)
+    if not isinstance(content, list) or (len(content) == 1 and isinstance(content[0], dict) and content[0].get("type") == "text" and set(content[0]) <= {"type", "text"}):
+        return serialize_tool_result(content, is_error)
+    parts = []
+    for block in content:
+        metadata = {"claude": {"block": block, "isError": is_error}}
+        kind = block.get("type") if isinstance(block, dict) else None
+        source = block.get("source", {}) if isinstance(block, dict) else {}
+        if kind == "text" and isinstance(block.get("text"), str):
+            parts.append({"type": "text", "text": block["text"], "metadata": metadata})
+            continue
+        projected = None
+        if kind in ("image", "audio", "video", "document"):
+            if source.get("type") == "base64" and isinstance(source.get("data"), str) and isinstance(source.get("media_type"), str):
+                projected = {"type": "data", "value": source["data"], "mimeType": source["media_type"]}
+            elif source.get("type") == "url" and isinstance(source.get("url"), str):
+                projected = {"type": "url", "value": source["url"]}
+                if source.get("media_type"):
+                    projected["mimeType"] = source["media_type"]
+            elif isinstance(block.get("data"), str) and isinstance(block.get("mimeType"), str):
+                projected = {"type": "data", "value": block["data"], "mimeType": block["mimeType"]}
+        if projected:
+            parts.append({"type": kind, "source": projected, "metadata": metadata})
+        else:
+            metadata["claude"]["unsupportedType"] = kind or "unknown"
+            parts.append({"type": "text", "text": json.dumps(block), "metadata": metadata})
+    return parts
+
+
+def frontend_result_blocks(result: Any) -> list:
+    if isinstance(result, str):
+        return [{"type": "text", "text": result}]
+    if not isinstance(result, list):
+        raise TypeError("Frontend tool result must be a string or content parts")
+    blocks = []
+    for part in result:
+        if hasattr(part, "model_dump"):
+            part = part.model_dump(by_alias=True, exclude_none=True)
+        kind = part["type"]
+        if kind == "text":
+            blocks.append({"type": "text", "text": part["text"]})
+            continue
+        source = part["source"]
+        if source["type"] == "data" and kind in ("image", "audio"):
+            blocks.append({"type": kind, "data": source["value"], "mimeType": source["mimeType"]})
+        elif source["type"] == "url":
+            block = {"type": "resource_link", "uri": source["value"], "name": (part.get("metadata") or {}).get("filename", source["value"])}
+            if source.get("mimeType"):
+                block["mimeType"] = source["mimeType"]
+            blocks.append(block)
+        elif source["type"] == "data":
+            blocks.append({"type": "resource", "resource": {"uri": f"data:{source['mimeType']};base64,{source['value']}", "mimeType": source["mimeType"], "blob": source["value"]}})
+        else:
+            raise ValueError("Cannot return unresolved provider file as an SDK tool result")
+    return blocks
+
+
+def unsupported_input_parts(input_data: RunAgentInput) -> list:
+    message = input_data.messages[-1] if input_data.messages else None
+    content = getattr(message, "content", None)
+    if not isinstance(content, list):
+        return []
+    notices = []
+    for index, part in enumerate(content):
+        kind = getattr(part, "type", None)
+        reason = None
+        if kind in ("audio", "video"):
+            reason = f"Claude does not accept {kind} input"
+        elif _is_provider_file_source(getattr(part, "source", None)):
+            reason = "Provider file handles cannot be resolved by this adapter"
+        if reason:
+            notices.append({"messageId": message.id, "contentIndex": index, "contentType": kind, "reason": reason})
+    return notices

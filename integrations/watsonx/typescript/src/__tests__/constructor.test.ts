@@ -63,6 +63,20 @@ describe("WatsonxAgent constructor", () => {
     );
   });
 
+  it("uses an explicit baseUrl in place of the region-derived one", () => {
+    const agent = new WatsonxAgent({
+      region: "eu-de",
+      instanceId: "my-inst-42",
+      agentId: "agent-1",
+      bearerToken: "tok",
+      baseUrl: "http://localhost:5555/instances/mock/",
+    });
+    expect((agent as any).baseUrl).toBe("http://localhost:5555/instances/mock");
+    expect((agent.clone() as any).baseUrl).toBe(
+      "http://localhost:5555/instances/mock",
+    );
+  });
+
   it("sets tokenExpiresAt ~55 minutes in the future when bearerToken is provided", () => {
     const before = Date.now();
     const agent = new WatsonxAgent({

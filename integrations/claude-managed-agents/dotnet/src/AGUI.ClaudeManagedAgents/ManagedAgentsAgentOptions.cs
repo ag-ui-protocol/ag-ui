@@ -7,6 +7,9 @@ namespace AGUI.ClaudeManagedAgents;
 /// </summary>
 public sealed class ManagedAgentsAgentOptions
 {
+    /// <summary>Server-side authorized lookup for a previously created native conversation.</summary>
+    public Func<string, CancellationToken, Task<ManagedAgentsSessionBinding?>>? ResolveSession { get; set; }
+
     /// <summary>
     /// Gets or sets the ID of the managed agent that powers each session. Required.
     /// </summary>
@@ -59,8 +62,8 @@ public sealed class ManagedAgentsAgentOptions
     /// <summary>
     /// Gets or sets how to answer a built-in tool gated on user confirmation
     /// (<c>evaluated_permission: "ask"</c>): <see cref="ToolConfirmationPolicy.Allow"/>,
-    /// <see cref="ToolConfirmationPolicy.Deny"/>, or <see langword="null"/> (the default) to end
-    /// the run with an error instead, since no confirmation UI is wired up yet.
+    /// <see cref="ToolConfirmationPolicy.Deny"/>, or <see langword="null"/> (the default) to park
+    /// and emit an approval interrupt that the client answers using a resume entry.
     /// </summary>
     public string? ToolConfirmation { get; set; }
 

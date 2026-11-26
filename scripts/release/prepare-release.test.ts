@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseGradleVersion, replaceGradleVersion } from "./lib/gradle-version";
 
 const SCRIPT = join(process.cwd(), "scripts/release/prepare-release.ts");
 const DOTNET_PROPS = "sdks/dotnet/Directory.Build.props";
@@ -606,3 +607,443 @@ test(
     rmSync(root, { recursive: true, force: true });
   },
 );
+
+// Gradle scanning must preserve the value span while ignoring unrelated syntax.
+const GRADLE_FIXTURE =
+  '// version = "9.9.9"\r\nplugins { kotlin("multiplatform") version "2.1.20" }\r\nversion = "0.4.1" // release\r\nsubprojects { version = rootProject.version }\r\n';
+const VALID_GRADLE = [
+  'version = "0.4.1"\nsubprojects { project.version = rootProject.version; setVersion("9.9.9") }\n',
+  GRADLE_FIXTURE,
+  'rootProject.version = "9.9.9"\nsubprojects { version = "8.0.0" }\nversion = "0.4.1"',
+  '/* { version = "9.9.9"\n /* nested } */ } */\nversion /* comment */ = "0.4.1"; // release\n',
+  'val message = "escaped \\" version = \\"9.9.9\\" {"\nversion = "0.4.1"\nnested { nested { version = "8.0.0" } }\n',
+  'val message = """{ version = "9.9.9" }"""\nversion = "0.4.1"\n',
+];
+const INVALID_GRADLE = [
+  'plugins { id("x") version "1.2.3" }',
+  'version = providers.gradleProperty("version")',
+  'version = "unterminated',
+];
+const FIRST_GRADLE = [
+  'version = "0.4.1"\nversion = "0.5.0"',
+  'val version = "9.9.9"; version = "0.4.1"',
+  'version = "0.4.1"\nrootProject.version = "0.5.0"; setVersion("0.6.0")',
+  'version = "0.4.1"\nval broken = (1] /* unrelated unterminated',
+];
+
+test("Gradle reader uses the first root assignment without validating later writes", () => {
+  for (const source of FIRST_GRADLE) {
+    assert.equal(parseGradleVersion(source).version, "0.4.1");
+    assert.equal(
+      replaceGradleVersion(source, "0.4.2"),
+      source.replace('"0.4.1"', '"0.4.2"'),
+    );
+  }
+  assert.equal(
+    parseGradleVersion('version = "release-name"').version,
+    "release-name",
+  );
+  assert.equal(
+    replaceGradleVersion('version = "0.4.1"', "release-name"),
+    'version = "release-name"',
+  );
+});
+
+test("Gradle literal parser ignores comments, strings, plugins and nested assignments", () => {
+  for (const source of [...VALID_GRADLE, ...FIRST_GRADLE]) {
+    const parsed = parseGradleVersion(source);
+    assert.equal(parsed.version, "0.4.1");
+    assert.equal(source.slice(parsed.start, parsed.end), "0.4.1");
+    assert.equal(
+      replaceGradleVersion(source, "0.4.2"),
+      source.replace('"0.4.1"', '"0.4.2"'),
+    );
+  }
+  for (const source of INVALID_GRADLE) {
+    assert.throws(() => parseGradleVersion(source), /version/i);
+  }
+});
+
+test("Python Gradle parser matches TS fixtures, spans and CLI failures", () => {
+  const root = mkdtempSync(join(tmpdir(), "gradle-parser-"));
+  const parser = join(process.cwd(), "scripts/release/gradle-version.py");
+  const file = join(root, "build.gradle.kts");
+  try {
+    for (const source of [
+      ...VALID_GRADLE,
+      ...FIRST_GRADLE,
+      'version = "release-name"',
+      ...INVALID_GRADLE,
+    ]) {
+      writeFileSync(file, source);
+      const result = spawnSync("python3", [parser, file], { encoding: "utf8" });
+      if (!INVALID_GRADLE.includes(source)) {
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout, `${parseGradleVersion(source).version}\n`);
+        const imported = spawnSync(
+          "python3",
+          [
+            "-c",
+            'import importlib.util, pathlib, json, sys; s=importlib.util.spec_from_file_location("gradle_version", sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(m.parse_gradle_version(pathlib.Path(sys.argv[2]).read_bytes().decode("utf-8"))))',
+            parser,
+            file,
+          ],
+          { encoding: "utf8" },
+        );
+        assert.equal(imported.status, 0, imported.stderr);
+        const { version, start, end } = parseGradleVersion(source);
+        assert.deepEqual(JSON.parse(imported.stdout), [version, start, end]);
+      } else {
+        assert.notEqual(result.status, 0, source);
+        assert.equal(result.stdout, "");
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const KOTLIN_SOURCE = "sdks/community/kotlin/library/build.gradle.kts";
+function kotlinFixture(source = GRADLE_FIXTURE, sharedVersion = true): string {
+  const root = mkdtempSync(join(tmpdir(), "prepare-kotlin-"));
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  mkdirSync(join(root, "sdks/community/kotlin/library"), { recursive: true });
+  const config = JSON.parse(
+    readFileSync(
+      join(process.cwd(), "scripts/release/release.config.json"),
+      "utf8",
+    ),
+  );
+  // Consume enrollment from the real config rather than duplicating it.
+  assert.ok(config.scopes["sdk-kotlin"], "sdk-kotlin must be enrolled");
+  config.scopes["sdk-kotlin"].sharedVersion = sharedVersion;
+  if (!sharedVersion)
+    config.scopes["sdk-kotlin"].packages = config.scopes[
+      "sdk-kotlin"
+    ].packages.slice(0, 1);
+  writeFileSync(
+    join(root, "scripts/release/release.config.json"),
+    JSON.stringify(config),
+  );
+  writeFileSync(join(root, KOTLIN_SOURCE), source);
+  for (const name of ["core", "client", "tools"]) {
+    mkdirSync(join(root, "sdks/community/kotlin/library", name), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(root, "sdks/community/kotlin/library", name, "build.gradle.kts"),
+      "version = rootProject.version\n",
+    );
+  }
+  return root;
+}
+
+for (const [bump, next] of [
+  ["patch", "0.4.2"],
+  ["minor", "0.5.0"],
+  ["major", "1.0.0"],
+]) {
+  test(`Kotlin ${bump} dry run reports three logical modules and preserves fixture bytes`, async () => {
+    const root = kotlinFixture();
+    try {
+      const result = await runPrepareRelease(
+        ["--scope", "sdk-kotlin", "--bump", bump, "--dry-run"],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const output = JSON.parse(result.stdout);
+      assert.deepEqual(output.files, []);
+      assert.deepEqual(
+        output.packages.map((p: { name: string }) => p.name),
+        ["kotlin-core", "kotlin-client", "kotlin-tools"],
+      );
+      for (const pkg of output.packages) {
+        assert.equal(pkg.file, KOTLIN_SOURCE);
+        assert.equal(pkg.oldVersion, "0.4.1");
+        assert.equal(pkg.newVersion, next);
+        assert.equal(pkg.ecosystem, "maven");
+        assert.equal(pkg.buildSystem, "gradle");
+        assert.equal(pkg.groupId, "com.ag-ui.community");
+      }
+      assert.equal(
+        readFileSync(join(root, KOTLIN_SOURCE), "utf8"),
+        GRADLE_FIXTURE,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const shared of [true, false]) {
+  test(`real Kotlin patch preserves CRLF and edits only the literal (shared=${shared})`, async () => {
+    const root = kotlinFixture(GRADLE_FIXTURE, shared);
+    try {
+      const result = await runPrepareRelease(
+        ["--scope", "sdk-kotlin", "--bump", "patch"],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout).files, [KOTLIN_SOURCE]);
+      const written = readFileSync(join(root, KOTLIN_SOURCE), "utf8");
+      assert.equal(written, GRADLE_FIXTURE.replace('"0.4.1"', '"0.4.2"'));
+      assert.equal(parseGradleVersion(written).version, "0.4.2");
+      for (const name of ["core", "client", "tools"])
+        assert.equal(
+          readFileSync(
+            join(
+              root,
+              "sdks/community/kotlin/library",
+              name,
+              "build.gradle.kts",
+            ),
+            "utf8",
+          ),
+          "version = rootProject.version\n",
+        );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("Kotlin prepare CLI rejects missing or invalid versions without writing", async () => {
+  for (const source of [...INVALID_GRADLE, 'version = "invalid"']) {
+    const root = kotlinFixture(source);
+    try {
+      const result = await runPrepareRelease(
+        ["--scope", "sdk-kotlin", "--bump", "patch"],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.notEqual(result.status, 0, source);
+      assert.equal(readFileSync(join(root, KOTLIN_SOURCE), "utf8"), source);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+// The Python canary conversion, end to end through the real script: an
+// independent uv-managed scope shaped like integration-aws-strands-py
+// (sharedVersion: false) at 0.1.0. The pinned uv parser keeps a `.devN` in a
+// u64 and reserves u64::MAX, so N must be at most 18446744073709551614.
+const UV_MAX_DEV = 18446744073709551614n;
+
+function strandsFixture(): { root: string; pkg: string } {
+  const root = mkdtempSync(join(tmpdir(), "prepare-release-strands-"));
+  const pkg = join(root, "integrations/aws-strands/python");
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  mkdirSync(pkg, { recursive: true });
+  writeFileSync(
+    join(root, "scripts/release/release.config.json"),
+    JSON.stringify({
+      prereleaseTag: "alpha",
+      scopes: {
+        "integration-aws-strands-py": {
+          description: "Fixture shaped like integration-aws-strands-py",
+          sharedVersion: false,
+          packages: [
+            {
+              name: "ag_ui_strands",
+              path: "integrations/aws-strands/python",
+              ecosystem: "python",
+              buildSystem: "uv",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(pkg, "pyproject.toml"),
+    [
+      "[project]",
+      'name = "ag_ui_strands"',
+      'version = "0.1.0"',
+      'requires-python = ">=3.10"',
+      "dependencies = []",
+      "",
+    ].join("\n"),
+  );
+  return { root, pkg };
+}
+
+function pyprojectVersion(pkg: string): string {
+  return readFileSync(join(pkg, "pyproject.toml"), "utf8").match(
+    /^version = "([^"]+)"$/m,
+  )![1];
+}
+
+function uvAccepts(pkg: string): { status: number | null; out: string } {
+  const uv = spawnSync(
+    "uv",
+    ["--no-config", "--offline", "--no-cache", "version", "--project", pkg],
+    { encoding: "utf8" },
+  );
+  return { status: uv.status, out: (uv.stdout ?? "") + (uv.stderr ?? "") };
+}
+
+test("a Python canary .devN past uv's bound is refused after conversion, not written", async () => {
+  // The old blank-suffix preid: canary.<timestamp>.<run id>.<attempt>, whose
+  // components the converter joins into one N.
+  const { root, pkg } = strandsFixture();
+  try {
+    const r = await runPrepareRelease(
+      [
+        "--scope",
+        "integration-aws-strands-py",
+        "--bump",
+        "prerelease",
+        "--preid",
+        "canary.1700000000.33068467612.1",
+      ],
+      { PREPARE_RELEASE_ROOT: root },
+    );
+    assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+    assert.match(r.stderr, /0\.1\.1\.dev1700000000330684676121/);
+    assert.match(r.stderr, /18446744073709551614/);
+    assert.equal(pyprojectVersion(pkg), "0.1.0", "nothing written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [label, preid, expected] of [
+  // Control: a timestamp-only suffix, to tell an overflow from a fixture fault.
+  ["timestamp-only", "canary.1700000000", "0.1.1.dev1700000000"],
+  // The bounded blank-suffix form: run id x 1000 + attempt.
+  ["run id and attempt", "canary.33068467612001", "0.1.1.dev33068467612001"],
+] as const) {
+  test(`a Python canary preid (${label}) converts to a bounded .devN that uv accepts`, async () => {
+    const { root, pkg } = strandsFixture();
+    try {
+      const r = await runPrepareRelease(
+        [
+          "--scope",
+          "integration-aws-strands-py",
+          "--bump",
+          "prerelease",
+          "--preid",
+          preid,
+        ],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(JSON.parse(r.stdout).packages[0].newVersion, expected);
+      assert.equal(pyprojectVersion(pkg), expected);
+      const n = BigInt(expected.match(/\.dev([0-9]+)$/)![1]);
+      assert.ok(n <= UV_MAX_DEV);
+      if (haveUv()) {
+        const uv = uvAccepts(pkg);
+        assert.equal(uv.status, 0, uv.out);
+        assert.ok(uv.out.includes(expected), uv.out);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a Python canary preid that is not numeric is refused, not written", async () => {
+  const { root, pkg } = strandsFixture();
+  try {
+    const r = await runPrepareRelease(
+      [
+        "--scope",
+        "integration-aws-strands-py",
+        "--bump",
+        "prerelease",
+        "--preid",
+        "canary.fix-user-issue",
+      ],
+      { PREPARE_RELEASE_ROOT: root },
+    );
+    assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+    assert.match(r.stderr, /0\.1\.1\.devfix-user-issue/);
+    assert.equal(pyprojectVersion(pkg), "0.1.0", "nothing written");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A scope that lists a TypeScript package before a Python one. The Python
+// .devN is checked only after the TS version is computed, so a check inside
+// the write loop would leave the TS package.json bumped when it refuses.
+function mixedScopeFixture(): { root: string; files: string[] } {
+  const root = mkdtempSync(join(tmpdir(), "prepare-release-mixed-"));
+  const ts = join(root, "sdks/typescript/pkg");
+  const py = join(root, "sdks/python");
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  mkdirSync(ts, { recursive: true });
+  mkdirSync(py, { recursive: true });
+  writeFileSync(
+    join(root, "scripts/release/release.config.json"),
+    JSON.stringify({
+      prereleaseTag: "alpha",
+      scopes: {
+        mixed: {
+          description: "Fixture with a TS package before a Python one",
+          sharedVersion: false,
+          packages: [
+            {
+              name: "@ag-ui/fixture",
+              path: "sdks/typescript/pkg",
+              ecosystem: "typescript",
+            },
+            {
+              name: "ag_ui_fixture",
+              path: "sdks/python",
+              ecosystem: "python",
+              buildSystem: "uv",
+            },
+          ],
+        },
+      },
+    }),
+  );
+  writeFileSync(
+    join(ts, "package.json"),
+    JSON.stringify({ name: "@ag-ui/fixture", version: "0.1.0" }, null, 2) +
+      "\n",
+  );
+  writeFileSync(
+    join(py, "pyproject.toml"),
+    [
+      "[project]",
+      'name = "ag_ui_fixture"',
+      'version = "0.1.0"',
+      'requires-python = ">=3.10"',
+      "dependencies = []",
+      "",
+    ].join("\n"),
+  );
+  return {
+    root,
+    files: [join(ts, "package.json"), join(py, "pyproject.toml")],
+  };
+}
+
+for (const [label, preid] of [
+  ["not numeric", "canary.rc1"],
+  ["past uv's bound", "canary.1700000000.33068467612.1"],
+] as const) {
+  test(`a mixed scope whose Python .devN is ${label} is refused before any package is written`, async () => {
+    const { root, files } = mixedScopeFixture();
+    try {
+      const before = files.map((f) => readFileSync(f, "utf8"));
+      const r = await runPrepareRelease(
+        ["--scope", "mixed", "--bump", "prerelease", "--preid", preid],
+        { PREPARE_RELEASE_ROOT: root },
+      );
+      assert.notEqual(r.status, 0, `accepted: ${r.stdout}`);
+      assert.match(r.stderr, /ag_ui_fixture: Python version 0\.1\.1\.dev/);
+      assert.deepEqual(
+        files.map((f) => readFileSync(f, "utf8")),
+        before,
+        "no package file changed",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}

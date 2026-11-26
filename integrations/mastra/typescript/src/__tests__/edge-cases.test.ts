@@ -10,7 +10,7 @@ import {
   makeRemoteMastraAgent,
   makeInput,
   collectEvents,
-  collectError,
+  collectRunError,
 } from "./helpers";
 
 describe("working memory edge cases", () => {
@@ -290,7 +290,7 @@ describe("error handling", () => {
       ],
     });
 
-    const { error, events } = await collectError(agent, makeInput());
+    const { error, events } = await collectRunError(agent, makeInput());
     expect(error.message).toBe("Something went wrong");
 
     expect(events[0].type).toBe(EventType.RUN_STARTED);
@@ -309,7 +309,7 @@ describe("error handling", () => {
       resourceId: "resource-1",
     });
 
-    const { error } = await collectError(agent, makeInput());
+    const { error } = await collectRunError(agent, makeInput());
     expect(error.message).toBe("Agent connection failed");
   });
 
@@ -325,8 +325,126 @@ describe("error handling", () => {
       resourceId: "resource-1",
     });
 
-    const { error } = await collectError(agent, makeInput());
+    const { error } = await collectRunError(agent, makeInput());
     expect(error.message).toBe("Remote agent unavailable");
+  });
+
+  describe("RUN_ERROR", () => {
+    const failingChunks = [
+      { type: "text-delta", payload: { text: "Hello" } },
+      { type: "error", payload: { error: "Model overloaded" } },
+      { type: "text-delta", payload: { text: "never sent" } },
+    ];
+
+    it.each([
+      ["local", () => makeLocalMastraAgent({ streamChunks: failingChunks })],
+      ["remote", () => makeRemoteMastraAgent({ streamChunks: failingChunks })],
+    ])(
+      "ends a %s run that hits an error chunk with exactly one RUN_ERROR",
+      async (_kind, makeAgent) => {
+        const { error, events } = await collectRunError(
+          makeAgent(),
+          makeInput(),
+        );
+
+        expect(error.message).toBe("Model overloaded");
+        expect(events.map((e) => e.type)).toEqual([
+          EventType.RUN_STARTED,
+          EventType.TEXT_MESSAGE_CHUNK,
+          EventType.RUN_ERROR,
+        ]);
+        expect(events[2]).toEqual({
+          type: EventType.RUN_ERROR,
+          message: "Model overloaded",
+        });
+      },
+    );
+
+    it("emits RUN_ERROR, then the original error, when the local agent's stream() throws", async () => {
+      const thrown = new Error("Agent connection failed");
+      const fakeAgent = new FakeLocalAgent({ streamChunks: [] });
+      fakeAgent.stream = async () => {
+        throw thrown;
+      };
+      const agent = new MastraAgent({
+        agentId: "test-agent",
+        agent: fakeAgent as any,
+        resourceId: "resource-1",
+      });
+
+      const { error, events } = await collectRunError(agent, makeInput());
+
+      // The Observable still errors with the very error that was thrown.
+      expect(error).toBe(thrown);
+
+      expect(events.map((e) => e.type)).toEqual([
+        EventType.RUN_STARTED,
+        EventType.RUN_ERROR,
+      ]);
+      expect((events[1] as any).message).toBe("Agent connection failed");
+    });
+
+    // Emitting RUN_ERROR must not change what runAgent() callers already rely
+    // on: the run still rejects with the original error and onRunFailed fires.
+    it.each([
+      [
+        "fresh run",
+        () => makeLocalMastraAgent({ streamChunks: failingChunks }),
+        {},
+      ],
+      [
+        "local resume",
+        () => makeLocalMastraAgent({ resumeChunks: failingChunks }),
+        {
+          resume: [
+            {
+              interruptId: "r::tc-1",
+              status: "resolved" as const,
+              payload: { approved: true },
+            },
+          ],
+        },
+      ],
+      [
+        "remote resume",
+        () => makeRemoteMastraAgent({ resumeChunks: failingChunks }),
+        {
+          resume: [
+            {
+              interruptId: "r::tc-1",
+              status: "resolved" as const,
+              payload: { approved: true },
+            },
+          ],
+        },
+      ],
+    ])(
+      "keeps runAgent() rejecting with the original error on a %s",
+      async (_kind, makeAgent, params) => {
+        const errorSpy = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => {});
+        const agent = makeAgent();
+        const failures: unknown[] = [];
+
+        const rejection = await agent
+          .runAgent(params, {
+            onRunFailed: ({ error }) => {
+              failures.push(error);
+            },
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        errorSpy.mockRestore();
+
+        expect(rejection).toBeInstanceOf(Error);
+        expect((rejection as Error).message).toBe("Model overloaded");
+        expect(failures).toHaveLength(1);
+        expect(failures[0]).toBe(rejection);
+      },
+    );
   });
 
   it("still emits RUN_FINISHED when getWorkingMemory throws on run finish", async () => {

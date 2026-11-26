@@ -7,6 +7,7 @@ import {
   RunAgentInput,
   RunFinishedEvent,
   RunStartedEvent,
+  TextMessageStartEvent,
 } from "@ag-ui/core";
 
 /** Emits RUN_STARTED and stays open until detached. */
@@ -89,6 +90,52 @@ describe("single-run detachment", () => {
       expect(agent.isRunning).toBe(false);
     },
   );
+
+  it("ignores events and a stream error sent after detaching, even with slow subscribers", async () => {
+    const agent = new HangingAgent({ debug: false });
+    const seen: string[] = [];
+    const onRunFailed = vi.fn();
+    const onRunFinalized = vi.fn();
+    let releaseFirst: (() => void) | undefined;
+    const run = agent.runAgent(
+      { runId: "detach-slow" },
+      {
+        onEvent: async ({ event }) => {
+          if (seen.length === 0) {
+            await new Promise<void>((resolve) => (releaseFirst = resolve));
+          }
+          seen.push(event.type);
+        },
+        onRunFailed,
+        onRunFinalized,
+      },
+    );
+    await waitForRuns(agent, 1);
+    await vi.waitFor(() => expect(releaseFirst).toBeDefined());
+
+    // Queued before the detach: already received, so it is still applied.
+    const queued: TextMessageStartEvent = {
+      type: EventType.TEXT_MESSAGE_START,
+      messageId: "queued",
+      role: "assistant",
+    };
+    agent.open[0].next(queued);
+    const detached = agent.detachActiveRun();
+    agent.open[0].next({ ...queued, messageId: "after-detach" });
+    agent.open[0].error(new Error("stream failed after detach"));
+    releaseFirst?.();
+
+    await detached;
+    await expect(run).resolves.toEqual({
+      result: undefined,
+      newMessages: [{ id: "queued", role: "assistant", content: "" }],
+    });
+    expect(seen).toEqual([EventType.RUN_STARTED, EventType.TEXT_MESSAGE_START]);
+    expect(agent.teardowns).toBe(1);
+    expect(onRunFailed).not.toHaveBeenCalled();
+    expect(onRunFinalized).toHaveBeenCalledTimes(1);
+    expect(agent.isRunning).toBe(false);
+  });
 
   it("is a no-op when idle and does not affect a later run", async () => {
     const agent = new HangingAgent({ debug: false });

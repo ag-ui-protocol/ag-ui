@@ -43,6 +43,13 @@ if (-not (Test-Path $installScript)) {
 Write-Host "Installing SDK pinned in $globalJson -> $repoDotnetRoot"
 & $installScript -JSonFile $globalJson -InstallDir $repoDotnetRoot
 
+# The test projects multi-target net8.0/net9.0/net10.0 ($(TargetFrameworksCore)), and the
+# pinned SDK only carries the 10.0 runtime, so the older runtimes are installed alongside it.
+foreach ($runtimeChannel in '8.0', '9.0') {
+    Write-Host "Installing .NET $runtimeChannel runtime -> $repoDotnetRoot"
+    & $installScript -Runtime dotnet -Channel $runtimeChannel -InstallDir $repoDotnetRoot
+}
+
 # Optionally install an additional SDK (e.g. a preview channel for the union spike).
 if ($ExtraVersion) {
     Write-Host "Installing additional SDK version $ExtraVersion -> $repoDotnetRoot"

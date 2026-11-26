@@ -1,19 +1,34 @@
 name: "Security: Fork PR Alert"
 
+# pull_request_target runs this file from the base branch with a write-capable
+# token, also for fork PRs, and without the fork-run approval gate. A fork
+# pull_request run gets a read-only token, so the alert comment failed with a
+# 403, and closed-event runs waited for approval until they expired.
+#
+# SAFETY: this job is API-only. NEVER add actions/checkout, and never run,
+# install, or build anything from the PR head in this workflow. Never put
+# untrusted PR data (titles, branch names, filenames, commit messages) in a
+# ${{ }} expression in any step input that runs as code: run:, and also the
+# github-script script: below. Read that data from context.payload or the API
+# inside the script.
 on:
-  pull_request:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] API-only, no checkout; see header
     types: [opened, synchronize, closed, reopened]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   fork-pr-monitor:
     if: github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    # No concurrency group on purpose. A group keeps at most one pending run
+    # and cancels older pending runs, so a quick open/push/close burst would
+    # drop checks. Parallel runs are safe because the alert comments are
+    # append-only: a run only adds a comment and never edits or deletes one.
+    # At worst, two parallel runs post the same alert twice. No run can
+    # erase an alert that an earlier run posted.
     permissions:
-      contents: read
-      pull-requests: write
+      pull-requests: write # post the alert comment on the PR
     steps:
       - name: Check for suspicious patterns
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
@@ -22,23 +37,35 @@ jobs:
             const pr = context.payload.pull_request;
             const alerts = [];
 
+            // Untrusted strings (filenames) go into markdown. Strip characters
+            // that can break out of code spans, mention users, or inject HTML.
+            // Truncate by code point so an emoji is never split in half.
+            const esc = s => Array.from(String(s).replace(/[`@<>\r\n]/g, '_')).slice(0, 200).join('');
+
+            // A comment body over 65536 characters fails with a 422. Show at
+            // most MAX_LIST items of a list, then "...and N more".
+            const MAX_LIST = 50;
+            const capList = items => items.length > MAX_LIST
+              ? [...items.slice(0, MAX_LIST), `...and ${items.length - MAX_LIST} more`]
+              : items;
+
             // 1. [skip ci] in commit messages from fork PRs
             if (context.payload.action === 'opened' || context.payload.action === 'synchronize') {
-              const commits = await github.rest.pulls.listCommits({
+              const commits = await github.paginate(github.rest.pulls.listCommits, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pr.number,
                 per_page: 100
               });
-              const skipCiCommits = commits.data.filter(c =>
+              const skipCiCommits = commits.filter(c =>
                 /\[skip ci\]|\[ci skip\]|\[no ci\]/i.test(c.commit.message)
               );
               if (skipCiCommits.length > 0) {
-                alerts.push(`⚠️ **[skip ci] detected in fork PR** — ${skipCiCommits.length} commit(s) with CI skip directives: ${skipCiCommits.map(c => '\`' + c.sha.substring(0, 7) + '\`').join(', ')}`);
+                alerts.push(`⚠️ **[skip ci] detected in fork PR** — ${skipCiCommits.length} commit(s) with CI skip directives: ${capList(skipCiCommits.map(c => '\`' + esc(c.sha.substring(0, 7)) + '\`')).join(', ')}`);
               }
             }
 
-            // 2. Force-push reducing changed files to 0 (evidence cleanup)
+            // 2. A push that leaves 0 changed files (evidence cleanup)
             if (context.payload.action === 'synchronize') {
               const prDetails = await github.rest.pulls.get({
                 owner: context.repo.owner,
@@ -46,7 +73,7 @@ jobs:
                 pull_number: pr.number
               });
               if (prDetails.data.changed_files === 0) {
-                alerts.push(`🚨 **Zero-file fork PR after force-push** — PR shows 0 changed files after update. This matches supply-chain attack cleanup patterns.`);
+                alerts.push(`🚨 **Zero-file fork PR after push** — PR shows 0 changed files after update. This matches supply-chain attack cleanup patterns.`);
               }
             }
 
@@ -62,37 +89,89 @@ jobs:
 
             // 4. Large bundled files (>5000 lines added)
             if (context.payload.action === 'opened' || context.payload.action === 'synchronize') {
-              const files = await github.rest.pulls.listFiles({
+              const files = await github.paginate(github.rest.pulls.listFiles, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pr.number,
                 per_page: 100
               });
-              const largeNewFiles = files.data.filter(f =>
+              const largeNewFiles = files.filter(f =>
                 f.status === 'added' && f.additions > 5000
               );
               if (largeNewFiles.length > 0) {
-                alerts.push(`⚠️ **Large files added** — ${largeNewFiles.map(f => '\`' + f.filename + '\` (' + f.additions + ' lines)').join(', ')}. Bundled payloads are a common attack vector.`);
+                alerts.push(`⚠️ **Large files added** — ${capList(largeNewFiles.map(f => '\`' + esc(f.filename) + '\` (' + f.additions + ' lines)')).join(', ')}. Bundled payloads are a common attack vector.`);
               }
             }
 
             if (alerts.length > 0) {
-              const body = [
-                '## 🔒 Supply Chain Security Alert',
-                '',
-                'This fork PR triggered security alerts:',
-                '',
-                ...alerts,
-                '',
-                '---',
-                '_Automated supply-chain security monitor._'
-              ].join('\n');
-
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                body
-              });
+              // Surface the alert first, so it is visible even if the comment fails.
               core.warning(alerts.join(' | '));
+              // Write markdown, not addHeading/addList: their HTML tags stop
+              // GitHub from rendering the markdown inside the alerts.
+              await core.summary
+                .addRaw([
+                  '## Supply Chain Security Alert',
+                  '',
+                  `Fork PR #${pr.number}`,
+                  '',
+                  ...alerts.map(a => `- ${a}`),
+                  ''
+                ].join('\n'))
+                .write();
+
+              // The comments are append-only. Each push re-scans the whole PR,
+              // so give each alert a key derived from its text (a hash) and put
+              // the key in a hidden marker in the comment that reports it.
+              // Post ONE new comment with only the alerts whose keys are not
+              // on the PR yet. NEVER edit or delete a comment: a later push
+              // or the close event must not erase earlier evidence.
+              try {
+                const crypto = require('crypto');
+                const keyOf = a => crypto.createHash('sha256').update(a).digest('hex').slice(0, 16);
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  per_page: 100
+                });
+                const posted = new Set();
+                for (const c of comments) {
+                  if (!c.user || c.user.login !== 'github-actions[bot]' || typeof c.body !== 'string') continue;
+                  for (const m of c.body.matchAll(/<!-- fork-pr-alert:([0-9a-f]{16}) -->/g)) {
+                    posted.add(m[1]);
+                  }
+                }
+                const fresh = [...new Map(alerts.map(a => [keyOf(a), a]))]
+                  .filter(([key]) => !posted.has(key));
+                if (fresh.length === 0) {
+                  core.info('All alerts from this run are already on the PR; not posting again.');
+                } else {
+                  // MAX_LIST is a safety bound: there are at most 4 alerts today.
+                  // Alerts left out here get no marker, so a later run posts them.
+                  const shown = fresh.slice(0, MAX_LIST);
+                  const body = [
+                    ...shown.map(([key]) => `<!-- fork-pr-alert:${key} -->`),
+                    '## 🔒 Supply Chain Security Alert',
+                    '',
+                    'This fork PR triggered security alerts:',
+                    '',
+                    ...shown.map(([, a]) => a),
+                    ...(fresh.length > shown.length
+                      ? [`...and ${fresh.length - shown.length} more (see the job summary)`]
+                      : []),
+                    '',
+                    '---',
+                    '_Automated supply-chain security monitor._'
+                  ].join('\n');
+                  const { data: created } = await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    body
+                  });
+                  core.info(`Posted alert comment ${created.id} with ${shown.length} new alert(s).`);
+                }
+              } catch (e) {
+                core.setFailed(`Alert fired but the PR comment failed: ${e.status} ${e.message}`);
+              }
             }

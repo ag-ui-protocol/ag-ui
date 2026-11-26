@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.datetime.Clock
 import kotlin.test.*
 
@@ -169,6 +171,110 @@ class StatefulAgUiAgentTest {
         assertTrue(history[0] is UserMessage)
         assertTrue(history[1] is AssistantMessage)
         assertEquals("Assistant response to: Hello", (history[1] as AssistantMessage).content)
+    }
+
+    @Test
+    fun testMultimodalToolResultPreservedInHistoryAndNextRun() = runTest {
+        val parts = listOf(
+            TextPart(text = "The image shows a lighthouse."),
+            ImagePart(source = UrlSource(value = "https://example.com/lighthouse.png", mimeType = "image/png"))
+        )
+        val metadata = JsonObject(mapOf("source" to JsonPrimitive("vision-tool")))
+        val result = ToolCallResultEvent.multimodal(
+            messageId = "tool-result",
+            toolCallId = "tool-call",
+            parts = parts,
+            metadata = metadata,
+            subagentRunId = "vision-run"
+        )
+        val encodedEvent = AgUiJson.encodeToJsonElement(BaseEvent.serializer(), result)
+        val decodedResult = assertIs<ToolCallResultEvent>(AgUiV1.decodeEvent(encodedEvent))
+        val agent = ToolResultStatefulAgent(decodedResult)
+        val expected = ToolMessage(
+            id = result.messageId,
+            content = result.content,
+            toolCallId = result.toolCallId,
+            contentParts = parts,
+            metadata = metadata,
+            subagentRunId = result.subagentRunId
+        )
+
+        agent.sendMessage("Describe the image", "thread1").toList()
+        assertEquals(expected, agent.getHistory("thread1").filterIsInstance<ToolMessage>().single())
+
+        agent.sendMessage("Tell me more", "thread1").toList()
+        assertEquals(2, agent.inputs.size)
+        val nextInput = agent.inputs[1]
+        assertEquals(expected, nextInput.messages.filterIsInstance<ToolMessage>().single())
+        val encoded = AgUiJson.encodeToJsonElement(RunAgentInput.serializer(), nextInput).jsonObject
+        val encodedResult = encoded.getValue("messages").jsonArray
+            .map { it.jsonObject }
+            .single { it["id"] == JsonPrimitive(result.messageId) }
+        assertEquals(JsonPrimitive("tool"), encodedResult["role"])
+        assertEquals(JsonPrimitive(result.toolCallId), encodedResult["toolCallId"])
+        assertEquals(
+            AgUiJson.parseToJsonElement(
+                """[{"type":"text","text":"The image shows a lighthouse."},{"type":"image","source":{"type":"url","value":"https://example.com/lighthouse.png","mimeType":"image/png"}}]"""
+            ),
+            encodedResult["content"]
+        )
+        assertEquals(metadata, encodedResult["metadata"])
+        assertEquals(JsonPrimitive("vision-run"), encodedResult["subagentRunId"])
+    }
+
+    @Test
+    fun testTextToolResultPreservedAsStringInHistoryAndNextRun() = runTest {
+        val metadata = JsonObject(mapOf("source" to JsonPrimitive("text-tool")))
+        val result = ToolCallResultEvent(
+            messageId = "text-result",
+            toolCallId = "text-call",
+            content = "The answer is 42.",
+            metadata = metadata,
+            subagentRunId = "text-run"
+        )
+        val agent = ToolResultStatefulAgent(result)
+        val expected = ToolMessage(
+            id = result.messageId,
+            content = result.content,
+            toolCallId = result.toolCallId,
+            metadata = metadata,
+            subagentRunId = result.subagentRunId
+        )
+
+        agent.sendMessage("Find the answer", "thread1").toList()
+        assertEquals(expected, agent.getHistory("thread1").filterIsInstance<ToolMessage>().single())
+
+        agent.sendMessage("Explain it", "thread1").toList()
+        assertEquals(2, agent.inputs.size)
+        val nextInput = agent.inputs[1]
+        val nextResult = nextInput.messages.filterIsInstance<ToolMessage>().single()
+        assertEquals(expected, nextResult)
+        assertNull(nextResult.contentParts)
+        val encoded = AgUiJson.encodeToJsonElement(RunAgentInput.serializer(), nextInput).jsonObject
+        val encodedResult = encoded.getValue("messages").jsonArray
+            .map { it.jsonObject }
+            .single { it["id"] == JsonPrimitive(result.messageId) }
+        assertEquals(JsonPrimitive("tool"), encodedResult["role"])
+        assertEquals(JsonPrimitive(result.toolCallId), encodedResult["toolCallId"])
+        assertEquals(JsonPrimitive(result.content), encodedResult["content"])
+        assertEquals(metadata, encodedResult["metadata"])
+        assertEquals(JsonPrimitive("text-run"), encodedResult["subagentRunId"])
+    }
+
+    private class ToolResultStatefulAgent(
+        private val result: ToolCallResultEvent
+    ) : StatefulAgUiAgent("http://mock-url") {
+        val inputs = mutableListOf<RunAgentInput>()
+
+        override fun run(input: RunAgentInput): Flow<BaseEvent> {
+            inputs.add(input)
+            val isFirstRun = inputs.size == 1
+            return flow {
+                emit(RunStartedEvent(threadId = input.threadId, runId = input.runId))
+                if (isFirstRun) emit(result)
+                emit(RunFinishedEvent(threadId = input.threadId, runId = input.runId))
+            }
+        }
     }
     
     /**

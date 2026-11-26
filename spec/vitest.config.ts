@@ -1,6 +1,19 @@
 import { mergeConfig } from "vitest/config";
 import baseConfig from "../sdks/typescript/vitest.base";
 
+/**
+ * The checks that hold for any version folder: the schema is sound, the
+ * fixtures and conformance corpus agree with it. They run once per folder.
+ * Everything else — the generator, the SDK manifests, publishing — is about
+ * what ships, and runs once, against the latest frozen version.
+ */
+const PER_VERSION = [
+  "harness/schema.test.ts",
+  "harness/fixtures.test.ts",
+  "harness/conformance.test.ts",
+  "harness/optional-null.test.ts",
+];
+
 export default mergeConfig(baseConfig, {
   test: {
     // The shared base sets passWithNoTests, which is right for a package that may
@@ -16,5 +29,23 @@ export default mergeConfig(baseConfig, {
     // failing the suite on timing rather than on anything it checks. The work
     // is genuinely long-running, which is the case the option exists for.
     testTimeout: 30_000,
+    projects: [
+      {
+        extends: true,
+        test: { name: "1.0", env: { AGUI_SPEC_VERSION: "1.0" } },
+      },
+      {
+        // Not `extends`: vitest concatenates `include` when extending, which
+        // would put the base's catch-all glob back and run everything twice.
+        test: {
+          name: "draft",
+          globals: true,
+          environment: "node",
+          include: PER_VERSION,
+          testTimeout: 30_000,
+          env: { AGUI_SPEC_VERSION: "draft" },
+        },
+      },
+    ],
   },
 });

@@ -11,11 +11,20 @@ import pytest
 from ag_ui.core import EventType
 from ag_ui_claude_sdk.config import STATE_MANAGEMENT_TOOL_FULL_NAME
 from ag_ui_claude_sdk.handlers import (
+    SUBAGENT_TASK_ACTIVITY_TYPE,
+    close_open_task_activities,
     handle_tool_use_block,
     handle_tool_result_block,
 )
 
 from claude_agent_sdk import ToolUseBlock, ToolResultBlock
+
+
+def _patch_of(event):
+    """An ACTIVITY_DELTA's patch as plain dicts. ag-ui-protocol 1.0 validates
+    each operation into a typed model; this is the shape it goes out on the
+    wire as."""
+    return [op.model_dump(by_alias=True) for op in event.patch]
 
 
 async def collect(agen):
@@ -33,7 +42,7 @@ class TestHandleToolUseBlock:
     @pytest.mark.asyncio
     async def test_regular_tool_emits_start_args_end(self):
         block = ToolUseBlock(id="tc1", name="mcp__weather__get_weather", input={"city": "NYC"})
-        state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None)
+        state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, {})
         events = await collect(gen)
         types = [e.type for e in events]
         assert types == [
@@ -42,14 +51,14 @@ class TestHandleToolUseBlock:
             EventType.TOOL_CALL_END,
         ]
         # Name is stripped of the MCP prefix
-        assert events[0].tool_call_name == "get_weather"
+        assert events[0].tool_call_name == "mcp__weather__get_weather"
         assert events[0].tool_call_id == "tc1"
         assert json.loads(events[1].delta) == {"city": "NYC"}
 
     @pytest.mark.asyncio
     async def test_tool_without_input_skips_args(self):
         block = ToolUseBlock(id="tc2", name="ping", input={})
-        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None)
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, {})
         types = [e.type for e in await collect(gen)]
         assert EventType.TOOL_CALL_ARGS not in types
         assert types == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_END]
@@ -60,7 +69,7 @@ class TestHandleToolUseBlock:
         # to a generated uuid. This guards against the `uuid` import living in
         # the module docstring (NameError at the str(uuid.uuid4()) fallback).
         block = ToolUseBlock(id="", name="ping", input={})
-        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None)
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, {})
         events = await collect(gen)
         types = [e.type for e in events]
         assert types == [EventType.TOOL_CALL_START, EventType.TOOL_CALL_END]
@@ -75,9 +84,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"state_updates": {"count": 5}},
         )
-        new_state, gen = await handle_tool_use_block(
-            block, _Msg(), "th", "run", {"count": 1, "name": "a"}
-        )
+        new_state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1, "name": "a"}, {})
         events = await collect(gen)
         # Only a STATE_SNAPSHOT, no TOOL_CALL_* events
         assert [e.type for e in events] == [EventType.STATE_SNAPSHOT]
@@ -94,9 +101,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"state_updates": json.dumps({"count": 9})},
         )
-        new_state, gen = await handle_tool_use_block(
-            block, _Msg(), "th", "run", {"count": 1}
-        )
+        new_state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1}, {})
         events = await collect(gen)
         assert events[0].snapshot == {"count": 9}
         # The returned state must equal the merged snapshot (pins the return on
@@ -110,7 +115,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"state_updates": "{not valid json"},
         )
-        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {})
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {}, {})
         events = await collect(gen)
         types = [e.type for e in events]
         # Invalid JSON emits ONLY a CUSTOM error event and returns early — no
@@ -133,9 +138,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"state_updates": {"count": 1}},
         )
-        new_state, gen = await handle_tool_use_block(
-            block, _Msg(), "th", "run", {"count": 1}
-        )
+        new_state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1}, {})
         events = await collect(gen)
         # No-op merge => no snapshot emitted.
         assert [e.type for e in events] == []
@@ -150,7 +153,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"state_updates": {"count": 2}},
         )
-        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1})
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1}, {})
         events = await collect(gen)
         assert [e.type for e in events] == [EventType.STATE_SNAPSHOT]
         assert events[0].snapshot == {"count": 2}
@@ -166,9 +169,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"count": 7, "name": "z"},
         )
-        new_state, gen = await handle_tool_use_block(
-            block, _Msg(), "th", "run", {"count": 1}
-        )
+        new_state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1}, {})
         events = await collect(gen)
         assert [e.type for e in events] == [EventType.STATE_SNAPSHOT]
         assert events[0].snapshot == {"count": 7, "name": "z"}
@@ -183,9 +184,7 @@ class TestHandleToolUseBlock:
             name=STATE_MANAGEMENT_TOOL_FULL_NAME,
             input={"state_updates": json.dumps({"count": 3})},
         )
-        new_state, gen = await handle_tool_use_block(
-            block, _Msg(), "th", "run", {"count": 1}
-        )
+        new_state, gen = await handle_tool_use_block(block, _Msg(), "th", "run", {"count": 1}, {})
         events = await collect(gen)
         assert events[0].snapshot == {"count": 3}
         assert new_state == {"count": 3}
@@ -199,9 +198,7 @@ class TestToolUseBlockParentMessageId:
         # that — NOT the SDK's parent_tool_use_id (which lives on the message).
         block = ToolUseBlock(id="tc1", name="get_weather", input={"city": "NYC"})
         msg = _Msg(parent_tool_use_id="SHOULD_NOT_BE_USED")
-        _, gen = await handle_tool_use_block(
-            block, msg, "th", "run", None, parent_message_id="assistant-msg-1"
-        )
+        _, gen = await handle_tool_use_block(block, msg, "th", "run", None, {}, parent_message_id="assistant-msg-1")
         events = await collect(gen)
         start = next(e for e in events if e.type == EventType.TOOL_CALL_START)
         assert start.parent_message_id == "assistant-msg-1"
@@ -215,7 +212,7 @@ class TestHandleToolResultBlock:
             tool_use_id="tc1",
             content=[{"type": "text", "text": '{"ok": true}'}],
         )
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
         assert events[0].type == EventType.TOOL_CALL_RESULT
         assert events[0].tool_call_id == "tc1"
@@ -232,7 +229,7 @@ class TestHandleToolResultBlock:
             content=[{"type": "text", "text": "boom"}],
             is_error=True,
         )
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
         payload = json.loads(events[0].content)
         assert payload["error"] is True
@@ -249,7 +246,7 @@ class TestHandleToolResultBlock:
             content=[{"type": "text", "text": '{"detail": "nope", "code": 42}'}],
             is_error=True,
         )
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
         payload = json.loads(events[0].content)
         # Single-encoded object: the original fields are top-level dict members,
@@ -279,7 +276,7 @@ class TestHandleToolResultBlock:
             content=[{"type": "text", "text": json.dumps({"msg": split_pasta})}],
             is_error=True,
         )
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
         payload = json.loads(events[0].content)
         assert payload["error"] is True
@@ -299,7 +296,7 @@ class TestHandleToolResultBlock:
             content=[{"type": "text", "text": '{"ok": true}'}],
             is_error=False,
         )
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         # Successful result is the bare payload, not wrapped in an error envelope.
         assert json.loads(events[0].content) == {"ok": True}
 
@@ -308,13 +305,13 @@ class TestHandleToolResultBlock:
         # Regression guard: result handler must NOT re-emit TOOL_CALL_END
         # (that caused "No active tool call" runtime errors).
         block = ToolResultBlock(tool_use_id="tc1", content="plain")
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert all(e.type != EventType.TOOL_CALL_END for e in events)
 
     @pytest.mark.asyncio
     async def test_no_tool_use_id_emits_nothing(self):
         block = ToolResultBlock(tool_use_id="", content="x")
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert events == []
 
     # ── Item 5: tool-result content encoding consistency ──
@@ -330,8 +327,8 @@ class TestHandleToolResultBlock:
             content=[{"type": "text", "text": "plain text"}],
         )
         bare_block = ToolResultBlock(tool_use_id="tc2", content="plain text")
-        list_events = await collect(handle_tool_result_block(list_block, "th", "run"))
-        bare_events = await collect(handle_tool_result_block(bare_block, "th", "run"))
+        list_events = await collect(handle_tool_result_block(list_block, "th", "run", {}))
+        bare_events = await collect(handle_tool_result_block(bare_block, "th", "run", {}))
         assert list_events[0].content == bare_events[0].content
 
     # ── Item 9: untested fallback branches (non-list / scalar / except) ──
@@ -339,7 +336,7 @@ class TestHandleToolResultBlock:
     async def test_dict_content_fallback_is_json_encoded(self):
         # content is a dict (not a list, not a string) -> json.dumps fallback.
         block = ToolResultBlock(tool_use_id="tc1", content={"k": "v"})
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
         assert json.loads(events[0].content) == {"k": "v"}
 
@@ -347,7 +344,7 @@ class TestHandleToolResultBlock:
     async def test_scalar_int_content_fallback(self):
         # A bare non-string scalar -> json.dumps fallback.
         block = ToolResultBlock(tool_use_id="tc1", content=42)
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
         assert events[0].content == "42"
 
@@ -355,32 +352,24 @@ class TestHandleToolResultBlock:
     async def test_empty_list_content_fallback(self):
         # An empty list takes the `else` (non-truthy-len) branch -> json.dumps([]).
         block = ToolResultBlock(tool_use_id="tc1", content=[])
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
-        assert events[0].content == "[]"
+        assert events[0].content == []
 
     @pytest.mark.asyncio
     async def test_non_text_block_list_fallback(self):
         # A list whose first block is NOT a text block -> json.dumps(content).
         content = [{"type": "image", "data": "xyz"}]
         block = ToolResultBlock(tool_use_id="tc1", content=content)
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
-        assert json.loads(events[0].content) == content
+        assert [part.metadata["claude"]["block"] for part in events[0].content] == content
 
     @pytest.mark.asyncio
-    async def test_unserializable_content_uses_str_fallback(self):
-        # Content that json.dumps cannot serialise must hit the
-        # `except (TypeError, ValueError) -> str(content)` fallback rather than
-        # crashing the handler.
-        class Unserializable:
-            def __repr__(self):
-                return "UNSER"
-
-        block = ToolResultBlock(tool_use_id="tc1", content=Unserializable())
-        events = await collect(handle_tool_result_block(block, "th", "run"))
-        assert len(events) == 1
-        assert events[0].content == "UNSER"
+    async def test_unserializable_content_fails_explicitly(self):
+        block = ToolResultBlock(tool_use_id="tc1", content=object())
+        with pytest.raises(TypeError):
+            await collect(handle_tool_result_block(block, "th", "run", {}))
 
 
 class TestNestedToolResult:
@@ -396,7 +385,7 @@ class TestNestedToolResult:
             content=[{"type": "text", "text": '{"ok": true}'}],
         )
         events = await collect(
-            handle_tool_result_block(block, "th", "run", parent_tool_use_id="parent-tc")
+            handle_tool_result_block(block, "th", "run", {}, parent_tool_use_id="parent-tc")
         )
         assert len(events) == 1
         ev = events[0]
@@ -407,12 +396,416 @@ class TestNestedToolResult:
         assert ev.raw_event.get("parent_tool_use_id") == "parent-tc"
 
     @pytest.mark.asyncio
-    async def test_no_parent_tool_use_id_leaves_raw_event_unset(self):
+    async def test_original_result_is_retained_in_raw_event(self):
         # Top-level (non-nested) results must NOT gain a spurious raw_event.
         block = ToolResultBlock(
             tool_use_id="tc1",
             content=[{"type": "text", "text": '{"ok": true}'}],
         )
-        events = await collect(handle_tool_result_block(block, "th", "run"))
+        events = await collect(handle_tool_result_block(block, "th", "run", {}))
         assert len(events) == 1
-        assert events[0].raw_event is None
+        assert events[0].raw_event["content"] == block.content
+
+
+class TestTaskSubagentActivity:
+    """`Task` tool calls (Claude's native subagent orchestration) must surface
+    as AG-UI activity events, not only as a generic tool call.
+
+    The shape mirrors the Mastra integration's background-task activity
+    (``MASTRA_BACKGROUND_TASK_ACTIVITY_TYPE`` in
+    integrations/mastra/typescript/src/mastra.ts): one activity per task, the
+    originating tool call id doubling as the activity ``message_id``, a
+    camelCase ``content`` object opened at ``status: "running"``, and an
+    RFC-6902 delta closing it at ``completed`` / ``failed``.
+
+    The registry is per run, created by the adapter alongside
+    ``processed_tool_ids`` and threaded in explicitly, so each test owns a
+    fresh one and nothing survives between tests.
+    """
+
+    @pytest.fixture
+    def registry(self):
+        return {}
+
+    @pytest.mark.asyncio
+    async def test_task_tool_emits_activity_snapshot_alongside_tool_call(self, registry):
+        block = ToolUseBlock(
+            id="task-1",
+            name="Task",
+            input={
+                "subagent_type": "code-reviewer",
+                "description": "Review the diff",
+                "prompt": "Review the diff and report findings",
+            },
+        )
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, registry)
+        events = await collect(gen)
+        # The generic tool-call events still flow (the later TOOL_CALL_RESULT
+        # addresses this call id), with the activity opened after the call is
+        # closed — the same order Mastra uses when work continues as activity.
+        assert [e.type for e in events] == [
+            EventType.TOOL_CALL_START,
+            EventType.TOOL_CALL_ARGS,
+            EventType.TOOL_CALL_END,
+            EventType.ACTIVITY_SNAPSHOT,
+        ]
+        snapshot = events[-1]
+        assert snapshot.message_id == "task-1"
+        assert snapshot.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
+        assert snapshot.content == {
+            "taskId": "task-1",
+            "toolName": "Task",
+            "toolCallId": "task-1",
+            "status": "running",
+            "subagentType": "code-reviewer",
+            "description": "Review the diff",
+            "prompt": "Review the diff and report findings",
+            "outputs": [],
+        }
+        # The activity was recorded on the RUN's registry, not anywhere global.
+        assert registry == {"task-1": SUBAGENT_TASK_ACTIVITY_TYPE}
+
+    @pytest.mark.asyncio
+    async def test_task_activity_omits_absent_optional_fields(self, registry):
+        block = ToolUseBlock(id="task-2", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, registry)
+        snapshot = (await collect(gen))[-1]
+        assert snapshot.type == EventType.ACTIVITY_SNAPSHOT
+        assert "subagentType" not in snapshot.content
+        assert "description" not in snapshot.content
+        assert snapshot.content["prompt"] == "go"
+
+    @pytest.mark.asyncio
+    async def test_non_task_tool_emits_no_activity(self, registry):
+        block = ToolUseBlock(id="tc-plain", name="Bash", input={"command": "ls"})
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, registry)
+        types = [e.type for e in await collect(gen)]
+        assert EventType.ACTIVITY_SNAPSHOT not in types
+        assert registry == {}
+
+    @pytest.mark.asyncio
+    # "mcp__ag_ui__Task" is a frontend tool named "Task": it renders as
+    # "Task" on TOOL_CALL_START, which is why the match is on the raw name.
+    @pytest.mark.parametrize("name", ["mcp__x__Agent", "mcp__x__Task", "mcp__ag_ui__Task"])
+    async def test_mcp_tool_named_like_subagent_tool_emits_no_activity(self, registry, name):
+        # The CLI's built-in subagent tool never carries an MCP prefix, so an
+        # MCP or frontend tool that merely ends in "__Agent" / "__Task" is an
+        # ordinary tool call, not a subagent run.
+        block = ToolUseBlock(id="tc-mcp", name=name, input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(block, _Msg(), "th", "run", None, registry)
+        types = [e.type for e in await collect(gen)]
+        assert EventType.ACTIVITY_SNAPSHOT not in types
+        assert registry == {}
+
+    @pytest.mark.asyncio
+    async def test_task_result_closes_activity_with_completed_delta(self, registry):
+        use = ToolUseBlock(id="task-3", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+
+        result = ToolResultBlock(
+            tool_use_id="task-3",
+            content=[{"type": "text", "text": '{"findings": 2}'}],
+        )
+        events = await collect(
+            handle_tool_result_block(result, "th", "run", registry)
+        )
+        assert [e.type for e in events] == [
+            EventType.TOOL_CALL_RESULT,
+            EventType.ACTIVITY_DELTA,
+        ]
+        delta = events[-1]
+        assert delta.message_id == "task-3"
+        assert delta.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
+        assert _patch_of(delta) == [
+            {"op": "add", "path": "/status", "value": "completed"},
+            {"op": "add", "path": "/result", "value": {"findings": 2}},
+        ]
+        # Closing the activity clears it from the run's registry.
+        assert registry == {}
+
+    @pytest.mark.asyncio
+    async def test_agent_named_tool_opens_and_closes_activity_like_task(self, registry):
+        # Newer Claude Code CLIs name the subagent tool "Agent" and keep "Task"
+        # only as an alias, so the model's tool_use arrives as "Agent".
+        use = ToolUseBlock(id="agent-1", name="Agent", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        snapshot = (await collect(gen))[-1]
+        assert snapshot.type == EventType.ACTIVITY_SNAPSHOT
+        assert snapshot.message_id == "agent-1"
+        assert snapshot.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE
+        assert snapshot.content["status"] == "running"
+        assert registry == {"agent-1": SUBAGENT_TASK_ACTIVITY_TYPE}
+
+        result = ToolResultBlock(
+            tool_use_id="agent-1",
+            content=[{"type": "text", "text": "done"}],
+        )
+        events = await collect(
+            handle_tool_result_block(result, "th", "run", registry)
+        )
+        assert [e.type for e in events] == [
+            EventType.TOOL_CALL_RESULT,
+            EventType.ACTIVITY_DELTA,
+        ]
+        assert _patch_of(events[-1])[0] == {"op": "add", "path": "/status", "value": "completed"}
+        assert registry == {}
+
+    @pytest.mark.asyncio
+    async def test_failed_task_result_closes_activity_as_failed(self, registry):
+        use = ToolUseBlock(id="task-4", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+
+        result = ToolResultBlock(
+            tool_use_id="task-4", content="subagent exploded", is_error=True
+        )
+        events = await collect(
+            handle_tool_result_block(result, "th", "run", registry)
+        )
+        assert [e.type for e in events] == [
+            EventType.TOOL_CALL_RESULT,
+            EventType.ACTIVITY_DELTA,
+        ]
+        delta = events[-1]
+        assert _patch_of(delta)[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(delta)[1]["path"] == "/error"
+        assert "subagent exploded" in json.dumps(_patch_of(delta)[1]["value"])
+
+    @pytest.mark.asyncio
+    async def test_activity_closed_once_so_a_repeat_result_emits_no_delta(self, registry):
+        use = ToolUseBlock(id="task-5", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        result = ToolResultBlock(
+            tool_use_id="task-5", content=[{"type": "text", "text": "done"}]
+        )
+        first = await collect(
+            handle_tool_result_block(result, "th", "run", registry)
+        )
+        assert EventType.ACTIVITY_DELTA in [e.type for e in first]
+        second = await collect(
+            handle_tool_result_block(result, "th", "run", registry)
+        )
+        assert EventType.ACTIVITY_DELTA not in [e.type for e in second]
+
+    @pytest.mark.asyncio
+    async def test_result_for_unopened_activity_emits_no_delta(self, registry):
+        result = ToolResultBlock(
+            tool_use_id="never-opened", content=[{"type": "text", "text": "hi"}]
+        )
+        events = await collect(
+            handle_tool_result_block(result, "th", "run", registry)
+        )
+        assert [e.type for e in events] == [EventType.TOOL_CALL_RESULT]
+
+    @pytest.mark.asyncio
+    async def test_same_tool_call_id_opens_the_activity_only_once(self, registry):
+        # Both adapter paths call open_task_activity. An id seen by both must
+        # open exactly one activity, so the single closing delta is never left
+        # addressing a second, still-open snapshot.
+        block = ToolUseBlock(id="task-6", name="Task", input={"prompt": "go"})
+        _, first = await handle_tool_use_block(block, _Msg(), "th", "run", None, registry)
+        assert EventType.ACTIVITY_SNAPSHOT in [e.type for e in await collect(first)]
+        _, second = await handle_tool_use_block(block, _Msg(), "th", "run", None, registry)
+        assert EventType.ACTIVITY_SNAPSHOT not in [e.type for e in await collect(second)]
+
+    @pytest.mark.asyncio
+    async def test_separate_registries_do_not_share_activities(self, registry):
+        # Two runs, two registries. A result delivered to the OTHER run must not
+        # close an activity that this run opened — which is exactly what a
+        # process-wide registry would have allowed.
+        other_registry = {}
+        use = ToolUseBlock(id="task-7", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th-a", "run-a", None, registry)
+        await collect(gen)
+        assert "task-7" in registry
+        assert other_registry == {}
+
+        result = ToolResultBlock(
+            tool_use_id="task-7", content=[{"type": "text", "text": "done"}]
+        )
+        foreign = await collect(
+            handle_tool_result_block(result, "th-b", "run-b", other_registry)
+        )
+        assert [e.type for e in foreign] == [EventType.TOOL_CALL_RESULT]
+        # The owning run still holds its activity and can still close it.
+        assert "task-7" in registry
+        own = await collect(
+            handle_tool_result_block(result, "th-a", "run-a", registry)
+        )
+        assert EventType.ACTIVITY_DELTA in [e.type for e in own]
+
+    @pytest.mark.asyncio
+    async def test_registry_is_required_on_both_handlers(self):
+        # The registry is a required parameter, not an optional one. A caller
+        # that forgets it fails immediately and visibly, instead of opening an
+        # activity nothing can ever close and leaving the UI showing a subagent
+        # stuck at "running" for good.
+        block = ToolUseBlock(id="task-9", name="Task", input={"prompt": "go"})
+        with pytest.raises(TypeError):
+            await handle_tool_use_block(block, _Msg(), "th", "run", None)
+        result = ToolResultBlock(
+            tool_use_id="task-9", content=[{"type": "text", "text": "done"}]
+        )
+        with pytest.raises(TypeError):
+            await collect(handle_tool_result_block(result, "th", "run"))
+
+    @pytest.mark.asyncio
+    async def test_public_constant_is_exported_for_renderers(self):
+        # A frontend registers its subagent renderer against this string, so it
+        # must be importable from the package rather than hardcoded.
+        import ag_ui_claude_sdk
+
+        assert ag_ui_claude_sdk.SUBAGENT_TASK_ACTIVITY_TYPE == SUBAGENT_TASK_ACTIVITY_TYPE
+        assert "SUBAGENT_TASK_ACTIVITY_TYPE" in ag_ui_claude_sdk.__all__
+
+    @pytest.mark.asyncio
+    async def test_failed_task_error_payload_matches_the_success_payload_shape(self, registry):
+        # A renderer reads ``content.result`` when a subagent succeeds and
+        # ``content.error`` when it fails. Both must carry the same kind of
+        # value — the parsed object when the subagent returned JSON — so the
+        # failure path does not hand the frontend a JSON string it has to
+        # parse a second time.
+        ok = ToolUseBlock(id="task-ok", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(ok, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        ok_delta = (
+            await collect(
+                handle_tool_result_block(
+                    ToolResultBlock(
+                        tool_use_id="task-ok",
+                        content=[{"type": "text", "text": '{"detail": "fine"}'}],
+                    ),
+                    "th",
+                    "run",
+                    registry,
+                )
+            )
+        )[-1]
+
+        bad = ToolUseBlock(id="task-bad", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(bad, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        bad_delta = (
+            await collect(
+                handle_tool_result_block(
+                    ToolResultBlock(
+                        tool_use_id="task-bad",
+                        content=[{"type": "text", "text": '{"detail": "boom"}'}],
+                        is_error=True,
+                    ),
+                    "th",
+                    "run",
+                    registry,
+                )
+            )
+        )[-1]
+
+        assert _patch_of(ok_delta)[1] == {
+            "op": "add",
+            "path": "/result",
+            "value": {"detail": "fine"},
+        }
+        assert _patch_of(bad_delta)[1] == {
+            "op": "add",
+            "path": "/error",
+            "value": {"detail": "boom"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_failed_task_with_plain_text_carries_the_text_unwrapped(self, registry):
+        use = ToolUseBlock(id="task-text", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        events = await collect(
+            handle_tool_result_block(
+                ToolResultBlock(
+                    tool_use_id="task-text", content="subagent exploded", is_error=True
+                ),
+                "th",
+                "run",
+                registry,
+            )
+        )
+        assert _patch_of(events[-1])[1] == {
+            "op": "add",
+            "path": "/error",
+            "value": "subagent exploded",
+        }
+        # The TOOL_CALL_RESULT payload keeps its own envelope — only the
+        # activity delta changed.
+        assert json.loads(events[0].content) == {
+            "error": True,
+            "content": "subagent exploded",
+        }
+
+    @pytest.mark.asyncio
+    async def test_task_result_with_several_blocks_keeps_every_block(self, registry):
+        # A subagent reply split across blocks reaches the TOOL_CALL_RESULT as
+        # content parts. The activity's result carries those same parts, so a
+        # renderer does not lose everything after the first block.
+        use = ToolUseBlock(id="task-split", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        events = await collect(
+            handle_tool_result_block(
+                ToolResultBlock(
+                    tool_use_id="task-split",
+                    content=[
+                        {"type": "text", "text": "first"},
+                        {"type": "text", "text": "second"},
+                    ],
+                ),
+                "th",
+                "run",
+                registry,
+            )
+        )
+        result = _patch_of(events[-1])[1]["value"]
+        assert result == events[0].model_dump()["content"]
+        assert [part["text"] for part in result] == ["first", "second"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("text", ["[1, 2]", "42", '"quoted"', "null"])
+    async def test_task_result_that_is_json_but_not_an_object_stays_text(
+        self, registry, text
+    ):
+        # Only a JSON object is handed over parsed. A reply that merely parses
+        # as some other JSON value is still the subagent's text.
+        use = ToolUseBlock(id="task-json", name="Task", input={"prompt": "go"})
+        _, gen = await handle_tool_use_block(use, _Msg(), "th", "run", None, registry)
+        await collect(gen)
+        events = await collect(
+            handle_tool_result_block(
+                ToolResultBlock(
+                    tool_use_id="task-json",
+                    content=[{"type": "text", "text": text}],
+                ),
+                "th",
+                "run",
+                registry,
+            )
+        )
+        assert _patch_of(events[-1])[1] == {
+            "op": "add",
+            "path": "/result",
+            "value": text,
+        }
+
+
+class TestCloseOpenTaskActivities:
+    """The teardown the adapter runs when a run ends with activities still open."""
+
+    def test_every_open_activity_is_closed_and_the_registry_emptied(self):
+        registry = {"a": SUBAGENT_TASK_ACTIVITY_TYPE, "b": SUBAGENT_TASK_ACTIVITY_TYPE}
+        events = close_open_task_activities(registry)
+        assert [e.message_id for e in events] == ["a", "b"]
+        assert all(e.type == EventType.ACTIVITY_DELTA for e in events)
+        assert all(e.activity_type == SUBAGENT_TASK_ACTIVITY_TYPE for e in events)
+        assert _patch_of(events[0])[0] == {"op": "add", "path": "/status", "value": "failed"}
+        assert _patch_of(events[0])[1]["path"] == "/error"
+        assert registry == {}
+
+    def test_nothing_open_produces_nothing(self):
+        assert close_open_task_activities({}) == []

@@ -1,36 +1,72 @@
 ---
 title: "HttpAgent"
-description: "HTTP-based agent for connecting to remote AI agents (Java)"
+description: "Run a remote AG-UI agent over HTTP and Server-Sent Events (Java)"
 ---
 
 # HttpAgent
 
-`HttpAgent` extends `AbstractAgent` to provide HTTP-based connectivity to remote AI agents. It delegates streaming to a `BaseHttpClient` implementation and forwards incoming events to subscribers.
+`com.agui.community.client.HttpAgent` is an `Agent` backed by a remote AG-UI endpoint. When a subscriber subscribes, it:
 
-## Configuration
+1. Serializes the `RunAgentInput` to JSON.
+2. Sends a `POST` to the endpoint with `Content-Type: application/json` and `Accept: text/event-stream`.
+3. Reads the SSE response line by line and deserializes each `data:` payload into an `Event`.
+4. Publishes the events in order, then completes when the response ends.
 
-Use the builder to construct an instance:
+## Constructors
 
 ```java
-HttpAgent agent = HttpAgent.builder()
-  .agentId("my-agent")
-  .threadId("thread-123")
-  .httpClient(myHttpClient)
-  .messages(new ArrayList<>())
-  .state(new State())
-  .debug(true)
-  .build();
+// Defaults: HttpClient.newHttpClient(), a shared cached thread pool, 5-minute timeout
+new HttpAgent(URI endpoint, Serializer serializer);
+
+// Full control
+new HttpAgent(URI endpoint, Serializer serializer,
+              HttpClient httpClient, Executor executor, Duration requestTimeout);
 ```
 
-Required: `agentId`, `threadId`, `httpClient`
+| Parameter | Description |
+|-----------|-------------|
+| `endpoint` | URI of the AG-UI endpoint, for example `http://localhost:8080/agent/weather` |
+| `serializer` | Encodes the input and decodes events. See [Serialization](/sdk/java/core/overview#serialization). |
+| `httpClient` | The JDK `HttpClient` to use. Set this to configure a proxy, TLS, HTTP version or authenticator. |
+| `executor` | Runs the blocking read of the response and delivers events to the subscriber |
+| `requestTimeout` | Passed to `HttpRequest.Builder.timeout(...)`. On Java 17, this limits waiting for response headers, not reading the SSE body. It should not be relied upon as a whole-run timeout. |
 
-## Methods
+Reading an SSE response blocks a thread for the whole run. By default, `HttpAgent` uses an unbounded cached thread pool so that many concurrent runs cannot starve a shared bounded pool such as `ForkJoinPool.commonPool()`. If you supply your own executor, make sure it has enough threads for your concurrency. On Java 21+, a virtual-thread executor is a good fit:
 
-- `protected void run(RunAgentInput input, IEventStream<BaseEvent> stream)` — streams events via `httpClient.streamEvents`
-- `void close()` — closes the underlying HTTP client
+```java
+Agent agent = new HttpAgent(
+        URI.create("https://example.com/agent"),
+        serializer,
+        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build(),
+        Executors.newVirtualThreadPerTaskExecutor(),
+        Duration.ofMinutes(10));
+```
 
-## Builder
+## Runs and subscriptions
 
-Fluent builder with validation. Required fields must be set or an `IllegalArgumentException` is thrown.
+`run(input)` itself sends nothing. Each `subscribe` call on the returned publisher starts a separate HTTP request, so if you subscribe twice the agent runs twice. Events are delivered through a `SubmissionPublisher`, which respects the subscriber's `request(n)` demand.
 
+## Errors
 
+These failures are delivered to the subscriber's `onError`:
+
+| Cause | Exception |
+|-------|-----------|
+| The endpoint returns HTTP status 400 or higher | `HttpAgentException` ("AG-UI endpoint returned HTTP 404") |
+| A connection failure or timeout | `IOException` / `HttpTimeoutException` |
+| An SSE payload that cannot be deserialized | `SerializationException` |
+| The thread is interrupted | `InterruptedException` (the interrupt flag is restored) |
+
+A failure inside the agent is not reported this way. Once the server has started streaming, an agent failure arrives as a normal `RunErrorEvent` and the stream then completes, so handle `RunErrorEvent` in `onNext`.
+
+## Authentication and headers
+
+`HttpAgent` sends a fixed set of request headers and has no option for adding more, such as an `Authorization: Bearer` token. Your options are:
+
+- For HTTP Basic or proxy authentication, configure an `Authenticator` on the `HttpClient` you pass in.
+- Put the endpoint behind a gateway that adds credentials.
+- Implement your own `Agent` that builds the request itself. `HttpAgent` is a small class, and its source is a good starting point.
+
+## SSE parsing
+
+The internal parser follows the SSE format. It joins multi-line `data:` fields with `\n`, ignores comment lines (`:`), and ignores the `event`, `id` and `retry` fields. If the stream ends without a final blank line, it still dispatches the last pending event.

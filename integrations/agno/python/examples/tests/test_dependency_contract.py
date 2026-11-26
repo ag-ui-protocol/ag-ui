@@ -35,15 +35,15 @@ class DependencyContractTests(unittest.TestCase):
     def test_declares_supported_runtime_ranges_and_required_extras(self) -> None:
         dependencies = _project_dependencies()
 
-        self.assertIn("agno[agui,google,os]>=3.0.4,<4", dependencies)
-        self.assertIn("ag-ui-protocol>=0.1.22,<0.2", dependencies)
+        self.assertIn("agno[agui,google,os]>=3.1.0,<4", dependencies)
+        self.assertIn("ag-ui-protocol>=1.0,<2", dependencies)
         self.assertIn("python-dotenv>=1.0,<2", dependencies)
         self.assertIn("packaging>=24,<27", dependencies)
         self.assertFalse(any(dependency.startswith("dotenv") for dependency in dependencies))
 
     def test_lock_uses_latest_verified_compatible_artifacts(self) -> None:
-        self.assertEqual(_locked_version("agno"), "3.0.5")
-        self.assertEqual(_locked_version("ag-ui-protocol"), "0.1.22")
+        self.assertEqual(_locked_version("agno"), "3.1.0")
+        self.assertEqual(_locked_version("ag-ui-protocol"), "1.0.0")
 
     def test_pyproject_is_the_only_dependency_source(self) -> None:
         self.assertFalse(

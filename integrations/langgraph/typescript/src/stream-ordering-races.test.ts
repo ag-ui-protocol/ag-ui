@@ -33,10 +33,13 @@ const TEST_ASSISTANT: Assistant = {
   name: "test assistant",
 };
 
-function createAgent() {
+function createAgent(
+  config: Partial<ConstructorParameters<typeof LangGraphAgent>[0]> = {},
+) {
   return new LangGraphAgent({
     deploymentUrl: "http://localhost:2024",
     graphId: "test-graph",
+    ...config,
   });
 }
 
@@ -131,13 +134,22 @@ async function runUntilStreamError(
       })
       .subscribe({
         next: (event) => events.push(event),
-        error: (error) => {
-          if (error === streamError) resolve();
-          else reject(error);
-        },
-        complete: () => reject(new Error("stream completed before sentinel")),
+        error: reject,
+        complete: resolve,
       });
   });
+  // The public boundary translates thrown stream failures into terminal events.
+  // Require our exact sentinel so an earlier implementation failure cannot make
+  // an ordering assertion pass against a prematurely truncated stream.
+  const terminals = events.filter(
+    (event) =>
+      event.type === EventType.RUN_ERROR ||
+      event.type === EventType.RUN_FINISHED,
+  );
+  expect(terminals).toEqual([
+    { type: EventType.RUN_ERROR, message: streamError.message },
+  ]);
+  expect(events.at(-1)).toBe(terminals[0]);
   return events;
 }
 
@@ -328,89 +340,100 @@ describe("load-dependent stream ordering", () => {
     ]);
   });
 
-  it("reads the completed root checkpoint when future values race ahead of subgraph entry", async () => {
-    const agent = createAgent();
-    const user: LangGraphMessage = {
-      id: "user-1",
-      type: "human",
-      content: "Plan my trip",
-    };
-    const rootAssistant: LangGraphMessage = {
-      id: "root-1",
-      type: "ai",
-      content: "I will find experiences next",
-    };
-    const futureExperience: LangGraphMessage = {
-      id: "experience-1",
-      type: "ai",
-      content: "Future experiences response",
-    };
-    const preEntryState = threadState({
-      messages: [user, rootAssistant],
-      itinerary: { city: "Amsterdam" },
-    });
-    const getHistory = vi
-      .spyOn(agent.client.threads, "getHistory")
-      .mockResolvedValue([preEntryState]);
+  // The adapter reads checkpoints the way the run saves them: by the
+  // operator's durability. The client cannot set the run's durability, so a
+  // client `forwardedProps.durability` must not change the read either.
+  it.each([
+    ["", {}],
+    [" even when the client sends exit durability", { durability: "exit" }],
+  ] as const)(
+    "reads the completed root checkpoint when future values race ahead of subgraph entry%s",
+    async (_label, forwardedProps) => {
+      const agent = createAgent();
+      const user: LangGraphMessage = {
+        id: "user-1",
+        type: "human",
+        content: "Plan my trip",
+      };
+      const rootAssistant: LangGraphMessage = {
+        id: "root-1",
+        type: "ai",
+        content: "I will find experiences next",
+      };
+      const futureExperience: LangGraphMessage = {
+        id: "experience-1",
+        type: "ai",
+        content: "Future experiences response",
+      };
+      const preEntryState = threadState({
+        messages: [user, rootAssistant],
+        itinerary: { city: "Amsterdam" },
+      });
+      const getHistory = vi
+        .spyOn(agent.client.threads, "getHistory")
+        .mockResolvedValue([preEntryState]);
 
-    const events = await runUntilStreamError(
-      agent,
-      [
-        eventChunk(
-          "on_chat_model_stream",
-          { langgraph_node: "supervisor", langgraph_checkpoint_ns: "" },
-          { chunk: { content: "", response_metadata: {} } },
-        ),
-        eventChunk(
-          "on_chain_end",
-          { langgraph_node: "supervisor", langgraph_checkpoint_ns: "" },
-          { output: { messages: [rootAssistant] } },
-        ),
-        valuesChunk({
-          messages: [user, rootAssistant, futureExperience],
-          itinerary: { city: "Amsterdam", experience: "Canal tour" },
-        }),
-        eventChunk(
-          "on_chain_start",
-          {
-            langgraph_node: "experiences_agent",
-            langgraph_checkpoint_ns: "experiences_agent:outer",
-            langgraph_step: 2,
-          },
-          {},
-        ),
-        eventChunk(
-          "on_chain_start",
-          {
-            langgraph_node: "experiences_agent_node",
-            langgraph_checkpoint_ns:
-              "experiences_agent:outer|experiences_agent_node:inner",
-            langgraph_step: 1,
-          },
-          {},
-        ),
-      ],
-      threadState({ messages: [user], itinerary: { city: "Amsterdam" } }),
-    );
+      const events = await runUntilStreamError(
+        agent,
+        [
+          eventChunk(
+            "on_chat_model_stream",
+            { langgraph_node: "supervisor", langgraph_checkpoint_ns: "" },
+            { chunk: { content: "", response_metadata: {} } },
+          ),
+          eventChunk(
+            "on_chain_end",
+            { langgraph_node: "supervisor", langgraph_checkpoint_ns: "" },
+            { output: { messages: [rootAssistant] } },
+          ),
+          valuesChunk({
+            messages: [user, rootAssistant, futureExperience],
+            itinerary: { city: "Amsterdam", experience: "Canal tour" },
+          }),
+          eventChunk(
+            "on_chain_start",
+            {
+              langgraph_node: "experiences_agent",
+              langgraph_checkpoint_ns: "experiences_agent:outer",
+              langgraph_step: 2,
+            },
+            {},
+          ),
+          eventChunk(
+            "on_chain_start",
+            {
+              langgraph_node: "experiences_agent_node",
+              langgraph_checkpoint_ns:
+                "experiences_agent:outer|experiences_agent_node:inner",
+              langgraph_step: 1,
+            },
+            {},
+          ),
+        ],
+        threadState({ messages: [user], itinerary: { city: "Amsterdam" } }),
+        forwardedProps,
+      );
 
-    expect(getHistory).toHaveBeenCalledWith("thread-1", {
-      limit: 1,
-      metadata: { step: 1 },
-    });
-    const boundarySnapshot = events.find(
-      (event): event is StateSnapshotEvent =>
-        event.type === EventType.STATE_SNAPSHOT && event.rawEvent === undefined,
-    );
-    expect(boundarySnapshot?.snapshot).toEqual(preEntryState.values);
-    const messagesSnapshot = events.find(
-      (event): event is MessagesSnapshotEvent =>
-        event.type === EventType.MESSAGES_SNAPSHOT,
-    );
-    expect(messagesSnapshot?.messages.map((message) => message.id)).toEqual([
-      "user-1",
-      "root-1",
-    ]);
-  });
+      expect(getHistory).toHaveBeenCalledWith("thread-1", {
+        limit: 1,
+        metadata: { step: 1 },
+      });
+      const boundarySnapshot = events.find(
+        (event): event is StateSnapshotEvent =>
+          event.type === EventType.STATE_SNAPSHOT &&
+          event.rawEvent === undefined,
+      );
+      expect(boundarySnapshot?.snapshot).toEqual(preEntryState.values);
+      const messagesSnapshot = events.find(
+        (event): event is MessagesSnapshotEvent =>
+          event.type === EventType.MESSAGES_SNAPSHOT,
+      );
+      expect(messagesSnapshot?.messages.map((message) => message.id)).toEqual([
+        "user-1",
+        "root-1",
+      ]);
+    },
+  );
 
   it("keeps existing message history when committed root values follow a node output", async () => {
     const agent = createAgent();
@@ -675,7 +698,7 @@ describe("load-dependent stream ordering", () => {
   );
 
   it("uses committed root values when a subgraph returns with exit durability", async () => {
-    const agent = createAgent();
+    const agent = createAgent({ durability: "exit" });
     const user: LangGraphMessage = {
       id: "user-1",
       type: "human",
@@ -725,7 +748,6 @@ describe("load-dependent stream ordering", () => {
         ),
       ],
       threadState({ messages: [user] }),
-      { durability: "exit" },
     );
 
     expect(getState).not.toHaveBeenCalled();
