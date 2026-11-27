@@ -60,15 +60,21 @@ export interface ValidateA2UIInput {
   validateBindings?: boolean;
 }
 
-/** Does `path` (absolute, e.g. `/items/0/name`) resolve in `data`? */
+/** Does `path` (RFC 6901 JSON Pointer, e.g. `/items/0/name`) resolve in `data`? */
 function absolutePathResolves(path: string, data: unknown): boolean {
-  const segments = path.split("/").filter((s) => s.length > 0);
+  if (path === "") return true;
+  if (!path.startsWith("/")) return false;
+  const segments = path
+    .slice(1)
+    .split("/")
+    .map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
   let cursor: unknown = data;
   for (const seg of segments) {
     if (cursor == null || typeof cursor !== "object") return false;
     if (Array.isArray(cursor)) {
+      if (!/^(?:0|[1-9]\d*)$/.test(seg)) return false;
       const idx = Number(seg);
-      if (!Number.isInteger(idx) || idx < 0 || idx >= cursor.length) return false;
+      if (idx >= cursor.length) return false;
       cursor = cursor[idx];
     } else {
       if (!(seg in (cursor as Record<string, unknown>))) return false;

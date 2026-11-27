@@ -22,17 +22,23 @@ def _is_object(v: Any) -> bool:
 
 
 def _absolute_path_resolves(path: str, data: Any) -> bool:
-    segments = [s for s in path.split("/") if s]
+    if path == "":
+        return True
+    if not path.startswith("/"):
+        return False
+    segments = [s.replace("~1", "/").replace("~0", "~") for s in path[1:].split("/")]
     cursor: Any = data
     for seg in segments:
         if cursor is None or not isinstance(cursor, (dict, list)):
             return False
         if isinstance(cursor, list):
+            if seg != "0" and (not seg.isascii() or not seg.isdigit() or seg.startswith("0")):
+                return False
             try:
                 idx = int(seg)
             except ValueError:
                 return False
-            if idx < 0 or idx >= len(cursor):
+            if idx >= len(cursor):
                 return False
             cursor = cursor[idx]
         else:
