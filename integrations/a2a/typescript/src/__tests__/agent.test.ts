@@ -56,6 +56,212 @@ class FakeA2AClient {
   }
 }
 
+const EXTENSION_URI = "https://a2ui.org/a2a-extension/a2ui/v0.8";
+
+type CapturedFetchCall = {
+  url: unknown;
+  init: RequestInit | undefined;
+};
+
+/**
+ * Mimics the pinned @a2a-js/sdk client (0.2.x): it calls the bare global
+ * fetch, so the only way agent headers can reach the wire is through the
+ * fetch the agent installs for the duration of the call.
+ */
+class WireFakeA2AClient extends FakeA2AClient {
+  constructor(
+    behaviour: ConstructorParameters<typeof FakeA2AClient>[0] = {},
+    readonly onFetch?: (input: unknown, init?: RequestInit) => void,
+  ) {
+    super(behaviour);
+  }
+
+  override sendMessageStream(params: MessageSendParams) {
+    const fetchPromise = globalThis.fetch("https://a2a.example/rpc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const inner = super.sendMessageStream(params);
+    return (async function* () {
+      await fetchPromise;
+      yield* inner;
+    })();
+  }
+
+  override async sendMessage(params: MessageSendParams) {
+    await globalThis.fetch("https://a2a.example/rpc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    return super.sendMessage(params);
+  }
+}
+
+function withCapturedFetch<T>(run: (calls: CapturedFetchCall[]) => Promise<T>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  const calls: CapturedFetchCall[] = [];
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    calls.push({ url: input, init });
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  return run(calls).finally(() => {
+    globalThis.fetch = originalFetch;
+  });
+}
+
+const userMessage = () =>
+  createMessage({ id: "user-1", role: "user", content: "Hi there" });
+
+const streamBehaviour = () => ({
+  stream: async function* () {
+    yield {
+      kind: "message",
+      messageId: "resp-1",
+      role: "agent",
+      parts: [{ kind: "text", text: "Hello from stream" }],
+    };
+  },
+});
+
+describe("A2AAgent headers (issue #3208)", () => {
+  it("sends agent.headers on streaming requests", async () => {
+    await withCapturedFetch(async (calls) => {
+      const client = new WireFakeA2AClient(streamBehaviour());
+      const agent = new A2AAgent({
+        a2aClient: client as any,
+        headers: { Authorization: "Bearer per-request-token", "X-Custom": "yes" },
+        initialMessages: [userMessage()],
+      });
+
+      await agent.runAgent();
+
+      expect(calls).toHaveLength(1);
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer per-request-token");
+      expect(headers.get("X-Custom")).toBe("yes");
+      expect(headers.get("X-A2A-Extensions")).toContain(EXTENSION_URI);
+      // The SDK's own headers survive the merge.
+      expect(headers.get("Content-Type")).toBe("application/json");
+    });
+  });
+
+  it("sends the clone's own headers, not the original's (per-request clones)", async () => {
+    await withCapturedFetch(async (calls) => {
+      const client = new WireFakeA2AClient(streamBehaviour());
+      const agent = new A2AAgent({
+        a2aClient: client as any,
+        headers: { Authorization: "Bearer original" },
+        initialMessages: [userMessage()],
+      });
+
+      const cloneA = agent.clone();
+      (cloneA as unknown as { headers: Record<string, string> }).headers = {
+        Authorization: "Bearer user-a",
+      };
+      const cloneB = agent.clone();
+      (cloneB as unknown as { headers: Record<string, string> }).headers = {
+        Authorization: "Bearer user-b",
+      };
+
+      await cloneA.runAgent();
+      await cloneB.runAgent();
+
+      expect(calls).toHaveLength(2);
+      expect(new Headers(calls[0].init?.headers).get("Authorization")).toBe("Bearer user-a");
+      expect(new Headers(calls[1].init?.headers).get("Authorization")).toBe("Bearer user-b");
+    });
+  });
+
+  it("preserves constructor headers across clone()", () => {
+    const client = new FakeA2AClient();
+    const agent = new A2AAgent({
+      a2aClient: client as any,
+      headers: { Authorization: "Bearer kept" },
+      initialMessages: [userMessage()],
+    });
+
+    const cloned = agent.clone();
+    expect((cloned as unknown as { headers: Record<string, string> }).headers).toEqual({
+      Authorization: "Bearer kept",
+    });
+    // Mutating the clone must not leak back into the original.
+    (cloned as unknown as { headers: Record<string, string> }).headers.Authorization = "Bearer changed";
+    expect((agent as unknown as { headers: Record<string, string> }).headers).toEqual({
+      Authorization: "Bearer kept",
+    });
+  });
+
+  it("does not mutate the shared client", () => {
+    const client = new WireFakeA2AClient(streamBehaviour());
+    const originalStream = client.sendMessageStream;
+    const originalSend = client.sendMessage;
+
+    const agent = new A2AAgent({
+      a2aClient: client as any,
+      headers: { Authorization: "Bearer x" },
+      initialMessages: [userMessage()],
+    });
+    agent.clone();
+
+    expect(client.sendMessageStream).toBe(originalStream);
+    expect(client.sendMessage).toBe(originalSend);
+  });
+
+  it("sends agent.headers on the blocking fallback request", async () => {
+    await withCapturedFetch(async (calls) => {
+      const client = new WireFakeA2AClient({
+        stream: async function* () {
+          throw new Error("Streaming unsupported");
+        },
+        send: async () => ({
+          id: null,
+          jsonrpc: "2.0",
+          result: {
+            kind: "message",
+            messageId: "resp-2",
+            role: "agent",
+            parts: [{ kind: "text", text: "Blocking response" }],
+          },
+        }),
+      });
+      const agent = new A2AAgent({
+        a2aClient: client as any,
+        headers: { Authorization: "Bearer fallback-token" },
+        initialMessages: [userMessage()],
+      });
+
+      await agent.runAgent();
+
+      // Two wire attempts: the failed streaming attempt, then the blocking
+      // fallback. Both must carry the agent headers.
+      expect(calls).toHaveLength(2);
+      for (const call of calls) {
+        const headers = new Headers(call.init?.headers);
+        expect(headers.get("Authorization")).toBe("Bearer fallback-token");
+        expect(headers.get("X-A2A-Extensions")).toContain(EXTENSION_URI);
+      }
+    });
+  });
+
+  it("restores the previous fetch after the run", async () => {
+    await withCapturedFetch(async () => {
+      const fetchDuringSetup = globalThis.fetch;
+      const client = new WireFakeA2AClient(streamBehaviour());
+      const agent = new A2AAgent({
+        a2aClient: client as any,
+        headers: { Authorization: "Bearer x" },
+        initialMessages: [userMessage()],
+      });
+
+      await agent.runAgent();
+
+      expect(globalThis.fetch).toBe(fetchDuringSetup);
+    });
+  });
+});
+
 describe("A2AAgent", () => {
   it("streams responses and records run summary", async () => {
     const fakeClient = new FakeA2AClient({
