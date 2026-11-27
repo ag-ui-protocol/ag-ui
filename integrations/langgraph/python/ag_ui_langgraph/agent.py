@@ -2362,6 +2362,7 @@ class LangGraphAgent:
         langchain_messages = agui_messages_to_langchain(messages)
         self._seed_tool_message_ids_from_input(langchain_messages, state_input["messages"])
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
+        langchain_messages = self._filter_reserved_input_messages(langchain_messages)
         config["configurable"]["thread_id"] = thread_id
         interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
@@ -2814,9 +2815,13 @@ class LangGraphAgent:
                 "context": [],
             }
 
+    def _filter_reserved_input_messages(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        return messages
+
     def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], input: RunAgentInput) -> State:
         if messages and isinstance(messages[0], SystemMessage):
             messages = messages[1:]
+        messages = self._filter_reserved_input_messages(messages)
 
         # At runtime ``state["messages"]`` holds LangChain BaseMessage subclasses
         # (HumanMessage / AIMessage / ToolMessage / SystemMessage) — not the

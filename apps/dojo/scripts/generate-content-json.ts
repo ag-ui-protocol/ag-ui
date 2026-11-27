@@ -100,6 +100,20 @@ async function getFeatureFrontendFiles(featureId: string) {
 const integrationsFolderPath = "../../../integrations";
 const middlewaresFolderPath = "../../../middlewares";
 const sdksFolderPath = "../../../sdks";
+function getLangGraphPythonAgentFiles(agentId: string) {
+  const agentDir = path.join(
+    __dirname,
+    integrationsFolderPath,
+    "/langgraph/python/examples/agents",
+    agentId,
+  );
+  const files = [path.join(agentDir, "agent.py")];
+  if (agentId === "agentic_chat") {
+    files.push(path.join(agentDir, "fastapi.py"));
+  }
+  return files;
+}
+
 const agentFilesMapper: Record<
   string,
   (agentKeys: string[]) => Record<string, string[]>
@@ -284,11 +298,7 @@ const agentFilesMapper: Record<
       (acc, agentId) => ({
         ...acc,
         [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/langgraph/python/examples/agents/${agentId}/agent.py`,
-          ),
+          ...getLangGraphPythonAgentFiles(agentId),
           path.join(
             __dirname,
             integrationsFolderPath,
@@ -304,11 +314,7 @@ const agentFilesMapper: Record<
       (acc, agentId) => ({
         ...acc,
         [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/langgraph/python/examples/agents/${agentId}/agent.py`,
-          ),
+          ...getLangGraphPythonAgentFiles(agentId),
           path.join(
             __dirname,
             integrationsFolderPath,
@@ -323,13 +329,7 @@ const agentFilesMapper: Record<
     return agentKeys.reduce(
       (acc, agentId) => ({
         ...acc,
-        [agentId]: [
-          path.join(
-            __dirname,
-            integrationsFolderPath,
-            `/langgraph/python/examples/agents/${agentId}/agent.py`,
-          ),
-        ],
+        [agentId]: getLangGraphPythonAgentFiles(agentId),
       }),
       {},
     );

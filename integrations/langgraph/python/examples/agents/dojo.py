@@ -1,17 +1,17 @@
+import hmac
 import os
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 load_dotenv()
 
 os.environ["LANGGRAPH_FAST_API"] = "true"
 
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
-from copilotkit import LangGraphAGUIAgent
 
-from .agentic_chat.agent import graph as agentic_chat_graph
+from .agentic_chat.fastapi import create_fastapi_agent
 from .agentic_chat_reasoning.agent import graph as agentic_chat_reasoning_graph
 from .agentic_chat_multimodal.agent import graph as agentic_chat_multimodal_graph
 from .agentic_generative_ui.agent import graph as agentic_generative_ui_graph
@@ -29,11 +29,7 @@ app = FastAPI(title="LangGraph Dojo Example Server")
 
 agents = {
     # Register the LangGraph agent using the LangGraphAgent class
-    "agentic_chat": LangGraphAGUIAgent(
-        name="agentic_chat",
-        description="An example for an agentic chat flow using LangGraph.",
-        graph=agentic_chat_graph,
-    ),
+    "agentic_chat": create_fastapi_agent(),
     "backend_tool_rendering": LangGraphAgent(
         name="backend_tool_rendering",
         description="An example for a backend tool rendering flow.",
@@ -101,8 +97,23 @@ agents = {
     ),
 }
 
+guidance_token = os.environ.get("AG_UI_GUIDANCE_TOKEN", "").strip()
+
+
+def authorize_agentic_chat_guidance(request: Request) -> bool:
+    offered = request.headers.get("authorization", "").encode()
+    expected = f"Bearer {guidance_token}".encode()
+    if not hmac.compare_digest(offered, expected):
+        raise HTTPException(status_code=401)
+    return True
+
+
 add_langgraph_fastapi_endpoint(
-    app=app, agent=agents["agentic_chat"], path="/agent/agentic_chat"
+    app=app,
+    agent=agents["agentic_chat"],
+    path="/agent/agentic_chat",
+    authorize_guidance=authorize_agentic_chat_guidance if guidance_token else None,
+    trusted_ingress=os.environ.get("AG_UI_TRUSTED_INGRESS") == "true",
 )
 
 add_langgraph_fastapi_endpoint(
