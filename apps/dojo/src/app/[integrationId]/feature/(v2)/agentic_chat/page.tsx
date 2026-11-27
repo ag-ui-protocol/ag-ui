@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import "@copilotkit/react-core/v2/styles.css";
-import { 
+import {
   useFrontendTool,
   useRenderTool,
   useAgentContext,
@@ -36,17 +36,31 @@ const AgenticChat: React.FC<AgenticChatProps> = ({ params }) => {
       showDevConsole={false}
       agent="agentic_chat"
     >
-      <Chat />
+      {integrationId === "opencode" ? <OpenCodeChat /> : <Chat />}
     </CopilotKit>
   );
 };
 
+// OpenCode executes server tools; this demo does not register unsupported client tools or state.
+const OpenCodeChat = () => (
+  <div className="flex justify-center items-center h-full w-full">
+    <div className="h-full w-full md:w-8/10 md:h-8/10 rounded-lg">
+      <CopilotChat
+        agentId="agentic_chat"
+        className="h-full rounded-2xl max-w-6xl mx-auto"
+      />
+    </div>
+  </div>
+);
+
 const Chat = () => {
-  const [background, setBackground] = useState<string>("--copilot-kit-background-color");
+  const [background, setBackground] = useState<string>(
+    "--copilot-kit-background-color",
+  );
 
   useAgentContext({
-    description: 'Name of the user',
-    value: 'Bob'
+    description: "Name of the user",
+    value: "Bob",
   });
 
   useFrontendTool({
@@ -54,8 +68,10 @@ const Chat = () => {
     description:
       "Change the background color of the chat. Can be anything that the CSS background attribute accepts. Regular colors, linear of radial gradients etc.",
     parameters: z.object({
-      background: z.string().describe("The background. Prefer gradients. Only use when asked."),
-    }) ,
+      background: z
+        .string()
+        .describe("The background. Prefer gradients. Only use when asked."),
+    }),
     handler: async ({ background }: { background: string }) => {
       setBackground(background);
       return {
@@ -69,7 +85,7 @@ const Chat = () => {
     name: "get_weather",
     parameters: z.object({
       location: z.string(),
-    })  ,
+    }),
     render: ({ parameters, result, status }) => {
       if (status !== "complete") {
         return <div data-testid="weather-info-loading">Loading weather...</div>;
