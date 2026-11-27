@@ -136,6 +136,34 @@ describe("aggregateTokenUsage", () => {
     expect(agg[1].inputTokens).toBe(2);
   });
 
+  // A label is a free-form string, so no separator between the two can be
+  // assumed absent from either. Joining them with a space merged these two
+  // distinct pairs into one group and reported the second model's cost under
+  // the first model's name. Discriminating: the pre-fix key collapses both
+  // pairs into "openai gpt x".
+  it("keeps pairs apart when a label contains the separator the old key used", () => {
+    const agg = aggregateTokenUsage([
+      { provider: "openai gpt", model: "x", inputTokens: 10 },
+      { provider: "openai", model: "gpt x", inputTokens: 20 },
+    ]);
+    expect(agg).toHaveLength(2);
+    expect(agg[0]).toMatchObject({ provider: "openai gpt", model: "x", inputTokens: 10 });
+    expect(agg[1]).toMatchObject({ provider: "openai", model: "gpt x", inputTokens: 20 });
+  });
+
+  // The same collision from the other direction: an absent label and an empty
+  // one both rendered as the empty string, so they grouped together even though
+  // only one of them reports a model at all.
+  it("keeps an absent label apart from an empty one", () => {
+    const agg = aggregateTokenUsage([
+      { provider: "acme", model: "", inputTokens: 5 },
+      { provider: "acme", inputTokens: 7 },
+    ]);
+    expect(agg).toHaveLength(2);
+    expect(agg[0]).toMatchObject({ provider: "acme", model: "", inputTokens: 5 });
+    expect(agg[1]).toMatchObject({ provider: "acme", inputTokens: 7 });
+  });
+
   it("returns [] for empty input", () => {
     expect(aggregateTokenUsage([])).toEqual([]);
   });
