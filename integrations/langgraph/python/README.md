@@ -84,12 +84,45 @@ existing prompt handling. The FastAPI helper skips the guidance capability
 route in this configuration and still calls an explicitly supplied
 `authorize_guidance` callback for POST requests.
 
-To serve a graph you already compiled, use
-`LangGraphAgent(name="my-agent", graph=graph)` with the same FastAPI helper.
-A precompiled graph may call its models from arbitrary nodes. For a custom
-LangChain chat wrapper that supports the model middleware interface, install
-`RunGuidanceMiddleware` when creating the graph and place
-`RunGuidanceAgentMixin` before your adapter in the class declaration.
+### Run guidance for existing graphs
+
+An upgrade alone leaves existing `LangGraphAgent(graph=...)` endpoints on
+their current prompt handling. For a graph built with LangChain's
+`create_agent`, rebuild it with `RunGuidanceMiddleware()` in its middleware
+list, then mix `RunGuidanceAgentMixin` into the adapter you serve. Keep your
+existing model, tools, checkpointer, state schema, and other middleware.
+
+```python
+from ag_ui_langgraph import (
+    LangGraphAgent,
+    RunGuidanceAgentMixin,
+    RunGuidanceMiddleware,
+    add_langgraph_fastapi_endpoint,
+)
+from fastapi import FastAPI
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import MemorySaver
+
+
+class GuidanceAgent(RunGuidanceAgentMixin, LangGraphAgent):
+    pass
+
+
+graph = create_agent(
+    model="openai:gpt-4.1-mini",
+    system_prompt="You are a helpful assistant.",
+    middleware=[RunGuidanceMiddleware()],
+    checkpointer=MemorySaver(),
+)
+app = FastAPI()
+add_langgraph_fastapi_endpoint(app, GuidanceAgent(name="chat", graph=graph), "/agent")
+```
+
+If you already subclass `LangGraphAgent`, put `RunGuidanceAgentMixin` first
+and your subclass second. The mixin handles AG-UI input and snapshots, and
+the middleware places the guidance into model calls. For a custom
+`StateGraph` that calls a model directly from a node, wrapping its compiled
+graph alone leaves those model calls on their existing prompt handling.
 
 ## Features
 

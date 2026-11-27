@@ -43,3 +43,8 @@ value with `ag_ui_langgraph.add_langgraph_fastapi_endpoint`.
 
 The factory enables run guidance by default. Pass `enable_run_guidance=False`
 to keep CopilotKit's existing prompt handling and skip capability registration.
+
+To enable the same behavior on your own `LangGraphAgent` endpoint, rebuild
+the chat graph with `RunGuidanceMiddleware` and serve it through an adapter
+that includes `RunGuidanceAgentMixin`. See the
+[existing graph example](../README.md#run-guidance-for-existing-graphs).

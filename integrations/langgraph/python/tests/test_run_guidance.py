@@ -4,10 +4,15 @@ import json
 import unittest
 
 import ag_ui_langgraph
-from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from ag_ui_langgraph import (
+    LangGraphAgent,
+    RunGuidanceAgentMixin,
+    RunGuidanceMiddleware,
+    add_langgraph_fastapi_endpoint,
+)
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from langchain.agents import AgentState
+from langchain.agents import AgentState, create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -40,7 +45,7 @@ class TestRunGuidance(unittest.TestCase):
         self.model = RecordingModel()
         self.checkpointer = MemorySaver()
 
-    def client(self, *, agent=None, **endpoint_options):
+    def client(self, *, agent=None, peer=("testclient", 50000), **endpoint_options):
         self.agent = agent or ag_ui_langgraph.create_langgraph_agent(
             name="test",
             model=self.model,
@@ -51,7 +56,7 @@ class TestRunGuidance(unittest.TestCase):
         router = APIRouter(prefix="/v1")
         add_langgraph_fastapi_endpoint(router, self.agent, "/agent", **endpoint_options)
         app.include_router(router)
-        return TestClient(app)
+        return TestClient(app, client=peer)
 
     def run_agent(self, client, run_id, *, context=(), messages=(), headers=None):
         self.post_run(
@@ -133,8 +138,26 @@ class TestRunGuidance(unittest.TestCase):
             self.assertEqual(prompt[0].content.count("STANDING_ROLE"), 1)
             self.assertEqual(prompt[0].content.count("GRANTED_TOOLS"), 1)
 
-    def test_anonymous_role_has_user_authority_and_clears_on_warm_thread(self):
-        with self.client() as client:
+    def test_restricted_ingress_trusts_keyless_private_peer(self):
+        with self.client(peer=("10.42.0.8", 50000), trusted_ingress=True) as client:
+            capability = client.get("/v1/agent/capabilities")
+            self.assertEqual(
+                capability.json()["custom"]["openbot.runGuidance"], {"version": 1}
+            )
+            prompt = self.run_agent(
+                client,
+                "keyless",
+                context=[
+                    entry("OpenBot standing role", "STANDING_ROLE"),
+                    entry("OpenBot granted tools guidance", "GRANTED_TOOLS"),
+                ],
+            )
+            self.assertEqual([message.type for message in prompt], ["system", "human"])
+            self.assertEqual(prompt[0].content.count("STANDING_ROLE"), 1)
+            self.assertEqual(prompt[0].content.count("GRANTED_TOOLS"), 1)
+
+    def test_public_peer_with_forged_forwarding_stays_anonymous(self):
+        with self.client(peer=("8.8.8.8", 50000)) as client:
             prompt = self.run_agent(
                 client,
                 "anonymous",
@@ -409,6 +432,29 @@ class TestRunGuidance(unittest.TestCase):
                 [(message.type, message.content) for message in prompt],
                 [("system", "LEGACY_TOOLS"), ("human", "Proceed?")],
             )
+
+    def test_compiled_chat_graph_can_use_guidance_mixin(self):
+        class GuidanceAgent(RunGuidanceAgentMixin, LangGraphAgent):
+            pass
+
+        graph = create_agent(
+            model=self.model,
+            middleware=[RunGuidanceMiddleware()],
+            checkpointer=self.checkpointer,
+        )
+        agent = GuidanceAgent(name="chat", graph=graph)
+        with self.client(agent=agent, trusted_ingress=True) as client:
+            capability = client.get("/v1/agent/capabilities")
+            self.assertEqual(
+                capability.json()["custom"]["openbot.runGuidance"], {"version": 1}
+            )
+            prompt = self.run_agent(
+                client,
+                "compiled",
+                context=[entry("OpenBot standing role", "STANDING_ROLE")],
+            )
+            self.assertEqual(prompt[0].type, "system")
+            self.assertIn("STANDING_ROLE", prompt[0].content)
 
     def test_precompiled_graph_retains_existing_capability_behavior(self):
         with self.client():
