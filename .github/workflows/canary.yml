@@ -78,6 +78,7 @@ on:
           - integration-claude-managed-agents-py
           - integration-claude-managed-agents-ts
           - integration-cloudflare-agents
+          - integration-codex-sdk-ts
           - integration-crewai-py
           - integration-crewai-ts
           - integration-langchain

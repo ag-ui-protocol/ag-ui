@@ -127,7 +127,9 @@ class _EmptyState extends StatelessWidget {
           Text(
             endpoint.featureKind == FeatureKind.approval
                 ? 'Ask the agent to do something consequential'
-                : 'Ask the agent something it can use a tool for',
+                : endpoint.tools.isEmpty
+                    ? 'Start a conversation with the agent'
+                    : 'Ask the agent something it can use a tool for',
             style: theme.textTheme.titleMedium
                 ?.copyWith(color: theme.colorScheme.outline),
           ),

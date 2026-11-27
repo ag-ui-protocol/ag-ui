@@ -45,7 +45,27 @@ class EndpointConfig {
     this.tools = const [],
   });
 
-  static const List<EndpointConfig> availableEndpoints = [
+  static const String backend = String.fromEnvironment(
+    'AG_UI_BACKEND',
+    defaultValue: 'go',
+  );
+
+  static List<EndpointConfig> get availableEndpoints => endpointsFor(backend);
+
+  static List<EndpointConfig> endpointsFor(String backend) =>
+      backend == 'codex' ? codexEndpoints : goEndpoints;
+
+  static const List<EndpointConfig> codexEndpoints = [
+    EndpointConfig(
+      name: 'Agentic Chat',
+      path: 'agentic_chat',
+      description: 'Text chat with Codex and conversation memory',
+      icon: Icons.chat,
+      featureKind: FeatureKind.clientTools,
+    ),
+  ];
+
+  static const List<EndpointConfig> goEndpoints = [
     EndpointConfig(
       name: 'Agentic Chat',
       path: 'agentic_chat',
@@ -60,8 +80,7 @@ class EndpointConfig {
         ),
         Tool(
           name: 'calculate',
-          description:
-              'Evaluates a simple arithmetic expression and returns the number.',
+          description: 'Evaluates a simple arithmetic expression and returns the number.',
           parameters: {
             'type': 'object',
             'properties': {
@@ -99,7 +118,8 @@ class EndpointConfig {
             'properties': {
               'summary': {
                 'type': 'string',
-                'description': 'Human-readable description of the intended action',
+                'description':
+                    'Human-readable description of the intended action',
               },
               'action': {
                 'type': 'string',
@@ -127,8 +147,7 @@ class EndpointConfig {
       tools: [
         Tool(
           name: 'render_card',
-          description:
-              'Render a titled card with key/value facts and an optional image URL.',
+          description: 'Render a titled card with key/value facts and an optional image URL.',
           parameters: {
             'type': 'object',
             'properties': {

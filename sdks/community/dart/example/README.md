@@ -52,3 +52,36 @@ Both source checkouts remain intact. Source planning/IDE files, logs, generated 
 ## Verification status
 
 The import resolves dependencies with Flutter 3.47.1 without the source `meta` override. Initial analysis reports 41 inherited diagnostics; the Flutter behavior slice owns those repairs without global suppression. The 22 imported Flutter tests and macOS debug build pass; Flutter migrated the macOS target to 12.0 and generated portable Swift Package Manager wiring. The parent Dart SDK passes 724 tests with 8 existing skips using `dart pub get --no-example`. Full contract, interactive platform and live-provider results are pending; this import alone does not establish end-to-end success.
+
+## Run Codex text chat
+
+Codex mode connects directly to the standalone Node server. It does not require the web Dojo. It supports Agentic Chat with text messages and conversation memory. Frontend tools, cards, approval callbacks, images, and shared-state writes are unavailable. The default Go endpoints remain unchanged.
+
+In terminal 1, use Node 22 and the repository's pnpm version. Authenticate with the Codex CLI or set `CODEX_API_KEY` in this server terminal. Select a dedicated scratch Git repository as the agent workspace.
+
+```bash
+# From the repository root:
+mkdir -p /tmp/ag-ui-codex-workspace
+git -C /tmp/ag-ui-codex-workspace init
+pnpm install
+pnpm exec nx run @ag-ui/codex-sdk:build
+CODEX_WORKING_DIRECTORY=/tmp/ag-ui-codex-workspace PORT=8032 pnpm exec nx run @ag-ui/codex-sdk:start
+```
+
+In terminal 2:
+
+```bash
+cd sdks/community/dart/example
+flutter pub get
+flutter run -d chrome --dart-define=AG_UI_BACKEND=codex --dart-define=AG_UI_BASE_URL=http://127.0.0.1:8032
+```
+
+Open Agentic Chat. Send `Hi, my name is Alex`, then `What is my name?`. Keep the same page open between turns. Provider credentials belong only in the server environment. The example uses a read-only sandbox with network access and web search disabled. Native progress may contain workspace content. Use a trusted local development host.
+
+To verify the Flutter contract without a provider, run:
+
+```bash
+flutter test test/codex_backend_test.dart test/codex_chat_contract_test.dart
+```
+
+For a browser check against the real server and controlled CLI, start the server with explicit `CODEX_TEST_MODE=1` and `CODEX_PATH` pointing to `integrations/community/codex-sdk/typescript/examples/testing/codex-exec.mjs`. Set `CODEX_FIXTURE_DIR` to a fresh temporary directory. Launch Flutter with the same compile-time options above. Record the two visible replies and browser POST requests. The second request must retain the first thread ID and assistant message IDs, include the prior conversation, and send an empty tools list. Run the same two turns with the production executable and provider access separately. A controlled CLI check does not verify provider operation.

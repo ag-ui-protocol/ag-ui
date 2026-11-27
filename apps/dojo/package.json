@@ -16,7 +16,8 @@
     "test:published-mode": "node --test scripts/published-mode.test.js",
     "check:protocol-locks": "node --test scripts/check-protocol-locks.test.js && node scripts/check-protocol-locks.js",
     "published-mode": "node scripts/published-mode.js",
-    "test:managed-agents-fake": "tsx --tsconfig e2e/tsconfig.event-trace.json --test e2e/managed-agents-fake.test.ts"
+    "test:managed-agents-fake": "tsx --tsconfig e2e/tsconfig.event-trace.json --test e2e/managed-agents-fake.test.ts",
+    "test:codex-request-metadata": "node --import tsx --test src/codex-request-metadata.test.ts"
   },
   "dependencies": {
     "@a2a-js/sdk": "0.2.5",

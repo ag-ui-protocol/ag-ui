@@ -465,6 +465,11 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "codex-sdk-typescript",
+    name: "Codex SDK (TypeScript)",
+    features: ["agentic_chat"],
+  },
+  {
     id: "claude-agent-sdk-typescript",
     name: "Claude Agent SDK (Typescript)",
     features: [
