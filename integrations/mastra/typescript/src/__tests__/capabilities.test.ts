@@ -79,6 +79,7 @@ describe("getCapabilities", () => {
       },
       tools: { supported: true, clientProvided: true },
       state: { snapshots: true, deltas: true, persistentState: true },
+      custom: { "openbot.runGuidance": { version: 1 } },
       reasoning: { streaming: true },
       humanInTheLoop: { supported: true, interrupts: true, approvals: true },
     });

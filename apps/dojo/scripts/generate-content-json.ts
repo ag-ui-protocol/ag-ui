@@ -173,6 +173,16 @@ const agentFilesMapper: Record<
         integrationsFolderPath,
         `/mastra/typescript/examples/src/mastra/agents/agentic-chat.ts`,
       ),
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        "/mastra/typescript/examples/src/mastra/index.ts",
+      ),
+      path.join(
+        __dirname,
+        integrationsFolderPath,
+        "/mastra/typescript/examples/src/mastra/run-guidance.ts",
+      ),
     ],
     backend_tool_rendering: [
       path.join(
