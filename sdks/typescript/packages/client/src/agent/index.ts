@@ -1,6 +1,7 @@
 export { AbstractAgent } from "./agent";
 export type { RunAgentResult } from "./agent";
 export { HttpAgent } from "./http";
+export { HttpAgentIdleTimeoutError } from "../run/http-request";
 export type {
   AgentConfig,
   HttpAgentConfig,
@@ -9,7 +10,7 @@ export type {
   AgentDebugConfig,
   ResolvedAgentDebugConfig,
 } from "./types";
-export { resolveAgentDebugConfig } from "./types";
+export { MAX_IDLE_TIMEOUT_MS, resolveAgentDebugConfig } from "./types";
 export type { AgentSubscriber, AgentStateMutation, AgentSubscriberParams } from "./subscriber";
 export { DebugLogger, createDebugLogger, resolveDebugLogger } from "../debug-logger";
 export type { DebugLoggerInput } from "../debug-logger";
