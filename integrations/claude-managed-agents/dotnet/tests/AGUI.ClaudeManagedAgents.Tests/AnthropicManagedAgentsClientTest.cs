@@ -74,6 +74,32 @@ public class AnthropicManagedAgentsClientTest
             $"Expected {expectedElement.GetRawText()}\nActual   {actual.Value.GetRawText()}");
     }
 
+    [Theory]
+    [InlineData("idle")]
+    [InlineData("running")]
+    public async Task LatestIdleEventUsesOneDescendingRow(string status)
+    {
+        var handler = new RecordingHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal))
+                return JsonResponse("""{"data":[{"id":"end","type":"session.status_idle","stop_reason":{"type":"end_turn"}}],"has_more":true,"next_page":"older"}""");
+            return JsonResponse($$"""{"id":"session","status":"{{status}}"}""");
+        });
+        var latest = await NewClient(handler).GetLatestIdleEventAsync("session", CancellationToken.None);
+        Assert.Equal("/v1/sessions/session", handler.Requests[0].Uri.AbsolutePath);
+        if (status == "running")
+        {
+            Assert.Null(latest);
+            Assert.Single(handler.Requests);
+            return;
+        }
+        Assert.Equal("end", latest?.GetProperty("id").GetString());
+        Assert.Equal(2, handler.Requests.Count);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(handler.Requests[1].Uri.Query);
+        Assert.Equal("desc", query["order"].ToString());
+        Assert.Equal("1", query["limit"].ToString());
+    }
+
     [Fact]
     public async Task RuntimeContextReachesNativeHttpRequest()
     {

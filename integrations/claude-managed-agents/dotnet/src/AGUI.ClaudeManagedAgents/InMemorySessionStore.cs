@@ -1,7 +1,7 @@
 namespace AGUI.ClaudeManagedAgents;
 
 /// <summary>
-/// In-memory thread↔session store. Mappings are lost on restart.
+/// In-memory thread-to-session store. Mappings are lost on restart.
 /// </summary>
 /// <remarks>
 /// Bounded: thread ids come from the client, so an unbounded map is a memory leak an untrusted
@@ -49,6 +49,7 @@ public sealed class InMemorySessionStore : ISessionStore
         ChildToolCalls = new(record.ChildToolCalls, StringComparer.Ordinal),
         DeliveredChildResultIds = new(record.DeliveredChildResultIds, StringComparer.Ordinal),
         LastEventId = record.LastEventId,
+        CleanEndEventId = record.CleanEndEventId,
         SessionThreadId = record.SessionThreadId,
         PreserveTools = record.PreserveTools,
         SessionEnded = record.SessionEnded,

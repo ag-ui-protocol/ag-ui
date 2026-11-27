@@ -56,6 +56,7 @@ internal sealed class ManagedAgentsTurn
         foreach (var evt in Drain()) yield return evt;
     }
     internal void AcknowledgeHistory(IEnumerable<string> ids) => _ackedToolUses.UnionWith(ids);
+    internal Func<Task<HashSet<string>>>? LoadEarlierAnswers { get; set; }
     internal Func<string, Task>? OnEventHandled { get; set; }
     internal Dictionary<string, JsonElement> ConfirmationEvents { get; } = new(StringComparer.Ordinal);
     internal IList<string> PendingConfirmations { get; } = new List<string>();
@@ -146,9 +147,16 @@ internal sealed class ManagedAgentsTurn
             await SendOutboundAsync(cancellationToken).ConfigureAwait(false);
             foreach (var evt in Drain()) yield return evt;
 
+            var canCheckpoint = true;
+            var sentSystem = _outbound.FirstOrDefault(evt => StringPropertyOf(evt, "type") == "system.message");
             await foreach (var streamEvent in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 if (Recovering && streamEvent.Json.TryGetProperty("id", out var eventId) && eventId.ValueKind == JsonValueKind.String && !SeenEventIds.Add(eventId.GetString()!)) continue;
+                var eventType = StringPropertyOf(streamEvent.Json, "type");
+                if (eventType == "user.custom_tool_result" || (eventType == "system.message" &&
+                    (sentSystem.ValueKind == JsonValueKind.Undefined || !streamEvent.Json.TryGetProperty("content", out var content) ||
+                    !JsonElement.DeepEquals(content, sentSystem.GetProperty("content")))))
+                    canCheckpoint = false;
                 await HandleAsync(streamEvent, cancellationToken).ConfigureAwait(false);
                 foreach (var evt in Drain())
                 {
@@ -159,6 +167,9 @@ internal sealed class ManagedAgentsTurn
                     await OnEventHandled(handledId).ConfigureAwait(false);
                 if (_done)
                 {
+                    if (canCheckpoint && eventType == "session.status_idle" && Outcome.Status == ManagedAgentsTurnStatus.Finished &&
+                        StateRecord is { SessionThreadId: null } record)
+                        record.CleanEndEventId = StringPropertyOf(streamEvent.Json, "id");
                     yield break;
                 }
             }
@@ -731,6 +742,11 @@ internal sealed class ManagedAgentsTurn
         }
 
         // requires_action: work out what the session is blocked on.
+        if (LoadEarlierAnswers is not null && requiresAction.EventIds.Any(id => !SeenEventIds.Contains(id) && !_ackedToolUses.Contains(id)))
+        {
+            _ackedToolUses.UnionWith(await LoadEarlierAnswers().ConfigureAwait(false));
+            LoadEarlierAnswers = null;
+        }
         var blockedOn = requiresAction.EventIds.Where(id => !_ackedToolUses.Contains(id)).ToList();
         if (blockedOn.Count == 0)
         {

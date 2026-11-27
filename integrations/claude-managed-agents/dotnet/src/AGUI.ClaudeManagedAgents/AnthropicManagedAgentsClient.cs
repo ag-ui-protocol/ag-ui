@@ -152,6 +152,18 @@ public sealed class AnthropicManagedAgentsClient : IManagedAgentsClient
         }
     }
 
+    /// <inheritdoc />
+    public async Task<JsonElement?> GetLatestIdleEventAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        var session = await _client.Beta.Sessions.Retrieve(sessionId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (session.Status != BetaManagedAgentsSessionStatus.Idle) return null;
+        var page = await _client.Beta.Sessions.Events.List(new EventListParams
+        {
+            SessionID = sessionId, Order = Anthropic.Models.Beta.Sessions.Events.Order.Desc, Limit = 1,
+        }, cancellationToken).ConfigureAwait(false);
+        return page.Items.FirstOrDefault()?.Json;
+    }
+
     public async Task<IReadOnlyList<JsonElement>> ListSessionEventsAsync(string sessionId, string? sessionThreadId, CancellationToken cancellationToken)
     {
         var history = new List<JsonElement>();

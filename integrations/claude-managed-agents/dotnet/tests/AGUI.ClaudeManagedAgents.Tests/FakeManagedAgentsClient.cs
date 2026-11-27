@@ -20,6 +20,11 @@ public sealed class FakeManagedAgentsClient : IManagedAgentsClient
     public Dictionary<string, IReadOnlyList<JsonElement>> ChildHistories { get; } = new();
     public IReadOnlyList<JsonElement> History { get; set; } = [];
     public List<string> RecoveryOrder { get; } = [];
+    public Task<JsonElement?> GetLatestIdleEventAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        RecoveryOrder.Add("latest");
+        return Task.FromResult<JsonElement?>(History.Count > 0 ? History[^1] : null);
+    }
     public string? RequestedThreadId { get; private set; }
     public TaskCompletionSource? HistoryGate { get; set; }
     public TaskCompletionSource HistoryStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
