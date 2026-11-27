@@ -42,19 +42,44 @@ validation failures retain their existing error behavior.
 pip install ag-ui-langgraph
 ```
 
-## Usage
+## Serve a LangChain chat agent with FastAPI
+
+Install `ag-ui-langgraph[fastapi]` plus the LangChain integration for your
+model provider. The chat factory installs run guidance middleware and returns
+an AG-UI agent ready to serve.
 
 ```python
-from langgraph.graph import StateGraph, MessagesState
-from langchain_openai import ChatOpenAI
-from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from ag_ui_langgraph import add_langgraph_fastapi_endpoint, create_langgraph_agent
 from fastapi import FastAPI
-from my_langgraph_workflow import graph
+from langgraph.checkpoint.memory import MemorySaver
 
-# Add to FastAPI
 app = FastAPI()
-add_langgraph_fastapi_endpoint(app, graph, "/agent")
+agent = create_langgraph_agent(
+    name="chat",
+    model="openai:gpt-4.1-mini",
+    system_prompt="You are a helpful assistant.",
+    checkpointer=MemorySaver(),
+)
+add_langgraph_fastapi_endpoint(app, agent, "/agent")
 ```
+
+The route advertises `custom["openbot.runGuidance"] == {"version": 1}` at
+`GET /agent/capabilities`. A caller can send context entries with the
+descriptions `OpenBot standing role` and `OpenBot granted tools guidance`.
+Send the current entries with each run, including a tool-result continuation or
+checkpoint resume. Registered hosts can authorize both entries as system
+guidance. For anonymous callers, the role is ordinary user guidance and the
+tool guidance is omitted. Use `authorize_guidance` with your existing
+authorization policy. A callback can return `True` for authorized callers,
+return `False` for anonymous handling, or raise an HTTP error. It runs for both
+the capability lookup and the streamed runs. Use `trusted_ingress=True` only
+when deployment access controls restrict both routes to authorized callers.
+
+To serve a graph you already compiled, use
+`LangGraphAgent(name="my-agent", graph=graph)` with the same FastAPI helper.
+To opt a custom LangChain chat wrapper into run guidance, install
+`RunGuidanceMiddleware` when creating the graph and place
+`RunGuidanceAgentMixin` before your adapter in the class declaration.
 
 ## Features
 
