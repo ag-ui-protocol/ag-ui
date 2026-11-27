@@ -35,6 +35,8 @@ export const parseProtoStream = (
   const log = resolveDebugLogger(debugLogger);
   const eventSubject = new Subject<BaseEvent>();
   let buffer = new Uint8Array(0);
+  let start = 0;
+  let buffered = 0;
   // A decode failure leaves its frame in the buffer, so without this the
   // stream end would blame the leftovers on truncation and report the wrong
   // cause for a stream that had already failed for a different reason.
@@ -47,11 +49,22 @@ export const parseProtoStream = (
       }
 
       if (event.type === HttpEventType.DATA && event.data) {
-        // Append the new data to our buffer
-        const newBuffer = new Uint8Array(buffer.length + event.data.length);
-        newBuffer.set(buffer, 0);
-        newBuffer.set(event.data, buffer.length);
-        buffer = newBuffer;
+        // Reuse spare capacity, compact consumed frames, or grow geometrically.
+        // Each pending byte is copied only a bounded number of times.
+        if (start + buffered + event.data.length > buffer.length) {
+          if (buffered + event.data.length <= buffer.length && buffered <= buffer.length / 2) {
+            buffer.copyWithin(0, start, start + buffered);
+          } else {
+            const next = new Uint8Array(
+              Math.max(buffered + event.data.length, buffer.length * 2, 4),
+            );
+            next.set(buffer.subarray(start, start + buffered));
+            buffer = next;
+          }
+          start = 0;
+        }
+        buffer.set(event.data, start + buffered);
+        buffered += event.data.length;
 
         // Process as many complete messages as possible
         processBuffer();
@@ -66,10 +79,10 @@ export const parseProtoStream = (
       // for a stream that was cut in half.
       processBuffer();
       if (failed) return;
-      if (buffer.length > 0) {
+      if (buffered > 0) {
         eventSubject.error(
           new Error(
-            `The binary stream ended mid-frame: ${buffer.length} trailing bytes could not be read as a complete message.`,
+            `The binary stream ended mid-frame: ${buffered} trailing bytes could not be read as a complete message.`,
           ),
         );
         return;
@@ -86,9 +99,9 @@ export const parseProtoStream = (
     // the buffer; re-entering would re-read it for every chunk that follows.
     if (failed) return;
     // Keep processing while we have enough data for at least a header (4 bytes)
-    while (buffer.length >= 4) {
+    while (buffered >= 4) {
       // Read message length from the first 4 bytes (big-endian uint32)
-      const view = new DataView(buffer.buffer, buffer.byteOffset, 4);
+      const view = new DataView(buffer.buffer, buffer.byteOffset + start, 4);
       const messageLength = view.getUint32(0, false); // false = big-endian
 
       // Check if we have the complete message (header + message body)
@@ -108,14 +121,14 @@ export const parseProtoStream = (
         return;
       }
 
-      if (buffer.length < totalLength) {
+      if (buffered < totalLength) {
         // Not enough data yet, wait for more
         break;
       }
 
       try {
         // Extract the message (skipping the 4-byte header)
-        const message = buffer.slice(4, totalLength);
+        const message = buffer.subarray(start + 4, start + totalLength);
 
         // Decode the protocol buffer message using the imported decode function
         const event = proto.decode(message);
@@ -149,7 +162,12 @@ export const parseProtoStream = (
 
       // Remove the processed message from the buffer, dropped frames included:
       // leaving one in place would re-read it forever.
-      buffer = buffer.slice(totalLength);
+      start += totalLength;
+      buffered -= totalLength;
+      if (buffered === 0) {
+        buffer = new Uint8Array(0);
+        start = 0;
+      }
     }
   }
 

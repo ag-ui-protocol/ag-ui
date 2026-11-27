@@ -591,6 +591,63 @@ describe("parseProtoStream", () => {
     return { chunk$, received, errors };
   };
 
+  it("copies fragmented frame bytes only a bounded number of times", () => {
+    const frame = eventEncoder.encodeBinary({
+      type: EventType.TEXT_MESSAGE_CONTENT,
+      messageId: "msg123",
+      delta: "A".repeat(512 * 1024),
+    });
+    const { chunk$, received, errors } = openProtoStream();
+    const copySpy = vi.spyOn(Uint8Array.prototype, "set");
+
+    try {
+      for (let offset = 0; offset < frame.length; offset += 2048) {
+        chunk$.next({
+          type: HttpEventType.DATA,
+          data: frame.subarray(offset, offset + 2048),
+        });
+      }
+      chunk$.complete();
+
+      const copiedBytes = copySpy.mock.calls.reduce((total, [source]) => total + source.length, 0);
+      expect(errors).toHaveLength(0);
+      expect(received).toHaveLength(1);
+      expect((received[0] as TextMessageContentEvent).delta).toHaveLength(512 * 1024);
+      expect(copiedBytes).toBeLessThan(frame.length * 8);
+    } finally {
+      copySpy.mockRestore();
+    }
+  });
+
+  it("does not repeatedly copy the unread suffix of coalesced frames", () => {
+    const frames = Array.from({ length: 100 }, (_, index) =>
+      eventEncoder.encodeBinary({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "msg123",
+        delta: `${index}:` + "B".repeat(4096),
+      }),
+    );
+    const bytes = concatBytes(frames);
+    const { chunk$, received, errors } = openProtoStream();
+    const sliceSpy = vi.spyOn(Uint8Array.prototype, "slice");
+
+    try {
+      chunk$.next({ type: HttpEventType.DATA, data: bytes });
+      chunk$.complete();
+
+      const slicedBytes = sliceSpy.mock.results.reduce(
+        (total, result) => total + (result.value?.length ?? 0),
+        0,
+      );
+      expect(errors).toHaveLength(0);
+      expect(received).toHaveLength(frames.length);
+      expect((received[99] as TextMessageContentEvent).delta).toContain("99:");
+      expect(slicedBytes).toBeLessThan(bytes.length * 8);
+    } finally {
+      sliceSpy.mockRestore();
+    }
+  });
+
   it("cancels the response body and stops reading once the cap trips", async () => {
     // A prefix that declares more than the limit, then a body that keeps
     // arriving. The guard fires on the prefix; nothing should be read after.
