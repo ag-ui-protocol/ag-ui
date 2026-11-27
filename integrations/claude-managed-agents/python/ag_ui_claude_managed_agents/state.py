@@ -148,6 +148,10 @@ def restore(history, record, emit):
             value = decode(get(event, "content"), record)
             if value:
                 apply(record, value)
+    emit_snapshot(record, emit)
+
+
+def emit_snapshot(record, emit):
     if record.shared_state is not None and not record.session_thread_id:
         emit(StateSnapshotEvent(snapshot=copy.deepcopy(record.shared_state)))
 

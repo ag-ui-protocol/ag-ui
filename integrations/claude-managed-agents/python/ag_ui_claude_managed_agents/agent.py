@@ -400,7 +400,7 @@ class ManagedAgentsAgent:
 
             await recover_turn(self, record, store_key, input, emit)
             return
-        from .recovery import recover_child_results, track_child_results
+        from .recovery import TurnCursor, recover_child_results, track_child_results
 
         emit = await track_child_results(
             record, input.messages, emit, lambda: self.store.set(store_key, record)
@@ -470,19 +470,12 @@ class ManagedAgentsAgent:
             ]
             await maybe_await(self.store.set(store_key, record))
 
-        async def on_event(event: Any) -> None:
-            if get(event, "id") and get(event, "type") not in (
-                "event_start",
-                "event_delta",
-            ):
-                record.last_event_id = get(event, "id")
-                await maybe_await(self.store.set(store_key, record))
-
+        cursor = TurnCursor(record, outbound.events, lambda: self.store.set(store_key, record))
         outcome = await run_turn(
             client=self.client,
             session_id=record.session_id,
             outbound=outbound.events,
-            on_event=on_event,
+            on_event=cursor.handled,
             on_results_sent=on_results_sent,
             on_follow_ups_sent=on_follow_ups_sent,
             on_client_park=on_client_park,
@@ -494,7 +487,7 @@ class ManagedAgentsAgent:
             emit=emit,
         )
 
-        await self._record_outcome(store_key, record, outcome)
+        await self._record_outcome(store_key, record, outcome, cursor.clean_end_event_id)
         if outcome.status != "errored":
             from .recovery import finish
 
@@ -546,7 +539,11 @@ class ManagedAgentsAgent:
         )
 
     async def _record_outcome(
-        self, store_key: str, record: SessionRecord, outcome: TurnOutcome
+        self,
+        store_key: str,
+        record: SessionRecord,
+        outcome: TurnOutcome,
+        clean_end_event_id: str | None,
     ) -> None:
         """Reconcile the record with how the turn ended.
 
@@ -554,6 +551,8 @@ class ManagedAgentsAgent:
         remote session is still parked on those calls and the next run has to
         answer them.
         """
+        if outcome.status == "finished" and not record.session_thread_id:
+            record.clean_end_event_id = clean_end_event_id
         if outcome.status == "errored":
             if outcome.session_ended:
                 record.ended = True
