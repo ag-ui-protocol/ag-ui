@@ -370,8 +370,34 @@ class StrandsAgentConfig:
     history never holds audio its model would reject on every later turn.
     Audio also needs strands-agents 1.53.0+, whatever this says.
     """
+    thread_idle_timeout: Optional[float] = None
+    """Seconds a thread may go without a run before its agent is let go.
+
+    Each thread's agent is kept in memory between runs, so a process that
+    serves many threads holds every one it has ever seen. With a timeout, a
+    thread that has had no run for that long is forgotten and its agent shut
+    down. Its next run builds the agent again: from the thread's session where
+    ``session_manager_provider`` gives it one, and otherwise from the history
+    the client sends with the run.
+
+    Checked when a run starts, on any thread: there is no timer. A thread is
+    never let go while a run is in progress on it, nor while it waits on an
+    answer to an interrupt: the interrupt lives on that agent, and an answer
+    sent to a rebuilt one fails with ``UNKNOWN_INTERRUPT_ID``. So a thread
+    whose interrupt is never answered is kept, as every thread is without a
+    timeout.
+
+    Work the agent still had in the background when it is let go is stopped.
+
+    ``None``, the default, keeps every thread for the life of the process.
+    """
 
     def __post_init__(self) -> None:
+        if self.thread_idle_timeout is not None and self.thread_idle_timeout < 0:
+            raise ValueError(
+                "thread_idle_timeout is a number of seconds, so it cannot be "
+                f"negative; got {self.thread_idle_timeout!r}"
+            )
         if self.subagent_visibility not in SUBAGENT_VISIBILITIES:
             raise ValueError(
                 "subagent_visibility must be one of "

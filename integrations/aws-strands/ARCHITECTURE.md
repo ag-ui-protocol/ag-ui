@@ -169,6 +169,43 @@ This document explains how the AWS Strands integration inside `integrations/aws-
   - A Strands stream event with no AG-UI translation is forwarded as `RawEvent(event=..., source="strands")` rather than dropped, which is how Bedrock's per-turn `metadata` reaches a client. The payload is filtered, never coerced: per-run invocation-state keys are stripped, and anything that will not survive a strict JSON round trip is dropped with a warning rather than stringified, since coercing it would ship the serialized live `Agent` (system prompt and conversation history included) to every connected client. Both bridges do this, from the same two positions in the loop.
   - What rides `event` is a framework-shaped payload the SDK is free to change in any release. Neither adapter treats its shape as part of its own contract, and neither one's README invites a client to depend on a field found in it.
 
+### `StrandsHarnessAgent` (`src/ag_ui_strands/harness.py`)
+
+A second entry point, for agents built by `strands_harness.create_harness()`. It
+exists because of how `StrandsAgent` isolates threads: it treats the agent it is
+given as a template and builds each thread's agent from the constructor settings
+it can read back. A harness is assembled out of exactly the settings that route
+cannot carry. Its context manager, memory manager and background tasks resolve
+into plugins bound to the agent that received them, and stay on the template,
+while the tools those plugins vend are ordinary registry entries and are carried
+to every thread still bound to the template's managers.
+
+`StrandsHarnessAgent` subclasses `StrandsAgent` and overrides one method,
+`_build_thread_agent`, to call `create_harness(**options)` once per `thread_id`.
+`StrandsAgent.run` calls that method under the thread-init lock and caches what
+it returns; a `_ThreadAgentBuildError` raised from it ends the run as a
+`RUN_STARTED` / `RUN_ERROR` pair and leaves the thread uncached. The class sets
+`_clones_template = False`, which is the only other thing the base class asks:
+there is no template to read, so nothing is read. Nothing in the run loop knows
+which of the two built the agent.
+
+Two things a harness does by default needed handling in the run loop itself, and
+both are SDK features that a plain `Agent` can use too, so they live in
+`agent.py` rather than behind the subclass:
+
+- **`HumanInTheLoop` approvals.** The SDK's gate raises a native interrupt under
+  its handler name, `strands:human-in-the-loop`, with a prompt string as the
+  reason, and evaluates the answer with `default_evaluate`. `_strands_interrupt_to_agui`
+  publishes it as a `tool_call` approval, reading the gated call out of the
+  interrupt id (`v1:before_tool_call:<toolUseId>:<uuid>`) and the agent's own
+  conversation, and `_native_resume_response` answers it with a bare bool.
+- **Background-task deliveries.** `_background_task_deliveries` reads the tail of
+  the conversation for the tool-use / tool-result pairs the SDK appends without
+  streaming, recognised by shape (a `get` whose tool use id is the task id). The
+  run loop checks whenever the conversation's length has changed since it last
+  looked, closes any open text message, and emits the pair as a completed tool
+  call before the model's next output.
+
 ### Configuration Layer (`src/ag_ui_strands/config.py`)
 
 `StrandsAgentConfig` allows each tool to define bespoke behavior without editing the adapter:

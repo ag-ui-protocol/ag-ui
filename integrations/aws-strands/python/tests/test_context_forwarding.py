@@ -566,3 +566,33 @@ def test_the_diagnostic_names_the_turn_that_breaks_a_tool_call():
         "roles=[user, assistant, user] tool-call adjacency=broken at [2] "
         "role alternation=ok"
     )
+
+
+@pytest.mark.parametrize("existing", [[{"text": "go"}], [{"image": {}}]])
+def test_context_is_taken_back_out_of_a_turn_copied_while_it_was_in(existing):
+    """Strands' context injectors run between the two halves of the transient
+    hook and swap the latest user turn for a copy with a new content list. The
+    placed block is in that list too, and has to come out of it."""
+    from ag_ui_strands.agent import (
+        _MODEL_CONTEXT_MUTATION_MARKER,
+        _place_user_text,
+        _restore_transient_model_context,
+    )
+
+    class _Agent:
+        pass
+
+    agent = _Agent()
+    agent.messages = [{"role": "user", "content": copy.deepcopy(existing)}]
+    setattr(
+        agent,
+        _MODEL_CONTEXT_MUTATION_MARKER,
+        [_place_user_text(agent.messages, "CONTEXT", "prepend")],
+    )
+    latest = agent.messages[-1]
+    note = {"injected": {"text": "note", "source": "an-injector"}}
+    agent.messages[-1] = {**latest, "content": [*latest["content"], note]}
+
+    _restore_transient_model_context(agent)
+
+    assert agent.messages[-1]["content"] == [*existing, note]

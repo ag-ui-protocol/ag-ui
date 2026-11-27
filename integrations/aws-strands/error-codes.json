@@ -177,6 +177,12 @@
       "note": "Reported when the per-request template-tools hook throws. Unlike the per-thread agent hook beside it, the option carries one name on both sides (template_tools_provider / templateToolsProvider) and returns the same thing, a selection of the template's tools, so there is one code and one sentence. Terminal rather than degrading to an unfiltered run: the hook exists to withhold tools from a caller, and failing open would hand the model exactly what the caller meant to keep back."
     },
     {
+      "code": "THREAD_AGENT_BUILD_ERROR",
+      "sides": ["python"],
+      "messages": ["Failed to build per-thread agent: {}"],
+      "note": "Reported when building a thread's agent itself fails, as opposed to the caller's options for it (THREAD_AGENT_KWARGS_ERROR). Python only because only Python has a bridge that builds each thread's agent with a factory: StrandsHarnessAgent calls strands-harness's create_harness per thread, and what that raises (an option it refuses, an MCP server marked fatal) arrives here. StrandsAgent clones a template with the SDK constructor and does not report under this code."
+    },
+    {
       "code": "THREAD_AGENT_CONFIG_ERROR",
       "sides": ["typescript"],
       "messages": ["Failed to build per-thread agent config: {}"],
