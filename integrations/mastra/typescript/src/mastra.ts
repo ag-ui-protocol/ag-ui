@@ -92,6 +92,7 @@ export type {
   MastraSubagentVisibility,
 } from "./subagents";
 import {
+  bridgeRunGuidanceContext,
   createMastraRunGuidanceProcessor,
   isMastraRunGuidanceProcessor,
   isMastraRunGuidanceEntry,
@@ -666,8 +667,11 @@ export interface MastraAgentConfig extends AgentConfig {
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
-  /** Enable the packaged run guidance receiver for an in-process agent. */
-  runGuidance?: MastraRunGuidanceOptions;
+  /**
+   * Run guidance is enabled by default. Pass false to disable the local
+   * receiver or remote capability discovery.
+   */
+  runGuidance?: false | MastraRunGuidanceOptions;
   /**
    * Forward Mastra tracing options into the run's `agent.stream(...)` (and the
    * resume path). Chiefly lets a caller inject a self-chosen `traceId` so the
@@ -979,7 +983,7 @@ export class MastraAgent extends AbstractAgent {
    * Unset (or empty) means remote paths fall back to the public `agentId`.
    */
   private readonly nativeAgentId?: string;
-  private readonly runGuidance?: MastraRunGuidanceOptions;
+  private readonly runGuidance?: false | MastraRunGuidanceOptions;
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
@@ -1119,12 +1123,17 @@ export class MastraAgent extends AbstractAgent {
   ): Promise<
     Awaited<ReturnType<typeof mastraConfiguredInputProcessors>> | undefined
   > {
-    if (!this.runGuidance || !supportsMastraRunGuidance(agent)) return;
+    if (
+      this.runGuidance === false ||
+      !inputContext.some(isMastraRunGuidanceEntry) ||
+      !supportsMastraRunGuidance(agent)
+    )
+      return;
     const processors = await mastraConfiguredInputProcessors(
       agent,
       requestContext,
     );
-    const trusted = this.runGuidance.trusted === true;
+    const trusted = this.runGuidance?.trusted === true;
     return [
       createMastraRunGuidanceProcessor(() => ({
         context: inputContext,
@@ -1152,18 +1161,30 @@ export class MastraAgent extends AbstractAgent {
 
     return new Observable<BaseEvent>((subscriber) => {
       const inputContext = input.context ?? [];
+      const localAgent = this.isLocalMastraAgent(this.agent)
+        ? this.agent
+        : undefined;
       const usesPackagedGuidance =
-        this.runGuidance !== undefined &&
-        this.isLocalMastraAgent(this.agent) &&
-        supportsMastraRunGuidance(this.agent);
+        this.runGuidance !== false &&
+        localAgent !== undefined &&
+        inputContext.some(isMastraRunGuidanceEntry) &&
+        supportsMastraRunGuidance(localAgent);
       // A run and its continuation carry their own snapshot. Preserve
       // server-provided context keys in a copy for each subscription.
       const requestContext = new RequestContext(this.requestContext?.entries());
-      requestContext.set("ag-ui", {
+      const aguiContext = {
         context: usesPackagedGuidance
           ? inputContext.filter((entry) => !isMastraRunGuidanceEntry(entry))
           : inputContext,
-      });
+      };
+      if (localAgent) {
+        // An installed native processor must not inherit an enclosing native
+        // request's authority or snapshot on an in-process bridge run.
+        Object.defineProperty(aguiContext, bridgeRunGuidanceContext, {
+          value: true,
+        });
+      }
+      requestContext.set("ag-ui", aguiContext);
 
       // Cancellation channel for THIS subscription. The teardown below fires it
       // so unsubscribing (or abortRun()) propagates into the Mastra stream.
@@ -1818,23 +1839,14 @@ export class MastraAgent extends AbstractAgent {
   private async runGuidanceCapabilities(): Promise<
     AgentCapabilities["custom"]
   > {
-    try {
-      if (this.isLocalMastraAgent(this.agent)) {
-        if (!supportsMastraRunGuidance(this.agent)) return undefined;
-        if (
-          this.runGuidance ||
-          (
-            await mastraConfiguredInputProcessors(
-              this.agent,
-              this.requestContext,
-            )
-          ).some(isMastraRunGuidanceProcessor)
-        ) {
-          return mastraRunGuidanceDeclaration();
-        }
-        return undefined;
-      }
+    if (this.runGuidance === false) return undefined;
+    if (this.isLocalMastraAgent(this.agent)) {
+      return supportsMastraRunGuidance(this.agent)
+        ? mastraRunGuidanceDeclaration()
+        : undefined;
+    }
 
+    try {
       const { options } = this.agent;
       // Use the handle's own ID, which can differ from the AG-UI public alias.
       // The native declaration does not describe a separately pinned version.

@@ -1,6 +1,7 @@
 import { registerApiRoute } from "@mastra/core/server";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  bridgeRunGuidanceContext,
   createMastraRunGuidanceProcessor,
   isMastraRunGuidanceProcessor,
   mastraConfiguredInputProcessors,
@@ -36,11 +37,22 @@ export function withMastraRunGuidanceAuthority<T>(
  * middleware with `withMastraRunGuidanceAuthority`.
  */
 export const mastraRunGuidanceProcessor = createMastraRunGuidanceProcessor(
-  (requestContext) =>
-    authority.getStore() ?? {
-      context: readMastraRunGuidanceContext(requestContext?.get("ag-ui")),
-      trusted: false,
-    },
+  (requestContext) => {
+    const context = requestContext?.get("ag-ui");
+    if (
+      typeof context === "object" &&
+      context !== null &&
+      bridgeRunGuidanceContext in context
+    ) {
+      return { context: [], trusted: false };
+    }
+    return (
+      authority.getStore() ?? {
+        context: readMastraRunGuidanceContext(context),
+        trusted: false,
+      }
+    );
+  },
 );
 
 /**

@@ -283,31 +283,40 @@ Guidance applies to each model call and stays out of conversation history.
 Send the current entries again on hand-back or resume. Omit an entry to clear
 it.
 
-For an in-process agent, set `runGuidance: { trusted }` in the `MastraAgent`
-constructor, `getLocalAgent`, or `getLocalAgents`. Set `trusted` from your
-server's authentication result or an explicitly trusted ingress. An empty
-`runGuidance` object enables ordinary guidance. The bridge installs the
-processor and exposes the capability from `getCapabilities()`. If your app
-serves the agent over AG-UI HTTP, return that declaration as JSON at
-`GET <endpoint>/capabilities` under the same authentication as the run endpoint.
-For `registerCopilotKit`, supply `runGuidance: { isTrusted: (context) => … }` to
-authorize guidance for agents that the route builds.
+In-process agents enable the receiver by default on supported Mastra cores.
+The default applies the role as ordinary task context. To authorize system
+guidance, set `runGuidance: { trusted }` in the `MastraAgent` constructor or a
+local agent factory using your server's authentication result or explicitly
+trusted ingress. For `registerCopilotKit`, provide
+`runGuidance: { isTrusted: (context) => … }` to authorize the agents the route
+builds. Set `runGuidance: false` to keep your existing context handling.
+Use `runGuidance: { enabled: false, isTrusted }` to keep a CopilotKit route's
+authorization hook active while disabling guidance.
+If your app serves an agent over AG-UI HTTP, return the bridge's
+`getCapabilities()` JSON at `GET <endpoint>/capabilities` under the same
+authentication as the run endpoint.
 
 For a native Mastra server, add `mastraRunGuidanceProcessor` to the agent's
 `inputProcessors` before any provider response-cache processor. On the server,
 call `withMastraRunGuidanceAuthority(trusted, next, body?.requestContext)`
 after authenticating the request. Pass the current request body's context so
-a native resume clears guidance when the request omits it. Mount `registerMastraRunGuidanceCapabilities(agentId)` with the same
-authentication and authorization as the native run routes. Import all three
+a native resume clears guidance when the request omits it. Mount
+`registerMastraRunGuidanceCapabilities(agentId)` with the same authentication
+and authorization as the native run routes. Import all three
 from `@ag-ui/mastra/run-guidance`. The remote bridge looks up the declaration
 at `GET /<encoded agentId>/capabilities` relative to the configured Mastra
 client base URL, using its native credentials and fetch implementation.
+`getRemoteAgents({ …, runGuidance: false })` skips discovery for that client.
 Mastra versions without the provider-request hook omit the declaration.
 
-The native example publishes this capability for `agentic_chat`.
+The native example enables the receiver and publishes this capability for
+`agentic_chat` by default.
 
 - Set `AG_UI_GUIDANCE_TOKEN` to require a matching `Authorization: Bearer …`
   header for native runs and discovery.
 - Set `AG_UI_TRUSTED_INGRESS=true` when deployment access controls restrict
   both routes to authorized application backends.
-- The example uses ordinary guidance when neither setting is present.
+- The example uses ordinary guidance when neither authentication setting is
+  present.
+- Set `AG_UI_RUN_GUIDANCE=false` to disable native guidance while retaining the
+  configured authentication.

@@ -159,7 +159,6 @@ describe("Mastra run guidance", () => {
     const wrapped = bridge.MastraAgent.getLocalAgents({
       mastra,
       resourceId: "resource",
-      runGuidance: {},
     }).test as bridge.MastraAgent;
     const input = makeInput({
       messages: [user],
@@ -215,20 +214,130 @@ describe("Mastra run guidance", () => {
     expect(occurrences(prompts[0], "system", "role-A")).toBe(1);
   });
 
-  it("keeps legacy local agents compatible and omits the declaration without the provider hook", async () => {
-    const { agent } = receiver();
-    const legacy = new bridge.MastraAgent({ agent, agentId: "test" });
-    expect((await legacy.getCapabilities()).custom).toBeUndefined();
+  it("leaves unrelated context and Mastra processor options alone by default", async () => {
+    const { agent, prompts } = receiver({ customInstructions: true });
+    const stream = vi.spyOn(agent, "stream");
+    const requestContext = new RequestContext();
+    requestContext.set("host", "host-context");
+    const wrapped = new bridge.MastraAgent({
+      agent,
+      agentId: "test",
+      requestContext,
+    });
+    const entries = [
+      { description: "topic", value: "ordinary custom context" },
+    ];
 
+    await collectEvents(
+      wrapped,
+      makeInput({ messages: [user], context: entries }),
+    );
+
+    expect((await wrapped.getCapabilities()).custom).toEqual(declaration);
+    expect(occurrences(prompts[0], "system", "ordinary custom context")).toBe(
+      1,
+    );
+    const [, options] = stream.mock.calls[0] as readonly unknown[];
+    expect(options).not.toHaveProperty("inputProcessors");
+    expect(
+      (options as { requestContext: RequestContext }).requestContext.get(
+        "host",
+      ),
+    ).toBe("host-context");
+  });
+
+  it("keeps ordinary context independent across overlapping local runs", async () => {
+    const { agent, prompts } = receiver({ customInstructions: true });
+    const wrapped = new bridge.MastraAgent({ agent, agentId: "test" });
+    await Promise.all(
+      ["one", "two"].map((id) =>
+        collectEvents(
+          wrapped,
+          makeInput({
+            threadId: id,
+            runId: id,
+            messages: [user],
+            context: [{ description: "topic", value: `context-${id}` }],
+          }),
+        ),
+      ),
+    );
+
+    const instructionRows = prompts.map((prompt) => prompt[0].content);
+    expect(instructionRows).toEqual(
+      expect.arrayContaining([
+        "Base instructions context-one",
+        "Base instructions context-two",
+      ]),
+    );
+  });
+
+  it.each([undefined, false] as const)(
+    "clears ambient native guidance on an empty bridge run and its continuation (%s)",
+    async (runGuidance) => {
+      const { agent, prompts } = receiver({ configured: true, suspend: true });
+      const wrapped = new bridge.MastraAgent({
+        agent,
+        agentId: "test",
+        runGuidance,
+      });
+      const run = (input: ReturnType<typeof makeInput>) =>
+        withMastraRunGuidanceAuthority(
+          true,
+          () => collectEvents(wrapped, input),
+          { "ag-ui": { context: context("outer-role", "outer-tools") } },
+        );
+      const first = await run(makeInput({ messages: [user], context: [] }));
+      const finished = first.find(
+        (event): event is RunFinishedEvent =>
+          event.type === EventType.RUN_FINISHED,
+      );
+      if (finished?.outcome?.type !== "interrupt")
+        throw new Error("Expected a suspended tool");
+      await run(
+        makeInput({
+          runId: "run-2",
+          context: [],
+          resume: [
+            {
+              interruptId: finished.outcome.interrupts[0].id,
+              status: "resolved",
+              payload: true,
+            },
+          ],
+        }),
+      );
+
+      expect(prompts).toHaveLength(2);
+      expect(JSON.stringify(prompts)).not.toMatch(/outer-role|outer-tools/);
+    },
+  );
+
+  it("preserves a legacy context handler when guidance is explicitly disabled", async () => {
+    const { mastra, prompts } = receiver({ customInstructions: true });
+    const wrapped = bridge.MastraAgent.getLocalAgent({
+      mastra,
+      agentId: "test",
+      resourceId: "resource",
+      runGuidance: false,
+    }) as bridge.MastraAgent;
+    await collectEvents(
+      wrapped,
+      makeInput({ messages: [user], context: context("role-A") }),
+    );
+
+    expect((await wrapped.getCapabilities()).custom).toBeUndefined();
+    expect(occurrences(prompts[0], "system", "role-A")).toBe(1);
+    expect(occurrences(prompts[0], "user", "role-A")).toBe(0);
+  });
+
+  it("omits the default declaration without the provider hook", async () => {
+    const { agent } = receiver();
     Object.defineProperty(agent, "listResolvedLLMRequestProcessors", {
       value: undefined,
     });
-    const configured = new bridge.MastraAgent({
-      agent,
-      agentId: "test",
-      runGuidance: {},
-    });
-    expect((await configured.getCapabilities()).custom).toBeUndefined();
+    const wrapped = new bridge.MastraAgent({ agent, agentId: "test" });
+    expect((await wrapped.getCapabilities()).custom).toBeUndefined();
   });
 
   it.each([false, true])(
@@ -239,7 +348,7 @@ describe("Mastra run guidance", () => {
         agent,
         agentId: "test",
         resourceId: "resource",
-        ...(configured ? {} : { runGuidance: { trusted: true } }),
+        runGuidance: { trusted: true },
       });
       const run = (input: ReturnType<typeof makeInput>) =>
         withMastraRunGuidanceAuthority(
@@ -362,6 +471,25 @@ describe("Mastra run guidance", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+  });
+
+  it("skips native discovery when the remote bridge explicitly opts out", async () => {
+    const dial = vi.fn<typeof fetch>(async (url) =>
+      String(url).endsWith("/api/agents")
+        ? Response.json({ test: {} })
+        : Response.json({ custom: declaration }),
+    );
+    const client = new MastraClient({
+      baseUrl: "https://mastra.example",
+      fetch: dial,
+    });
+    const { test: wrapped } = await bridge.MastraAgent.getRemoteAgents({
+      mastraClient: client,
+      resourceId: "resource",
+      runGuidance: false,
+    });
+    expect((await wrapped.getCapabilities?.())?.custom).toBeUndefined();
+    expect(dial).toHaveBeenCalledOnce();
   });
 
   it.each([

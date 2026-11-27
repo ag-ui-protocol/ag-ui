@@ -5,6 +5,7 @@ import {
 import { ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import {
   MastraAgent,
+  type MastraAgentConfig,
   type MastraSubagentToolResults,
   type MastraSubagentVisibility,
   MastraTracingOptions,
@@ -24,11 +25,15 @@ export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
 export interface CopilotKitRouteOptions<Cors> {
   path: string;
   resourceId: string;
-  /** Enable run guidance on the Mastra agents built by this route. */
-  runGuidance?: {
-    /** Read the authentication result established by the Mastra server. */
-    isTrusted?: (context: ContextWithMastra) => boolean | Promise<boolean>;
-  };
+  /** Authorize run guidance or disable it for the agents built by this route. */
+  runGuidance?:
+    | false
+    | {
+        /** Disable the receiver while retaining the host's authorization hook. */
+        enabled?: boolean;
+        /** Read the authentication result established by the Mastra server. */
+        isTrusted?: (context: ContextWithMastra) => boolean | Promise<boolean>;
+      };
   /**
    * Mastra tracing options forwarded to each agent run (default-agent path
    * only; ignored when `agents` is supplied since those are pre-constructed).
@@ -102,6 +107,13 @@ export function createCopilotKitRoute<
         await setContext(c, requestContext);
       }
 
+      let guidance: MastraAgentConfig["runGuidance"] =
+        runGuidance === false ? false : undefined;
+      if (!agents && runGuidance) {
+        const trusted = (await runGuidance.isTrusted?.(c)) === true;
+        guidance = runGuidance.enabled === false ? false : { trusted };
+      }
+
       const aguiAgents =
         agents ||
         MastraAgent.getLocalAgents({
@@ -112,9 +124,7 @@ export function createCopilotKitRoute<
             >(MASTRA_RESOURCE_ID_KEY) ?? resourceId,
           mastra,
           requestContext,
-          runGuidance: runGuidance
-            ? { trusted: (await runGuidance.isTrusted?.(c)) === true }
-            : undefined,
+          runGuidance: guidance,
           tracingOptions,
           subagentVisibility,
           subagentToolResults,

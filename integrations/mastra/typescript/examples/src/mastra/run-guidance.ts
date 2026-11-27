@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
+export const runGuidanceEnabled = process.env.AG_UI_RUN_GUIDANCE !== "false";
+
 export function authorizeGuidance(
   authorization: string | null,
   settings: { token?: string; restrictedIngress?: boolean },

@@ -14,12 +14,18 @@ export interface MastraRunGuidanceOptions {
 const processorId = "ag-ui-run-guidance";
 
 /** @internal */
-export function isMastraRunGuidanceEntry(entry: {
-  description: string;
-}): boolean {
+export const bridgeRunGuidanceContext = Symbol.for(
+  "@ag-ui/mastra/bridge-run-guidance",
+);
+
+/** @internal */
+export function isMastraRunGuidanceEntry(entry: unknown): boolean {
   return (
-    entry.description === roleDescription ||
-    entry.description === toolDescription
+    typeof entry === "object" &&
+    entry !== null &&
+    "description" in entry &&
+    (entry.description === roleDescription ||
+      entry.description === toolDescription)
   );
 }
 

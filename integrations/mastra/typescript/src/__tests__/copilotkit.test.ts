@@ -226,6 +226,43 @@ describe.each([
     expect(mocks.captured.request.headers.get("authorization")).toBeNull();
   });
 
+  it("forwards a guidance opt-out to its default local agent factory", async () => {
+    const route = await invoke(register, {
+      path: "/copilotkit",
+      resourceId: "static",
+      runGuidance: false,
+    });
+    await route.handler(makeContext());
+
+    expect(mocks.captured.getLocalAgentsOptions.runGuidance).toBe(false);
+    expect(mocks.captured.runtimeOptions.runGuidance).toBeUndefined();
+  });
+
+  it("keeps the route's authorization hook active with guidance disabled", async () => {
+    const isTrusted = vi.fn((context: { req: { raw: Request } }) => {
+      if (context.req.raw.headers.get("authorization") !== "Bearer bot-key") {
+        throw new Error("Missing server credential");
+      }
+      return true;
+    });
+    const route = await invoke(register, {
+      path: "/copilotkit",
+      resourceId: "static",
+      runGuidance: { enabled: false, isTrusted },
+    });
+
+    await expect(route.handler(makeContext())).rejects.toThrow(
+      "Missing server credential",
+    );
+    expect(getLocalAgents).not.toHaveBeenCalled();
+
+    const authorized = makeContext({ authorization: "Bearer bot-key" });
+    await route.handler(authorized);
+    expect(isTrusted).toHaveBeenLastCalledWith(authorized);
+    expect(mocks.captured.getLocalAgentsOptions.runGuidance).toBe(false);
+    expect(mocks.captured.request.headers.get("authorization")).toBeNull();
+  });
+
   it("runs setContext with the shared request context before building agents", async () => {
     const seen: string[] = [];
     const route = await invoke(register, {

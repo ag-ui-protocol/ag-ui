@@ -5,7 +5,7 @@ import {
   registerMastraRunGuidanceCapabilities,
   withMastraRunGuidanceAuthority,
 } from "@ag-ui/mastra/run-guidance";
-import { authorizeGuidance } from "./run-guidance";
+import { authorizeGuidance, runGuidanceEnabled } from "./run-guidance";
 
 import { agenticChatAgent } from "./agents/agentic-chat";
 import { agenticChatReasoningAgent } from "./agents/agentic-chat-reasoning";
@@ -56,6 +56,7 @@ export const mastra = new Mastra({
         );
         if (authority === "reject")
           return context.json({ error: "Unauthorized" }, 401);
+        if (!runGuidanceEnabled) return next();
         // Mastra's validator also reads the raw body.
         const body: { requestContext?: Record<string, unknown> } | undefined =
           context.req.method === "POST"
@@ -71,7 +72,7 @@ export const mastra = new Mastra({
         );
       },
     ],
-    apiRoutes: [chatCapabilities],
+    apiRoutes: runGuidanceEnabled ? [chatCapabilities] : [],
   },
   agents: {
     agentic_chat: agenticChatAgent,
