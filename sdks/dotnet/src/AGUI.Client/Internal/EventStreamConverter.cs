@@ -41,6 +41,13 @@ internal static class EventStreamConverter
         await foreach (var update in AsChatResponseUpdatesCore(events, jsonSerializerOptions, owners, cancellationToken)
             .ConfigureAwait(false))
         {
+            // AGUI.Server serializes the originating ChatResponseUpdate onto BaseEvent.RawEvent,
+            // including custom AdditionalProperties. Restore those onto the update so they
+            // survive GetStreamingResponseAsync and ToChatResponse (issue #3272). Converter-owned
+            // keys (subagent attribution, owner markers) are never taken from the payload, and
+            // keys the converter already set are left alone.
+            ApplyRawEventAdditionalProperties(update);
+
             // The marker means this update was buffered and its owner already frozen at
             // creation — including when that owner is the parent. Re-resolving would read a
             // map that has moved on since.
@@ -70,6 +77,58 @@ internal static class EventStreamConverter
     /// "unresolved". Removed before the update is yielded.
     /// </summary>
     private const string AGUIOwnerResolvedKey = "agui.__ownerResolved";
+
+    private static void ApplyRawEventAdditionalProperties(ChatResponseUpdate update)
+    {
+        if (update.RawRepresentation is not BaseEvent { RawEvent: { } raw }
+            || raw.ValueKind != JsonValueKind.Object
+            || !raw.TryGetProperty("additionalProperties", out var properties)
+            || properties.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        update.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+        foreach (var property in properties.EnumerateObject())
+        {
+            if (property.Name == AGUIOwnerResolvedKey
+                || property.Name == AGUISubagentRunIdKey
+                || update.AdditionalProperties.ContainsKey(property.Name))
+            {
+                continue;
+            }
+
+            update.AdditionalProperties[property.Name] = ConvertRawEventProperty(property.Value);
+        }
+    }
+
+    private static object? ConvertRawEventProperty(JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.String:
+                return value.GetString();
+            case JsonValueKind.Number:
+                if (value.TryGetInt64(out var integer))
+                {
+                    return integer;
+                }
+
+                // Anything outside Int64 (UInt64.MaxValue, high-precision decimals,
+                // non-integral numbers) stays a cloned JsonElement so digits are not
+                // rounded through Double.
+                return value.Clone();
+            case JsonValueKind.True:
+                return true;
+            case JsonValueKind.False:
+                return false;
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+                return null;
+            default:
+                return value.Clone();
+        }
+    }
 
     /// <summary>
     /// Renders the open steps for an error message, naming each step's owner. Steps are

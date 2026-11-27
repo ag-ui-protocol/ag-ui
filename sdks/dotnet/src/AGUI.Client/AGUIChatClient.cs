@@ -255,13 +255,12 @@ public sealed class AGUIChatClient : DelegatingChatClient
             await foreach (var update in EventStreamConverter.AsChatResponseUpdates(
                 _transport.SendAsync(input, cancellationToken), _jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
             {
-                // Add agui_thread_id to RunStarted updates
+                // Add agui_thread_id to RunStarted updates without dropping custom
+                // keys EventStreamConverter just restored from rawEvent.additionalProperties.
                 if (update.RawRepresentation is RunStartedEvent)
                 {
-                    update.AdditionalProperties = new AdditionalPropertiesDictionary
-                    {
-                        [AGUIClientInternalKeys.ThreadId] = update.ConversationId ?? threadId
-                    };
+                    update.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+                    update.AdditionalProperties[AGUIClientInternalKeys.ThreadId] = update.ConversationId ?? threadId;
                 }
 
                 // Apply client vs server tool call distinction

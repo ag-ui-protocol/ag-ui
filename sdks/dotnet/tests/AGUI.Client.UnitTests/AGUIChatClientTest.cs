@@ -725,6 +725,262 @@ public sealed class AGUIChatClientTest
         Assert.Null(updates.ToChatResponse().Usage);
     }
 
+    // https://github.com/ag-ui-protocol/ag-ui/issues/3272
+    // AGUI.Server serializes each ChatResponseUpdate onto the event's rawEvent, including
+    // custom AdditionalProperties. AGUIChatClient must map those back onto streamed updates
+    // so GetStreamingResponseAsync exposes them and ToChatResponse hoists them onto the
+    // coalesced ChatMessage. MEAI routes properties by MessageId (dotnet/extensions#7194):
+    // TEXT_MESSAGE_* updates have ids so user keys land on ChatMessage; id-less updates
+    // such as RUN_STARTED land on ChatResponse (here: agui_thread_id).
+    [Fact]
+    public async Task GetStreamingResponse_SurfacesAdditionalPropertiesFromRawEvent()
+    {
+        var raw = JsonSerializer.SerializeToElement(
+            new ChatResponseUpdate(ChatRole.Assistant, "Hi")
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["MyProperty"] = "MyValue"
+                }
+            },
+            AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatResponseUpdate)));
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant", RawEvent = raw },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "Hi", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m1", RawEvent = raw },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var messages = new[] { new ChatMessage(ChatRole.User, "Hello!") };
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(messages))
+        {
+            updates.Add(u);
+        }
+
+        Assert.Contains(updates, u =>
+            u.RawRepresentation is TextMessageContentEvent
+            && u.AdditionalProperties?.TryGetValue("MyProperty", out string? streamed) == true
+            && streamed == "MyValue");
+
+        var response = await client.GetResponseAsync(messages);
+        Assert.Contains(response.Messages, m =>
+            m.AdditionalProperties?.TryGetValue("MyProperty", out string? onMessage) == true
+            && onMessage == "MyValue");
+        Assert.Equal("t1", response.AdditionalProperties?["agui_thread_id"]);
+    }
+
+    // Assigning a fresh AdditionalPropertiesDictionary on RunStarted would drop
+    // custom keys EventStreamConverter restored from rawEvent. Merge instead,
+    // and keep the SDK thread id authoritative over a spoofed agui_thread_id.
+    [Fact]
+    public async Task GetStreamingResponse_RunStarted_KeepsRawEventCustomProperties()
+    {
+        var raw = ParseRawEvent(
+            """
+            {
+              "additionalProperties": {
+                "MyProperty": "MyValue",
+                "agui_thread_id": "spoofed"
+              }
+            }
+            """);
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1", RawEvent = raw },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        var started = Assert.Single(updates, u => u.RawRepresentation is RunStartedEvent);
+        Assert.NotNull(started.AdditionalProperties);
+        Assert.True(
+            started.AdditionalProperties.TryGetValue("MyProperty", out string? custom) == true
+            && custom == "MyValue");
+        Assert.Equal("t1", started.AdditionalProperties["agui_thread_id"]);
+    }
+
+    // Converter-owned keys in rawEvent.additionalProperties must not be restored:
+    // agui.__ownerResolved would skip ResolveOwner (even when the payload value is
+    // false), and a raw agui.subagentRunId would stick on a parent-owned update
+    // because ResolveOwner returns null for the parent and does not overwrite.
+    [Fact]
+    public async Task GetStreamingResponse_RawEventConverterOwnedKeys_DoNotAffectOwnerResolution()
+    {
+        var raw = ParseRawEvent(
+            """
+            {
+              "additionalProperties": {
+                "agui.__ownerResolved": false,
+                "agui.subagentRunId": "spoofed",
+                "MyProperty": "MyValue"
+              }
+            }
+            """);
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new SubagentStartedEvent { SubagentRunId = "s1", Name = "researcher" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant", SubagentRunId = "s1" },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "from-subagent", SubagentRunId = "s1", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m1", SubagentRunId = "s1" },
+            new SubagentFinishedEvent { SubagentRunId = "s1" },
+            new TextMessageStartEvent { MessageId = "m2", Role = "assistant" },
+            new TextMessageContentEvent { MessageId = "m2", Delta = "from-parent", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m2" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "hi") }))
+        {
+            updates.Add(u);
+        }
+
+        var subagent = Assert.Single(updates, u =>
+            u.RawRepresentation is TextMessageContentEvent { MessageId: "m1" });
+        Assert.Equal("s1", subagent.AdditionalProperties?[EventStreamConverter.AGUISubagentRunIdKey]);
+        Assert.False(subagent.AdditionalProperties?.ContainsKey("agui.__ownerResolved"));
+        Assert.True(
+            subagent.AdditionalProperties?.TryGetValue("MyProperty", out string? subagentCustom) == true
+            && subagentCustom == "MyValue");
+
+        var parent = Assert.Single(updates, u =>
+            u.RawRepresentation is TextMessageContentEvent { MessageId: "m2" });
+        Assert.False(parent.AdditionalProperties?.ContainsKey(EventStreamConverter.AGUISubagentRunIdKey));
+        Assert.False(parent.AdditionalProperties?.ContainsKey("agui.__ownerResolved"));
+        Assert.True(
+            parent.AdditionalProperties?.TryGetValue("MyProperty", out string? parentCustom) == true
+            && parentCustom == "MyValue");
+    }
+
+    // Numbers that cannot round-trip through Int64 (or Double) must keep their
+    // original JSON digits. UInt64.MaxValue and a high-precision decimal both
+    // lose information if GetDouble is used after TryGetInt64 fails.
+    [Fact]
+    public async Task GetStreamingResponse_RawEventNumbers_PreserveExactValues()
+    {
+        var raw = ParseRawEvent(
+            """
+            {
+              "additionalProperties": {
+                "smallInt": 42,
+                "bigUint": 18446744073709551615,
+                "precise": 1.234567890123456789
+              }
+            }
+            """);
+
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant", RawEvent = raw },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "Hi", RawEvent = raw },
+            new TextMessageEndEvent { MessageId = "m1", RawEvent = raw },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(
+            new[] { new ChatMessage(ChatRole.User, "Hello!") }))
+        {
+            updates.Add(u);
+        }
+
+        var content = Assert.Single(updates, u => u.RawRepresentation is TextMessageContentEvent);
+        Assert.NotNull(content.AdditionalProperties);
+        Assert.Equal(42L, content.AdditionalProperties["smallInt"]);
+
+        var bigUint = Assert.IsType<JsonElement>(content.AdditionalProperties["bigUint"]);
+        Assert.Equal("18446744073709551615", bigUint.GetRawText());
+        Assert.Equal(18446744073709551615UL, bigUint.GetUInt64());
+
+        var precise = Assert.IsType<JsonElement>(content.AdditionalProperties["precise"]);
+        Assert.Equal("1.234567890123456789", precise.GetRawText());
+    }
+
+    // https://github.com/ag-ui-protocol/ag-ui/issues/3272
+    // Non-.NET servers omit rawEvent, and when they do send one it is not a
+    // serialized ChatResponseUpdate. Mapping those shapes must not throw and
+    // must not copy payload keys (foo, role, contents, ...) onto AdditionalProperties.
+    [Fact]
+    public async Task GetStreamingResponse_MissingRawEvent_DoesNotThrowOrCopyStrayKeys()
+    {
+        await AssertRawEventDoesNotLeakKeysAsync(rawEvent: null);
+    }
+
+    [Theory]
+    [InlineData("{\"foo\":1}")]
+    [InlineData("\"not-an-object\"")]
+    [InlineData("42")]
+    [InlineData("[1,2]")]
+    [InlineData("true")]
+    [InlineData("{\"role\":\"assistant\",\"contents\":[]}")]
+    [InlineData("{\"additionalProperties\":\"oops\"}")]
+    [InlineData("{\"additionalProperties\":[1]}")]
+    [InlineData("{\"additionalProperties\":3}")]
+    [InlineData("{\"additionalProperties\":null}")]
+    public async Task GetStreamingResponse_NonDotNetOrMalformedRawEvent_DoesNotThrowOrCopyStrayKeys(string rawJson)
+    {
+        using var doc = JsonDocument.Parse(rawJson);
+        await AssertRawEventDoesNotLeakKeysAsync(doc.RootElement.Clone());
+    }
+
+    private static JsonElement ParseRawEvent(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    private static async Task AssertRawEventDoesNotLeakKeysAsync(JsonElement? rawEvent)
+    {
+        var transport = new StaticTransport(
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1", RawEvent = rawEvent },
+            new TextMessageStartEvent { MessageId = "m1", Role = "assistant", RawEvent = rawEvent },
+            new TextMessageContentEvent { MessageId = "m1", Delta = "Hi", RawEvent = rawEvent },
+            new TextMessageEndEvent { MessageId = "m1", RawEvent = rawEvent },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1", RawEvent = rawEvent });
+        using var client = new AGUIChatClient(new() { Transport = transport });
+        var messages = new[] { new ChatMessage(ChatRole.User, "Hello!") };
+
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var u in client.GetStreamingResponseAsync(messages).ConfigureAwait(false))
+        {
+            updates.Add(u);
+        }
+
+        var content = Assert.Single(updates, u => u.RawRepresentation is TextMessageContentEvent);
+        AssertNoLeakedRawEventKeys(content.AdditionalProperties);
+
+        var response = await client.GetResponseAsync(messages).ConfigureAwait(false);
+        Assert.All(response.Messages, m => AssertNoLeakedRawEventKeys(m.AdditionalProperties));
+        Assert.Equal("t1", response.AdditionalProperties?["agui_thread_id"]);
+        AssertNoLeakedRawEventKeys(response.AdditionalProperties);
+    }
+
+    private static void AssertNoLeakedRawEventKeys(AdditionalPropertiesDictionary? properties)
+    {
+        if (properties is null)
+        {
+            return;
+        }
+
+        foreach (var key in properties.Keys)
+        {
+            Assert.False(
+                key is "foo" or "role" or "contents" or "authorName" or "additionalProperties" or "MyProperty",
+                $"Stray rawEvent key '{key}' landed in AdditionalProperties.");
+        }
+    }
+
     private sealed class CapturingTransport(params BaseEvent[] middleEvents) : IAGUITransport
     {
         public RunAgentInput? LastInput { get; private set; }
