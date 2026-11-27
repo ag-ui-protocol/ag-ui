@@ -33,6 +33,7 @@ node_modules
 
 **/typescript/**/node_modules/
 **/typescript/**/dist/
+integrations/copilot-sdk/typescript/dist-example/
 
 # Turborepo
 .turbo

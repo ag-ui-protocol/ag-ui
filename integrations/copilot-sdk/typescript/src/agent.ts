@@ -1,0 +1,646 @@
+import {
+  contentToText,
+  EventType as E,
+  type BaseEvent,
+  type Message,
+  type RunAgentInput,
+  type RunFinishedEvent,
+  type ToolMessage,
+  type UserMessage,
+} from "@ag-ui/core";
+import { AbstractAgent, type AgentConfig } from "@ag-ui/client";
+import type {
+  CopilotSession,
+  ResumeSessionConfig,
+  SessionConfig,
+  SessionEvent,
+  Tool,
+  ToolInvocation,
+} from "@github/copilot-sdk";
+import { createHash, randomUUID } from "node:crypto";
+import { Observable } from "rxjs";
+import { CopilotEventMapper } from "./mapper.js";
+
+/** The slice of the native session this integration depends on. */
+export type CopilotSessionPort = Pick<
+  CopilotSession,
+  "sessionId" | "send" | "abort" | "disconnect"
+> & {
+  rpc: { tools: Pick<CopilotSession["rpc"]["tools"], "handlePendingToolCall"> };
+};
+
+export interface CopilotClientPort {
+  createSession(config: SessionConfig): Promise<CopilotSessionPort>;
+  resumeSession(sessionId: string, config: ResumeSessionConfig): Promise<CopilotSessionPort>;
+  getSessionMetadata(sessionId: string): Promise<unknown>;
+  deleteSession(sessionId: string): Promise<void>;
+}
+
+/** What a server-side tool handler gets besides its arguments. */
+export interface ToolContext extends ToolInvocation {
+  /** Shared state the client sent with the current run. */
+  state: unknown;
+  /** Emit an AG-UI event into the current run, ordered with the native stream; a no-op once that run ended. */
+  emit(event: BaseEvent): void;
+  /** Replace the shared state (a STATE_SNAPSHOT). */
+  setState(snapshot: unknown): void;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface AGUITool<TArgs = any> extends Omit<Tool<TArgs>, "handler"> {
+  /** Omit the handler to make the call pause: the browser (or an interrupt) resolves it. */
+  handler?: (args: TArgs, context: ToolContext) => Promise<unknown> | unknown;
+}
+
+/** Tells CopilotKit which streamed tool argument to mirror into which state key. */
+export interface PredictStateEntry {
+  state_key: string;
+  tool: string;
+  tool_argument: string;
+}
+
+export interface CopilotAgentConfig extends AgentConfig {
+  client: CopilotClientPort;
+  model?: string;
+  instructions?: string;
+  /** Server-side tools the model may call directly. */
+  tools?: AGUITool[];
+  sessionConfig?: Omit<SessionConfig, "onEvent" | "tools">;
+  /** Emitted as a `PredictState` CUSTOM event at the start of every run. */
+  predictState?: PredictStateEntry[];
+  /**
+   * Handler-less tools (by name) that pause the run with an interrupt outcome
+   * instead of a plain finish. The function maps the client's resume payload
+   * to the result the model sees when the paused call continues.
+   */
+  interrupts?: Record<string, (payload: unknown, args: unknown) => unknown>;
+  /** Wall-clock budget for a single run; on expiry the native work is abandoned. */
+  runTimeoutMs?: number;
+  /** Bounds the in-process pending-tool registry. */
+  maxPendingTools?: number;
+}
+
+interface PendingCall {
+  requestId: string;
+  toolName: string;
+  args: unknown;
+  subagentRunId?: string;
+}
+
+/** AG-UI events raised by tool handlers ride the native queue to keep ordering. */
+interface EmittedEvent {
+  type: "agui";
+  event: BaseEvent;
+  /** The run that emitted it: another run drops it. */
+  run?: object;
+}
+
+interface Thread {
+  session?: CopilotSessionPort;
+  mapper: CopilotEventMapper;
+  /** AG-UI toolCallId -> the suspended external tool call this process still holds. */
+  pending: Map<string, PendingCall>;
+  /** `u:`user ids and `t:`tool call ids the native session consumed; outlives dispose like the session. */
+  delivered: Set<string>;
+  events: Array<SessionEvent | EmittedEvent>;
+  state: unknown;
+  /** Identity of the active run: handler callbacks act only while it is still the active one. */
+  run?: object;
+  wake?: () => void;
+  busy: boolean;
+  /** The frontend tool list the live session was opened with. */
+  tools?: string;
+  /** Names the live session registered without a handler: their calls suspend. */
+  paused?: Set<string>;
+  /** The one teardown every concurrent dispose of this thread awaits. */
+  closing?: Promise<void>;
+}
+
+type Attachment = NonNullable<Parameters<CopilotSession["send"]>[0]["attachments"]>[number];
+
+/** Native sessions are process-local; a restart drops suspended tool calls. */
+const MAX_THREADS = 32;
+/** Quiet period after a pending tool request before handing off to the browser. */
+const HANDOFF_DELAY_MS = 50;
+
+function byokProvider(): Pick<SessionConfig, "provider" | "model"> | undefined {
+  const baseUrl = process.env.OPENAI_BASE_URL;
+  if (!baseUrl) return undefined;
+  return {
+    provider: { type: "openai", baseUrl, apiKey: process.env.OPENAI_API_KEY },
+    model: process.env.OPENAI_CHAT_MODEL_ID ?? "gpt-4o",
+  };
+}
+
+/** Mirrors the sibling SDK integrations: state and context belong in the prompt preamble. */
+function buildPrompt(input: RunAgentInput, userContent: string): string {
+  const parts: string[] = [];
+  if (input.context?.length) {
+    parts.push("## Context from the application");
+    for (const entry of input.context) parts.push(`- ${entry.description}: ${entry.value}`);
+    parts.push("");
+  }
+  if (input.state && Object.keys(input.state as object).length > 0) {
+    parts.push("## Current shared state");
+    parts.push(`\`\`\`json\n${JSON.stringify(input.state, null, 2)}\n\`\`\``);
+    parts.push("");
+  }
+  parts.push(userContent);
+  return parts.join("\n");
+}
+
+function isToolMessage(message: Message): message is ToolMessage {
+  return message.role === "tool";
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Unsupported media retains a text placeholder rather than disappearing silently. */
+function userInput(content: UserMessage["content"]): { text: string; attachments: Attachment[] } {
+  if (typeof content === "string") return { text: content, attachments: [] };
+  const attachments: Attachment[] = [];
+  const text: string[] = [];
+  let warned = false;
+  for (const part of content) {
+    if (part.type === "text") {
+      text.push(part.text);
+      continue;
+    }
+    if (part.source.type === "data") {
+      attachments.push({ type: "blob", data: part.source.value.replace(/^data:[^,]*,/, ""), mimeType: part.source.mimeType });
+    } else {
+      text.push(`[Unsupported ${part.type} content]`);
+      if (!warned) {
+        console.warn("[copilot-sdk] Unsupported media: using text placeholders; only inline data is forwarded");
+        warned = true;
+      }
+    }
+  }
+  return { text: text.join("\n"), attachments };
+}
+
+/**
+ * Serves one Copilot SDK session per AG-UI thread.
+ *
+ * Frontend tools are registered without a handler, so the runtime suspends the
+ * call and reports it as `external_tool.requested`. The run then finishes, the
+ * browser executes the tool, and the next `RunAgentInput` carries a `role: "tool"`
+ * message that resolves the *original* RPC through `handlePendingToolCall` —
+ * the result is never re-prompted as user text.
+ */
+export class CopilotAgent extends AbstractAgent {
+  private readonly threads = new Map<string, Thread>();
+  // ponytail: never pruned (a few ids per turn), like the native sessions it mirrors.
+  private readonly delivered = new Map<string, Set<string>>();
+  /** Shared with clones so a disposed thread resumes its own native session, never another agent's. */
+  private readonly sessionPrefix = randomUUID();
+  private readonly config: CopilotAgentConfig;
+
+  constructor(config: CopilotAgentConfig) {
+    super(config);
+    this.config = config;
+  }
+
+  override clone(): CopilotAgent {
+    return Object.assign(super.clone(), {
+      config: this.config,
+      threads: this.threads,
+      delivered: this.delivered,
+      sessionPrefix: this.sessionPrefix,
+    });
+  }
+
+  /**
+   * Closes the sessions shared by this agent and its clones and deletes their native
+   * history. Call at host shutdown, once the host stops admitting runs and drains them.
+   */
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.threads.keys()].map((id) => this.dispose(id)));
+    // Best effort: the ledger names every thread this family opened; ids never stored just fail.
+    // ponytail: a run still opening its session during the sweep leaves it on disk, and every
+    // delete starts at once; gate admissions or batch the deletes if either starts to matter.
+    const { client } = this.config;
+    await Promise.allSettled(
+      [...this.delivered.keys()].map(async (id) =>
+        this.withDeadline(client.deleteSession(this.sessionId(id)), Date.now() + 5000, "")),
+    );
+  }
+
+  // The CLI accepts only [A-Za-z0-9_-] ids, so the thread id is hashed.
+  private sessionId(threadId: string): string {
+    return `${this.sessionPrefix}-${createHash("sha256").update(threadId).digest("hex")}`;
+  }
+
+  private async dispose(threadId: string, thread = this.threads.get(threadId)): Promise<void> {
+    if (!thread) return;
+    thread.closing ??= (async () => {
+      const session = thread.session;
+      if (session) {
+        // Stay reserved until closed, so a retry cannot resume the same native session mid-teardown.
+        thread.busy = true;
+        for (const close of [() => session.abort(), () => session.disconnect()]) {
+          // try/catch, not .catch(): a closer that throws synchronously must not skip removal.
+          try {
+            await this.withDeadline(close(), Date.now() + 5000, "");
+          } catch {}
+        }
+      }
+      if (this.threads.get(threadId) === thread) this.threads.delete(threadId);
+    })();
+    await thread.closing;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((subscriber) => {
+      const controller = new AbortController();
+      void (async () => {
+        try {
+          for await (const event of this.stream(input, controller.signal)) subscriber.next(event);
+          subscriber.complete();
+        } catch (error) {
+          subscriber.error(error);
+        }
+      })();
+      return () => controller.abort();
+    });
+  }
+
+  private async *stream(input: RunAgentInput, signal: AbortSignal): AsyncGenerator<BaseEvent> {
+    const timeoutMs = this.config.runTimeoutMs ?? 120_000;
+    const maxPending = this.config.maxPendingTools ?? 32;
+    const deadline = Date.now() + timeoutMs;
+
+    let thread = this.threads.get(input.threadId);
+    // A stale answer must not take a cache slot or tear down the live session's other pending calls.
+    const delivered = this.delivered.get(input.threadId);
+    if (input.resume?.some((entry) => !thread?.pending.has(entry.interruptId) && !delivered?.has(`t:${entry.interruptId}`))) {
+      yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+      yield { type: E.RUN_ERROR, message: "Unknown or expired interrupt", code: "COPILOT_SDK_ERROR" };
+      return;
+    }
+    // Re-inserting keeps the Map in least-recently-used order.
+    this.threads.delete(input.threadId);
+    while (!thread && this.threads.size >= MAX_THREADS) {
+      // Join a teardown already freeing a slot before evicting another thread,
+      // and never evict a thread mid-run: that would abort a live stream. A thread
+      // awaiting an approval goes last, so abandoned approvals cannot block admission.
+      const entries = [...this.threads];
+      const victim = (
+        entries.find(([, entry]) => entry.closing) ??
+        entries.find(([, entry]) => !entry.busy && !entry.pending.size) ??
+        entries.find(([, entry]) => !entry.busy)
+      )?.[0];
+      if (victim === undefined) {
+        yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+        yield { type: E.RUN_ERROR, message: "Thread capacity reached; every thread has an active run", code: "COPILOT_SDK_ERROR" };
+        return;
+      }
+      await this.dispose(victim);
+      // A concurrent run for this thread may have opened it while we waited.
+      thread = this.threads.get(input.threadId);
+      this.threads.delete(input.threadId);
+    }
+    if (!this.delivered.has(input.threadId)) this.delivered.set(input.threadId, new Set());
+    thread ??= {
+      mapper: new CopilotEventMapper(),
+      pending: new Map(),
+      delivered: this.delivered.get(input.threadId)!,
+      events: [],
+      state: undefined,
+      busy: false,
+    };
+    this.threads.set(input.threadId, thread);
+    if (thread.busy) {
+      // Refuse outside the try below: its finally would release the active run's flag.
+      yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+      yield { type: E.RUN_ERROR, message: "Thread already has an active run", code: "COPILOT_SDK_ERROR" };
+      return;
+    }
+
+    let failure: string | undefined;
+    try {
+      // Inside the try so a consumer closing the stream at any yield still releases busy.
+      thread.busy = true;
+      thread.state = input.state;
+      thread.run = {};
+
+      yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
+      yield* thread.mapper.resume();
+      if (this.config.predictState) {
+        yield { type: E.CUSTOM, name: "PredictState", value: this.config.predictState };
+      }
+
+      // Only results that resolve a call this process still holds are actionable;
+      // CopilotKit replays the whole transcript on every run.
+      const results = input.messages
+        .filter(isToolMessage)
+        .filter((message) => thread!.pending.has(message.toolCallId));
+      const lastUser = [...input.messages]
+        .reverse()
+        .find((message): message is UserMessage => message.role === "user");
+      const newUser =
+        lastUser && !thread.delivered.has(`u:${lastUser.id}`) ? userInput(lastUser.content) : undefined;
+
+      for (const entry of input.resume ?? []) {
+        if (!thread.pending.has(entry.interruptId)) continue; // A replay of an answer already delivered.
+        if (!results.some((result) => result.toolCallId === entry.interruptId)) {
+          results.push({
+            id: `resume:${entry.interruptId}`, role: "tool", toolCallId: entry.interruptId,
+            content: JSON.stringify(entry.status === "cancelled" ? { cancelled: true } : entry.payload ?? null),
+          });
+        }
+      }
+      // Only a run that continues a tool call needs the old session; resolved
+      // tool messages stay in the replayed transcript forever.
+      const tail = input.messages.at(-1);
+      if (!thread.session && tail && isToolMessage(tail) && !thread.delivered.has(`t:${tail.toolCallId}`)) {
+        throw new Error("Pending tool session was lost; start a new thread");
+      }
+      // Tools are fixed when a session opens: a new turn with a different tool list
+      // re-opens it, resuming the same native history by ID.
+      if (thread.session && newUser && !thread.pending.size && thread.tools !== JSON.stringify(input.tools)) {
+        await this.withDeadline(thread.session.disconnect(), deadline, "Session re-open timed out");
+        thread.session = undefined;
+        thread.events.length = 0;
+      }
+      if (!thread.session) {
+        thread.session = await this.withDeadline(
+          this.createSession(thread, input, () =>
+            input.messages.at(-1) === lastUser && !!newUser && !signal.aborted && Date.now() < deadline),
+          deadline,
+          "Session creation timed out",
+        );
+      }
+
+      // Before any native dispatch, so a cancelled run never marks its prompt delivered.
+      if (signal.aborted) throw new Error("Run cancelled");
+
+      if (results.length) {
+        await this.withDeadline(
+          Promise.all(results.map((result) => this.resolvePending(thread!, result))),
+          deadline,
+          "Pending tool resolution timed out",
+        );
+      } else if (newUser) {
+        const { text, attachments } = newUser;
+        await this.withDeadline(
+          thread.session.send({
+            prompt: buildPrompt(input, text || (attachments.length ? "Describe the attached media." : "")),
+            ...(attachments.length ? { attachments } : {}),
+          }),
+          deadline,
+          "Prompt dispatch timed out",
+        );
+        // After the ack, so a failed send stays retryable.
+        // ponytail: a timed-out send that did arrive is sent again on retry.
+        thread.delivered.add(`u:${lastUser!.id}`);
+      } else {
+        // Nothing new to do: a replayed transcript with no unresolved work.
+        yield* thread.mapper.finish();
+        yield* thread.mapper.suspend();
+        yield { type: E.RUN_FINISHED, threadId: input.threadId, runId: input.runId, ...this.interruptOutcome(thread) };
+        return;
+      }
+
+      while (true) {
+        const event = await this.nextEvent(thread, deadline, signal);
+        if (signal.aborted) throw new Error("Run cancelled");
+        if (!event) {
+          // Quiet with suspended tool calls: hand off to the browser and end the run.
+          if (thread.pending.size) break;
+          throw new Error("Run timed out");
+        }
+        if (event.type === "agui") {
+          if (event.run === thread.run) yield event.event;
+          continue;
+        }
+        if (event.type === "session.error") throw new Error(event.data.message || "SDK session failed");
+        if (event.type === "abort") throw new Error("Run cancelled");
+        // Emitted by the runtime but missing from the SDK's SessionEvent union.
+        if ((event.type as string) === "agent.interrupted") throw new Error("Run was interrupted");
+        if (event.type === "external_tool.requested") {
+          const { toolCallId, requestId, toolName, arguments: args } = event.data;
+          if (thread.paused?.has(toolName)) {
+            if (!thread.pending.has(toolCallId) && thread.pending.size >= maxPending) {
+              throw new Error("Pending frontend tool limit exceeded");
+            }
+            const subagentRunId = (event as { agentId?: string }).agentId;
+            thread.pending.set(toolCallId, { requestId, toolName, args, subagentRunId });
+          }
+        }
+        yield* thread.mapper.mapEvent(event);
+        if (event.type === "session.idle" && !event.agentId && !thread.pending.size) break;
+      }
+
+      yield* thread.mapper.finish();
+      yield* thread.mapper.suspend();
+      yield {
+        type: E.RUN_FINISHED,
+        threadId: input.threadId,
+        runId: input.runId,
+        ...this.interruptOutcome(thread),
+      };
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+      yield* thread.mapper.finish();
+      yield { type: E.RUN_ERROR, message: failure, code: "COPILOT_SDK_ERROR" };
+    } finally {
+      // A thread being closed stays reserved, so a retry cannot reuse its session.
+      if (!thread.closing) thread.busy = false;
+      thread.run = undefined;
+      // A failed run leaves the native session in an unknown state; drop it rather
+      // than leaking the thread's session and its suspended RPCs.
+      if (failure !== undefined) await this.dispose(input.threadId, thread);
+    }
+  }
+
+  /** Own-entry lookup, so names like `toString` are not inherited handlers. */
+  private interruptHandler(name: string): ((payload: unknown, args: unknown) => unknown) | undefined {
+    const interrupts = this.config.interrupts;
+    return interrupts && Object.hasOwn(interrupts, name) ? interrupts[name] : undefined;
+  }
+
+  /** Suspended interrupt tools turn the finish into an interrupt outcome the client must resume. */
+  private interruptOutcome(thread: Thread): Pick<RunFinishedEvent, "outcome"> | Record<string, never> {
+    const interrupts = [...thread.pending]
+      .filter(([, call]) => this.interruptHandler(call.toolName) !== undefined)
+      .map(([toolCallId, call]) => ({
+        id: toolCallId,
+        reason: "tool_call" as const,
+        toolCallId,
+        message: `Paused in ${call.toolName}`,
+        metadata: { reason: call.args },
+        ...(call.subagentRunId ? { subagentRunId: call.subagentRunId } : {}),
+      }));
+    return interrupts.length ? { outcome: { type: "interrupt", interrupts } } : {};
+  }
+
+  private enqueue(thread: Thread, event: BaseEvent, run: object | undefined): void {
+    thread.events.push({ type: "agui", event, run });
+    thread.wake?.();
+  }
+
+  /** Server-side handlers get the AG-UI run context; handler-less tools pause. */
+  private bindTools(thread: Thread): Tool[] {
+    return (this.config.tools ?? []).map((tool) => {
+      const { handler } = tool;
+      if (!handler) return { ...tool, skipPermission: true } as Tool;
+      return {
+        ...tool,
+        handler: (args: unknown, invocation: ToolInvocation) => {
+          // A retained context must not write into a later run's state or stream.
+          const run = thread.run;
+          const live = () => run !== undefined && thread.run === run;
+          return handler(args, {
+            ...invocation,
+            state: thread.state,
+            emit: (event) => {
+              if (live()) this.enqueue(thread, event, run);
+            },
+            setState: (snapshot) => {
+              if (!live()) return;
+              thread.state = structuredClone(snapshot);
+              this.enqueue(thread, { type: E.STATE_SNAPSHOT, snapshot: structuredClone(thread.state) }, run);
+            },
+          });
+        },
+      } as Tool;
+    });
+  }
+
+  private async createSession(
+    thread: Thread,
+    input: RunAgentInput,
+    canReset: () => boolean,
+  ): Promise<CopilotSessionPort> {
+    // Frontend tools are declared without a handler: that is what makes the
+    // runtime suspend the call instead of executing it. The browser owns the
+    // permission decision, so the runtime must not gate it.
+    const frontendTools = input.tools.map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+      skipPermission: true,
+    }));
+    const tools = [...this.bindTools(thread), ...frontendTools];
+    // The runtime rejects duplicate names; failing first keeps resume recovery from deleting the history.
+    const names = tools.map((tool) => tool.name);
+    const duplicate = names.find((name, i) => names.indexOf(name) !== i);
+    if (duplicate !== undefined) throw new Error(`Duplicate tool name: ${duplicate}`);
+    thread.tools = JSON.stringify(input.tools);
+    thread.paused = new Set(tools.filter((tool) => !(tool as Tool).handler).map((tool) => tool.name));
+    const config = {
+      model: this.config.model ?? "gpt-5.4-mini",
+      streaming: true,
+      // Only the tools registered here, plus the `task` built-in when custom
+      // agents exist (it is what dispatches them). Required by `mode: "empty"`.
+      availableTools: ["custom:*", ...(this.config.sessionConfig?.customAgents?.length ? ["builtin:task"] : [])],
+      ...(this.config.instructions
+        ? { systemMessage: { mode: "append", content: this.config.instructions } }
+        : {}),
+      ...byokProvider(),
+      ...this.config.sessionConfig,
+      tools,
+      onEvent: (event: SessionEvent) => {
+        thread.events.push(event);
+        thread.wake?.();
+      },
+    } as SessionConfig;
+    // The native session is keyed by the thread, so a thread whose in-memory
+    // entry was disposed (cancel, timeout, eviction) resumes its history.
+    const { client } = this.config;
+    const sessionId = this.sessionId(input.threadId);
+    if (await client.getSessionMetadata(sessionId)) {
+      try {
+        return await client.resumeSession(sessionId, config);
+      } catch (error) {
+        // The SDK already tried transcript recovery; without a reset every later run
+        // of this thread fails. Only a live run ending in a new user turn may reset it,
+        // never a replay or a run that timed out or was cancelled meanwhile.
+        // ponytail: any resume error resets, classify once the SDK exposes error codes;
+        // a retry can still race a reset its timed-out run left in flight.
+        if (!canReset()) throw error;
+        console.warn("[copilot-sdk] Resume failed; deleting the session and starting this thread fresh", error);
+        await client.deleteSession(sessionId);
+        if (!canReset()) throw error;
+        thread.events.length = 0;
+      }
+    }
+    return client.createSession({ ...config, sessionId });
+  }
+
+  private async resolvePending(thread: Thread, result: ToolMessage): Promise<void> {
+    const call = thread.pending.get(result.toolCallId);
+    if (!call) return; // A duplicate result for a call that was already resolved.
+    thread.pending.delete(result.toolCallId);
+    const resume = this.interruptHandler(call.toolName);
+    // An interrupt's answer arrives as the tool result; the mapper decides what the model reads.
+    const text = contentToText(result.content);
+    const content = resume && !result.error ? resume(parseJson(text), call.args) : text;
+    const response = await thread.session!.rpc.tools.handlePendingToolCall({
+      requestId: call.requestId,
+      result: result.error
+        ? { textResultForLlm: text, resultType: "failure", error: result.error }
+        : typeof content === "string"
+          ? content
+          : JSON.stringify(content),
+    });
+    if (!response.success) throw new Error("Native pending tool call could not be resolved");
+    thread.delivered.add(`t:${result.toolCallId}`);
+  }
+
+  /**
+   * Returns the next native event, or `undefined` on cancellation, timeout,
+   * or a quiet stream with suspended tool calls.
+   */
+  private async nextEvent(
+    thread: Thread,
+    deadline: number,
+    signal: AbortSignal,
+  ): Promise<SessionEvent | EmittedEvent | undefined> {
+    while (!signal.aborted && !thread.events.length) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return undefined;
+      const wait = thread.pending.size ? Math.min(HANDOFF_DELAY_MS, remaining) : remaining;
+      const quiet = await new Promise<boolean>((resolve) => {
+        const finish = (quiet: boolean) => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", wake);
+          thread.wake = undefined;
+          resolve(quiet);
+        };
+        const wake = () => finish(false);
+        const timer = setTimeout(() => finish(true), wait);
+        thread.wake = wake;
+        signal.addEventListener("abort", wake, { once: true });
+      });
+      if (quiet && thread.pending.size) return undefined;
+      if (quiet && Date.now() >= deadline) return undefined;
+    }
+    // Checked even with events queued: a turn consumed after the deadline must not report success.
+    return signal.aborted || Date.now() >= deadline ? undefined : thread.events.shift();
+  }
+
+  /** Abandons the native promise on expiry instead of awaiting a stuck RPC. */
+  private withDeadline<T>(work: Promise<T>, deadline: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), Math.max(0, deadline - Date.now()));
+      work.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+}

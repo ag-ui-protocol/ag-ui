@@ -72,6 +72,12 @@
     "notice": "integrations/community/spring-ai/typescript/LICENSE"
   },
   {
+    "directory": "integrations/copilot-sdk/typescript",
+    "names": ["@ag-ui/copilot-sdk"],
+    "license": "MIT",
+    "notice": "integrations/copilot-sdk/typescript/LICENSE"
+  },
+  {
     "directory": "integrations/crew-ai/typescript",
     "names": ["@ag-ui/crewai"],
     "license": "MIT",
