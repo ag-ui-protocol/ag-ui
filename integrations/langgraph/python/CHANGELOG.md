@@ -11,9 +11,6 @@
 - Stale guidance is scrubbed from state snapshots.
 - Preserves legacy message order and default checkpointing.
 - Documentation added for run guidance, keyless listeners, and cross-host encryption.
-
-### Breaking changes
-
 - Run guidance behavior and state snapshot handling changed; verify guidance opt-out and snapshot contents after upgrade.
 
 ## 0.0.48 — 2026-11-21
