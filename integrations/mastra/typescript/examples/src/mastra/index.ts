@@ -31,7 +31,7 @@ const guidanceSettings = {
 export const mastra = new Mastra({
   server: {
     port: process.env.PORT ? parseInt(process.env.PORT) : 4111,
-    host: "0.0.0.0",
+    host: process.env.MASTRA_HOST || "0.0.0.0",
     middleware: [
       async (context, next) => {
         let path: string;
