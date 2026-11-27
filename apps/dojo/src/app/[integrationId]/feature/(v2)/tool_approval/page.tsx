@@ -26,16 +26,40 @@ interface ApprovalPayload extends ApprovalRequest {
   type?: unknown;
 }
 
-// The @ag-ui/mastra bridge publishes a pending approval as a standard
-// interrupt: `event.value` is the Interrupt, with the details under
-// `metadata.mastra`. Returns null for any other interrupt so this hook ignores
-// it.
+// A pending approval arrives as a standard interrupt: `event.value` is the
+// Interrupt. Two integrations say it two ways:
+//
+// - @ag-ui/mastra puts the details under `metadata.mastra`.
+// - ag_ui_strands publishes the Strands harness's own gate as a `tool_call`
+//   interrupt whose answer is `{ approved: boolean }`, with the call under
+//   `metadata.tool_name` and `metadata.tool_input`.
+//
+// Returns null for any other interrupt so this hook ignores it.
 function readApprovalRequest(value: unknown): ApprovalRequest | null {
   if (!value || typeof value !== "object") return null;
-  const request = (value as { metadata?: { mastra?: ApprovalPayload } })
-    .metadata?.mastra;
-  if (request?.type !== "mastra_tool_approval") return null;
-  return { toolName: request.toolName, args: request.args };
+  const interrupt = value as {
+    reason?: unknown;
+    metadata?: {
+      mastra?: ApprovalPayload;
+      tool_name?: unknown;
+      tool_input?: unknown;
+    };
+  };
+  const request = interrupt.metadata?.mastra;
+  if (request?.type === "mastra_tool_approval")
+    return { toolName: request.toolName, args: request.args };
+  const toolName = interrupt.metadata?.tool_name;
+  if (interrupt.reason === "tool_call" && typeof toolName === "string") {
+    const input = interrupt.metadata?.tool_input;
+    return {
+      toolName,
+      args:
+        input && typeof input === "object"
+          ? (input as ApprovalRequest["args"])
+          : undefined,
+    };
+  }
+  return null;
 }
 
 // Shape of the `record_expense` tool result once the approved call has run.

@@ -379,6 +379,12 @@ def record_template_tool_selection(agent: Any, allowed: Optional[Set[str]]) -> N
     setattr(agent, _ALLOWED_ATTR, allowed)
 
 
+# Where a per-thread agent that was not cloned from the adapter's template
+# keeps the tools the per-request filter chooses among. Each such agent is
+# built with tool instances of its own, so there is no one list to share.
+THREAD_TEMPLATE_TOOLS_ATTR = "_ag_ui_thread_template_tools"
+
+
 class TemplateToolsNarrowingHook(HookProvider):
     """Re-narrow the filtered set once a resumed batch has been dispatched.
 
@@ -421,8 +427,9 @@ class TemplateToolsNarrowingHook(HookProvider):
         allowed = getattr(agent, _ALLOWED_ATTR, _UNSET)
         if allowed is _UNSET or allowed is None:
             return
+        own = getattr(agent, THREAD_TEMPLATE_TOOLS_ATTR, None)
         apply_template_tool_selection(
             agent.tool_registry,
-            self._template_tools,
+            own if own is not None else self._template_tools,
             allowed,
         )

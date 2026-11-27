@@ -260,6 +260,14 @@ const ALL_SERVICES = {
       env: { PORT: 8017, STRANDS_DEMO_FIXED_WEATHER: "1" },
     },
   ],
+  "aws-strands-harness": [
+    {
+      command: "poetry run dev-harness",
+      name: "AWS Strands Harness",
+      cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
+      env: { PORT: 8032, STRANDS_DEMO_FIXED_WEATHER: "1" },
+    },
+  ],
   "aws-strands-typescript": [
     {
       command: "pnpm run dojo",
@@ -479,6 +487,7 @@ const ALL_SERVICES = {
         AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
+        AWS_STRANDS_HARNESS_URL: "http://localhost:8032",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",
@@ -524,6 +533,7 @@ const ALL_SERVICES = {
         AGUI_DOTNET_URL: "http://localhost:8023",
         AWS_STRANDS_URL: "http://localhost:8017",
         AWS_STRANDS_TYPESCRIPT_URL: "http://localhost:8022",
+        AWS_STRANDS_HARNESS_URL: "http://localhost:8032",
         CLAUDE_AGENT_SDK_PYTHON_URL: "http://localhost:8019",
         CLAUDE_AGENT_SDK_TYPESCRIPT_URL: "http://localhost:8020",
         CLAUDE_MANAGED_AGENTS_DOTNET_URL: "http://localhost:8026",

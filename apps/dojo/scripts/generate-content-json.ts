@@ -491,6 +491,35 @@ const agentFilesMapper: Record<
       {},
     );
   },
+  // Every harness demo is built in one file, from the plain demo beside it.
+  "aws-strands-harness": (agentKeys: string[]) => {
+    return agentKeys.reduce(
+      (acc, agentId) => ({
+        ...acc,
+        [agentId]: [
+          path.join(
+            __dirname,
+            integrationsFolderPath,
+            "/aws-strands/python/examples/server/harness.py",
+          ),
+          ...(agentId === "tool_approval"
+            ? []
+            : [
+                path.join(
+                  __dirname,
+                  integrationsFolderPath,
+                  `/aws-strands/python/examples/server/api/${
+                    agentId.startsWith("generative_ui_")
+                      ? "agentic_chat"
+                      : agentId
+                  }.py`,
+                ),
+              ]),
+        ],
+      }),
+      {},
+    );
+  },
   "aws-strands-typescript": (agentKeys: string[]) => {
     // TS example filenames use hyphens — map underscore keys (agentic_chat)
     // to hyphenated filenames (agentic-chat.ts).

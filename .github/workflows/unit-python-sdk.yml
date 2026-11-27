@@ -1022,6 +1022,63 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: ./.github/actions/assert-lockfiles-unchanged
 
+  aws-strands-python-harness:
+    name: aws-strands-python-harness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        # id so the lockfile assertion below can gate on this step's outcome. See
+        # the locked lane for why !cancelled() alone is not enough.
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: integrations/aws-strands/python
+        run: uv sync --locked
+
+      - name: Install strands-harness
+        working-directory: integrations/aws-strands/python
+        # Installed over the locked environment rather than declared in
+        # pyproject.toml. strands-harness needs a newer strands-agents than this
+        # package's floor, and a lock holds one version of a package, so
+        # declaring it (even as an extra) would move the locked lane off the
+        # floor it exists to test. Pinned, so this lane changes when someone
+        # changes it; the newest harness is the latest lane's business.
+        run: |
+          set -euo pipefail
+          uv pip install 'strands-harness==0.5.0'
+          uv run --no-sync python -c \
+            "import importlib.metadata as m; print('strands-agents', m.version('strands-agents'), 'strands-harness', m.version('strands-harness'))"
+
+      - name: Run the harness suites against the real harness
+        working-directory: integrations/aws-strands/python
+        # The harness entry point, and the two SDK features a harness turns on
+        # by default: approvals and background tasks. test_harness_agent.py
+        # skips its real-harness half where strands-harness is absent, and
+        # test_harness_agui_features.py (request context, client tools,
+        # interrupts and state on a real harness) skips whole, which is every
+        # other lane, so this is the only place they run. -rs so a
+        # skip here is printed rather than passing unnoticed.
+        run: |
+          uv run --no-sync python -m pytest -v -rs \
+            tests/test_harness_agent.py \
+            tests/test_harness_agui_features.py \
+            tests/test_sdk_approval_interrupt.py \
+            tests/test_background_task_delivery.py
+
+      - name: Assert no lockfile was rewritten
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: ./.github/actions/assert-lockfiles-unchanged
+
   langroid-python:
     runs-on: ubuntu-latest
 

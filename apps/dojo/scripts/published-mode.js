@@ -130,6 +130,10 @@ const LANES = {
     npm: ["@ag-ui/aws-strands"],
     python: { dir: "integrations/aws-strands/python/examples", tool: "poetry", producers: ["ag-ui-strands"] },
   },
+  "aws-strands-harness": {
+    npm: ["@ag-ui/aws-strands"],
+    python: { dir: "integrations/aws-strands/python/examples", tool: "poetry", producers: ["ag-ui-strands"] },
+  },
   "aws-strands-typescript": {
     npm: ["@ag-ui/aws-strands"],
     npmRoots: ["integrations/aws-strands/typescript/examples"],

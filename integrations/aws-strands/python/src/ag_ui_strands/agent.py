@@ -11,6 +11,7 @@ import inspect
 import json
 import logging
 import math
+import time
 import collections.abc
 from copy import deepcopy
 import types
@@ -36,6 +37,7 @@ from typing import (
 from strands import Agent as StrandsAgentCore
 from strands.agent.conversation_manager import ConversationManager
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
+from strands.interventions.actions import default_evaluate as _sdk_default_evaluate
 from strands.session import SessionManager
 from strands.types.interrupt import InterruptResponseContent
 
@@ -625,6 +627,17 @@ INTERRUPT_CANCELLED = _interrupt_cancelled()
 _TOOL_APPROVAL_NAME_PREFIX = "ag_ui:tool_call:"
 
 
+# The name Strands' own approval gate raises its interrupts under: the
+# ``HumanInTheLoop`` intervention handler, which is also what the Strands
+# harness builds from ``interventions="ask"`` / ``"smart"``. The handler is
+# registered at most once per agent under this fixed name, and the SDK raises
+# the interrupt with the handler's name, so the name alone identifies it.
+_SDK_APPROVAL_INTERRUPT_NAME = "strands:human-in-the-loop"
+
+# ``BeforeToolCallEvent._interrupt_id``: ``v1:before_tool_call:<toolUseId>:<uuid5>``.
+_BEFORE_TOOL_CALL_INTERRUPT_PREFIX = "v1:before_tool_call:"
+
+
 def _strands_uses_presence_based_interrupt_responses(installed_version: str) -> bool:
     """Return the interrupt-response contract of a Strands SDK version."""
     try:
@@ -672,6 +685,104 @@ def _is_tool_approval_interrupt(native_interrupt: Any) -> bool:
     return isinstance(name, str) and name.startswith(_TOOL_APPROVAL_NAME_PREFIX)
 
 
+async def _shut_down_agent(agent: Any) -> None:
+    """Shut one thread's agent down, where it has a way to be.
+
+    A plain agent may hold MCP connections; a harness also holds background
+    tasks and memory it has not written yet. A failure is logged and goes no
+    further: the agent is being let go either way.
+    """
+    if agent is None:
+        return
+    try:
+        shutdown_async = getattr(agent, "shutdown_async", None)
+        if callable(shutdown_async):
+            await shutdown_async()
+        elif callable(getattr(agent, "shutdown", None)):
+            agent.shutdown()
+    except Exception as e:  # noqa: BLE001 - one agent must not strand the rest
+        logger.warning("Shutting down a thread's agent failed: %s", e, exc_info=True)
+
+
+def _sdk_approval_gate(agent: Any) -> Any:
+    """The ``HumanInTheLoop`` handler registered on ``agent``, or ``None``."""
+    registry = getattr(agent, "_intervention_registry", None)
+    for handler in getattr(registry, "_handlers", None) or []:
+        if getattr(handler, "name", None) == _SDK_APPROVAL_INTERRUPT_NAME:
+            return handler
+    return None
+
+
+def _is_sdk_approval_interrupt(native_interrupt: Any, agent: Any = None) -> bool:
+    """True when a native interrupt is a ``HumanInTheLoop`` pause this adapter
+    can answer as an approval.
+
+    That gate reads its answer with ``default_evaluate``: ``True`` or a yes
+    string approves and everything else denies. The generic envelope this
+    adapter hands every other native interrupt (``{"response": ...}``) is
+    neither, so an approval forwarded that way is always a denial. These are
+    therefore published as tool-call approvals and answered with a plain bool.
+
+    Only for the gate as the SDK ships it, read off ``agent``. A gate built with
+    its own ``evaluate``, or with ``enable_trust``, reads answers a bool cannot
+    express, and one written against the envelope works today: those stay
+    generic interrupts, as does any interrupt whose agent is not known (a
+    multi-agent orchestrator's node).
+    """
+    if getattr(native_interrupt, "name", None) != _SDK_APPROVAL_INTERRUPT_NAME:
+        return False
+    gate = _sdk_approval_gate(agent)
+    return (
+        gate is not None
+        and getattr(gate, "_evaluate", None) is _sdk_default_evaluate
+        and not getattr(gate, "_enable_trust", False)
+    )
+
+
+def _sdk_approval_granted(entry: Any) -> bool:
+    """Whether a resume entry approves an SDK-gated call. Strict, like the
+    adapter's own gate: only a resolved ``{"approved": True}`` grants."""
+    payload = getattr(entry, "payload", None)
+    return (
+        getattr(entry, "status", None) == "resolved"
+        and isinstance(payload, Mapping)
+        and payload.get("approved") is True
+    )
+
+
+def _sdk_approval_tool_use_id(native_interrupt: Any) -> Optional[str]:
+    """The native tool use an SDK approval gates, read out of its interrupt id."""
+    interrupt_id = getattr(native_interrupt, "id", None)
+    if not isinstance(interrupt_id, str) or not interrupt_id.startswith(
+        _BEFORE_TOOL_CALL_INTERRUPT_PREFIX
+    ):
+        return None
+    # The trailing component is a uuid5, which has no colon; a tool use id may.
+    tool_use_id, _, _ = interrupt_id[
+        len(_BEFORE_TOOL_CALL_INTERRUPT_PREFIX) :
+    ].rpartition(":")
+    return tool_use_id or None
+
+
+def _find_native_tool_use(agent: Any, tool_use_id: Optional[str]) -> Optional[Mapping]:
+    """The ``toolUse`` block with this id in the agent's own conversation.
+
+    ``None`` when the agent does not hold it, which is the case for a call a
+    delegate made: the interrupt reaches the parent, the delegate's
+    conversation does not.
+    """
+    if not tool_use_id:
+        return None
+    for message in reversed(getattr(agent, "messages", None) or []):
+        if not isinstance(message, Mapping) or message.get("role") != "assistant":
+            continue
+        for block in message.get("content") or []:
+            tool_use = block.get("toolUse") if isinstance(block, Mapping) else None
+            if isinstance(tool_use, Mapping) and tool_use.get("toolUseId") == tool_use_id:
+                return tool_use
+    return None
+
+
 def _wrap_resume_response(status: str, payload: Any) -> dict:
     """Package a ``ResumeEntry`` for Strands' ``interruptResponse`` shape.
 
@@ -708,7 +819,9 @@ def _frontend_tool_resume_content(entry: Any) -> tuple[str, bool]:
     return content, is_error
 
 
-def _native_resume_response(entry: Any, native_interrupt: Any) -> Any:
+def _native_resume_response(
+    entry: Any, native_interrupt: Any, agent: Any = None
+) -> Any:
     """Return the answer Strands records when this entry is forwarded.
 
     One definition, read both by the batch the run forwards and by the replay
@@ -723,13 +836,20 @@ def _native_resume_response(entry: Any, native_interrupt: Any) -> Any:
         # its equivalent guard the same way, and tests it, because its own types
         # are structural rather than validated at the boundary.
         return entry.payload if entry.status == "resolved" else {"approved": False}
+    if _is_sdk_approval_interrupt(native_interrupt, agent):
+        # A bare bool, which is what the SDK's gate evaluates. ``False`` is a
+        # recorded answer on every supported release: the floor reads a
+        # response by presence, not truthiness.
+        return _sdk_approval_granted(entry)
     if is_frontend_tool_interrupt(native_interrupt):
         content, is_error = _frontend_tool_resume_content(entry)
         return wrap_frontend_tool_response(content, is_error=is_error)
     return _wrap_resume_response(entry.status, entry.payload)
 
 
-def _legacy_resume_response(entry: Any, native_interrupt: Any) -> Any:
+def _legacy_resume_response(
+    entry: Any, native_interrupt: Any, agent: Any = None
+) -> Any:
     """The answer the previous release recorded for this interrupt, or ``None``.
 
     Only one interrupt changes shape across this release. A reserved-prefix
@@ -743,6 +863,12 @@ def _legacy_resume_response(entry: Any, native_interrupt: Any) -> Any:
     loosens: the envelope predates this release on this side, and a checkpoint
     parked on anything else already holds the shape still computed for it.
     """
+    if _is_sdk_approval_interrupt(native_interrupt, agent):
+        # Classified generic before, so a checkpoint parked by the previous
+        # release holds the generic envelope for it.
+        return _wrap_resume_response(
+            getattr(entry, "status", None), getattr(entry, "payload", None)
+        )
     if not _is_tool_approval_interrupt(native_interrupt):
         return None
     if isinstance(getattr(native_interrupt, "reason", None), Mapping):
@@ -753,7 +879,9 @@ def _legacy_resume_response(entry: Any, native_interrupt: Any) -> Any:
     )
 
 
-def _replays_recorded_answers(interrupt_state: Any, resume_entries: Any) -> bool:
+def _replays_recorded_answers(
+    interrupt_state: Any, resume_entries: Any, agent: Any = None
+) -> bool:
     """True when this batch re-submits exactly the answers the checkpoint holds.
 
     Strands records the submitted answers before it reruns hooks and the parked
@@ -781,13 +909,84 @@ def _replays_recorded_answers(interrupt_state: Any, resume_entries: Any) -> bool
         if not _native_interrupt_is_answered(native_interrupt):
             return False
         if native_interrupt.response == _native_resume_response(
-            entry, native_interrupt
+            entry, native_interrupt, agent
         ):
             continue
-        legacy = _legacy_resume_response(entry, native_interrupt)
+        legacy = _legacy_resume_response(entry, native_interrupt, agent)
         if legacy is None or native_interrupt.response != legacy:
             return False
     return True
+
+
+def _is_background_task_delivery(tool_use: Any) -> bool:
+    """True for the tool use Strands writes to hand back a background task.
+
+    Background Tasks reports a finished task by appending a tool use and its
+    result to the conversation itself: a ``get`` on the task, under the task's
+    own id. Nothing is streamed for either block. The shape is the test rather
+    than the tool's name, which a caller can change (``manage_tool_name``).
+    """
+    if not isinstance(tool_use, Mapping):
+        return False
+    tool_input = tool_use.get("input")
+    tool_use_id = tool_use.get("toolUseId")
+    return (
+        isinstance(tool_input, Mapping)
+        and isinstance(tool_use_id, str)
+        and bool(tool_use_id)
+        and tool_input.get("mode") == "get"
+        and tool_input.get("task_id") == tool_use_id
+    )
+
+
+def _background_task_deliveries(
+    agent: Any, announced: set
+) -> List[Tuple[Mapping, Mapping]]:
+    """The background-task results at the end of the conversation not yet announced.
+
+    Returned oldest first as ``(toolUse, toolResult)``. Only the tail is read:
+    Strands appends deliveries as a continuation immediately before the model
+    call that reads them, so the walk back ends at the first message that is
+    neither a tool-result turn nor an assistant turn carrying a delivery.
+    """
+    messages = getattr(agent, "messages", None) or []
+    results: Dict[str, Mapping] = {}
+    found: List[Tuple[Mapping, Mapping]] = []
+    for message in reversed(messages):
+        if not isinstance(message, Mapping):
+            break
+        content = message.get("content") or []
+        if message.get("role") == "user":
+            tool_results = [
+                block["toolResult"]
+                for block in content
+                if isinstance(block, Mapping)
+                and isinstance(block.get("toolResult"), Mapping)
+            ]
+            # Any tool result makes this a tool-result turn. Other blocks may
+            # sit beside it: a context injector writes its note into the latest
+            # user turn before the model is called, which is this one.
+            if not tool_results:
+                break
+            for tool_result in tool_results:
+                results[tool_result.get("toolUseId")] = tool_result
+            continue
+        deliveries = [
+            block["toolUse"]
+            for block in content
+            if isinstance(block, Mapping)
+            and _is_background_task_delivery(block.get("toolUse"))
+        ]
+        for tool_use in reversed(deliveries):
+            tool_use_id = tool_use["toolUseId"]
+            if tool_use_id in results and tool_use_id not in announced:
+                found.append((tool_use, results[tool_use_id]))
+        # A turn that carries anything else is where the model last spoke: a
+        # delivery merged into it is read, and nothing older is a delivery.
+        if not deliveries or len(deliveries) != len(content):
+            break
+    found.reverse()
+    return found
 
 
 def _get_strands_session_manager(agent: Any) -> Any:
@@ -908,12 +1107,17 @@ def _approval_metadata(
     return metadata
 
 
-def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
+def _strands_interrupt_to_agui(
+    strands_interrupt: Any, agent: Any = None
+) -> "Interrupt":
     """Map a native Strands ``Interrupt`` onto an AG-UI ``Interrupt``.
 
     Interrupts raised by this adapter's approval hook use its reserved
-    ``ag_ui:tool_call:`` name prefix and map to AG-UI tool-call approvals.
-    All other native interrupts retain their generic name and reason payload.
+    ``ag_ui:tool_call:`` name prefix and map to AG-UI tool-call approvals. So do
+    the ones Strands' own ``HumanInTheLoop`` gate raises; ``agent`` is where
+    the call such a gate is asking about is looked up, since its native reason
+    is only a prompt. All other native interrupts retain their generic name and
+    reason payload.
     """
     s_id = getattr(strands_interrupt, "id", "")
     name = getattr(strands_interrupt, "name", None) or "interrupt"
@@ -933,6 +1137,42 @@ def _strands_interrupt_to_agui(strands_interrupt: Any) -> "Interrupt":
             tool_call_id=_approval_tool_use_id(raw_reason),
             response_schema=_tool_approval_response_schema(),
             metadata=_approval_metadata(name, tool_name, tool_input, raw_reason),
+        )
+
+    if _is_sdk_approval_interrupt(strands_interrupt, agent):
+        # The same shape as the adapter's own approvals, so a client renders
+        # and answers one without knowing which gate raised it. The gate's
+        # reason is its prompt, which names the call and, under a risk
+        # classifier, why it was flagged: that is the message. The call itself
+        # is published only when this agent's conversation holds it. A call a
+        # delegate made was never streamed to the client, so naming it as
+        # ``tool_call_id`` would point at a card that does not exist.
+        tool_use = _find_native_tool_use(
+            agent, _sdk_approval_tool_use_id(strands_interrupt)
+        )
+        tool_name, tool_input = _approval_reason_fields(
+            {
+                "tool_name": tool_use.get("name"),
+                "tool_input": tool_use.get("input"),
+            }
+            if tool_use
+            else None
+        )
+        prompt = raw_reason if isinstance(raw_reason, str) and raw_reason else None
+        metadata: dict = {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "strandsName": name,
+        }
+        if prompt is not None and tool_use is None:
+            metadata["reason"] = prompt
+        return Interrupt(
+            id=s_id,
+            reason="tool_call",
+            message=prompt or f"Approve call to {tool_name}?",
+            tool_call_id=tool_use.get("toolUseId") if tool_use else None,
+            response_schema=_tool_approval_response_schema(),
+            metadata=metadata,
         )
 
     return Interrupt(
@@ -1315,7 +1555,7 @@ def _preflight_resume_entries(
     # parked mid-resume (see _replays_recorded_answers). The interrupts an exact
     # replay may address are the answered ones it is replaying.
     replaying_recorded_answers = _replays_recorded_answers(
-        interrupt_state, resume_entries
+        interrupt_state, resume_entries, agent
     )
     if replaying_recorded_answers:
         addressable = dict(getattr(interrupt_state, "interrupts", {}) or {})
@@ -1384,7 +1624,7 @@ def _preflight_resume_entries(
         # expired checkpoint is still refused, because an answer nobody may act
         # on any more is not made actionable by having been recorded early.
         if replaying_recorded_answers and native is not None:
-            legacy = _legacy_resume_response(entry, native)
+            legacy = _legacy_resume_response(entry, native, agent)
             if legacy is not None and getattr(native, "response", None) == legacy:
                 continue
 
@@ -1398,7 +1638,9 @@ def _preflight_resume_entries(
             # interrupt is restored. Adapter-owned interrupts have a fixed
             # contract, so validate against it rather than waving the payload
             # through.
-            if _is_tool_approval_interrupt(native):
+            if _is_tool_approval_interrupt(native) or _is_sdk_approval_interrupt(
+                native, agent
+            ):
                 schema = _tool_approval_response_schema()
             elif is_frontend_tool_interrupt(native):
                 schema = frontend_tool_response_schema()
@@ -1529,6 +1771,7 @@ from .client_proxy_tool import (
     waits_for_frontend_call,
 )
 from .template_tools import (
+    THREAD_TEMPLATE_TOOLS_ATTR,
     TemplateToolsNarrowingHook,
     apply_template_tool_selection,
     index_template_tools,
@@ -3679,7 +3922,35 @@ def _restore_transient_model_context(agent: Any) -> None:
     # when it was applied.
     for mutation in reversed(applied):
         _undo_one(mutation)
+        _undo_in_copied_turns(mutation, getattr(agent, "messages", None))
     delattr(agent, _MODEL_CONTEXT_MUTATION_MARKER)
+
+
+def _undo_in_copied_turns(mutation: Tuple[Any, ...], messages: Any) -> None:
+    """Undo a placement in turns that were copied while it was applied.
+
+    Strands' context injectors (the SDK's ``ContextInjector``, which the
+    harness's environment and todo notes are) run between this hook's two
+    callbacks and replace the latest user turn with a copy whose content is a
+    new list. That list holds the placed block, by identity, and is not the
+    list ``_undo_one`` was given, so without this the request's context would
+    stay in the conversation for good."""
+    kind = mutation[0]
+    if kind not in ("replace", "splice") or not isinstance(messages, list):
+        return
+    placed = mutation[-1]
+    original = mutation[3] if kind == "replace" else None
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list) or content is mutation[1]:
+            continue
+        for index, block in enumerate(content):
+            if block is placed:
+                if kind == "replace":
+                    content[index] = original
+                else:
+                    content.pop(index)
+                break
 
 
 def _undo_one(mutation: Tuple[Any, ...]) -> None:
@@ -3754,8 +4025,22 @@ def _restore_orchestrator_context(orchestrator: Any, _depth: int = 0) -> None:
             _restore_orchestrator_context(executor, _depth + 1)
 
 
+class _ThreadAgentBuildError(Exception):
+    """A per-thread agent could not be built; ends the run as a ``RUN_ERROR``."""
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
 class StrandsAgent:
     """AWS Strands Agent wrapper for AG-UI integration."""
+
+    # Whether each thread's agent is cloned from the ``agent`` template the
+    # constructor is given. A subclass that builds every thread's agent itself
+    # (see ``_build_thread_agent``) has no template to read and sets this False.
+    _clones_template: bool = True
 
     def __init__(
         self,
@@ -3812,7 +4097,7 @@ class StrandsAgent:
 
         # Store template agent configuration for creating fresh instances.
         # Orchestrators are invoked directly, so there is no template to clone.
-        if self._orchestrator is None:
+        if self._orchestrator is None and self._clones_template:
             self._model = agent.model
             self._system_prompt = agent.system_prompt
             # A plugin's tool can retain a callback bound to the template's
@@ -3846,7 +4131,11 @@ class StrandsAgent:
         # it and cannot report it. A template built with plugins is still a
         # dropped setting, so record it here and let it be reported through the
         # same route as every other param that will not carry.
-        if self._orchestrator is None and _template_plugin_names(agent):
+        if (
+            self._orchestrator is None
+            and self._clones_template
+            and _template_plugin_names(agent)
+        ):
             self._template_owned_params.append("plugins")
 
         # Both kinds of param will fail to reach per-thread agents, and both
@@ -3988,6 +4277,42 @@ class StrandsAgent:
         # has to reach the instance that paused; a fresh one was never
         # interrupted and rejects the response.
         self._parked_orchestrators_by_thread: Dict[str, Any] = {}
+        # When each thread's last run ended, for ``thread_idle_timeout``.
+        self._thread_last_run_ended: Dict[str, float] = {}
+
+    def _forget_thread(self, thread_id: str) -> Any:
+        """Drop everything kept for a thread. Returns its agent, if it had one."""
+        self._proxy_tool_names_by_thread.pop(thread_id, None)
+        self._pending_interrupts_by_thread.pop(thread_id, None)
+        self._last_resume_fingerprint.pop(thread_id, None)
+        self._frontend_wait_bridge_by_thread.pop(thread_id, None)
+        self._thread_last_run_ended.pop(thread_id, None)
+        return self._agents_by_thread.pop(thread_id, None)
+
+    async def _forget_idle_threads(self) -> None:
+        """Let go of every thread idle past ``thread_idle_timeout``.
+
+        Forgotten first and shut down after, with no await in between: a run
+        that arrives for one of them while its agent is closing finds no agent
+        and builds a new one, never the one being closed.
+        """
+        timeout = self.config.thread_idle_timeout
+        if timeout is None:
+            return
+        now = time.monotonic()
+        idle = [
+            thread_id
+            for thread_id, ended in self._thread_last_run_ended.items()
+            if now - ended >= timeout
+            and thread_id not in self._active_runs_by_thread
+            # Waiting on an answer: the interrupt lives on this agent, and an
+            # answer sent to a rebuilt one names an interrupt it never raised.
+            and not self._pending_interrupts_by_thread.get(thread_id)
+            and thread_id not in self._parked_orchestrators_by_thread
+        ]
+        agents = [self._forget_thread(thread_id) for thread_id in idle]
+        for agent in agents:
+            await _shut_down_agent(agent)
 
     def _will_emit_tool_snapshot(self, behavior: Any, emit_snapshots: bool) -> bool:
         # ``emit_snapshots`` is the per-run gate (config flag AND not a
@@ -4034,7 +4359,8 @@ class StrandsAgent:
         is resumable through ``RunAgentInput.resume`` on the next turn.
         """
         ag_ui_interrupts = [
-            _strands_interrupt_to_agui(interrupt) for interrupt in native_interrupts
+            _strands_interrupt_to_agui(interrupt, strands_agent)
+            for interrupt in native_interrupts
         ]
         self._pending_interrupts_by_thread[thread_id] = {
             interrupt.id: interrupt for interrupt in ag_ui_interrupts
@@ -4427,6 +4753,87 @@ class StrandsAgent:
                 self._pending_interrupts_by_thread.pop(thread_id, None)
                 self._parked_orchestrators_by_thread.pop(thread_id, None)
 
+    async def _build_thread_agent(
+        self, input_data: RunAgentInput, session_manager: Any
+    ) -> StrandsAgentCore:
+        """Build the Strands agent that serves one thread.
+
+        Called once per ``thread_id``, under the thread-init lock, with the
+        session manager ``session_manager_provider`` returned for it (or
+        ``None``). This implementation clones the template the adapter was
+        given. A subclass that assembles each thread's agent some other way
+        overrides it, and everything else about a run stays the same.
+
+        Raise ``_ThreadAgentBuildError`` to end the run with a ``RUN_ERROR``
+        instead: the thread is not cached, so the next request retries it.
+        """
+        # Only forward ``hooks`` when the caller actually
+        # supplied providers. Passing ``hooks=None`` or
+        # ``hooks=[]`` risks being interpreted differently by
+        # future StrandsAgentCore versions (e.g. as "disable
+        # default hooks"), so we omit the kwarg entirely when
+        # there's nothing to forward.
+        core_kwargs = dict(self._agent_kwargs)
+        if self._hooks:
+            core_kwargs["hooks"] = list(self._hooks)
+        # Same falsy-omission rule as hooks, for the same reason:
+        # ``plugins=[]`` is a value a future StrandsAgentCore could
+        # read as "disable the defaults", which is not what an
+        # absent setting means.
+        if self._plugins:
+            core_kwargs["plugins"] = list(self._plugins)
+        # The caller's per-thread kwargs go on last, so they can
+        # supply what the template cannot carry and override what
+        # it can. See StrandsAgentConfig.thread_agent_kwargs.
+        try:
+            extra = (
+                dict(self.config.thread_agent_kwargs(input_data) or {})
+                if self.config.thread_agent_kwargs is not None
+                else {}
+            )
+            # Each thread owns its trimming counters and summary
+            # state. A shared manager can save another thread's
+            # offset, causing a restart to skip history and append
+            # over message zero. Explicit per-thread factories can
+            # supply managers that cannot be copied.
+            if (
+                "conversation_manager" in core_kwargs
+                and "conversation_manager" not in extra
+            ):
+                core_kwargs["conversation_manager"] = _copy_template_conversation_manager(
+                    core_kwargs["conversation_manager"]
+                )
+        except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
+            logger.error(
+                "thread_agent_kwargs failed: %s", e, exc_info=True
+            )
+            raise _ThreadAgentBuildError(
+                f"Failed to build per-thread agent kwargs: {e}",
+                "THREAD_AGENT_KWARGS_ERROR",
+            ) from e
+        core_kwargs.update(extra)
+        self._report_uncarried_params(core_kwargs)
+        # Re-asserted after the caller: these keep threads apart
+        # and a run coherent, so they stay the adapter's to set.
+        for owned in ("model", "system_prompt", "tools", "session_manager"):
+            core_kwargs.pop(owned, None)
+        return StrandsAgentCore(
+            model=self._model,
+            system_prompt=self._system_prompt,
+            tools=self._tools,
+            session_manager=session_manager,
+            **core_kwargs,
+        )
+
+    def _template_tools_of(self, strands_agent: Any) -> List[Any]:
+        """The tools ``template_tools_provider`` chooses among for this thread.
+
+        The template's own, unless the thread's agent was built with a set of
+        its own and carries it (``THREAD_TEMPLATE_TOOLS_ATTR``).
+        """
+        own = getattr(strands_agent, THREAD_TEMPLATE_TOOLS_ATTR, None)
+        return own if own is not None else self._tools
+
     def _report_uncarried_params(self, core_kwargs: dict) -> None:
         """Name the params that will not reach this thread's agent.
 
@@ -4546,6 +4953,9 @@ class StrandsAgent:
             snapshot_seed=snapshot_seed,
         )
         try:
+            # Inside the ``try``: cancelled while an idle agent closes, this
+            # run still gives its slot back.
+            await self._forget_idle_threads()
             async for event in events:
                 yield event
         finally:
@@ -4553,6 +4963,7 @@ class StrandsAgent:
                 await events.aclose()
             finally:
                 self._active_runs_by_thread.discard(thread_id)
+                self._thread_last_run_ended[thread_id] = time.monotonic()
 
     async def _run_raw(
         self,
@@ -4722,77 +5133,22 @@ class StrandsAgent:
                             f"session_manager_provider returned None for thread_id={thread_id}; "
                             "agent will run without session persistence"
                         )
-                    # Only forward ``hooks`` when the caller actually
-                    # supplied providers. Passing ``hooks=None`` or
-                    # ``hooks=[]`` risks being interpreted differently by
-                    # future StrandsAgentCore versions (e.g. as "disable
-                    # default hooks"), so we omit the kwarg entirely when
-                    # there's nothing to forward.
-                    core_kwargs = dict(self._agent_kwargs)
-                    if self._hooks:
-                        core_kwargs["hooks"] = list(self._hooks)
-                    # Same falsy-omission rule as hooks, for the same reason:
-                    # ``plugins=[]`` is a value a future StrandsAgentCore could
-                    # read as "disable the defaults", which is not what an
-                    # absent setting means.
-                    if self._plugins:
-                        core_kwargs["plugins"] = list(self._plugins)
-                    # The caller's per-thread kwargs go on last, so they can
-                    # supply what the template cannot carry and override what
-                    # it can. See StrandsAgentConfig.thread_agent_kwargs.
                     try:
-                        extra = (
-                            dict(self.config.thread_agent_kwargs(input_data) or {})
-                            if self.config.thread_agent_kwargs is not None
-                            else {}
-                        )
-                        # Each thread owns its trimming counters and summary
-                        # state. A shared manager can save another thread's
-                        # offset, causing a restart to skip history and append
-                        # over message zero. Explicit per-thread factories can
-                        # supply managers that cannot be copied.
-                        if (
-                            "conversation_manager" in core_kwargs
-                            and "conversation_manager" not in extra
-                        ):
-                            core_kwargs["conversation_manager"] = _copy_template_conversation_manager(
-                                core_kwargs["conversation_manager"]
+                        self._agents_by_thread[thread_id] = (
+                            await self._build_thread_agent(
+                                input_data, session_manager
                             )
-                    except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
-                        logger.error(
-                            "thread_agent_kwargs failed: %s", e, exc_info=True
                         )
-                        # RUN_STARTED first: a run that reports only an
-                        # error leaves a client that brackets on the
-                        # lifecycle events with an unopened run.
-                        yield RunStartedEvent(
-                            type=EventType.RUN_STARTED,
-                            thread_id=input_data.thread_id,
-                            run_id=input_data.run_id,
-                            protocol_version=PROTOCOL_VERSION,
+                    except _ThreadAgentBuildError as e:
+                        # RUN_STARTED first: a run that reports only an error
+                        # leaves a client that brackets on the lifecycle events
+                        # with an unopened run.
+                        ev_started, ev_error = _error_events(
+                            input_data, e.message, e.code
                         )
-                        yield RunErrorEvent(
-                            type=EventType.RUN_ERROR,
-                            message=(
-                                "Failed to build per-thread agent kwargs: "
-                                f"{e}"
-                            ),
-                            code="THREAD_AGENT_KWARGS_ERROR",
-                        )
+                        yield ev_started
+                        yield ev_error
                         return
-                    core_kwargs.update(extra)
-                    self._report_uncarried_params(core_kwargs)
-                    # Re-asserted after the caller: these keep threads apart
-                    # and a run coherent, so they stay the adapter's to set.
-                    for owned in ("model", "system_prompt", "tools", "session_manager"):
-                        core_kwargs.pop(owned, None)
-                    self._agents_by_thread[thread_id] = StrandsAgentCore(
-                        model=self._model,
-                        system_prompt=self._system_prompt,
-                        tools=self._tools,
-                        session_manager=session_manager,
-                        **core_kwargs,
-                    )
         strands_agent = self._agents_by_thread[thread_id]
 
         # A waiting frontend tool is answered by the client's ordinary
@@ -5104,7 +5460,7 @@ class StrandsAgent:
                     await maybe_await(
                         self.config.template_tools_provider(input_data)
                     ),
-                    index_template_tools(self._tools),
+                    index_template_tools(self._template_tools_of(strands_agent)),
                 )
             except Exception as e:  # noqa: BLE001 - surfaced as RUN_ERROR
                 logger.error(
@@ -5127,7 +5483,7 @@ class StrandsAgent:
             try:
                 apply_template_tool_selection(
                     strands_agent.tool_registry,
-                    self._tools,
+                    self._template_tools_of(strands_agent),
                     template_tool_allowed,
                     exempt_names=parked_batch_tool_names(strands_agent),
                 )
@@ -5310,6 +5666,10 @@ class StrandsAgent:
         # resumes from its checkpoint.  Cancelled resumes end the run cleanly.
         _resume_prompt: list | None = None
         _resumed_tool_call_ids: set = set()
+        # Names of the calls an approval on this resume lets run. A client's
+        # tool among them still has to be handed to the client: see where
+        # ``pending_halt`` is seeded.
+        _approved_gated_tool_names: set = set()
         resume_entries: list[ResumeEntry] = list(resume_entries or [])
 
         if resume_entries:
@@ -5328,10 +5688,18 @@ class StrandsAgent:
                         "interruptResponse": {
                             "interruptId": entry.interrupt_id,
                             "response": _native_resume_response(
-                                entry, native_interrupt
+                                entry, native_interrupt, strands_agent
                             ),
                         }
                     })
+                    if _sdk_approval_granted(entry) and _is_sdk_approval_interrupt(
+                        native_interrupt, strands_agent
+                    ):
+                        _gated = _find_native_tool_use(
+                            strands_agent, _sdk_approval_tool_use_id(native_interrupt)
+                        )
+                        if _gated and _gated.get("name"):
+                            _approved_gated_tool_names.add(_gated["name"])
                     # Track tool_call_ids so the tool card is not re-emitted.
                     # A frontend wait carries its tool call on the native
                     # interrupt too, so the card stays suppressed even when the
@@ -5814,7 +6182,17 @@ class StrandsAgent:
             )
             stop_text_streaming = False
             halt_event_stream = False
-            pending_halt = False
+            # A client tool that Strands' approval gate held was streamed, and
+            # its card sent, on the run that paused. Approved, it executes on
+            # this one with no stream event to latch the halt on, and its
+            # placeholder result would send the model on as if the client had
+            # answered. Latch it here instead, so the run stops after the
+            # batch and the client runs the tool it was shown.
+            pending_halt = any(
+                name in frontend_tool_names
+                and self.config.tool_behaviors.get(name) is None
+                for name in _approved_gated_tool_names
+            )
             # Frontend-tool ToolCallEnd ids are buffered here so the client's
             # "execute this frontend tool" signal is delayed until AFTER this
             # turn's backend tool results have been emitted. This prevents the
@@ -6363,6 +6741,17 @@ class StrandsAgent:
                         {"role": "user", "content": resume_prompt, "metadata": prompt_metadata}
                     ]
             agent_stream = strands_agent.stream_async(resume_prompt, **stream_kwargs)
+            # Background-task results Strands wrote into the conversation
+            # without streaming them, and the conversation length at which they
+            # were last looked for, so the look costs one comparison per event.
+            announced_background_deliveries: set = set()
+            # The last message's identity as well as the count: a manager that
+            # drops as many turns as a delivery adds leaves the count where it was.
+            _native_messages = getattr(strands_agent, "messages", None) or []
+            background_delivery_scan_mark = (
+                len(_native_messages),
+                id(_native_messages[-1]) if _native_messages else None,
+            )
             try:
                 async for event in _stream_with_model_context(
                     agent_stream, context_block
@@ -6396,6 +6785,115 @@ class StrandsAgent:
                         break
 
                     logger.debug(f"Received event: {event}")
+
+                    # A finished background task comes back as a tool use and
+                    # its result appended to the conversation, with no stream
+                    # event for either, right before the model call that reads
+                    # them. Announce the pair here, before that call's output,
+                    # so the client sees the result the model is about to
+                    # answer and the snapshot keeps the turns apart. Without
+                    # this the result never reaches the client at all and the
+                    # model's answers on either side of it run together into
+                    # one message.
+                    _native_messages = getattr(strands_agent, "messages", None) or []
+                    _native_mark = (
+                        len(_native_messages),
+                        id(_native_messages[-1]) if _native_messages else None,
+                    )
+                    if _native_mark != background_delivery_scan_mark:
+                        background_delivery_scan_mark = _native_mark
+                        for _bg_use, _bg_result in _background_task_deliveries(
+                            strands_agent, announced_background_deliveries
+                        ):
+                            _bg_id = _bg_use["toolUseId"]
+                            announced_background_deliveries.add(_bg_id)
+                            _bg_name = _bg_use.get("name") or "unknown"
+                            _bg_args = dumps_wire(_bg_use.get("input") or {})
+                            if not message_started:
+                                discard_orphans(
+                                    citations, f"thread_id={input_data.thread_id}"
+                                )
+                            if message_started:
+                                citation_metadata = citations.take()
+                                yield TextMessageEndEvent(
+                                    type=EventType.TEXT_MESSAGE_END,
+                                    message_id=message_id,
+                                    metadata=citation_metadata,
+                                )
+                                if emit_snapshots and accumulated_text:
+                                    snapshot_messages.append(
+                                        AssistantMessage(
+                                            id=message_id,
+                                            role="assistant",
+                                            content=accumulated_text,
+                                            metadata=copy_metadata(citation_metadata),
+                                        )
+                                    )
+                                    accumulated_text = ""
+                                message_started = False
+                                message_id = str(uuid.uuid4())
+                            yield ToolCallStartEvent(
+                                type=EventType.TOOL_CALL_START,
+                                tool_call_id=_bg_id,
+                                tool_call_name=_bg_name,
+                                parent_message_id=(
+                                    message_id
+                                    if emit_snapshots
+                                    else last_emitted_text_message_id
+                                ),
+                            )
+                            yield ToolCallArgsEvent(
+                                type=EventType.TOOL_CALL_ARGS,
+                                tool_call_id=_bg_id,
+                                delta=_bg_args,
+                            )
+                            yield ToolCallEndEvent(
+                                type=EventType.TOOL_CALL_END,
+                                tool_call_id=_bg_id,
+                            )
+                            _bg_result_message_id = str(uuid.uuid4())
+                            _bg_content = _serialize_tool_result_data(
+                                _extract_tool_result_data(
+                                    _bg_result.get("content", [])
+                                )
+                            )
+                            yield ToolCallResultEvent(
+                                type=EventType.TOOL_CALL_RESULT,
+                                tool_call_id=_bg_id,
+                                message_id=_bg_result_message_id,
+                                content=_bg_content,
+                            )
+                            if emit_snapshots:
+                                snapshot_messages.append(
+                                    AssistantMessage(
+                                        id=message_id,
+                                        role="assistant",
+                                        content="",
+                                        tool_calls=[
+                                            ToolCall(
+                                                id=_bg_id,
+                                                type="function",
+                                                function=FunctionCall(
+                                                    name=_bg_name,
+                                                    arguments=_bg_args,
+                                                ),
+                                            )
+                                        ],
+                                    )
+                                )
+                                snapshot_messages.append(
+                                    ToolMessage(
+                                        id=_bg_result_message_id,
+                                        role="tool",
+                                        content=_bg_content,
+                                        tool_call_id=_bg_id,
+                                    )
+                                )
+                                yield MessagesSnapshotEvent(
+                                    type=EventType.MESSAGES_SNAPSHOT,
+                                    messages=list(snapshot_messages),
+                                )
+                                message_id = str(uuid.uuid4())
 
                     # Skip lifecycle events. ``start`` is Strands' deprecated
                     # alias of ``start_event_loop`` and is emitted alongside it;
@@ -6784,6 +7282,8 @@ class StrandsAgent:
                             result_data = _extract_tool_result_data(result_content)
 
                             if not result_tool_id:
+                                continue
+                            if result_tool_id in announced_background_deliveries:
                                 continue
 
                             # Every call is keyed by Strands' own tool-use ID.

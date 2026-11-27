@@ -4,8 +4,11 @@ AWS Strands Integration for AG-UI.
 Wraps a Strands ``Agent`` as an AG-UI agent: event-stream translation,
 frontend proxy-tool sync, per-thread session management, and the two-tier
 A2UI surface generation (``get_a2ui_tools`` / ``plan_a2ui_injection``).
+``StrandsHarnessAgent`` serves a Strands harness (``strands-harness``) the same
+way, building one per thread.
 """
 from .agent import INTERRUPT_CANCELLED, StrandsAgent
+from .harness import HarnessOptionsProvider, StrandsHarnessAgent
 from .a2ui_tool import (
     A2UI_OPERATIONS_KEY,
     A2UI_STREAM_KEY,
@@ -52,6 +55,8 @@ from ag_ui.core import (
 
 __all__ = [
     "StrandsAgent",
+    "StrandsHarnessAgent",
+    "HarnessOptionsProvider",
     "INTERRUPT_CANCELLED",
     "A2UI_STREAM_KEY",
     "A2UI_OPERATIONS_KEY",

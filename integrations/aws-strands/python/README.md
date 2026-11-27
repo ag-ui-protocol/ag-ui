@@ -198,11 +198,131 @@ each time, not a shared manager or shared summarization agent. When a session
 manager is configured, it restores that thread's saved state into this fresh
 manager during SDK agent construction.
 
+### Letting idle threads go
+
+Each thread's agent is kept in memory between runs, so by default a process
+holds every thread it has ever served. Set a timeout to let idle ones go:
+
+```python
+StrandsAgentConfig(thread_idle_timeout=30 * 60)  # seconds
+```
+
+A thread with no run for that long is forgotten and its agent shut down. Its
+next run builds the agent again: from the thread's session where
+`session_manager_provider` gives it one, and otherwise from the history the
+client sends with the run. The check happens when a run starts, on any thread;
+there is no timer.
+
+A thread is never let go while a run is in progress on it, nor while it waits on
+an answer to an interrupt, because the interrupt lives on that agent. Work the
+agent still had in the background when it is let go is stopped. The same setting
+applies to `StrandsHarnessAgent`, where it matters more: a whole harness is kept
+per thread.
+
+## Strands harness
+
+`StrandsHarnessAgent` serves a [Strands harness](https://strandsagents.com/docs/user-guide/harness/)
+over AG-UI. It is a separate entry point from `StrandsAgent`, and it needs the
+`strands-harness` package, which this one does not depend on because it requires
+a newer `strands-agents` than the floor here (1.65 against 1.55):
+
+```bash
+pip install ag_ui_strands strands-harness
+```
+
+```python
+from ag_ui_strands import StrandsHarnessAgent, create_strands_app
+
+agent = StrandsHarnessAgent(
+    name="harness",
+    harness={"model": "bedrock/global.anthropic.claude-opus-5-5", "interventions": "ask"},
+)
+app = create_strands_app(agent, path="/", origins=["http://localhost:3000"])
+```
+
+`create_harness()` returns a plain `strands.Agent`, so it is tempting to hand one
+to `StrandsAgent`. Do not: the template route described above is exactly what a
+harness does not survive. Its context manager, memory and background tasks are
+bound to the agent they were assembled on and stay on the template, while the
+tools that need them (`retrieve_context`, `search_memory`) are carried to every
+thread, still pointing at the template's. A run streams a reply either way, so
+nothing tells you. `StrandsHarnessAgent` calls `create_harness` once per
+`thread_id` instead, and from there it is `StrandsAgent`: the same event
+translation, frontend tools, interrupts, `StrandsAgentConfig` and endpoint.
+
+`harness` is the options for `create_harness`: a mapping applied to every thread,
+or a callable that is given the `RunAgentInput` that starts a thread and returns
+that thread's options (it may be async). `create_harness` passes any `Agent`
+keyword through, so this is also where anything per thread goes.
+
+```python
+def options(input_data):
+    user = (input_data.forwarded_props or {}).get("user_id", "anonymous")
+    return {
+        "model": "bedrock/global.anthropic.claude-opus-5-5",
+        "memory": {"dir": f"/var/lib/agent/memory/{user}"},
+    }
+
+agent = StrandsHarnessAgent(name="harness", harness=options)
+```
+
+What the adapter decides for a thread, over those options:
+
+| Setting | What happens |
+| --- | --- |
+| Sessions | With `StrandsAgentConfig.session_manager_provider`, the thread's agent is built on the manager it returns. Without one, and with no `session` in the options, the harness's file sessions are off: its default is a session under a random id that nothing could resume. The conversation then lives on the thread's cached agent and the client replays it after a restart, as with `StrandsAgent`. To keep the harness's own sessions, return `{"session": {"id": ...}}` for the thread from a `harness` callable. |
+| Hooks and plugins | The ones passed to `StrandsHarnessAgent`, and the adapter's own, go in front of any in the options. The harness hands hooks to its subagents too. |
+| `template_tools_provider` | Chooses among the tools the thread's harness was built with. Leaving out a tool the harness itself depends on (`strands_manage_background_task`, `retrieve_context`) takes that feature away for the request. |
+| `thread_agent_kwargs` | Refused at construction. There is no template to add to; return the options from `harness`. |
+
+Fixed options that would give every thread the same conversation are refused at
+construction: a `session` that names an id or is a `SessionManager`, a
+`session_manager`, and a context manager instance. Return those per thread from a
+callable.
+
+Everything else is the harness's default. Three of those defaults matter on a
+server:
+
+- **Memory is on, and it is one store for every thread the process serves.**
+  Where threads belong to different people, give each their own (`memory={"dir": ...}`
+  as above) or turn it off.
+- **The built-in `shell`, `read`, `write` and `edit` tools run on the host**, with
+  no sandbox unless you configure one. Narrow them with `builtin_tools`, or gate
+  them with `interventions` (next section).
+- **The harness keeps its files under `./.agent`** in the working directory. Point
+  them somewhere durable where the filesystem is not.
+
+Call `await agent.shutdown()` where the process stops serving, for example in a
+FastAPI lifespan. A harness agent holds work that outlives a run (memory it has
+not written yet, MCP connections), and this shuts every thread's agent down.
+
+What a client sees of the harness's own features:
+
+- **Approvals** (`interventions="ask"`, `"smart"`, or a policy) arrive as
+  `tool_call` approval interrupts; see
+  [Approvals from Strands' own gate](#approvals-from-strands-own-gate).
+  The harness's gate decides about every tool, the ones a client sends with a
+  run included. Where the client asks about its own tools itself, pass
+  `StrandsHarnessAgent(..., gate_client_tools=False)`: a client's tool then goes
+  straight to the client, and the gate decides about the harness's tools only.
+- **Subagents** run in the background by default; see
+  [Background tasks](#background-tasks). The delegate's own steps are not
+  streamed, because the SDK runs a background task outside the parent's stream.
+  The client sees the `subagent` call and, later, its result.
+- **A failure to build a thread's harness** ends the run with
+  `THREAD_AGENT_BUILD_ERROR` (or `THREAD_AGENT_KWARGS_ERROR` when it was the
+  `harness` callable that raised). The thread is not cached, so the next request
+  tries again.
+
+Python only. The TypeScript package has no counterpart for
+`@strands-agents/harness` yet.
+
 ## Key Files
 
 | File                                           | Description                                                                     |
 | ---------------------------------------------- | ------------------------------------------------------------------------------- |
 | `src/ag_ui_strands/agent.py`                   | Core wrapper translating Strands streams into AG-UI events                      |
+| `src/ag_ui_strands/harness.py`                 | `StrandsHarnessAgent`: a Strands harness built per thread                       |
 | `src/ag_ui_strands/config.py`                  | Config primitives (`StrandsAgentConfig`, `ToolBehavior`, `PredictStateMapping`) |
 | `src/ag_ui_strands/endpoint.py`                | FastAPI endpoint helper                                                         |
 | `src/ag_ui_strands/utils.py`                   | `create_strands_app`, multimodal conversion, and `UrlFetchPolicy`               |
@@ -580,6 +700,38 @@ payload=...)]`. The minimum supported Strands release gates its resume on
       return "charged"
   ```
 
+### Approvals from Strands' own gate
+
+Strands ships an approval gate of its own, the `HumanInTheLoop` intervention
+handler (`Agent(interventions=[HumanInTheLoop()])`), and the Strands harness
+builds one from `interventions="ask"` or `"smart"`. Its pauses are published the
+same way as `interrupt_on_call` approvals, so a client renders and answers both
+without knowing which gate raised one:
+
+- The interrupt's `reason` is `tool_call`, its `response_schema` is the
+  `approved` one, and `metadata` carries `tool_name`, `tool_input` and
+  `strandsName` (`strands:human-in-the-loop`).
+- `message` is the gate's own prompt, which names the call and, under a risk
+  classifier, says why it was flagged.
+- `tool_call_id` is the call the client was just shown. A call made by a
+  delegate (a harness subagent) was never streamed, so its approval carries no
+  `tool_call_id`, `tool_name` is `"unknown"`, and the prompt is repeated under
+  `metadata.reason`.
+- Resume with `{"approved": true}` to run the call. `{"approved": false}` or a
+  `cancelled` entry denies it, and the model is told the call was not confirmed.
+  The gate receives a plain `True` or `False`: it evaluates its answer with the
+  SDK's `default_evaluate`, which the generic `{"response": ...}` envelope never
+  satisfies. Before this was handled, every answer to this gate was a denial.
+
+This mapping is Python only for now. The TypeScript package still publishes the
+SDK's gate as a generic interrupt.
+
+Only the gate as the SDK ships it is mapped. A gate built with a custom
+`evaluate`, or with `enable_trust`, reads answers a bool cannot express, so it
+stays a generic interrupt and its `evaluate` receives the `{"response": ...}`
+envelope described above, as before. So does a gate on a node of a multi-agent
+orchestrator. A gate with an inline `ask` callback never pauses the run at all.
+
 ### Persistence and proxy-tool boundaries
 
 | Scenario                                                                        | Support boundary                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -747,6 +899,30 @@ model events, and a payload that will not survive a strict `json.dumps` /
 Coercing it, with `default=str` for instance, would ship the `repr` of the live
 `Agent`, system prompt and conversation history included, to every connected
 client.
+
+## Background tasks
+
+Strands can run a tool call in the background (`Agent(background_tasks=...)`,
+and on by default in the Strands harness, where `subagent` always runs that
+way). The call returns at once with a task id, and the SDK hands the result back
+later by writing a tool use and its result into the conversation: a `get` on the
+task, under the task's own id, immediately before the model call that reads it.
+
+Neither of those two blocks is streamed by the SDK, so the adapter announces
+them itself. A client sees, in order:
+
+1. the original call (`TOOL_CALL_START` ... `TOOL_CALL_RESULT`), whose result
+   says the task was dispatched;
+2. whatever the model says while it waits;
+3. a second tool call, named for the SDK's task tool
+   (`strands_manage_background_task` unless `manage_tool_name` renames it), with
+   `{"mode": "get", "task_id": ...}` as its arguments and the task's result as
+   its `TOOL_CALL_RESULT`;
+4. the model's answer to that result, as a message of its own.
+
+`MESSAGES_SNAPSHOT` holds the same turns in the same order, which is what lets
+the next request replay the history the model actually has. What ran inside the
+task is not streamed. Python only for now.
 
 ## Sub-agents (agents as tools)
 
@@ -959,7 +1135,8 @@ while this bridge rejects it earlier, in the resume preflight, under
 shared `FRONTEND_TOOL_IDENTITY_ERROR`) and
 `INTERRUPT_RESUME_ERROR` are Python-only, `SEED_BUILD_ERROR` is TypeScript-only,
 `THREAD_AGENT_KWARGS_ERROR` is this bridge's half of a failure TypeScript reports
-as `THREAD_AGENT_CONFIG_ERROR`, and two shared codes deliberately carry a
+as `THREAD_AGENT_CONFIG_ERROR`, `THREAD_AGENT_BUILD_ERROR` is Python-only because
+only `StrandsHarnessAgent` builds a thread's agent with a factory, and two shared codes deliberately carry a
 different sentence on each side for reasons of their own:
 `INTERRUPT_SESSION_CAPABILITY_ERROR` because the capability each side names is a
 different SDK API, and `SESSION_MANAGER_INVALID_TYPE` only because the

@@ -705,6 +705,33 @@ export const agentsIntegrations = {
     return agents;
   },
 
+  // The Strands harness (`strands-harness`), served by `StrandsHarnessAgent`:
+  // the Python demos of the lane above, each on a harness instead of a plain
+  // agent, plus the harness's own approval gate. Same AG-UI client.
+  "aws-strands-harness": async () => ({
+    ...mapAgents(
+      (path) =>
+        new AWSStrandsAgent({
+          url: `${envVars.awsStrandsHarnessUrl}/${path}/`,
+        }),
+      {
+        agentic_chat: "agentic-chat",
+        // The adapter puts the client's context into the prompt, so the
+        // plain chat agent serves the generative UI demos.
+        generative_ui_markdown: "agentic-chat",
+        generative_ui_tool: "agentic-chat",
+        backend_tool_rendering: "backend-tool-rendering",
+        agentic_generative_ui: "agentic-generative-ui",
+        shared_state: "shared-state",
+        human_in_the_loop: "human-in-the-loop",
+        interrupt: "interrupt",
+        tool_approval: "tool-approval",
+        predictive_state_updates: "predictive-state-updates",
+        tool_based_generative_ui: "tool-based-generative-ui",
+      },
+    ),
+  }),
+
   "aws-strands-typescript": async () => {
     // TS example server mounts every endpoint on hyphenated paths (matching the
     // Python reference server) so the same curl payloads drive both adapters.
