@@ -327,6 +327,9 @@ Run the native example twice when one deployment needs both public ordinary
 guidance and keyless trusted guidance for a backend.
 
 - Configure public proxies to use port `4111` as their sole Mastra upstream.
+  Block `/api/memory` and its subpaths at the proxy unless the server uses
+  `server.auth` with `mapUserToResourceId` to scope memory access to the
+  authenticated caller.
 - Limit inbound access to the private instance on port `4112` to authorized
   application backends through a firewall, service ACL, or private network
   policy. Apply the rule to the entire listener, including capability discovery
@@ -342,9 +345,10 @@ pnpm exec nx run example:build
 
 Set these paths from the repository root in both launch shells. Supply the
 configured model provider's environment to each process. The commands use
-loopback for a proxy and backend running on the same host. Set `MASTRA_HOST`
-to the appropriate interface when those callers run on separate hosts. The
-example defaults to `0.0.0.0` when `MASTRA_HOST` is unset.
+loopback by default. If the proxy or backend runs on a separate host, set
+`MASTRA_HOST` in the corresponding launch shell to the interface that caller
+can reach. Outside these commands, the example defaults to `0.0.0.0` when
+`MASTRA_HOST` is unset.
 
 ```bash
 mastra_entry="$(pwd -P)/integrations/mastra/typescript/examples/.mastra/output/index.mjs"
@@ -356,7 +360,7 @@ Start the public instance in one shell.
 
 ```bash
 cd "$mastra_state/public/run" &&
-  MASTRA_HOST=127.0.0.1 PORT=4111 AG_UI_GUIDANCE_TOKEN= \
+  MASTRA_HOST="${MASTRA_HOST:-127.0.0.1}" PORT=4111 AG_UI_GUIDANCE_TOKEN= \
     AG_UI_TRUSTED_INGRESS=false AG_UI_RUN_GUIDANCE=true node "$mastra_entry"
 ```
 
@@ -364,7 +368,7 @@ Start the private instance in the other shell after applying its ingress rules.
 
 ```bash
 cd "$mastra_state/private/run" &&
-  MASTRA_HOST=127.0.0.1 PORT=4112 AG_UI_GUIDANCE_TOKEN= \
+  MASTRA_HOST="${MASTRA_HOST:-127.0.0.1}" PORT=4112 AG_UI_GUIDANCE_TOKEN= \
     AG_UI_TRUSTED_INGRESS=true AG_UI_RUN_GUIDANCE=true node "$mastra_entry"
 ```
 
