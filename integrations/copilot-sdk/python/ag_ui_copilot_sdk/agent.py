@@ -550,10 +550,16 @@ class CopilotAgent:
                 )
 
             if results:
-                await asyncio.wait_for(
-                    asyncio.gather(*(self._resolve_pending(thread, r) for r in results)),
+                # Settle every resolver before raising, so none outlives the teardown.
+                outcomes = await asyncio.wait_for(
+                    asyncio.gather(
+                        *(self._resolve_pending(thread, r) for r in results),
+                        return_exceptions=True,
+                    ),
                     max(deadline - loop.time(), 0),
                 )
+                if error := next((o for o in outcomes if isinstance(o, BaseException)), None):
+                    raise error
             elif new_user:
                 text, attachments = new_user
                 await asyncio.wait_for(

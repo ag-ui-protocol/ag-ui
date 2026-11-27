@@ -604,6 +604,39 @@ async def test_predict_state_and_immutable_snapshots_across_mutable_backend_hand
     ]
 
 
+async def test_failed_resolver_waits_for_sibling_acknowledgements_before_teardown():
+    call = FRONTEND_TOOL_TURN[0]
+    second = {
+        **call,
+        "id": "2",
+        "data": {**call["data"], "toolCallId": "call-2", "requestId": "req-2"},
+    }
+    client = FakeClient([call, second])
+    agent = CopilotAgent(client, tools=[AGUITool("change_background", "change it")], run_timeout=5)
+    assert (await collect(agent, make_input()))[-1].type == "RUN_FINISHED"
+
+    async def handle(request):
+        if request.request_id == "req-2":
+            await asyncio.sleep(0.05)
+        return type("Response", (), {"success": request.request_id == "req-2"})()
+
+    client.session.rpc.tools.handle_pending_tool_call = handle
+    results = [
+        {"id": f"t-{n}", "role": "tool", "toolCallId": f"call-{n}", "content": "ok"} for n in (1, 2)
+    ]
+    messages = [{"id": "u1", "role": "user", "content": "Say hello."}, *results]
+    stream = agent.run(make_input(runId="r2", messages=messages))
+    async for event in stream:
+        if event.type == "RUN_ERROR":
+            # Inspect at the error, before advancing the stream into teardown.
+            assert event.message == "Native pending tool call could not be resolved"
+            assert "t:call-2" in agent._delivered["t1"]
+            break
+    else:
+        raise AssertionError("expected RUN_ERROR")
+    await stream.aclose()
+
+
 async def test_closing_the_stream_after_run_finished_keeps_the_handoff():
     client = FakeClient(FRONTEND_TOOL_TURN)
     agent = CopilotAgent(client, tools=[AGUITool("change_background", "change it")], run_timeout=5)
