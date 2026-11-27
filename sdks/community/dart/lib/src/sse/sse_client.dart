@@ -15,12 +15,18 @@ class SseClient {
   /// Maximum number of UTF-16 code units allowed in a single SSE data block.
   ///
   /// Passed to [SseParser] so the parse-layer cap matches the adapter-layer
-  /// cap set on [EventStreamAdapter]. Defaults to 8 MiB (8 × 1024 × 1024
+  /// cap set on `EventStreamAdapter`. Defaults to 8 MiB (8 × 1024 × 1024
   /// code units), matching [SseParser]'s own default.
   final int maxDataCodeUnits;
 
+  /// Maximum decoded SSE line length in UTF-16 code units.
+  ///
+  /// Defaults to [maxDataCodeUnits] plus seven code units for the field prefix.
+  final int maxLineCodeUnits;
+
   StreamController<SseMessage>? _controller;
   StreamSubscription<SseMessage>? _subscription;
+  Future<void>? _closing;
   http.StreamedResponse? _currentResponse;
   Timer? _idleTimer;
   Timer? _reconnectTimer;
@@ -40,8 +46,14 @@ class SseClient {
     http.Client? httpClient,
     Duration idleTimeout = const Duration(seconds: 45),
     BackoffStrategy? backoffStrategy,
-    this.maxDataCodeUnits = 8 * 1024 * 1024,
-  })  : _httpClient = httpClient ?? http.Client(),
+    int maxDataCodeUnits = 8 * 1024 * 1024,
+    int? maxLineCodeUnits,
+  })  : maxDataCodeUnits = maxDataCodeUnits,
+        maxLineCodeUnits = SseParser(
+          maxDataCodeUnits: maxDataCodeUnits,
+          maxLineCodeUnits: maxLineCodeUnits,
+        ).maxLineCodeUnits,
+        _httpClient = httpClient ?? http.Client(),
         _idleTimeout = idleTimeout,
         _backoffStrategy = backoffStrategy ?? LegacyBackoffStrategy() {
     if (idleTimeout <= Duration.zero) {
@@ -69,14 +81,22 @@ class SseClient {
     }
 
     _isClosed = false;
-    _controller = StreamController<SseMessage>(
-      onCancel: () => close(),
-    );
+    _lastEventId = null;
+    _serverRetryDuration = null;
+    _hasEverConnected = false;
+    _reconnectAttempt = 0;
+    final controller = StreamController<SseMessage>();
+    _controller = controller;
+    controller.onCancel = () async {
+      if (_isCurrent(controller)) {
+        await close();
+      }
+    };
 
     // Start the connection
     _connect(url, headers, requestTimeout);
 
-    return _controller!.stream;
+    return controller.stream;
   }
 
   /// Parse an existing byte stream as SSE messages.
@@ -92,7 +112,10 @@ class SseClient {
     Stream<List<int>> stream, {
     Map<String, String>? headers,
   }) {
-    final parser = SseParser(maxDataCodeUnits: maxDataCodeUnits);
+    final parser = SseParser(
+      maxDataCodeUnits: maxDataCodeUnits,
+      maxLineCodeUnits: maxLineCodeUnits,
+    );
     return parser.parseBytes(stream);
   }
 
@@ -102,11 +125,22 @@ class SseClient {
     Map<String, String>? headers,
     Duration? requestTimeout,
   ) async {
-    if (_isClosed || _isConnecting) return;
+    final controller = _controller;
+    if (controller == null || !_isCurrent(controller) || _isConnecting) {
+      return;
+    }
 
     _isConnecting = true;
 
     try {
+      // Keep the subscription reachable until cancellation finishes so close()
+      // can await the same cleanup while a retry is suspended here.
+      await _subscription?.cancel();
+      if (!_isCurrent(controller)) {
+        return;
+      }
+      _subscription = null;
+
       // Prepare headers
       final requestHeaders = <String, String>{
         'Accept': 'text/event-stream',
@@ -126,9 +160,24 @@ class SseClient {
       // Send the request with optional timeout
       final responseFuture = _httpClient.send(request);
       final response = requestTimeout != null
-          ? await responseFuture.timeout(requestTimeout)
+          ? await responseFuture.timeout(
+              requestTimeout,
+              onTimeout: () {
+                // A Future timeout does not cancel the underlying HTTP request.
+                unawaited(responseFuture.then<void>(
+                  _discardResponse,
+                  onError: (Object _, StackTrace __) {},
+                ));
+                throw TimeoutException('Future not completed', requestTimeout);
+              },
+            )
           : await responseFuture;
 
+      if (!_isCurrent(controller)) {
+        // The HTTP client may finish an old request after this session closed.
+        await _discardResponse(response);
+        return;
+      }
       _currentResponse = response;
 
       // Check for successful response
@@ -143,18 +192,23 @@ class SseClient {
       _hasEverConnected = true;
 
       // Create parser for this connection
-      final parser = SseParser(maxDataCodeUnits: maxDataCodeUnits);
+      final parser = SseParser(
+        maxDataCodeUnits: maxDataCodeUnits,
+        maxLineCodeUnits: maxLineCodeUnits,
+      );
 
       // Set up idle timeout
-      _resetIdleTimer();
+      _resetIdleTimer(controller);
 
       // Parse the stream
       final messageStream = parser.parseBytes(response.stream);
 
       // Listen to messages
-      _subscription?.cancel();
       _subscription = messageStream.listen(
         (message) {
+          if (!_isCurrent(controller)) {
+            return;
+          }
           // Update last event ID if present
           if (message.id != null) {
             _lastEventId = message.id;
@@ -166,31 +220,53 @@ class SseClient {
           }
 
           // Reset idle timer on each message
-          _resetIdleTimer();
+          _resetIdleTimer(controller);
 
           // Forward the message
-          _controller?.add(message);
+          controller.add(message);
         },
         onError: (Object error) {
-          _handleError(error, url, headers, requestTimeout);
+          if (_isCurrent(controller)) {
+            _handleError(error, url, headers, requestTimeout);
+          }
         },
         onDone: () {
-          _handleDisconnection(url, headers, requestTimeout);
+          if (_isCurrent(controller)) {
+            _handleDisconnection(url, headers, requestTimeout);
+          }
         },
         cancelOnError: false,
       );
+    } on Object catch (error) {
+      if (_isCurrent(controller)) {
+        _handleError(error, url, headers, requestTimeout);
+      }
+    } finally {
+      if (_isCurrent(controller)) {
+        _isConnecting = false;
+      }
+    }
+  }
 
-      _isConnecting = false;
-    } catch (error) {
-      _isConnecting = false;
-      _handleError(error, url, headers, requestTimeout);
+  // The controller identifies a single public connect()/close() session.
+  bool _isCurrent(StreamController<SseMessage> controller) =>
+      !_isClosed && identical(_controller, controller);
+
+  Future<void> _discardResponse(http.StreamedResponse response) async {
+    try {
+      await response.stream.listen((_) {}, onError: (Object _) {}).cancel();
+    } on Object {
+      // An abandoned response must not affect the active connection.
     }
   }
 
   /// Reset the idle timer.
-  void _resetIdleTimer() {
+  void _resetIdleTimer(StreamController<SseMessage> controller) {
     _idleTimer?.cancel();
     _idleTimer = Timer(_idleTimeout, () {
+      if (!_isCurrent(controller)) {
+        return;
+      }
       // Idle timeout reached, trigger reconnection
       _subscription?.cancel();
       _currentResponse = null;
@@ -249,37 +325,66 @@ class SseClient {
     Map<String, String>? headers,
     Duration? requestTimeout,
   ) {
-    if (_isClosed) return;
+    final controller = _controller;
+    if (controller == null ||
+        !_isCurrent(controller) ||
+        _reconnectTimer != null) {
+      return;
+    }
 
     // Calculate delay (use server retry if available, otherwise backoff)
     _reconnectAttempt++;
     final delay =
         _serverRetryDuration ?? _backoffStrategy.nextDelay(_reconnectAttempt);
+    // A caller-supplied strategy may synchronously close this connection.
+    if (!_isCurrent(controller)) {
+      return;
+    }
 
     // Schedule reconnection. Store the timer so close() can cancel it and
     // avoid a connect() call racing against a concurrent close().
-    _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () {
-      _reconnectTimer = null;
-      if (!_isClosed) {
-        _connect(url, headers, requestTimeout);
+      if (!_isCurrent(controller)) {
+        return;
       }
+      _reconnectTimer = null;
+      _connect(url, headers, requestTimeout);
     });
   }
 
   /// Close the connection and clean up resources.
-  Future<void> close() async {
-    if (_isClosed) return;
+  Future<void> close() {
+    final pending = _closing;
+    if (pending != null) {
+      return pending;
+    }
+    if (_isClosed) {
+      return Future<void>.value();
+    }
+    final closed = Completer<void>();
+    _closing = closed.future;
+    closed.complete(_closeConnection());
+    return closed.future;
+  }
 
+  Future<void> _closeConnection() async {
     _isClosed = true;
+    _isConnecting = false;
     _idleTimer?.cancel();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    await _subscription?.cancel();
-    _currentResponse = null;
-    await _controller?.close();
-    _controller = null;
-    _backoffStrategy.reset();
+    try {
+      await _subscription?.cancel();
+    } finally {
+      final controller = _controller;
+      _subscription = null;
+      _currentResponse = null;
+      _controller = null;
+      _closing = null;
+      // A paused or absent consumer cannot hold transport cleanup open.
+      unawaited(controller?.close());
+      _backoffStrategy.reset();
+    }
   }
 
   /// Check if the client is currently connected.

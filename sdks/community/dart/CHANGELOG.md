@@ -5,6 +5,16 @@ All notable changes to the AG-UI Dart SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Bound incremental SSE byte-to-line framing before a terminator or end of
+  stream. `SseParser` and `SseClient` now accept `maxLineCodeUnits`, derived
+  from `maxDataCodeUnits + 7` when omitted. Oversized lines and malformed
+  UTF-8 cancel the input once, discard partial fields, and report a
+  content-free `FormatException` without flushing a partial message.
+
 ## [0.3.0]
 
 ### Breaking Changes (review-fix pass)

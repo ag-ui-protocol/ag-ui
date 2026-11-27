@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:typed_data';
 
 import '../internal/sse_constants.dart';
 import 'sse_message.dart';
@@ -39,24 +40,33 @@ class SseParser {
   /// larger payloads.
   final int maxDataCodeUnits;
 
+  /// Maximum number of UTF-16 code units in one decoded SSE line.
+  ///
+  /// Raw byte parsing enforces this limit before a line terminator arrives.
+  /// [parseLines] also rejects complete input lines over the limit. It defaults
+  /// to [maxDataCodeUnits] plus the seven code units in the longest supported
+  /// field prefix, `event: `.
+  final int maxLineCodeUnits;
+
   /// Maximum number of UTF-16 code units the `id:` field value may contain.
   /// Caps the sticky `_lastEventId` value to prevent a malicious server from
   /// growing the stored id across reconnects via an oversized `id:` line.
   static const int maxIdCodeUnits = 1024;
 
   // `_eventBuffer` stores the SSE `event:` field for the current message.
-  // Unlike `_dataBuffer`, it is REPLACED (not appended) on each `event:` line
-  // per the WHATWG SSE spec, so its maximum size is bounded by the line
-  // splitter upstream rather than accumulating across lines. Only `_dataBuffer`
-  // needs an explicit `maxDataCodeUnits` cap because it accumulates across multiple
-  // `data:` lines within a single message.
+  // Unlike `_dataBuffer`, it is replaced rather than appended across lines.
   final _eventBuffer = StringBuffer();
   final _dataBuffer = StringBuffer();
   String? _lastEventId;
   Duration? _retry;
   bool _hasDataField = false;
 
-  SseParser({this.maxDataCodeUnits = kSseDefaultMaxDataCodeUnits});
+  SseParser({
+    int maxDataCodeUnits = kSseDefaultMaxDataCodeUnits,
+    int? maxLineCodeUnits,
+  })  : maxDataCodeUnits = _validateDataLimit(maxDataCodeUnits),
+        maxLineCodeUnits =
+            _resolveLineLimit(maxDataCodeUnits, maxLineCodeUnits);
 
   /// Clears all parser state, including the otherwise-sticky
   /// `_lastEventId`. Use when reusing a parser instance across
@@ -71,46 +81,31 @@ class SseParser {
   /// The input should be a stream of text lines from an SSE endpoint.
   /// Empty lines trigger message dispatch.
   Stream<SseMessage> parseLines(Stream<String> lines) async* {
-    await for (final line in lines) {
-      final message = _processLine(line);
-      if (message != null) {
-        yield message;
+    try {
+      await for (final line in lines) {
+        if (line.length > maxLineCodeUnits) {
+          throw _lineOverflow(maxLineCodeUnits);
+        }
+        final message = _processLine(line);
+        if (message != null) {
+          yield message;
+        }
       }
-    }
 
-    // Dispatch any remaining buffered message
-    final finalMessage = _dispatchEvent();
-    if (finalMessage != null) {
-      yield finalMessage;
+      final finalMessage = _dispatchEvent();
+      if (finalMessage != null) {
+        yield finalMessage;
+      }
+    } finally {
+      _resetBuffers();
     }
   }
 
   /// Parses raw bytes from an SSE stream.
   ///
-  /// Routes through [parseLines] so the end-of-stream flush in
-  /// [parseLines] also fires here — a byte source that closes without
-  /// a trailing blank line still emits its final buffered event.
-  Stream<SseMessage> parseBytes(Stream<List<int>> bytes) {
-    // Per WHATWG SSE spec the BOM is stripped once at the very start of the
-    // stream, not from every line. A mid-stream U+FEFF that happens to be the
-    // first character of a data line would otherwise be silently consumed.
-    var firstLine = true;
-    final lines = utf8.decoder
-        .bind(bytes)
-        .transform(const LineSplitter())
-        .transform(StreamTransformer<String, String>.fromHandlers(
-      handleData: (String line, EventSink<String> sink) {
-        if (firstLine) {
-          firstLine = false;
-          if (line.isNotEmpty && line.codeUnitAt(0) == 0xFEFF) {
-            line = line.substring(1);
-          }
-        }
-        sink.add(line);
-      },
-    ));
-    return parseLines(lines);
-  }
+  /// Rejects an oversized unfinished line before its terminator or EOF.
+  Stream<SseMessage> parseBytes(Stream<List<int>> bytes) =>
+      _SseByteSession(this, bytes).stream;
 
   /// Process a single line according to SSE spec.
   SseMessage? _processLine(String line) {
@@ -184,8 +179,8 @@ class SseParser {
         // of quietly OOM-ing.
         final newlineBytes =
             _hasDataField ? 1 : 0; // \n separator between lines
-        if (_dataBuffer.length + newlineBytes + value.length >
-            maxDataCodeUnits) {
+        if (value.length >
+            maxDataCodeUnits - _dataBuffer.length - newlineBytes) {
           _resetBuffers();
           throw FormatException(
             'SSE data field exceeds $maxDataCodeUnits-code-unit limit '
@@ -274,4 +269,371 @@ class SseParser {
 
   /// Gets the last event ID (for reconnection).
   String? get lastEventId => _lastEventId;
+}
+
+const int _largestExactInteger = 9007199254740991;
+const int _decoderSliceBytes = 1024;
+
+int _validateDataLimit(int limit) {
+  if (limit <= 0 || limit > _largestExactInteger) {
+    throw ArgumentError.value(
+      limit,
+      'maxDataCodeUnits',
+      'must be a positive exactly representable integer',
+    );
+  }
+  return limit;
+}
+
+int _resolveLineLimit(int dataLimit, int? lineLimit) {
+  _validateDataLimit(dataLimit);
+  if (lineLimit == null && dataLimit > _largestExactInteger - 7) {
+    throw ArgumentError.value(
+      dataLimit,
+      'maxDataCodeUnits',
+      'derived line limit is not exactly representable',
+    );
+  }
+  final resolved = lineLimit ?? dataLimit + 7;
+  if (resolved <= 0 || resolved > _largestExactInteger) {
+    throw ArgumentError.value(
+      lineLimit,
+      'maxLineCodeUnits',
+      'must be a positive exactly representable integer',
+    );
+  }
+  return resolved;
+}
+
+FormatException _lineOverflow(int limit) =>
+    FormatException('SSE line exceeds $limit-code-unit limit');
+
+enum _SseByteState { active, finishing, failed, cancelled, closed }
+
+final class _SseByteSession {
+  _SseByteSession(this._parser, this._source) {
+    _decoder = utf8.decoder.startChunkedConversion(
+      StringConversionSink.fromStringSink(_decodedOutput),
+    );
+    _output = StreamController<SseMessage>(
+      sync: true,
+      onListen: _listen,
+      onPause: _pause,
+      onResume: _resume,
+      onCancel: _cancel,
+    );
+  }
+
+  final SseParser _parser;
+  final Stream<List<int>> _source;
+  final StringBuffer _decodedOutput = StringBuffer();
+  late final StreamController<SseMessage> _output;
+  late ByteConversionSink? _decoder;
+  StreamSubscription<List<int>>? _subscription;
+  Future<void>? _sourceCancellation;
+  _SseByteState _state = _SseByteState.active;
+
+  List<int>? _inputChunk;
+  int _inputOffset = 0;
+  String? _decodedSlice;
+  int _decodedOffset = 0;
+  Object? _pendingDecodeError;
+  StackTrace? _pendingDecodeStackTrace;
+  Uint16List _line = Uint16List(0);
+  int _lineLength = 0;
+  bool _skipLf = false;
+  bool _atTextStart = true;
+  bool _sourcePaused = false;
+  bool _pumpScheduled = false;
+  bool _pumping = false;
+
+  Stream<SseMessage> get stream => _output.stream;
+
+  void _listen() {
+    _subscription = _source.listen(
+      _acceptChunk,
+      onError: _sourceError,
+      onDone: _sourceDone,
+      cancelOnError: false,
+    );
+  }
+
+  void _acceptChunk(List<int> chunk) {
+    if (_state != _SseByteState.active || chunk.isEmpty) {
+      return;
+    }
+    _subscription?.pause();
+    _sourcePaused = true;
+    _inputChunk = chunk;
+    _inputOffset = 0;
+    _schedulePump();
+  }
+
+  void _sourceError(Object error, StackTrace stackTrace) {
+    _fail(error, stackTrace);
+  }
+
+  void _sourceDone() {
+    if (_state != _SseByteState.active) {
+      return;
+    }
+    _state = _SseByteState.finishing;
+    try {
+      _decoder!.close();
+      _decoder = null;
+      _takeDecodedOutput();
+    } on FormatException catch (_, stackTrace) {
+      _decoder = null;
+      _pendingDecodeError = const FormatException('Invalid SSE UTF-8');
+      _pendingDecodeStackTrace = stackTrace;
+      _takeDecodedOutput();
+    }
+    _schedulePump();
+  }
+
+  void _schedulePump() {
+    if (_pumpScheduled ||
+        _state == _SseByteState.failed ||
+        _state == _SseByteState.cancelled ||
+        _state == _SseByteState.closed) {
+      return;
+    }
+    _pumpScheduled = true;
+    scheduleMicrotask(() {
+      _pumpScheduled = false;
+      _pump();
+    });
+  }
+
+  void _pump() {
+    if (_pumping ||
+        _output.isPaused ||
+        (_state != _SseByteState.active && _state != _SseByteState.finishing)) {
+      return;
+    }
+    _pumping = true;
+    try {
+      while (!_output.isPaused &&
+          (_state == _SseByteState.active ||
+              _state == _SseByteState.finishing)) {
+        final decoded = _decodedSlice;
+        if (decoded != null && _decodedOffset < decoded.length) {
+          final codeUnit = decoded.codeUnitAt(_decodedOffset++);
+          final message = _acceptCodeUnit(codeUnit);
+          if (message != null) {
+            _schedulePump();
+            _output.add(message);
+            return;
+          }
+          continue;
+        }
+
+        _decodedSlice = null;
+        _decodedOffset = 0;
+
+        final decodeError = _pendingDecodeError;
+        if (decodeError != null) {
+          final decodeStackTrace = _pendingDecodeStackTrace!;
+          _pendingDecodeError = null;
+          _pendingDecodeStackTrace = null;
+          _fail(decodeError, decodeStackTrace);
+          return;
+        }
+
+        final input = _inputChunk;
+        if (input != null && _inputOffset < input.length) {
+          var end = _inputOffset;
+          while (
+              end < input.length && end - _inputOffset < _decoderSliceBytes) {
+            final byte = input[end++];
+            if (byte == 0x0D || byte == 0x0A) {
+              break;
+            }
+          }
+          try {
+            _decoder!.addSlice(input, _inputOffset, end, false);
+          } on FormatException catch (_, stackTrace) {
+            _inputChunk = null;
+            _inputOffset = 0;
+            _decoder = null;
+            _pendingDecodeError = const FormatException('Invalid SSE UTF-8');
+            _pendingDecodeStackTrace = stackTrace;
+            _takeDecodedOutput();
+            continue;
+          }
+          _inputOffset = end;
+          _takeDecodedOutput();
+          continue;
+        }
+
+        _inputChunk = null;
+        _inputOffset = 0;
+
+        if (_state == _SseByteState.finishing) {
+          if (_lineLength != 0) {
+            _parser._processLine(_takeLine());
+          }
+          final message = _parser._dispatchEvent();
+          _state = _SseByteState.closed;
+          _releaseTransientState();
+          if (message != null) {
+            _output.add(message);
+          }
+          unawaited(_output.close());
+          return;
+        }
+
+        _resumeSourceIfReady();
+        return;
+      }
+    } on Object catch (error, stackTrace) {
+      _fail(error, stackTrace);
+    } finally {
+      _pumping = false;
+    }
+  }
+
+  void _takeDecodedOutput() {
+    final decoded = _decodedOutput.toString();
+    _decodedOutput.clear();
+    if (decoded.isNotEmpty) {
+      _decodedSlice = decoded;
+      _decodedOffset = 0;
+    }
+  }
+
+  SseMessage? _acceptCodeUnit(int codeUnit) {
+    if (_atTextStart) {
+      _atTextStart = false;
+      if (codeUnit == 0xFEFF) {
+        return null;
+      }
+    }
+    if (_skipLf) {
+      _skipLf = false;
+      if (codeUnit == 0x0A) {
+        return null;
+      }
+    }
+    if (codeUnit == 0x0D || codeUnit == 0x0A) {
+      _skipLf = codeUnit == 0x0D;
+      return _parser._processLine(_takeLine());
+    }
+    _appendCodeUnit(codeUnit);
+    return null;
+  }
+
+  void _appendCodeUnit(int codeUnit) {
+    if (_lineLength == _parser.maxLineCodeUnits) {
+      throw _lineOverflow(_parser.maxLineCodeUnits);
+    }
+    if (_lineLength == _line.length) {
+      final remaining = _parser.maxLineCodeUnits - _lineLength;
+      final growth = _line.isEmpty
+          ? (_decoderSliceBytes < remaining ? _decoderSliceBytes : remaining)
+          : (_lineLength < remaining ? _lineLength : remaining);
+      final capacity = _lineLength + growth;
+      final grown = Uint16List(capacity)..setRange(0, _lineLength, _line);
+      _line = grown;
+    }
+    _line[_lineLength++] = codeUnit;
+  }
+
+  String _takeLine() {
+    final value = String.fromCharCodes(_line, 0, _lineLength);
+    _lineLength = 0;
+    return value;
+  }
+
+  void _pause() {
+    if ((_state == _SseByteState.active || _state == _SseByteState.finishing) &&
+        !_sourcePaused) {
+      _subscription?.pause();
+      _sourcePaused = true;
+    }
+  }
+
+  void _resume() {
+    if (_state == _SseByteState.finishing ||
+        _inputChunk != null ||
+        _decodedSlice != null) {
+      _schedulePump();
+    } else {
+      _resumeSourceIfReady();
+    }
+  }
+
+  void _resumeSourceIfReady() {
+    if (_state != _SseByteState.active || _output.isPaused || !_sourcePaused) {
+      return;
+    }
+    _sourcePaused = false;
+    _subscription?.resume();
+  }
+
+  void _fail(Object error, StackTrace stackTrace) {
+    if (_state == _SseByteState.failed ||
+        _state == _SseByteState.cancelled ||
+        _state == _SseByteState.closed) {
+      return;
+    }
+    _state = _SseByteState.failed;
+    _releaseTransientState();
+    _parser._resetBuffers();
+    unawaited(_cancelSource(suppressErrors: true));
+    _output.addError(error, stackTrace);
+    unawaited(_output.close());
+  }
+
+  Future<void> _cancelSource({required bool suppressErrors}) {
+    final existing = _sourceCancellation;
+    if (existing != null) {
+      return existing;
+    }
+    final completer = Completer<void>();
+    _sourceCancellation = completer.future;
+    Future<void> cancellation;
+    try {
+      cancellation = _subscription?.cancel() ?? Future<void>.value();
+    } on Object catch (error, stackTrace) {
+      cancellation = Future<void>.error(error, stackTrace);
+    }
+    cancellation.then<void>(
+      (_) => completer.complete(),
+      onError: (Object error, StackTrace stackTrace) {
+        if (suppressErrors) {
+          completer.complete();
+        } else {
+          completer.completeError(error, stackTrace);
+        }
+      },
+    );
+    return completer.future;
+  }
+
+  Future<void> _cancel() {
+    if (_state == _SseByteState.closed) {
+      return Future<void>.value();
+    }
+    if (_state == _SseByteState.failed) {
+      return _sourceCancellation ?? Future<void>.value();
+    }
+    _state = _SseByteState.cancelled;
+    _releaseTransientState();
+    _parser._resetBuffers();
+    return _cancelSource(suppressErrors: false);
+  }
+
+  void _releaseTransientState() {
+    _inputChunk = null;
+    _inputOffset = 0;
+    _decodedSlice = null;
+    _decodedOffset = 0;
+    _pendingDecodeError = null;
+    _pendingDecodeStackTrace = null;
+    _decodedOutput.clear();
+    _decoder = null;
+    _line = Uint16List(0);
+    _lineLength = 0;
+  }
 }
