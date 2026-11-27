@@ -12,7 +12,7 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
-from ag_ui.core import RunAgentInput
+from ag_ui.core import CustomEvent, RunAgentInput
 from copilot import CopilotClient
 from copilot.tools import ToolInvocation
 from fastapi import FastAPI
@@ -541,6 +541,52 @@ async def test_inline_media_parts_are_sent_as_blobs(with_text):
     else:
         assert client.session.prompts[0] == "Describe the attached media."
     assert events[-1].type == "RUN_FINISHED"
+
+
+async def test_a_retained_handler_context_is_ignored_once_its_run_ended():
+    kept = []
+    client = FakeClient([{"id": "idle", "type": "session.idle", "data": {}}])
+    create = client.create_session
+
+    async def create_with_backend(**options):
+        session = await create(**options)
+        send = session.send
+
+        async def send_with_backend(prompt, **kwargs):
+            if kept:
+                kept[0].set_state({"stale": True})
+                kept[0].emit(CustomEvent(name="stale", value=None))
+            else:
+                await options["tools"][0].handler(
+                    ToolInvocation(
+                        session_id=session.session_id,
+                        tool_call_id="backend-1",
+                        tool_name="keep",
+                        arguments={},
+                    )
+                )
+            await send(prompt, **kwargs)
+
+        session.send = send_with_backend
+        return session
+
+    client.create_session = create_with_backend
+    agent = CopilotAgent(
+        client,
+        run_timeout=1,
+        tools=[AGUITool("keep", "Keep context", None, lambda _args, context: kept.append(context))],
+    )
+    async for event in agent.run(make_input()):
+        if event.type == "RUN_FINISHED":
+            # Also call it while run 1 delivers RUN_FINISHED, before its teardown.
+            kept[0].emit(CustomEvent(name="late", value=None))
+    messages = [
+        {"id": "u1", "role": "user", "content": "Say hello."},
+        {"id": "u2", "role": "user", "content": "Again."},
+    ]
+    events = await collect(agent, make_input(runId="r2", state={"fresh": True}, messages=messages))
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_FINISHED"]
+    assert agent._threads["t1"].state == {"fresh": True}
 
 
 async def test_predict_state_and_immutable_snapshots_across_mutable_backend_handler_steps():

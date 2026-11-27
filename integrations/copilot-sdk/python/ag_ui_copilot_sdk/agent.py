@@ -46,7 +46,8 @@ class ToolContext:
     invocation: ToolInvocation
     #: Shared state the client sent with the current run.
     state: Any
-    #: Emit an AG-UI event into the current run, ordered with the native stream.
+    #: Emit an AG-UI event into the current run, ordered with the native stream;
+    #: a no-op once that run ended.
     emit: Callable[[BaseEvent], None]
     #: Replace the shared state (a STATE_SNAPSHOT).
     set_state: Callable[[Any], None]
@@ -79,9 +80,12 @@ class _Thread:
     pending: dict[str, _Pending] = field(default_factory=dict)
     #: ``u:`` user ids and ``t:`` tool call ids the native session consumed; outlives dispose.
     delivered: set[str] = field(default_factory=set)
-    #: Native events and, tagged as ``{"type": "agui", "event": ...}``, handler-emitted ones.
+    #: Native events and, tagged as ``{"type": "agui", "event": ..., "run": ...}``,
+    #: handler-emitted ones; another run drops them.
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     state: Any = None
+    #: Identity of the active run: handler callbacks act only while it is still the active one.
+    run: object | None = None
     busy: bool = False
     #: The frontend tool list the live session was opened with.
     tools: list[Any] | None = None
@@ -259,14 +263,22 @@ class CopilotAgent:
                 tool.name, tool.description, parameters=tool.parameters, skip_permission=True
             )
 
-        def emit(event: BaseEvent) -> None:
-            thread.queue.put_nowait({"type": "agui", "event": event})
-
-        def set_state(snapshot: Any) -> None:
-            thread.state = deepcopy(snapshot)
-            emit(StateSnapshotEvent(snapshot=deepcopy(thread.state)))
-
         async def handler(invocation: ToolInvocation) -> ToolResult:
+            # A retained context must not write into a later run's state or stream.
+            run = thread.run
+
+            def live() -> bool:
+                return run is not None and thread.run is run
+
+            def emit(event: BaseEvent) -> None:
+                if live():
+                    thread.queue.put_nowait({"type": "agui", "event": event, "run": run})
+
+            def set_state(snapshot: Any) -> None:
+                if live():
+                    thread.state = deepcopy(snapshot)
+                    emit(StateSnapshotEvent(snapshot=deepcopy(thread.state)))
+
             context = ToolContext(
                 invocation=invocation,
                 state=thread.state,
@@ -475,6 +487,7 @@ class CopilotAgent:
             # Inside the try so a client disconnect at any yield still releases busy.
             thread.busy = True
             thread.state = input_data.state
+            thread.run = object()
 
             yield RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id)
             for event in thread.mapper.resume():
@@ -598,7 +611,8 @@ class CopilotAgent:
                     raise TimeoutError("Run timed out")
                 kind, data = raw["type"], raw.get("data") or {}
                 if kind == "agui":
-                    yield raw["event"]
+                    if raw["run"] is thread.run:
+                        yield raw["event"]
                     continue
                 if kind == "session.error":
                     raise RuntimeError(data.get("message") or "SDK session failed")
@@ -644,6 +658,7 @@ class CopilotAgent:
             # A thread being closed stays reserved, so a retry cannot reuse its session.
             if thread.closing is None:
                 thread.busy = False
+            thread.run = None
             # A failed run leaves the native session in an unknown state; drop it
             # rather than leaking the thread and its suspended RPCs.
             if failed:

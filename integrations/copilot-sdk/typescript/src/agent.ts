@@ -40,7 +40,7 @@ export interface CopilotClientPort {
 export interface ToolContext extends ToolInvocation {
   /** Shared state the client sent with the current run. */
   state: unknown;
-  /** Emit an AG-UI event into the current run, ordered with the native stream. */
+  /** Emit an AG-UI event into the current run, ordered with the native stream; a no-op once that run ended. */
   emit(event: BaseEvent): void;
   /** Replace the shared state (a STATE_SNAPSHOT). */
   setState(snapshot: unknown): void;
@@ -91,6 +91,8 @@ interface PendingCall {
 interface EmittedEvent {
   type: "agui";
   event: BaseEvent;
+  /** The run that emitted it: another run drops it. */
+  run?: object;
 }
 
 interface Thread {
@@ -102,6 +104,8 @@ interface Thread {
   delivered: Set<string>;
   events: Array<SessionEvent | EmittedEvent>;
   state: unknown;
+  /** Identity of the active run: handler callbacks act only while it is still the active one. */
+  run?: object;
   wake?: () => void;
   busy: boolean;
   /** The frontend tool list the live session was opened with. */
@@ -324,6 +328,7 @@ export class CopilotAgent extends AbstractAgent {
       // Inside the try so a consumer closing the stream at any yield still releases busy.
       thread.busy = true;
       thread.state = input.state;
+      thread.run = {};
 
       yield { type: E.RUN_STARTED, threadId: input.threadId, runId: input.runId };
       yield* thread.mapper.resume();
@@ -409,7 +414,7 @@ export class CopilotAgent extends AbstractAgent {
           throw new Error("Run timed out");
         }
         if (event.type === "agui") {
-          yield event.event;
+          if (event.run === thread.run) yield event.event;
           continue;
         }
         if (event.type === "session.error") throw new Error(event.data.message || "SDK session failed");
@@ -445,6 +450,7 @@ export class CopilotAgent extends AbstractAgent {
     } finally {
       // A thread being closed stays reserved, so a retry cannot reuse its session.
       if (!thread.closing) thread.busy = false;
+      thread.run = undefined;
       // A failed run leaves the native session in an unknown state; drop it rather
       // than leaking the thread's session and its suspended RPCs.
       if (failure !== undefined) await this.dispose(input.threadId, thread);
@@ -472,8 +478,8 @@ export class CopilotAgent extends AbstractAgent {
     return interrupts.length ? { outcome: { type: "interrupt", interrupts } } : {};
   }
 
-  private enqueue(thread: Thread, event: BaseEvent): void {
-    thread.events.push({ type: "agui", event });
+  private enqueue(thread: Thread, event: BaseEvent, run: object | undefined): void {
+    thread.events.push({ type: "agui", event, run });
     thread.wake?.();
   }
 
@@ -484,16 +490,23 @@ export class CopilotAgent extends AbstractAgent {
       if (!handler) return { ...tool, skipPermission: true } as Tool;
       return {
         ...tool,
-        handler: (args: unknown, invocation: ToolInvocation) =>
-          handler(args, {
+        handler: (args: unknown, invocation: ToolInvocation) => {
+          // A retained context must not write into a later run's state or stream.
+          const run = thread.run;
+          const live = () => run !== undefined && thread.run === run;
+          return handler(args, {
             ...invocation,
             state: thread.state,
-            emit: (event) => this.enqueue(thread, event),
-            setState: (snapshot) => {
-              thread.state = structuredClone(snapshot);
-              this.enqueue(thread, { type: E.STATE_SNAPSHOT, snapshot: structuredClone(thread.state) });
+            emit: (event) => {
+              if (live()) this.enqueue(thread, event, run);
             },
-          }),
+            setState: (snapshot) => {
+              if (!live()) return;
+              thread.state = structuredClone(snapshot);
+              this.enqueue(thread, { type: E.STATE_SNAPSHOT, snapshot: structuredClone(thread.state) }, run);
+            },
+          });
+        },
       } as Tool;
     });
   }

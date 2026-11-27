@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RunAgentInput } from "@ag-ui/core";
+import { firstValueFrom, tap, toArray } from "rxjs";
+import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import type { SessionEvent } from "@github/copilot-sdk";
-import { CopilotAgent, type CopilotSessionPort } from "../src/index.js";
+import { CopilotAgent, type CopilotSessionPort, type ToolContext } from "../src/index.js";
 import { CopilotEventMapper } from "../src/mapper.js";
 import { FakeClient, FakeSession, FRONTEND_TOOL_TURN, TEXT_TURN, TOOLS, makeInput, run, type Payload } from "./helpers.js";
 
@@ -369,6 +370,44 @@ describe("CopilotAgent", () => {
     if (withText) expect(client.session!.sent[0]!.prompt).toBe("Describe these.");
     else expect(client.session!.sent[0]!.prompt).toBe("Describe the attached media.");
     expect(events.at(-1)!.type).toBe("RUN_FINISHED");
+  });
+
+  it("ignores a retained handler context once its run has ended", async () => {
+    let kept: ToolContext | undefined;
+    const client = new FakeClient([{ id: "idle", type: "session.idle", data: {} }]);
+    const create = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await create(config);
+      const send = session.send.bind(session);
+      session.send = async (options) => {
+        if (kept) {
+          kept.setState({ stale: true });
+          kept.emit({ type: "CUSTOM", name: "stale", value: null } as BaseEvent);
+        } else {
+          await config.tools![0]!.handler!({}, {
+            sessionId: session.sessionId, toolCallId: "backend-1", toolName: "keep", arguments: {},
+          });
+        }
+        return send(options);
+      };
+      return session;
+    };
+    const agent = new CopilotAgent({
+      client, runTimeoutMs: 1_000,
+      tools: [{ name: "keep", description: "Keep context", handler: (_args, context) => { kept = context; return "ok"; } }],
+    });
+    // Also call it while run 1 delivers RUN_FINISHED, before its teardown.
+    await firstValueFrom(agent.run(makeInput()).pipe(
+      tap((event) => event.type === "RUN_FINISHED" && kept!.emit({ type: "CUSTOM", name: "late", value: null } as BaseEvent)),
+      toArray(),
+    ));
+    const events = await run(agent, makeInput({
+      runId: "r2", state: { fresh: true },
+      messages: [{ id: "u1", role: "user", content: "Say hello." }, { id: "u2", role: "user", content: "Again." }],
+    }));
+    expect(events.map((event) => event.type)).toEqual(["RUN_STARTED", "RUN_FINISHED"]);
+    expect((agent as unknown as { threads: Map<string, { state: unknown }> }).threads.get("t1")!.state)
+      .toEqual({ fresh: true });
   });
 
   it("emits PredictState and immutable snapshots across mutable backend handler steps", async () => {
