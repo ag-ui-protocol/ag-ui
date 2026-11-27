@@ -26,10 +26,11 @@ def add_langgraph_fastapi_endpoint(
         app: FastAPI application or APIRouter to register the routes on.
         agent: LangGraph agent to serve.
         path: Path of the agent route.
-        authorize_guidance: Host authorization for guidance-enabled agents. Runs
-            for both POST and GET capabilities. Return True to authorize system
+        authorize_guidance: Host authorization for agent POST requests and
+            the capabilities route when present. Return True to authorize system
             guidance, False for anonymous handling, or raise an HTTPException
-            to reject the request. Takes precedence over trusted_ingress.
+            to reject the request. Takes precedence over trusted_ingress. With
+            guidance disabled, either boolean allows legacy prompt handling.
         trusted_ingress: Set only when deployment access controls restrict this
             endpoint to authorized callers.
         **kwargs: Forwarded to ``app.post`` for the agent route (``name``,
@@ -53,12 +54,16 @@ def add_langgraph_fastapi_endpoint(
         # Create an event encoder to properly format SSE events.
         encoder = EventEncoder(accept=request.headers.get("accept"))
 
+        trusted = (
+            await guidance_is_trusted(request)
+            if guidance_enabled or authorize_guidance is not None
+            else False
+        )
+
         # Each request gets isolated active_run state.
         request_agent = agent.clone()
         if isinstance(request_agent, RunGuidanceAgentMixin):
-            events = request_agent.run(
-                input_data, trusted_guidance=await guidance_is_trusted(request)
-            )
+            events = request_agent.run(input_data, trusted_guidance=trusted)
         else:
             events = request_agent.run(input_data)
 

@@ -79,9 +79,15 @@ authorize both explicitly. The helper's `dependencies` keyword applies to the
 POST route. Set `trusted_ingress=True` only when deployment access controls
 restrict both routes to authorized callers.
 
+Set `enable_run_guidance=False` on the chat factory to use the adapter's
+existing prompt handling. The FastAPI helper skips the guidance capability
+route in this configuration and still calls an explicitly supplied
+`authorize_guidance` callback for POST requests.
+
 To serve a graph you already compiled, use
 `LangGraphAgent(name="my-agent", graph=graph)` with the same FastAPI helper.
-To opt a custom LangChain chat wrapper into run guidance, install
+A precompiled graph may call its models from arbitrary nodes. For a custom
+LangChain chat wrapper that supports the model middleware interface, install
 `RunGuidanceMiddleware` when creating the graph and place
 `RunGuidanceAgentMixin` before your adapter in the class declaration.
 

@@ -6,14 +6,16 @@ from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 from contextlib import aclosing
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
-from ag_ui.core import Context, RunAgentInput
+from ag_ui.core import Context, MessagesSnapshotEvent, RunAgentInput
+from ag_ui.core import Message as AGUIMessage
 from ag_ui.core import SystemMessage as AGUISystemMessage
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 
 from .agent import LangGraphAgent, ProcessedEvents
@@ -53,7 +55,7 @@ def _entry(entries: Sequence[Context], description: str) -> str:
     return matches[0].strip() if matches else ""
 
 
-def _legacy_description(message: BaseMessage | AGUISystemMessage) -> str | None:
+def _legacy_description(message: BaseMessage | AGUIMessage) -> str | None:
     if not isinstance(message, (SystemMessage, AGUISystemMessage)):
         return None
     message_id = message.id or ""
@@ -67,14 +69,15 @@ def _legacy_description(message: BaseMessage | AGUISystemMessage) -> str | None:
     )
 
 
-def _without_stale_guidance(
-    messages: Sequence[BaseMessage],
-) -> Iterator[BaseMessage]:
+_Message = TypeVar("_Message", bound=BaseMessage | AGUIMessage)
+
+
+def _without_stale_guidance(messages: Sequence[_Message]) -> Iterator[_Message]:
     for message in messages:
         if _legacy_description(message):
             continue
         if (
-            isinstance(message, SystemMessage)
+            isinstance(message, (SystemMessage, AGUISystemMessage))
             and isinstance(message.content, str)
             and message.content.startswith(_APP_CONTEXT_PREFIX)
         ):
@@ -125,6 +128,17 @@ class RunGuidanceAgentMixin:
             for message in super()._filter_reserved_input_messages(messages)
             if not _legacy_description(message)
         ]
+
+    async def get_state_and_messages_snapshots(
+        self, config: RunnableConfig
+    ) -> AsyncGenerator[ProcessedEvents, None]:
+        async for event in super().get_state_and_messages_snapshots(config):
+            if isinstance(event, MessagesSnapshotEvent):
+                # A client may echo these messages on its next run.
+                event = event.model_copy(
+                    update={"messages": list(_without_stale_guidance(event.messages))}
+                )
+            yield event
 
     async def run(
         self, input: RunAgentInput, *, trusted_guidance: bool = False
@@ -224,12 +238,15 @@ def create_langgraph_agent(
     name: str,
     model: str | BaseChatModel,
     middleware: Sequence[AgentMiddleware] = (),
+    enable_run_guidance: bool = True,
     agent_options: Mapping[str, Any] | None = None,
     **graph_options: Any,
 ) -> LangGraphAgent:
     """Create a LangChain chat agent with AG-UI's run guidance enabled.
 
-    ``middleware`` and ``graph_options`` go to LangChain's ``create_agent``.
+    Set ``enable_run_guidance=False`` to use the ordinary adapter's prompt
+    handling. ``middleware`` and ``graph_options`` go to LangChain's
+    ``create_agent``.
     ``agent_options`` goes to the ``LangGraphAgent`` adapter. Supply a persistent
     ``checkpointer`` for production deployments that need to retain state across
     processes or restarts.
@@ -237,7 +254,10 @@ def create_langgraph_agent(
     if graph_options.get("checkpointer") is None:
         graph_options["checkpointer"] = MemorySaver()
     model_middleware = list(middleware)
-    if not any(isinstance(item, RunGuidanceMiddleware) for item in model_middleware):
+    if enable_run_guidance and not any(
+        isinstance(item, RunGuidanceMiddleware) for item in model_middleware
+    ):
         model_middleware.append(RunGuidanceMiddleware())
     graph = create_agent(model, middleware=model_middleware, **graph_options)
-    return _RunGuidanceAgent(name=name, graph=graph, **dict(agent_options or {}))
+    adapter = _RunGuidanceAgent if enable_run_guidance else LangGraphAgent
+    return adapter(name=name, graph=graph, **dict(agent_options or {}))

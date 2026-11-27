@@ -10,10 +10,13 @@ DEFAULT_MODEL = "openai:gpt-4.1-mini"
 
 
 def create_chat_graph(
-    *, model: str | BaseChatModel = DEFAULT_MODEL, fastapi: bool = False
+    *,
+    model: str | BaseChatModel = DEFAULT_MODEL,
+    fastapi: bool = False,
+    enable_run_guidance: bool = True,
 ):
     middleware = [CopilotKitMiddleware()]
-    if fastapi:
+    if fastapi and enable_run_guidance:
         middleware.append(RunGuidanceMiddleware())
     return create_agent(
         model=model,
@@ -30,11 +33,14 @@ class _FastAPIChatAgent(RunGuidanceAgentMixin, LangGraphAGUIAgent):
 
 
 def create_fastapi_agent(
-    *, model: str | BaseChatModel = DEFAULT_MODEL
+    *, model: str | BaseChatModel = DEFAULT_MODEL, enable_run_guidance: bool = True
 ) -> LangGraphAGUIAgent:
     """Build the checkpointed Dojo chat agent."""
-    return _FastAPIChatAgent(
+    adapter = _FastAPIChatAgent if enable_run_guidance else LangGraphAGUIAgent
+    return adapter(
         name="agentic_chat",
         description="An example for an agentic chat flow using LangGraph.",
-        graph=create_chat_graph(model=model, fastapi=True),
+        graph=create_chat_graph(
+            model=model, fastapi=True, enable_run_guidance=enable_run_guidance
+        ),
     )

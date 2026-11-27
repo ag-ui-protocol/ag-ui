@@ -40,3 +40,6 @@ run and tool-result continuation.
 To host just the stock chat agent, import
 `create_fastapi_agent` from `agents.agentic_chat.fastapi` and serve its return
 value with `ag_ui_langgraph.add_langgraph_fastapi_endpoint`.
+
+The factory enables run guidance by default. Pass `enable_run_guidance=False`
+to keep CopilotKit's existing prompt handling and skip capability registration.

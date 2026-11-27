@@ -1,5 +1,6 @@
 """Exercise the packaged chat factory and FastAPI guidance routes offline."""
 
+import json
 import unittest
 
 import ag_ui_langgraph
@@ -48,6 +49,12 @@ class TestRunGuidance(unittest.TestCase):
         return TestClient(app)
 
     def run_agent(self, client, run_id, *, context=(), messages=(), headers=None):
+        self.post_run(
+            client, run_id, context=context, messages=messages, headers=headers
+        )
+        return self.model.prompts[-1]
+
+    def post_run(self, client, run_id, *, context=(), messages=(), headers=None):
         response = client.post(
             "/v1/agent",
             headers=headers,
@@ -67,7 +74,11 @@ class TestRunGuidance(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotIn("RUN_ERROR", response.text)
         self.assertIn("RUN_FINISHED", response.text)
-        return self.model.prompts[-1]
+        return [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
 
     def test_host_authorizes_run_and_capability_with_same_callback(self):
         async def authorize(request: Request) -> bool:
@@ -271,6 +282,100 @@ class TestRunGuidance(unittest.TestCase):
             self.assertEqual(
                 [message.id for message in prompt if isinstance(message, HumanMessage)],
                 ["start", "next"],
+            )
+
+    def test_snapshot_echo_does_not_restore_stale_guidance(self):
+        config = {"configurable": {"thread_id": "thread"}}
+        with self.client(trusted_ingress=True) as client:
+            self.run_agent(client, "start")
+            self.agent.graph.update_state(
+                config,
+                {
+                    "messages": [
+                        SystemMessage(id="granted-tools:cached", content="STALE_TOOLS"),
+                        SystemMessage(
+                            id="mixed-context",
+                            content='App Context:\n[{"description":"OpenBot standing role",'
+                            '"value":"STALE_ROLE"},{"description":"Ordinary context","value":"KEEP"}]',
+                        ),
+                        SystemMessage(
+                            id="reserved-context",
+                            content='App Context:\n[{"description":"OpenBot granted tools guidance",'
+                            '"value":"STALE_CONTEXT_TOOLS"}]',
+                        ),
+                        SystemMessage(id="ordinary", content="ORDINARY_INSTRUCTION"),
+                    ]
+                },
+            )
+            events = self.post_run(client, "next")
+            snapshot = next(
+                event["messages"]
+                for event in events
+                if event["type"] == "MESSAGES_SNAPSHOT"
+            )
+            prompt = self.run_agent(client, "echo", messages=snapshot)
+            for stale in ("STALE_TOOLS", "STALE_ROLE", "STALE_CONTEXT_TOOLS"):
+                self.assertFalse(any(stale in message.content for message in prompt))
+                self.assertNotIn(stale, json.dumps(snapshot))
+            by_id = {message["id"]: message["content"] for message in snapshot}
+            self.assertEqual(by_id["ordinary"], "ORDINARY_INSTRUCTION")
+            self.assertEqual(
+                json.loads(by_id["mixed-context"].removeprefix("App Context:\n")),
+                [{"description": "Ordinary context", "value": "KEEP"}],
+            )
+            self.assertNotIn("granted-tools:cached", by_id)
+            self.assertNotIn("reserved-context", by_id)
+            stored = self.agent.graph.get_state(config).values["messages"]
+            self.assertTrue(
+                any(message.id == "granted-tools:cached" for message in stored)
+            )
+
+    def test_packaged_factory_can_opt_out(self):
+        agent = ag_ui_langgraph.create_langgraph_agent(
+            name="test",
+            model=self.model,
+            enable_run_guidance=False,
+        )
+
+        def authorize(request: Request) -> bool:
+            if request.headers.get("Authorization") != "Bearer legacy-token":
+                raise HTTPException(status_code=401)
+            return False
+
+        with self.client(agent=agent, authorize_guidance=authorize) as client:
+            self.assertEqual(client.get("/v1/agent/capabilities").status_code, 404)
+            denied = client.post(
+                "/v1/agent",
+                json={
+                    "threadId": "thread",
+                    "runId": "denied",
+                    "state": {},
+                    "messages": [],
+                    "tools": [],
+                    "context": [],
+                    "forwardedProps": {},
+                },
+            )
+            self.assertEqual(denied.status_code, 401)
+            self.assertEqual(self.model.prompts, [])
+
+            prompt = self.run_agent(
+                client,
+                "legacy",
+                headers={"Authorization": "Bearer legacy-token"},
+                context=[entry("OpenBot standing role", "RESERVED_ROLE")],
+                messages=[
+                    {"id": "placeholder", "role": "system", "content": "DISCARD"},
+                    {
+                        "id": "granted-tools:legacy",
+                        "role": "system",
+                        "content": "LEGACY_TOOLS",
+                    },
+                ],
+            )
+            self.assertEqual(
+                [(message.type, message.content) for message in prompt],
+                [("system", "LEGACY_TOOLS"), ("human", "Proceed?")],
             )
 
     def test_precompiled_graph_retains_existing_capability_behavior(self):

@@ -17,7 +17,7 @@ def make_model(captured, tool_name):
     def provider(request):
         body = json.loads(request.content)
         captured.append(body)
-        if len(captured) == 1:
+        if tool_name and len(captured) == 1:
             delta = {
                 "role": "assistant",
                 "tool_calls": [
@@ -217,6 +217,10 @@ class TestRunGuidanceContract(unittest.TestCase):
             "forwardedProps": {},
         }
         with TestClient(app) as client:
+            capabilities = client.get("/agent/capabilities")
+            self.assertEqual(
+                capabilities.json()["custom"]["openbot.runGuidance"], {"version": 1}
+            )
             first = client.post("/agent", json=start)
             self.assertEqual(first.status_code, 200)
             self.assertNotIn("RUN_ERROR", first.text)
@@ -258,3 +262,30 @@ class TestRunGuidanceContract(unittest.TestCase):
         result = next(row for row in requests[1]["messages"] if row["role"] == "tool")
         self.assertEqual(result["tool_call_id"], "approval-call")
         self.assertEqual(result["content"], "FRONTEND_RESULT")
+
+    def test_stock_fastapi_chat_can_keep_the_legacy_context_path(self):
+        requests = []
+        app = FastAPI()
+        add_langgraph_fastapi_endpoint(
+            app,
+            create_fastapi_agent(
+                model=make_model(requests, None), enable_run_guidance=False
+            ),
+            "/agent",
+        )
+        with TestClient(app) as client:
+            self.assertEqual(client.get("/agent/capabilities").status_code, 404)
+            self.run_agent(
+                client,
+                run_id="legacy",
+                context=[
+                    {"description": "OpenBot standing role", "value": "LEGACY_ROLE"}
+                ],
+                headers={},
+            )
+        messages = requests[0]["messages"]
+        context = next(
+            message for message in messages if "App Context:" in message["content"]
+        )
+        self.assertEqual(context["role"], "system")
+        self.assertIn("LEGACY_ROLE", context["content"])
