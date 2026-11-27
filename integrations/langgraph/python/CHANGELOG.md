@@ -4,6 +4,18 @@
 
 - The packaged and Dojo FastAPI chat factories enable per-run guidance by default. Existing `LangGraphAgent` endpoints retain their current prompt handling. To enable run guidance on an existing LangChain chat graph, rebuild it with `RunGuidanceMiddleware` and serve it through an adapter with `RunGuidanceAgentMixin`. See [Run guidance for existing graphs](README.md#run-guidance-for-existing-graphs).
 
+## 0.1.0 — 2026-11-27
+
+- Python chat agents can now receive run guidance.
+- Guidance can be opted out of, and snapshot echoes are scrubbed.
+- Stale guidance is scrubbed from state snapshots.
+- Preserves legacy message order and default checkpointing.
+- Documentation added for run guidance, keyless listeners, and cross-host encryption.
+
+### Breaking changes
+
+- Run guidance behavior and state snapshot handling changed; verify guidance opt-out and snapshot contents after upgrade.
+
 ## 0.0.48 — 2026-11-21
 
 - Continue-mode now starts a new run when forwarded input differs from what a prior node (e.g. permission gate) checked, preventing bypass of gating nodes.
