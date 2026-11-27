@@ -64,10 +64,13 @@ AG_UI_GUIDANCE_TOKEN='' AG_UI_TRUSTED_INGRESS=true \
     --host 127.0.0.1 --port 8001 --workers 1
 ```
 
-Point public clients to your public URL and the trusted backend to
-`http://127.0.0.1:8001/agent/agentic_chat`. If the backend runs on another host,
-first restrict access to the private port to that backend, then bind the
-keyless listener to the appropriate private interface and use its internal URL.
+Point public clients to your public URL. For a trusted backend on the same
+host, use `http://127.0.0.1:8001/agent/agentic_chat`. If the backend runs on
+another host, first restrict access to the private port to that backend,
+then bind the keyless listener to the appropriate private interface. Require
+TLS with authenticated endpoints or an encrypted tunnel for all traffic
+between the backend and the keyless listener. Point the backend to the
+protected internal URL.
 Configure the backend to use that same listener for capability lookup, runs,
 and tool-result continuations.
 
