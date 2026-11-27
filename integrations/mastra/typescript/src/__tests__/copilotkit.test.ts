@@ -205,6 +205,27 @@ describe.each([
     expect(mocks.captured.runtimeOptions.agents).toBe(agents);
   });
 
+  it("authorizes guidance in the server route before it builds the local agents", async () => {
+    const authorize = vi.fn(
+      (c: { req: { raw: Request } }) =>
+        c.req.raw.headers.get("authorization") === "Bearer bot-key",
+    );
+    const route = await invoke(register, {
+      path: "/copilotkit",
+      resourceId: "static",
+      runGuidance: { isTrusted: authorize },
+    });
+    const context = makeContext({ authorization: "Bearer bot-key" });
+    await route.handler(context);
+
+    expect(authorize).toHaveBeenCalledWith(context);
+    expect(mocks.captured.getLocalAgentsOptions.runGuidance).toEqual({
+      trusted: true,
+    });
+    expect(mocks.captured.runtimeOptions.runGuidance).toBeUndefined();
+    expect(mocks.captured.request.headers.get("authorization")).toBeNull();
+  });
+
   it("runs setContext with the shared request context before building agents", async () => {
     const seen: string[] = [];
     const route = await invoke(register, {

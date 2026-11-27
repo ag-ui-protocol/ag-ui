@@ -24,6 +24,11 @@ export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
 export interface CopilotKitRouteOptions<Cors> {
   path: string;
   resourceId: string;
+  /** Enable run guidance on the Mastra agents built by this route. */
+  runGuidance?: {
+    /** Read the authentication result established by the Mastra server. */
+    isTrusted?: (context: ContextWithMastra) => boolean | Promise<boolean>;
+  };
   /**
    * Mastra tracing options forwarded to each agent run (default-agent path
    * only; ignored when `agents` is supplied since those are pre-constructed).
@@ -78,6 +83,7 @@ export function createCopilotKitRoute<
     path,
     resourceId,
     setContext,
+    runGuidance,
     agents,
     cors,
     tracingOptions,
@@ -106,6 +112,9 @@ export function createCopilotKitRoute<
             >(MASTRA_RESOURCE_ID_KEY) ?? resourceId,
           mastra,
           requestContext,
+          runGuidance: runGuidance
+            ? { trusted: (await runGuidance.isTrusted?.(c)) === true }
+            : undefined,
           tracingOptions,
           subagentVisibility,
           subagentToolResults,

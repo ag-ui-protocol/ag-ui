@@ -1,6 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { LibSQLStore } from "@mastra/libsql";
+import { mastraRunGuidanceProcessor } from "@ag-ui/mastra/run-guidance";
 import { weatherTool } from "../tools/weather-tool";
 
 export const agenticChatAgent = new Agent({
@@ -19,10 +20,11 @@ export const agenticChatAgent = new Agent({
       Use the weatherTool to fetch current weather data.
 `,
   model: "openai/gpt-4.1-mini",
+  inputProcessors: [mastraRunGuidanceProcessor],
   tools: { get_weather: weatherTool },
   memory: new Memory({
     storage: new LibSQLStore({
-      id: 'agentic-chat-memory',
+      id: "agentic-chat-memory",
       url: "file:../mastra.db", // path is relative to the .mastra/output directory
     }),
   }),

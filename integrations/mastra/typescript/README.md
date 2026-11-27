@@ -271,3 +271,42 @@ cd integrations/mastra/typescript/examples
 pnpm install
 pnpm run dev
 ```
+
+## Per-run guidance
+
+A configured receiver declares `custom["openbot.runGuidance"] = { version: 1 }`
+in its AG-UI capabilities. It reads the current run's `RunAgentInput.context`
+entries named `OpenBot standing role` and `OpenBot granted tools guidance`.
+The processor adds both to the provider's system instructions for an authorized
+caller. For an ordinary caller, it adds only the role as user task context.
+Guidance applies to each model call and stays out of conversation history.
+Send the current entries again on hand-back or resume. Omit an entry to clear
+it.
+
+For an in-process agent, set `runGuidance: { trusted }` in the `MastraAgent`
+constructor, `getLocalAgent`, or `getLocalAgents`. Set `trusted` from your
+server's authentication result or an explicitly trusted ingress. An empty
+`runGuidance` object enables ordinary guidance. The bridge installs the
+processor and exposes the capability from `getCapabilities()`. If your app
+serves the agent over AG-UI HTTP, return that declaration as JSON at
+`GET <endpoint>/capabilities` under the same authentication as the run endpoint.
+For `registerCopilotKit`, supply `runGuidance: { isTrusted: (context) => … }` to
+authorize guidance for agents that the route builds.
+
+For a native Mastra server, add `mastraRunGuidanceProcessor` to the agent's
+`inputProcessors` before any provider response-cache processor. On the server,
+call `withMastraRunGuidanceAuthority(trusted, next)` after authenticating the
+request. Mount `registerMastraRunGuidanceCapabilities(agentId)` with the same
+authentication and authorization as the native run routes. Import all three
+from `@ag-ui/mastra/run-guidance`. The remote bridge looks up the declaration
+at `GET /<encoded agentId>/capabilities` relative to the configured Mastra
+client base URL, using its native credentials and fetch implementation.
+Mastra versions without the provider-request hook omit the declaration.
+
+The native example publishes this capability for `agentic_chat`.
+
+- Set `AG_UI_GUIDANCE_TOKEN` to require a matching `Authorization: Bearer …`
+  header for native runs and discovery.
+- Set `AG_UI_TRUSTED_INGRESS=true` when deployment access controls restrict
+  both routes to authorized application backends.
+- The example uses ordinary guidance when neither setting is present.

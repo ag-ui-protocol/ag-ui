@@ -1,3 +1,4 @@
+import type { MastraRunGuidanceOptions } from "./run-guidance";
 import type { Message, PartSource, TextPart } from "@ag-ui/client";
 import { AbstractAgent, contentToText } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
@@ -586,6 +587,8 @@ export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Enable the packaged guidance receiver on the local agent. */
+  runGuidance?: MastraRunGuidanceOptions;
   /**
    * Enable Mastra's `untilIdle` run mode (background-task lifecycle piped into
    * the run's fullStream). `true` enables it for every agent; pass an array of
@@ -611,6 +614,7 @@ export function getLocalAgents({
   mastra,
   resourceId,
   requestContext,
+  runGuidance,
   untilIdle,
   observationalMemory,
   tracingOptions,
@@ -635,6 +639,7 @@ export function getLocalAgents({
         agent,
         resourceId,
         requestContext,
+        runGuidance,
         untilIdle: wantsUntilIdle(agentId) ? true : undefined,
         observationalMemory: wantsObservationalMemory(agentId)
           ? true
@@ -656,6 +661,8 @@ export interface GetLocalAgentOptions {
   agentId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Enable the packaged guidance receiver on the local agent. */
+  runGuidance?: MastraRunGuidanceOptions;
   /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
   /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
@@ -669,6 +676,7 @@ export function getLocalAgent({
   agentId,
   resourceId,
   requestContext,
+  runGuidance,
   tracingOptions,
   subagentVisibility,
   subagentToolResults,
@@ -682,6 +690,7 @@ export function getLocalAgent({
     agent,
     resourceId,
     requestContext,
+    runGuidance,
     tracingOptions,
     subagentVisibility,
     subagentToolResults,
