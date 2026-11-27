@@ -1,0 +1,206 @@
+{
+  "AGENTIC_CHAT": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t1",
+      "runId": "r1",
+      "parentRunId": null,
+      "input": null
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-sZwVO-ktzIGDEfy3",
+      "role": "assistant",
+      "name": "AgenticChat",
+      "rawEvent": {
+        "authorName": "AgenticChat",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-sZwVO-ktzIGDEfy3",
+      "delta": "Hello duaa! How can ",
+      "rawEvent": {
+        "authorName": "AgenticChat",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-sZwVO-ktzIGDEfy3",
+      "delta": "I assist you today?",
+      "rawEvent": {
+        "authorName": "AgenticChat",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-sZwVO-ktzIGDEfy3"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t1",
+      "runId": "r1",
+      "result": null,
+      "outcome": {
+        "type": "success",
+        "pendingToolCallIds": null
+      },
+      "usage": [
+        {
+          "provider": null,
+          "model": "gpt-4o",
+          "inputTokens": 4,
+          "outputTokens": 10,
+          "totalTokens": 14,
+          "reasoningTokens": null,
+          "cachedInputTokens": null,
+          "cacheWriteInputTokens": null
+        }
+      ]
+    }
+  ],
+  "BACKEND_TOOL": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t1",
+      "runId": "r1",
+      "parentRunId": null,
+      "input": null
+    },
+    {
+      "type": "TOOL_CALL_START",
+      "subagentRunId": null,
+      "toolCallId": "call_get_weather_1",
+      "toolCallName": "get_weather",
+      "parentMessageId": "chatcmpl-0-gVLlBKHQ9dkxwa",
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TOOL_CALL_ARGS",
+      "subagentRunId": null,
+      "toolCallId": "call_get_weather_1",
+      "delta": "{\"location\":\"San Francisco\"}",
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TOOL_CALL_END",
+      "subagentRunId": null,
+      "toolCallId": "call_get_weather_1",
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TOOL_CALL_RESULT",
+      "subagentRunId": null,
+      "messageId": "call_get_weather_1",
+      "toolCallId": "call_get_weather_1",
+      "content": "{\"temperature\":20,\"conditions\":\"sunny\",\"humidity\":50,\"wind_speed\":10,\"feelsLike\":25}",
+      "role": null,
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "tool",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-NG0L5yQS-D_biey7",
+      "role": "assistant",
+      "name": "BackendToolRenderer",
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-NG0L5yQS-D_biey7",
+      "delta": "Done! I've completed",
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-NG0L5yQS-D_biey7",
+      "delta": " that for you.",
+      "rawEvent": {
+        "authorName": "BackendToolRenderer",
+        "role": "assistant",
+        "conversationId": null,
+        "additionalProperties": null
+      }
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "subagentRunId": null,
+      "messageId": "chatcmpl-NG0L5yQS-D_biey7"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t1",
+      "runId": "r1",
+      "result": null,
+      "outcome": {
+        "type": "success",
+        "pendingToolCallIds": null
+      },
+      "usage": [
+        {
+          "provider": null,
+          "model": "gpt-4o",
+          "inputTokens": 39,
+          "outputTokens": 19,
+          "totalTokens": 58,
+          "reasoningTokens": null,
+          "cachedInputTokens": null,
+          "cacheWriteInputTokens": null
+        }
+      ]
+    }
+  ],
+  "RUN_ERROR": [
+    {
+      "type": "RUN_ERROR",
+      "message": "An error occurred while streaming the agent response.",
+      "code": "StreamingError",
+      "usage": null
+    }
+  ]
+}

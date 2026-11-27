@@ -5,20 +5,28 @@ description: "Overview of the AG‑UI Rust SDKs"
 
 # Rust SDK
 
-The Rust SDK consists of two crates:
+The Rust SDK supplies three crates for current AG-UI 1.0 (Rust 1.88.0 or newer):
 
 - ag-ui-core: shared types and events
-- ag-ui-client: client utilities and concrete agents like HttpAgent
+- ag-ui-client: client lifecycle, subscribers, and HTTP/SSE transport
+- ag-ui-encoder: framework-independent, validated SSE producer encoding
 
 ## Getting started
 
-```bash
-# Core data types and events
-cargo add ag-ui-core
+Version 0.2.0 is available from this repository. Use a reachable immutable Git
+revision for all three SDK crates and patch their transitive SDK dependencies to
+that same revision. See the [client overview](/sdk/rust/client/overview) for the
+complete recipe. Local path dependencies are useful for checkout development,
+but do not establish external Git consumption or registry publication readiness.
 
-# Client crate with Agent trait, HttpAgent, subscribers
-cargo add ag-ui-client
-```
+For producers, normalize incoming JSON with
+`ag_ui_core::processing::normalize_run_input` before opening the SSE response.
+Stream current events with `ag_ui_encoder::Encoder::encode_live` and
+`ag_ui_encoder::CONTENT_TYPE`. The encoder validates event payloads but does not
+enforce lifecycle sequencing or provide a server framework.
+
+The HTTP client processes current AG-UI 1.0. Retired `THINKING_*` events are not
+translated; producers must use `REASONING_*` events.
 
 ## Packages
 

@@ -5,7 +5,9 @@ description: "Agent trait with core event handling"
 
 # Agent trait
 
-The Agent trait defines the contract for connecting any execution backend to AG‑UI. Concrete implementations (like HttpAgent) stream core events that are handled by subscribers to maintain messages and state.
+The Agent trait defines the contract for connecting any execution backend to
+AG‑UI. Concrete implementations (like HttpAgent) stream core events that are
+handled by subscribers to maintain messages and state.
 
 ```rust
 use ag_ui_client::Agent;
@@ -13,14 +15,17 @@ use ag_ui_client::Agent;
 
 ## Generics
 
-- StateT: the agent state type. Must implement ag_ui_client::core::AgentState (Serialize + Deserialize + Clone + Debug + Send + Sync).
-- FwdPropsT: forwarded properties type passed through to downstream systems. Must implement ag_ui_client::core::FwdProps.
+- StateT: the agent state type. Must implement ag_ui_client::core::AgentState
+  (Serialize + Deserialize + Clone + Debug + Default + Send + Sync + 'static).
+- FwdPropsT: forwarded properties type passed through to downstream systems.
+  Must implement ag_ui_client::core::FwdProps.
 
 Defaults for both are serde_json::Value, which works well for quick starts.
 
 ## Running
 
-The core trait method you implement is run, which returns an asynchronous stream of core events:
+The core trait method you implement is run, which returns an asynchronous stream
+of core events:
 
 ```rust
 #[async_trait::async_trait]
@@ -36,12 +41,24 @@ where
 }
 ```
 
-For most consumers, use the provided convenience wrapper run_agent which:
+Use `run_input` with a complete `RunAgentInput` for explicit thread/run identity
+and continuation. It verifies lifecycle completion, expands chunks, applies
+state/history changes, and finalizes every subscriber once on ordinary `Result`
+paths. Dropping the future and callback panics cannot await asynchronous
+finalizers. Transport, protocol,
+or subscriber failure returns `Err`; a producer `RUN_ERROR` is represented by
+`terminal_status` in an `Ok` result.
+
+The provided convenience wrapper `run_agent`:
 
 - constructs an internal RunAgentInput from RunAgentParams
 - initializes an event handler with your subscribers
 - consumes the event stream and applies mutations
-- returns RunAgentResult with final result, new messages and new state
+- returns `RunAgentResult` with terminal status, optional result, complete reconciled
+  messages, and state
+- creates a fresh thread unless `with_thread_id` supplies a stable one
+
+`run` alone provides raw events without these lifecycle guarantees.
 
 ```rust
 use ag_ui_client::{Agent};
@@ -53,7 +70,8 @@ let result: RunAgentResult<_> = my_agent.run_agent(&params, ()).await?;
 
 ## RunAgentParams
 
-A builder for run inputs. Supports typed state and forwarded props via new_typed.
+A builder for run inputs. Supports typed state and forwarded props via
+new_typed.
 
 ```rust
 use ag_ui_client::agent::RunAgentParams;
@@ -70,6 +88,8 @@ let params = RunAgentParams::new()
 struct MyState { count: u32 }
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 struct MyProps { tenant: String }
+impl ag_ui_client::core::AgentState for MyState {}
+impl ag_ui_client::core::FwdProps for MyProps {}
 
 let params_typed = RunAgentParams::<MyState, MyProps>::new_typed()
     .with_state(MyState { count: 1 })
@@ -79,7 +99,10 @@ let params_typed = RunAgentParams::<MyState, MyProps>::new_typed()
 
 Builder helpers include:
 
+- with_thread_id(thread_id) to retain a conversation across turns
+- with_parent_run_id(parent_run_id) to link runs
 - with_run_id(run_id)
+- with_resume(Vec<ResumeEntry>) to answer interrupts
 - add_tool(tool)
 - add_context(ctx)
 - with_forwarded_props(props)
@@ -89,19 +112,70 @@ Builder helpers include:
 
 ## RunAgentResult
 
-Returned by run_agent:
+Returned by `run_input` and `run_agent`. `terminal_status` distinguishes a
+finished run from a producer error. `outcome` further describes success,
+interruption, or cancellation; `usage` carries optional per-model token counts.
+`result: Option<Value>` follows the canonical TypeScript client: it is present
+only for a successful finish (an omitted outcome also means success). Missing
+and whole-null results become `None`; nested nulls are preserved. Interrupted
+or cancelled runs have no result. The redundant `output` field was removed:
 
 ```rust
 pub struct RunAgentResult<StateT: AgentState> {
-    pub result: serde_json::Value,
+    pub result: Option<serde_json::Value>,
+    pub terminal_status: RunTerminalStatus,
+    pub messages: Vec<Message>,
+    pub outcome: Option<RunFinishedOutcome>,
+    pub usage: Option<Vec<TokenUsage>>,
     pub new_messages: Vec<Message>,
     pub new_state: StateT,
 }
 ```
 
+## Complete-history continuation
+
+Retain the thread ID, choose a new run ID, and carry `messages` and `new_state`.
+`new_messages` contains only previously unseen IDs and cannot preserve snapshot
+replacements or deletions. Activity remains in the public history but is
+filtered from HTTP conversation history.
+
+```rust
+use ag_ui_client::{Agent, HttpAgent, RunTerminalStatus};
+use ag_ui_client::core::types::{Message, RunAgentInput, RunFinishedOutcome};
+use serde_json::json;
+
+async fn two_turns(agent: &HttpAgent) -> Result<(), Box<dyn std::error::Error>> {
+    let mut input = RunAgentInput::new(
+        "conversation-1", "run-1", json!({}),
+        vec![Message::new_user("Hello")], vec![], vec![], json!({}),
+    );
+    let first = agent.run_input(&input, ()).await?;
+    if let RunTerminalStatus::ProducerError(error) = &first.terminal_status {
+        return Err(format!("producer failure: {}", error.message).into());
+    }
+    if matches!(first.outcome,
+        Some(RunFinishedOutcome::Interrupt { .. } | RunFinishedOutcome::Cancelled)) {
+        // Handle interruption/resume or cancellation before scheduling another turn.
+        return Ok(());
+    }
+    println!("First output: {:?}", first.result);
+    input.messages = first.messages;
+    input.messages.push(Message::new_user("Please continue"));
+    input.state = first.new_state;
+    input.run_id = "run-2".into();
+    let second = agent.run_input(&input, ()).await?;
+    if let RunTerminalStatus::ProducerError(error) = &second.terminal_status {
+        return Err(format!("producer failure: {}", error.message).into());
+    }
+    println!("Second outcome: {:?}; output: {:?}", second.outcome, second.result);
+    Ok(())
+}
+```
+
 ## AgentStateMutation
 
-Subscriber methods may return AgentStateMutation to update messages and/or state and optionally stop propagation to later subscribers.
+Subscriber methods may return AgentStateMutation to update messages and/or state
+and optionally stop propagation to later subscribers.
 
 ```rust
 pub struct AgentStateMutation<StateT = JsonValue> {
@@ -113,4 +187,7 @@ pub struct AgentStateMutation<StateT = JsonValue> {
 
 ## Errors
 
-Most Agent operations return Result<_, AgentError> where AgentError = ag_ui_client::error::AgUiClientError. See the client error page for details. Common categories include configuration errors, HTTP transport/status errors (for HttpAgent), JSON errors, and subscriber errors.
+Most Agent operations return Result<\_, AgentError> where AgentError =
+ag_ui_client::error::AgUiClientError. See the client error page for details.
+Common categories include configuration errors, HTTP transport/status errors
+(for HttpAgent), JSON errors, and subscriber errors.

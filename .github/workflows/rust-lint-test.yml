@@ -1,69 +1,72 @@
-name: test
+name: Rust SDK qualification
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
     paths:
-      - "sdks/community/rust/crates/**"
-      - "sdks/community/rust/**/tests/**"
-      - "sdks/community/rust/Cargo.toml"
-      - "sdks/community/rust/.cargo/**"
+      - "sdks/community/rust/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
       - ".github/workflows/rust-lint-test.yml"
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
     paths:
-      - "sdks/community/rust/crates/**"
-      - "sdks/community/rust/**/tests/**"
-      - "sdks/community/rust/Cargo.toml"
-      - "sdks/community/rust/.cargo/**"
+      - "sdks/community/rust/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
       - ".github/workflows/rust-lint-test.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 defaults:
   run:
     working-directory: ./sdks/community/rust
 
-permissions:
-  contents: read
-
 jobs:
   rust:
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-
-    name: Rust SDK Tests [${{ matrix.os }}]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            toolchain: "1.88.0"
+    name: Rust SDK [${{ matrix.os }}, ${{ matrix.toolchain }}]
     runs-on: ${{ matrix.os }}
-
     env:
       CARGO_TERM_COLOR: always
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # Built-in cache is fork-safe (fork PRs can't write to base repo cache)
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
-
-      - name: Build
-        run: cargo build --verbose
-
+      - name: Install compiler and quality tools
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --component clippy,rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: sdks/community/rust
+          key: ${{ matrix.toolchain }}
+      - name: Build all public crates and test targets
+        run: cargo +${{ matrix.toolchain }} build --workspace --all-targets --locked
       - name: Check formatting
-        run: cargo fmt -- --check
-
+        run: cargo +${{ matrix.toolchain }} fmt --all -- --check
       - name: Check clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Publish ag-ui-core dry-run
-        run: cargo publish -p ag-ui-core --dry-run
-
-      - name: Publish ag-ui-client dry-run
-        # Documented interim: packaging-only (--no-verify skips the compile-verify).
-        # cargo publish drops the workspace [patch.crates-io] override and would
-        # compile against the stale ag-ui-core 0.1.0 on crates.io. Drop --no-verify
-        # once ag-ui-core is republished to crates.io.
-        run: cargo publish -p ag-ui-client --dry-run --no-verify
-
-      - name: Run tests
-        run: cargo test --verbose
+        run: cargo +${{ matrix.toolchain }} clippy --workspace --all-targets --locked -- -D warnings
+      - name: Complete fixture, producer, HTTP and lifecycle suites
+        run: cargo +${{ matrix.toolchain }} test --workspace --all-targets --locked
+      - name: Doctests
+        run: cargo +${{ matrix.toolchain }} test --workspace --doc --locked
+      - name: Documentation warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +${{ matrix.toolchain }} doc --workspace --no-deps --locked
+      - name: Verify all registry packages together
+        if: matrix.toolchain == 'stable' && matrix.os == 'ubuntu-latest'
+        run: cargo +stable publish --workspace --dry-run --locked

@@ -22,7 +22,7 @@ pub enum SkillLevel {
 
 impl Display for SkillLevel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -43,7 +43,7 @@ pub enum SpecialPreferences {
 
 impl Display for SpecialPreferences {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -64,7 +64,7 @@ pub enum CookingTime {
 
 impl Display for CookingTime {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -102,6 +102,7 @@ pub struct RecipeSnapshot {
 
 impl AgentState for RecipeSnapshot {}
 
+#[derive(Default)]
 pub struct RecipeSubscriber;
 
 impl RecipeSubscriber {
@@ -117,7 +118,7 @@ impl AgentSubscriber<RecipeSnapshot, ()> for RecipeSubscriber {
         event: &StateSnapshotEvent<RecipeSnapshot>,
         _params: AgentSubscriberParams<'async_trait, RecipeSnapshot, ()>,
     ) -> Result<AgentStateMutation<RecipeSnapshot>, AgentError> {
-        info!("Received state snapshot update: {:#?}", event.snapshot);
+        println!("state snapshot: {:#?}", event.snapshot);
         Ok(AgentStateMutation::default())
     }
 
@@ -126,7 +127,7 @@ impl AgentSubscriber<RecipeSnapshot, ()> for RecipeSubscriber {
         event: &StateDeltaEvent,
         _params: AgentSubscriberParams<'async_trait, RecipeSnapshot, ()>,
     ) -> Result<AgentStateMutation<RecipeSnapshot>, AgentError> {
-        info!("Received state delta event {:#?}", event.delta);
+        println!("state delta: {:#?}", event.delta);
         Ok(AgentStateMutation::default())
     }
 
@@ -143,10 +144,10 @@ impl AgentSubscriber<RecipeSnapshot, ()> for RecipeSubscriber {
 async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_default_env().init();
 
-    // Base URL for the mock server
-    // Run the following command to start the mock server:
-    // `uv run rust/crates/ag-ui-client/scripts/shared_state.py`
-    let base_url = Url::parse("http://127.0.0.1:3001/")?;
+    // Start integrations/server-starter-all-features/python/examples with PORT=3001.
+    let endpoint =
+        std::env::var("AG_UI_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:3001".to_string());
+    let base_url = Url::parse(&format!("{}/shared_state", endpoint.trim_end_matches('/')))?;
 
     // Create the HTTP agent
     let agent = HttpAgent::builder().with_url(base_url).build()?;
@@ -159,11 +160,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "I want to bake a loaf of bread, can you give me a recipe?",
     ));
 
-    info!("Starting agent run with input: {:#?}", params);
+    info!("Starting agent run with input: {params:#?}");
 
     let result = agent.run_agent(&params, [subscriber]).await?;
 
-    info!("Agent run finished. Final result: {:#?}", result);
+    println!("final recipe state: {:#?}", result.new_state.recipe);
 
     Ok(())
 }
