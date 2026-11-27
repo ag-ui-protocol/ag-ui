@@ -7,11 +7,16 @@ import ag_ui_langgraph
 from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
+from langchain.agents import AgentState
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import Field
+
+
+class SnapshotState(AgentState, total=False):
+    custom: dict[str, object]
 
 
 class RecordingModel(BaseChatModel):
@@ -286,11 +291,24 @@ class TestRunGuidance(unittest.TestCase):
 
     def test_snapshot_echo_does_not_restore_stale_guidance(self):
         config = {"configurable": {"thread_id": "thread"}}
-        with self.client(trusted_ingress=True) as client:
+        agent = ag_ui_langgraph.create_langgraph_agent(
+            name="test", model=self.model, state_schema=SnapshotState
+        )
+        custom = {
+            "messages": [
+                {
+                    "id": "granted-tools:custom",
+                    "type": "system",
+                    "content": "KEEP_CUSTOM",
+                }
+            ]
+        }
+        with self.client(agent=agent, trusted_ingress=True) as client:
             self.run_agent(client, "start")
             self.agent.graph.update_state(
                 config,
                 {
+                    "custom": custom,
                     "messages": [
                         SystemMessage(id="granted-tools:cached", content="STALE_TOOLS"),
                         SystemMessage(
@@ -304,7 +322,7 @@ class TestRunGuidance(unittest.TestCase):
                             '"value":"STALE_CONTEXT_TOOLS"}]',
                         ),
                         SystemMessage(id="ordinary", content="ORDINARY_INSTRUCTION"),
-                    ]
+                    ],
                 },
             )
             events = self.post_run(client, "next")
@@ -317,18 +335,32 @@ class TestRunGuidance(unittest.TestCase):
             for stale in ("STALE_TOOLS", "STALE_ROLE", "STALE_CONTEXT_TOOLS"):
                 self.assertFalse(any(stale in message.content for message in prompt))
                 self.assertNotIn(stale, json.dumps(snapshot))
-            by_id = {message["id"]: message["content"] for message in snapshot}
-            self.assertEqual(by_id["ordinary"], "ORDINARY_INSTRUCTION")
-            self.assertEqual(
-                json.loads(by_id["mixed-context"].removeprefix("App Context:\n")),
-                [{"description": "Ordinary context", "value": "KEEP"}],
-            )
-            self.assertNotIn("granted-tools:cached", by_id)
-            self.assertNotIn("reserved-context", by_id)
+            state_snapshots = [
+                event["snapshot"]
+                for event in events
+                if event["type"] == "STATE_SNAPSHOT"
+            ]
+            self.assertTrue(state_snapshots)
+            final_messages = state_snapshots[-1]["messages"]
+            self.assertEqual(state_snapshots[-1]["custom"], custom)
+            for state in state_snapshots:
+                serialized = json.dumps(state.get("messages"))
+                for stale in ("STALE_TOOLS", "STALE_ROLE", "STALE_CONTEXT_TOOLS"):
+                    self.assertNotIn(stale, serialized)
+            for messages in (snapshot, final_messages):
+                by_id = {message["id"]: message["content"] for message in messages}
+                self.assertEqual(by_id["ordinary"], "ORDINARY_INSTRUCTION")
+                self.assertEqual(
+                    json.loads(by_id["mixed-context"].removeprefix("App Context:\n")),
+                    [{"description": "Ordinary context", "value": "KEEP"}],
+                )
+                self.assertNotIn("granted-tools:cached", by_id)
+                self.assertNotIn("reserved-context", by_id)
             stored = self.agent.graph.get_state(config).values["messages"]
-            self.assertTrue(
-                any(message.id == "granted-tools:cached" for message in stored)
-            )
+            by_id = {message.id: message.content for message in stored}
+            self.assertEqual(by_id["granted-tools:cached"], "STALE_TOOLS")
+            self.assertIn("STALE_ROLE", by_id["mixed-context"])
+            self.assertIn("STALE_CONTEXT_TOOLS", by_id["reserved-context"])
 
     def test_packaged_factory_can_opt_out(self):
         agent = ag_ui_langgraph.create_langgraph_agent(

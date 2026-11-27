@@ -19,6 +19,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 
 from .agent import LangGraphAgent, ProcessedEvents
+from .types import State
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,19 @@ class RunGuidanceAgentMixin:
             for message in super()._filter_reserved_input_messages(messages)
             if not _legacy_description(message)
         ]
+
+    def get_state_snapshot(self, state: State) -> State:
+        snapshot = super().get_state_snapshot(state)
+        if not isinstance(snapshot, dict):
+            return snapshot
+        messages = snapshot.get("messages")
+        if not isinstance(messages, list):
+            return snapshot
+
+        cleaned = list(_without_stale_guidance(messages))
+        if cleaned == messages:
+            return snapshot
+        return {**snapshot, "messages": cleaned}
 
     async def get_state_and_messages_snapshots(
         self, config: RunnableConfig
