@@ -119,6 +119,20 @@ export interface AGUIRun<State = AGUIState> {
   setState(state: State): void;
   /** Streams an extra event to the client (a CUSTOM event, for instance). */
   emit(event: BaseEvent): void;
+  /**
+   * What the user answered the approval of a paused tool call with: its
+   * resume entry's `payload`, such as the time slot a picker resolved with.
+   * Read it in the tool's `execute`, which the AI SDK hands the call's
+   * `toolCallId`. Undefined when this run does not approve that call.
+   *
+   * ```ts
+   * execute: async ({ topic }, { toolCallId }) => {
+   *   const slot = run.resumePayload<{ chosen_label: string }>(toolCallId);
+   *   return `Booked ${topic} for ${slot?.chosen_label}`;
+   * }
+   * ```
+   */
+  resumePayload<T = unknown>(toolCallId: string): T | undefined;
 }
 
 export interface StreamTextOptionsInput {
@@ -305,6 +319,7 @@ export async function* runAGUI<State = AGUIState>(
       },
       setState: (state) => store.set(state),
       emit: (event) => channel.push(event),
+      resumePayload: <T>(toolCallId: string) => converted.answers.get(toolCallId) as T | undefined,
     };
 
     let result: StreamTextLike;

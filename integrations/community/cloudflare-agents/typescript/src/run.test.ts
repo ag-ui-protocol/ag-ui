@@ -648,6 +648,76 @@ describe.each(SDKS)("runAGUI with $name", (sdk: Sdk) => {
       expect(agent.messages.find((m) => m.role === "tool")).toMatchObject({ content: "Over the limit." });
     });
 
+    describe("an answer with a value", () => {
+      type Slot = { chosen_label?: string; cancelled?: boolean };
+
+      /** schedule_meeting pauses for the user, then books the slot they answered with. */
+      function schedulingAgent() {
+        const seen: unknown[] = [];
+        const model = sdk.model([
+          turn(chunks.toolCall("tc1", "schedule_meeting", { topic: "Intro call" })),
+          turn(chunks.text("t2", "Done.")),
+        ]);
+        const client = clientFor((run) =>
+          ai.streamText({
+            model: model as any,
+            messages: run.messages,
+            stopWhen: ai.stepCountIs(3),
+            tools: {
+              schedule_meeting: ai.tool({
+                inputSchema: ai.jsonSchema({ type: "object", properties: { topic: { type: "string" } } }),
+                needsApproval: true,
+                execute: async ({ topic }: any, { toolCallId }: any) => {
+                  const answer = run.resumePayload<Slot>(toolCallId);
+                  seen.push(answer);
+                  if (answer?.cancelled) return `Not booked: ${topic}`;
+                  return `Booked ${topic} for ${answer?.chosen_label}`;
+                },
+              }),
+            },
+          }),
+        );
+        client.agent.messages = [userMessage("Book an intro call")];
+        return { ...client, seen };
+      }
+
+      const resultOf = (events: BaseEvent[]) =>
+        (events.filter((e) => e.type === EventType.TOOL_CALL_RESULT).at(-1) as any)?.content;
+
+      it("runs the tool, which reads what the user answered", async () => {
+        const { agent, events, seen } = schedulingAgent();
+        await agent.runAgent();
+
+        await agent.runAgent({
+          resume: [{ interruptId: "tc1", status: "resolved", payload: { chosen_label: "Mon 10:00" } }],
+        });
+
+        expect(seen).toEqual([{ chosen_label: "Mon 10:00" }]);
+        expect(resultOf(events)).toBe("Booked Intro call for Mon 10:00");
+        expect((events.at(-1) as any).outcome).toEqual({ type: "success" });
+      });
+
+      it("hands the tool an answer sent beside approved: true", async () => {
+        const { agent, seen } = schedulingAgent();
+        await agent.runAgent();
+
+        await agent.runAgent({
+          resume: [{ interruptId: "tc1", status: "resolved", payload: { approved: true, chosen_label: "Tue 9:00" } }],
+        });
+
+        expect(seen).toEqual([{ approved: true, chosen_label: "Tue 9:00" }]);
+      });
+
+      it("leaves it to the tool to act on an answer that declines", async () => {
+        const { agent, events } = schedulingAgent();
+        await agent.runAgent();
+
+        await agent.runAgent({ resume: [{ interruptId: "tc1", status: "resolved", payload: { cancelled: true } }] });
+
+        expect(resultOf(events)).toBe("Not booked: Intro call");
+      });
+    });
+
     if (sdk.name === "ai@7") {
       it("resumes approvals configured on streamText (AI SDK v7 toolApproval)", async () => {
         const execute = vi.fn(async ({ order }: any) => ({ refunded: order }));
