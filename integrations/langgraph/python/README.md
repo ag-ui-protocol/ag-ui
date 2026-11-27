@@ -77,7 +77,9 @@ the capability lookup and the streamed runs. Protect both routes using
 app-level or router-level authorization, or use `authorize_guidance` to
 authorize both explicitly. The helper's `dependencies` keyword applies to the
 POST route. Set `trusted_ingress=True` only when deployment access controls
-restrict both routes to authorized callers.
+restrict both routes to authorized callers. To serve public and keyless
+backend traffic side by side, run separate instances and route each to its own
+listener. See the [two-listener example](examples/README.md#public-and-restricted-keyless-listeners).
 
 Set `enable_run_guidance=False` on the chat factory to use the adapter's
 existing prompt handling. The FastAPI helper skips the guidance capability

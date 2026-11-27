@@ -37,6 +37,47 @@ run and tool-result continuation.
 - With both values unset, the role reaches the model as ordinary user guidance.
   Tool guidance is available only to authorized requests.
 
+### Public and restricted keyless listeners
+
+Run separate instances of the same app when you need both public access and
+keyless system guidance for a trusted backend. The example below assumes the
+public reverse proxy and the backend run on the same host as Uvicorn.
+Configure the proxy to route public requests only to port 8000. Before
+enabling trust on port 8001, restrict access to that listener to the trusted
+backend. Use host isolation or a network ACL as appropriate. Keep port 8001
+out of public proxy routes, port mappings, and load balancers.
+
+From this directory, after `uv sync --frozen`, run these commands in separate
+terminals or services:
+
+```sh
+# Public instance, reachable through your public reverse proxy.
+AG_UI_GUIDANCE_TOKEN='' AG_UI_TRUSTED_INGRESS=false \
+  uv run --frozen uvicorn agents.dojo:app \
+    --host 127.0.0.1 --port 8000 --workers 1
+```
+
+```sh
+# Keyless instance, reachable only by the trusted backend.
+AG_UI_GUIDANCE_TOKEN='' AG_UI_TRUSTED_INGRESS=true \
+  uv run --frozen uvicorn agents.dojo:app \
+    --host 127.0.0.1 --port 8001 --workers 1
+```
+
+Point public clients to your public URL and the trusted backend to
+`http://127.0.0.1:8001/agent/agentic_chat`. If the backend runs on another host,
+first restrict access to the private port to that backend, then bind the
+keyless listener to the appropriate private interface and use its internal URL.
+Configure the backend to use that same listener for capability lookup, runs,
+and tool-result continuations.
+
+The stock chat uses an in-memory checkpointer, so each process has its own
+threads and pending tool calls. Keep a conversation and its continuations on
+the same instance. If you configure persistent state, use separate checkpoint
+stores or namespaces for the public and restricted instances.
+
+### Hosting your own graph
+
 To host just the stock chat agent, import
 `create_fastapi_agent` from `agents.agentic_chat.fastapi` and serve its return
 value with `ag_ui_langgraph.add_langgraph_fastapi_endpoint`.
