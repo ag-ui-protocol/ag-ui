@@ -46,11 +46,13 @@ RECIPE_SCHEMA = {
         },
     },
     "required": [
+        "title",
         "skill_level",
         "special_preferences",
         "cooking_time",
         "ingredients",
         "instructions",
+        "changes",
     ],
 }
 

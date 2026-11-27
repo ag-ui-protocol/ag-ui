@@ -20,7 +20,7 @@ const recipeSchema = {
     instructions: { type: "array", items: { type: "string" } },
     changes: { type: "string", description: "A description of the changes made to the recipe" },
   },
-  required: ["skill_level", "special_preferences", "cooking_time", "ingredients", "instructions"],
+  required: ["title", "skill_level", "special_preferences", "cooking_time", "ingredients", "instructions", "changes"],
 };
 
 /** The tool's argument IS the new state: the handler snapshots it for the UI. */
