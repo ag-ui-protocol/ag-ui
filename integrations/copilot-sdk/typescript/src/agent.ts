@@ -378,6 +378,9 @@ export class CopilotAgent extends AbstractAgent {
         );
       }
 
+      // Before any native dispatch, so a cancelled run never marks its prompt delivered.
+      if (signal.aborted) throw new Error("Run cancelled");
+
       if (results.length) {
         await this.withDeadline(
           Promise.all(results.map((result) => this.resolvePending(thread!, result))),

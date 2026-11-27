@@ -229,7 +229,7 @@ describe("CopilotAgent", () => {
         if (timing === "before waiting") subscription.unsubscribe();
         await vi.advanceTimersByTimeAsync(0);
         const cancelledSession = client.session!;
-        expect(cancelledSession.prompts).toHaveLength(1);
+        expect(cancelledSession.prompts).toHaveLength(timing === "before waiting" ? 0 : 1);
 
         if (timing !== "before waiting") {
           expect(vi.getTimerCount()).toBe(1);
