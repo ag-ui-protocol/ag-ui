@@ -25,10 +25,12 @@ describe("TypeScript/Python adapter parity", () => {
       expect(client.session!.aborted).toBe(true);
       expect(client.session!.disconnected).toBe(true);
     } finally {
-      await vi.runAllTimersAsync();
-      await completion;
-      await agent.close();
-      vi.useRealTimers();
+      try {
+        await vi.runAllTimersAsync();
+        await completion.finally(() => agent.close());
+      } finally {
+        vi.useRealTimers();
+      }
     }
   });
 

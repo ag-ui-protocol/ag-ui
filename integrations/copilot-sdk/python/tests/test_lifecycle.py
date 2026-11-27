@@ -550,7 +550,7 @@ async def test_thread_stays_reserved_until_failed_session_is_disconnected():
     client.create_session = create_with_slow_abort
     agent = CopilotAgent(client, run_timeout=0.02)
     first = asyncio.create_task(collect(agent, make_input()))
-    await closing.wait()
+    await asyncio.wait_for(closing.wait(), 5)  # A cleanup regression fails, not hangs.
     # A retry during teardown must not resume the session that is being closed.
     retry = await collect(agent, make_input(runId="r2"))
     assert retry[-1].type == "RUN_ERROR"
@@ -601,7 +601,7 @@ async def test_cancelled_teardown_still_releases_the_thread():
     client.create_session = create_with_slow_abort
     agent = CopilotAgent(client, run_timeout=0.02)
     first = asyncio.create_task(collect(agent, make_input()))
-    await closing.wait()
+    await asyncio.wait_for(closing.wait(), 5)  # A cleanup regression fails, not hangs.
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first

@@ -14,7 +14,9 @@ test("[GitHub Copilot SDK] Tool Based Generative UI renders haikus for two promp
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
 
+  const afterFirst = await genAIAgent.snapshotHaiku(page);
   await genAIAgent.generateHaiku('Generate Haiku for "The moon shines bright"');
+  await genAIAgent.checkLaterHaikuArrived(page, afterFirst);
   await genAIAgent.checkGeneratedHaiku();
   await genAIAgent.checkHaikuDisplay(page);
 });

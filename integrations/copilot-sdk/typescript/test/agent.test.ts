@@ -244,9 +244,15 @@ describe("CopilotAgent", () => {
         expect(cancelledSession.disconnected).toBe(true);
         expect(vi.getTimerCount()).toBe(0);
 
-        const retry = run(agent, makeInput({ runId: "r2" }));
+        let settled = false;
+        const retry = run(
+          agent,
+          makeInput({ runId: "r2", messages: [{ id: "u2", role: "user", content: "Again." }] }),
+        ).finally(() => (settled = true));
         await vi.advanceTimersByTimeAsync(0);
         expect(client.session).not.toBe(cancelledSession);
+        expect(client.session!.prompts).toHaveLength(1);
+        expect(settled).toBe(false);
         client.session!.emit({ id: "retry-idle", type: "session.idle", data: {} });
         expect((await retry).at(-1)!.type).toBe("RUN_FINISHED");
         expect(client.session!.aborted).toBe(false);
@@ -403,7 +409,7 @@ describe("CopilotAgent", () => {
     ));
     const events = await run(agent, makeInput({
       runId: "r2", state: { fresh: true },
-      messages: [{ id: "u1", role: "user", content: "Say hello." }, { id: "u2", role: "user", content: "Again." }],
+      messages: [{ id: "u1", role: "user", content: "Say hello." }, { id: "u1", role: "user", content: "Say hello." }],
     }));
     expect(events.map((event) => event.type)).toEqual(["RUN_STARTED", "RUN_FINISHED"]);
     expect((agent as unknown as { threads: Map<string, { state: unknown }> }).threads.get("t1")!.state)
