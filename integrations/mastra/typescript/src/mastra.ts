@@ -92,15 +92,14 @@ export type {
   MastraSubagentVisibility,
 } from "./subagents";
 import {
-  hasMastraRunGuidanceProcessor,
+  createMastraRunGuidanceProcessor,
+  isMastraRunGuidanceProcessor,
   isMastraRunGuidanceEntry,
   mastraConfiguredInputProcessors,
   mastraRunGuidanceCapabilitiesPath,
   mastraRunGuidanceDeclaration,
-  mastraRunGuidanceProcessor,
   readsMastraRunGuidanceDeclaration,
   supportsMastraRunGuidance,
-  withMastraRunGuidanceContext,
   type MastraRunGuidanceOptions,
 } from "./run-guidance";
 import { version as ADAPTER_VERSION } from "../package.json";
@@ -1116,6 +1115,7 @@ export class MastraAgent extends AbstractAgent {
   private async runGuidanceInputProcessors(
     agent: LocalMastraAgent,
     requestContext: RequestContext,
+    inputContext: RunAgentInput["context"],
   ): Promise<
     Awaited<ReturnType<typeof mastraConfiguredInputProcessors>> | undefined
   > {
@@ -1124,9 +1124,16 @@ export class MastraAgent extends AbstractAgent {
       agent,
       requestContext,
     );
-    if (!hasMastraRunGuidanceProcessor(processors)) {
-      return [mastraRunGuidanceProcessor, ...processors];
-    }
+    const trusted = this.runGuidance.trusted === true;
+    return [
+      createMastraRunGuidanceProcessor(() => ({
+        context: inputContext,
+        trusted,
+      })),
+      ...processors.filter(
+        (processor) => !isMastraRunGuidanceProcessor(processor),
+      ),
+    ];
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -1512,6 +1519,7 @@ export class MastraAgent extends AbstractAgent {
               const inputProcessors = await this.runGuidanceInputProcessors(
                 this.agent,
                 requestContext,
+                inputContext,
               );
               if (inputProcessors)
                 resumeOptions.inputProcessors = inputProcessors;
@@ -1706,14 +1714,7 @@ export class MastraAgent extends AbstractAgent {
         }
       };
 
-      const execution = usesPackagedGuidance
-        ? withMastraRunGuidanceContext(
-            inputContext,
-            run,
-            this.runGuidance?.trusted === true,
-          )
-        : run();
-      execution.catch((error) => failRun(error));
+      run().catch((error) => failRun(error));
 
       // Teardown runs on unsubscribe AND on normal completion (RxJS closes the
       // subscription either way), so it is the single place this run's
@@ -1822,12 +1823,12 @@ export class MastraAgent extends AbstractAgent {
         if (!supportsMastraRunGuidance(this.agent)) return undefined;
         if (
           this.runGuidance ||
-          hasMastraRunGuidanceProcessor(
+          (
             await mastraConfiguredInputProcessors(
               this.agent,
               this.requestContext,
-            ),
-          )
+            )
+          ).some(isMastraRunGuidanceProcessor)
         ) {
           return mastraRunGuidanceDeclaration();
         }
@@ -1870,7 +1871,7 @@ export class MastraAgent extends AbstractAgent {
       const declaration = await client.request<unknown>(path, {
         method: "GET",
       });
-      if (readsMastraRunGuidanceDeclaration(declaration)) {
+      if (await readsMastraRunGuidanceDeclaration(declaration)) {
         return mastraRunGuidanceDeclaration();
       }
     } catch {
@@ -4523,7 +4524,7 @@ export class MastraAgent extends AbstractAgent {
       runId,
       messages,
       tools,
-      context: inputContext,
+      context: inputContext = [],
       forwardedProps,
       state,
     }: RunAgentInput,
@@ -4592,6 +4593,7 @@ export class MastraAgent extends AbstractAgent {
         const inputProcessors = await this.runGuidanceInputProcessors(
           this.agent,
           requestContext,
+          inputContext,
         );
         const streamOptions: Record<string, unknown> = {
           memory: {

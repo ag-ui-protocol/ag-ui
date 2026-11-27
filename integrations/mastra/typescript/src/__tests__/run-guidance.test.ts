@@ -11,6 +11,11 @@ import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import * as bridge from "../index";
+import {
+  mastraRunGuidanceProcessor,
+  registerMastraRunGuidanceCapabilities,
+  withMastraRunGuidanceAuthority,
+} from "../run-guidance-native";
 import { collectEvents, makeInput } from "./helpers";
 
 const declaration = { "openbot.runGuidance": { version: 1 } };
@@ -88,9 +93,7 @@ function receiver({
       : "Base instructions",
     model: model as any,
     memory: memory as any,
-    ...(configured
-      ? { inputProcessors: [bridge.mastraRunGuidanceProcessor] }
-      : {}),
+    ...(configured ? { inputProcessors: [mastraRunGuidanceProcessor] } : {}),
     ...(suspend || followUp ? { tools: { approve } } : {}),
   });
   const mastra = new Mastra({
@@ -167,7 +170,7 @@ describe("Mastra run guidance", () => {
       forwardedProps: { trusted: true },
     });
     wrapped.headers = { "x-forwarded-for": "127.0.0.1", "x-trusted": "true" };
-    await bridge.withMastraRunGuidanceAuthority(true, () =>
+    await withMastraRunGuidanceAuthority(true, () =>
       collectEvents(wrapped, input),
     );
 
@@ -239,7 +242,7 @@ describe("Mastra run guidance", () => {
         ...(configured ? {} : { runGuidance: { trusted: true } }),
       });
       const run = (input: ReturnType<typeof makeInput>) =>
-        bridge.withMastraRunGuidanceAuthority(true, () =>
+        withMastraRunGuidanceAuthority(true, () =>
           collectEvents(wrapped, input),
         );
       const first = await run(
@@ -273,7 +276,7 @@ describe("Mastra run guidance", () => {
     "declares native run guidance only when the processor is configured (%s)",
     async (configured) => {
       const { mastra } = receiver({ configured });
-      const route = bridge.registerMastraRunGuidanceCapabilities("test");
+      const route = registerMastraRunGuidanceCapabilities("test");
       expect(route.path).toBe("/test/capabilities");
       expect(route.method).toBe("GET");
       const requestContext = new RequestContext();
@@ -325,6 +328,7 @@ describe("Mastra run guidance", () => {
   });
 
   it.each([
+    () => Response.json({ identity: "malformed", custom: declaration }),
     () => new Response(null, { status: 404 }),
     () =>
       Response.json({ custom: { "openbot.runGuidance": { version: "1" } } }),

@@ -10,7 +10,7 @@ export default defineConfig({
     // AbstractAgent bridge (and its @ag-ui/client → uuid runtime dep), which the
     // Mastra CLI bundler can't resolve.
     a2ui: "src/a2ui-tool.ts",
-    "run-guidance": "src/run-guidance.ts",
+    "run-guidance": "src/run-guidance-native.ts",
   },
   format: ["cjs", "esm"],
   dts: true,
