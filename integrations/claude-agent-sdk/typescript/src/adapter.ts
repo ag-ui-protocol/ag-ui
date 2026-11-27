@@ -143,8 +143,19 @@ export class ClaudeAgentAdapter extends AbstractAgent {
     this.bindings.delete(threadId);
   }
 
+  /**
+   * `AbstractAgent.clone()` skips field initializers, so the per-thread maps
+   * must be set here. Clones share them with the original: a host such as the
+   * CopilotKit runtime clones the agent for each request, and the follow-up
+   * run must find the session and the paused tool call of the earlier run, and
+   * be refused while another run of the same thread is active.
+   */
   public clone(): ClaudeAgentAdapter {
     const cloned = super.clone() as ClaudeAgentAdapter;
+    cloned.bindings = this.bindings;
+    cloned.admitted = this.admitted;
+    cloned.activeQueries = this.activeQueries;
+    cloned.sessions = this.sessions;
     cloned.config = { ...this.config };
     if (this.headers) {
       cloned.headers = { ...this.headers };
@@ -251,14 +262,47 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               : input.tools,
         },
         profileOptions,
-        (name, args) => recovery.resolveFrontendResult(name, args),
+        (name, args) => {
+          if (this.config.nativeChildRecovery)
+            throw new Error(
+              "Frontend tool must be suspended before execution in native recovery mode",
+            );
+          return recovery.resolveFrontendResult(name, args);
+        },
       );
       if (this.config.nativeChildRecovery) {
-        if (input.tools.length)
-          throw new Error(
-            "Native child recovery currently supports configured native tools, not frontend MCP tools",
-          );
-        const native = new NativeChildRecovery(this.config.nativeChildRecovery);
+        const proxy = options.mcpServers?.[AG_UI_MCP_SERVER_NAME];
+        const native = new NativeChildRecovery(
+          this.config.nativeChildRecovery,
+          {
+            [STATE_MANAGEMENT_TOOL_FULL_NAME]: async (call) => {
+              const result = await createStateManagementTool().handler(
+                call.input,
+              );
+              return {
+                content: result.content
+                  .map((b: { text: string }) => b.text)
+                  .join("\n"),
+                is_error: !!result.isError,
+              };
+            },
+          },
+          proxy && typeof proxy === "object" && proxy.type === "sdk"
+            ? async (workerOptions) => {
+                const endpoint = await startLoopbackMcp(proxy);
+                return {
+                  options: {
+                    ...workerOptions,
+                    mcpServers: {
+                      ...workerOptions.mcpServers,
+                      [AG_UI_MCP_SERVER_NAME]: endpoint.config,
+                    },
+                  },
+                  close: () => endpoint.close(),
+                };
+              }
+            : undefined,
+        );
         options.resume = binding?.sessionId ?? options.resume;
         options.sessionId = options.resume
           ? undefined
@@ -269,6 +313,11 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               native.abort("SDK query timed out; parent remains unresolved"),
             this.config.queryTimeoutMs,
           );
+        if (hasState(input.state))
+          subscriber.next({
+            type: EventType.STATE_SNAPSHOT,
+            snapshot: input.state,
+          });
         const sdkStream = native.run(
           input,
           options,
@@ -286,7 +335,7 @@ export class ClaudeAgentAdapter extends AbstractAgent {
           threadId,
           runId,
           input,
-          new Set(),
+          new Set(extractToolNames(input.tools)),
           subscriber,
           runCtx,
         );
@@ -1238,7 +1287,14 @@ export class ClaudeAgentAdapter extends AbstractAgent {
 
           const resultText = (resultMsg as { result?: string }).result;
           if (!hasStreamedText && resultText) {
-            const resultMsgId = randomUUID();
+            // With partial streaming disabled, ResultMessage repeats the last
+            // complete assistant message. Preserve its canonical identity.
+            const lastAssistant = runMessages
+              .filter((m) => m.role === "assistant")
+              .at(-1);
+            const matchingAssistant =
+              lastAssistant?.content === resultText ? lastAssistant : undefined;
+            const resultMsgId = matchingAssistant?.id ?? randomUUID();
             subscriber.next({
               type: EventType.TEXT_MESSAGE_START,
               threadId,
@@ -1260,11 +1316,13 @@ export class ClaudeAgentAdapter extends AbstractAgent {
               messageId: resultMsgId,
             });
 
-            upsertMessage({
-              id: resultMsgId,
-              role: "assistant" as const,
-              content: resultText,
-            });
+            upsertMessage(
+              matchingAssistant ?? {
+                id: resultMsgId,
+                role: "assistant" as const,
+                content: resultText,
+              },
+            );
           }
         }
       }

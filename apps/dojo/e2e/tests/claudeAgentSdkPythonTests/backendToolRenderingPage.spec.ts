@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../../test-isolation-helper";
 import { BackendToolRenderingPage } from "../../featurePages/BackendToolRenderingPage";
 
 test("[Claude Agent SDK Python] Backend Tool Rendering displays backend weather results", async ({

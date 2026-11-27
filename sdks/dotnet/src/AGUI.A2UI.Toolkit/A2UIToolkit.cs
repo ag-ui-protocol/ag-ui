@@ -320,6 +320,13 @@ public static class A2UIToolkit
             guidelines,
             prior is not null ? new A2UIEditContext(targetSurfaceId!, prior, changes) : null);
 
+        // The in-flight generator call is removed from provider history because it has no
+        // result yet. Carry its create instructions explicitly, just as the edit context does.
+        if (!isUpdate && !string.IsNullOrEmpty(changes))
+        {
+            prompt += $"\n## Instructions for this create request\n{changes}\n";
+        }
+
         return new A2UIPreparedRequest(prompt, isUpdate, prior, Error: null);
     }
 

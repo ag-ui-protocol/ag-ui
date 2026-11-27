@@ -87,6 +87,48 @@ function richTemplate(): import("@strands-agents/sdk").Agent {
 }
 
 describe("AgentConfig forwarding", () => {
+  it.each([true, false])(
+    "reports a template sortTools=%s setting that cannot be recovered safely",
+    async (sortTools) => {
+      capturedConfigs.length = 0;
+      const warn = vi.fn();
+      const template = Object.assign(richTemplate(), { sortTools });
+      await collect(
+        new StrandsAgent({
+          agent: template,
+          name: "t",
+          config: { logger: { debug: vi.fn(), warn, error: vi.fn() } },
+        }),
+      );
+
+      expect(warn.mock.calls.flat().join("\n")).toContain("sortTools");
+      expect(capturedConfigs.at(-1)).not.toHaveProperty("sortTools");
+    },
+  );
+
+  it.each([true, false])(
+    "lets per-thread config supply sortTools=%s without warning",
+    async (sortTools) => {
+      capturedConfigs.length = 0;
+      const warn = vi.fn();
+      const template = Object.assign(richTemplate(), { sortTools: !sortTools });
+      await collect(
+        new StrandsAgent({
+          agent: template,
+          name: "t",
+          config: {
+            logger: { debug: vi.fn(), warn, error: vi.fn() },
+            threadAgentConfig: () =>
+              ({ sortTools }) as Partial<AgentConfig> & { sortTools: boolean },
+          },
+        }),
+      );
+
+      expect(capturedConfigs.at(-1)).toHaveProperty("sortTools", sortTools);
+      expect(warn.mock.calls.flat().join("\n")).not.toContain("sortTools");
+    },
+  );
+
   it("forwards an auxiliary model exposed by a newer SDK", async () => {
     capturedConfigs.length = 0;
     const auxModel = { name: "auxiliary-model" };

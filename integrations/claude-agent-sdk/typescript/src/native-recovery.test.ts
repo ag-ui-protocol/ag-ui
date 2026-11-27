@@ -6,7 +6,7 @@ import { NativeChildRecovery } from "./native-recovery";
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: queryMock }));
 it.each([false, true])(
-  "denies a nested Agent during bridge recovery (background=%s)",
+  "denies a parent Agent during bridge recovery (background=%s)",
   async (background) => {
     const checkpoint: ChildCheckpoint = {
       parentPath: "unused",
@@ -17,8 +17,13 @@ it.each([false, true])(
       calls: [],
     };
     const inspect = vi
-      .spyOn(NativeHistory.prototype, "inspect")
-      .mockResolvedValue(checkpoint);
+      .spyOn(NativeHistory.prototype, "children")
+      .mockResolvedValue([checkpoint]);
+    const root = vi.spyOn(NativeHistory.prototype, "root").mockResolvedValue({
+      ...checkpoint,
+      childId: "",
+      parent: { id: "", name: "", input: {} },
+    });
     let decision: unknown;
     queryMock.mockImplementation(({ options }: { options: Options }) => {
       const stream = (async function* () {
@@ -30,7 +35,6 @@ it.each([false, true])(
           cwd: "/tmp",
           tool_name: "Agent",
           tool_use_id: "nested",
-          agent_id: "child",
           tool_input: { run_in_background: background },
         };
         decision = await hook(input, "nested", {
@@ -70,6 +74,7 @@ it.each([false, true])(
       });
     } finally {
       inspect.mockRestore();
+      root.mockRestore();
     }
   },
 );

@@ -93,10 +93,34 @@ This is the easiest way to test multiple flows locally. Each route still follows
 The integration has three main layers:
 
 - **StrandsAgent** – wraps `strands.Agent.stream_async`. It translates Strands events into AG-UI events (text chunks, tool calls, PredictState, snapshots, reasoning/thinking, multi-agent steps, etc.).
-- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
+- **Configuration** – `StrandsAgentConfig` + `ToolBehavior` + `PredictStateMapping` let you describe tool-specific quirks declaratively. `ToolBehavior`'s fields are `skip_messages_snapshot`, `continue_after_frontend_call`, `stop_streaming_after_result`, `interrupt_on_call`, `predict_state`, `args_streamer`, `state_from_args`, `state_from_result`, `custom_result_handler` and `tool_stream_event_handler`; `StrandsAgentConfig` adds `tool_behaviors`, `state_context_builder`, `thread_agent_kwargs`, `session_manager_provider`, `emit_messages_snapshot`, `replay_history_into_strands`, `subagent_visibility` (see [Sub-agents](#sub-agents-agents-as-tools)), `a2ui`, `url_fetch_policy` and `audio_input_supported` (off by default; see [Audio input](#audio-input)).
 - **Transport helpers** – `create_strands_app` and `add_strands_fastapi_endpoint` expose the agent via SSE. They are thin shells over the shared `ag_ui.encoder.EventEncoder`.
 
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for diagrams and a deeper dive.
+
+## A2UI models without forced tool choice
+
+By default, `generate_a2ui` forces its inner model to call `render_a2ui`.
+For a model that rejects forced tool choice, set `force_tool_choice=False`:
+
+```python
+from ag_ui_strands import StrandsAgentConfig, get_a2ui_tools
+
+# Auto-injection configuration for StrandsAgent(config=...).
+config = StrandsAgentConfig(
+    a2ui={"inject_a2ui_tool": True, "force_tool_choice": False}
+)
+
+# Or explicitly add the generated tool to your Strands agent's tools.
+generate_ui = get_a2ui_tools({"model": model, "force_tool_choice": False})
+```
+
+This omits the `tool_choice` keyword from the inner model request, leaving the
+choice behavior to the model implementation. The render tool specification and
+prompt remain present. Generation still uses one model turn per attempt;
+text-only responses and invalid render arguments use the existing bounded
+recovery loop (three total attempts by default). Exhaustion returns
+`a2ui_recovery_exhausted`. There is no automatic compatibility fallback.
 
 ## Per-thread agents: hooks and plugins
 
@@ -723,6 +747,83 @@ model events, and a payload that will not survive a strict `json.dumps` /
 Coercing it, with `default=str` for instance, would ship the `repr` of the live
 `Agent`, system prompt and conversation history included, to every connected
 client.
+
+## Sub-agents (agents as tools)
+
+A tool that wraps another Strands agent, either `Agent.as_tool()` or a
+generator tool that re-yields `inner.stream_async(...)`, streams the inner
+agent's events to the parent. `StrandsAgentConfig.subagent_visibility` decides
+what the client sees of them:
+
+| Value | Client sees |
+| --- | --- |
+| `"inline"` (default) | Unchanged from earlier releases: the sub-agent's tool calls, untagged, beside the parent's. Its text does not stream. |
+| `"attributed"` | An AG-UI [subagent](https://docs.ag-ui.com/concepts/subagents) run per invocation: `SUBAGENT_STARTED`, the sub-agent's text, reasoning and tool calls tagged with its `subagentRunId`, then `SUBAGENT_FINISHED` (or `SUBAGENT_ERROR`) before the spawning call's `TOOL_CALL_RESULT`. |
+| `"hidden"` | Only the spawning tool call and its result. |
+
+```python
+from strands import Agent
+from ag_ui_strands import StrandsAgent, StrandsAgentConfig
+
+researcher = Agent(name="researcher", description="Researches a topic.", tools=[...])
+orchestrator = Agent(tools=[researcher.as_tool()])
+
+agent = StrandsAgent(
+    orchestrator,
+    name="orchestrator",
+    config=StrandsAgentConfig(subagent_visibility="attributed"),
+)
+```
+
+With `"attributed"`:
+
+- The run id is the spawning call's id, and `parentToolCallId` names that
+  call, so a client can show the sub-agent's work inside its tool card. The
+  sub-agent's own calls keep the `parent::child` ids `"inline"` already used,
+  and its messages carry ids under the same prefix.
+- A run starts on the first payload only an agent's stream produces, so a
+  generator tool that yields progress dicts is not announced as a sub-agent.
+- A sub-agent that delegates again is a run of its own, linked to its parent
+  by `parentSubagentRunId`. Concurrent sub-agents stream independently.
+- `SUBAGENT_FINISHED` carries the spawning call's result. `SUBAGENT_ERROR`
+  (code `STRANDS_SUBAGENT_ERROR`) reports a spawning call that ended in an
+  error result; it ends only that sub-agent and the parent goes on.
+- A run closed with no result of its own: successful if the sub-agent's loop
+  had ended (a sibling's interrupt can park a finished sub-agent's result),
+  `suspended` if it had not and the run paused on an interrupt, and otherwise
+  abandoned, reported as `SUBAGENT_ERROR` with code
+  `STRANDS_SUBAGENT_ABANDONED`. That covers a nested run whose parent stopped
+  first and any run still open at `RUN_FINISHED`. A nested run keeps its own
+  outcome at any depth: one that had ended stays successful even when the runs
+  above it are abandoned. A tool call the run left open gets its
+  `TOOL_CALL_END` first, attributed to that run.
+- The sub-agent's messages enter `MESSAGES_SNAPSHOT`, tagged with
+  `subagentRunId`, between the spawning call and its result, unless the
+  spawning tool's `ToolBehavior` sets `skip_messages_snapshot`. Parallel
+  sub-agents each follow their own tool's setting, and a nested sub-agent
+  follows the top-level spawning tool's. A call left unanswered at
+  `RUN_FINISHED`, parked by an interrupt say, publishes its messages in a last
+  snapshot before it.
+- `"hidden"` covers everything a sub-agent's wrapper yields from the first
+  payload that shows it wraps an agent, state included. A generator tool's
+  state updates still reach the client until then, so a state update it yields
+  before re-yielding the agent's stream is visible.
+- Sub-agent messages a client sends back are kept out of the parent model's
+  history, since Strands persists only the parent conversation: messages
+  carrying `subagentRunId`, and anything under a `parent::child` id, including
+  sub-agent tool calls a client flattened onto the spawning assistant message.
+  They are still echoed in the snapshot.
+
+Turn `"attributed"` on only once every client understands AG-UI 1.0 subagent
+events: an older client fails on the unknown event types while decoding.
+
+Not covered: a plain `@tool` that calls `sub_agent(...)` and returns its
+result exposes no events, so it stays an ordinary tool call; a
+`tool_stream_event_handler` on the spawning tool takes its payloads instead;
+`Graph` and `Swarm` orchestrators keep their own step-based events (see
+below); a nested sub-agent's `SUBAGENT_STARTED` carries no description; and a
+sub-agent's token usage is still not counted in the run's usage. The
+TypeScript bridge has no agent-as-tool forwarding, so this is Python only.
 
 ## Multi-agent orchestration
 

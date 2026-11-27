@@ -190,10 +190,11 @@ const LANES = {
   langchain: { npm: ["@ag-ui/langchain"] },
   watsonx: { npm: ["@ag-ui/watsonx"] },
   "cloudflare-agents": {
-    npm: ["@ag-ui/cloudflare-agents"],
-    // A standalone install (own lockfile) that links the adapter and client
-    // from the repo; published mode pins both to npm latest.
-    npmRoots: ["integrations/community/cloudflare-agents/typescript/examples"],
+    // The Worker uses the withAGUI API, which npm `latest` (0.0.2) predates,
+    // so there is no release to switch it to yet: it links the adapter from
+    // this checkout. Once the next release is out, this goes back to
+    // `npm: ["@ag-ui/cloudflare-agents"]` with the examples dir as npmRoots.
+    note: "the withAGUI release of @ag-ui/cloudflare-agents is not on npm yet; the Worker links it from this checkout",
   },
   "claude-managed-agents-python": {
     python: {
@@ -215,6 +216,12 @@ const LANES = {
     // (sdks/community/java/spring); published mode has no Maven rewrite yet,
     // so only the @ag-ui/* npm packages are published releases.
     note: "Java server builds from this checkout's Spring SDK; only @ag-ui/* npm deps are published",
+  },
+  "openai-agents-python": {
+    // ag-ui-openai-agents is not on PyPI yet, so there is no release to switch
+    // the server to: it runs the adapter and its lockfile from this checkout.
+    // Once published, this becomes a `python` entry with that producer.
+    note: "ag-ui-openai-agents is not on PyPI yet; the server runs it from this checkout",
   },
   "claude-managed-agents-dotnet": {
     dotnet: {

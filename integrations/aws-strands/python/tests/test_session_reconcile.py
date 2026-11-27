@@ -680,12 +680,24 @@ def _legacy_checkpoint(*results):
     """Restore a pre-1.55 save through the SDK's migration boundary."""
     from strands.interrupt import _InterruptState
 
+    # A parked result belongs to a tool call in the saved assistant message.
+    # SDK 1.66 validates that relationship when restoring legacy checkpoints.
+    tool_uses = [
+        {
+            "toolUse": {
+                "toolUseId": result["toolUseId"],
+                "name": "frontend_tool",
+                "input": {},
+            }
+        }
+        for result in results
+    ]
     return _InterruptState.from_dict(
         {
             "activated": True,
             "interrupts": {},
             "context": {
-                "tool_use_message": {"role": "assistant", "content": []},
+                "tool_use_message": {"role": "assistant", "content": tool_uses},
                 "tool_results": list(results),
             },
         }

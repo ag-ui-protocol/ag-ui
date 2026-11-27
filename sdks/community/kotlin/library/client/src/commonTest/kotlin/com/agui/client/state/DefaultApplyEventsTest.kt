@@ -833,7 +833,7 @@ class DefaultApplyEventsTest {
         }
         var reportedError = false
 
-        assertFails {
+        assertFailsWith<IllegalArgumentException> {
             defaultApplyEvents(
                 baseInput(),
                 flowOf<BaseEvent>(StateDeltaEvent(delta = malformedDelta)),

@@ -1,13 +1,168 @@
 import { test as base, Page } from "@playwright/test";
 import { awaitLLMResponseDone } from "./utils/copilot-actions";
 import {
-  type CapturedProtocolStream,
-  assertStreamsDeclareProtocolVersion,
+  type ProtocolEvidenceAllowance,
+  type ProtocolStream,
+  assertProtocolEvidence,
   PROTOCOL_VERSION_LANES,
+  promptKeyOfRequest,
   protocolVersionLaneOf,
 } from "./lib/event-trace-protocol-version";
 
 const PROTOCOL_STREAM_SETTLE_MS = 10_000;
+
+const PROTOCOL_RECORDER_BINDING = "__aguiProtocolRecord";
+
+type ProtocolRecorderMessage =
+  | { kind: "request"; id: string; url: string; requestBody: string | null }
+  | { kind: "stream"; id: string }
+  | { kind: "not-a-stream"; id: string }
+  | { kind: "chunk"; id: string; text: string }
+  | { kind: "end"; id: string; outcome: "complete" | "aborted" | "failed"; error?: string };
+
+/**
+ * Runs in the page before any of its scripts. Wraps `fetch` so every POST on
+ * the Dojo CopilotKit route is reported to the test: the request when it is
+ * sent (so streams keep the order their requests were sent in, and the body
+ * tells which prompt each answers), then whether the response is an SSE
+ * stream, each chunk as it arrives, and how the stream ended.
+ *
+ * The page gets a pass-through stream. The recorder reads the response itself,
+ * so a stream is recorded to its end whether or not the page reads it, and
+ * whatever arrived before a cancellation is kept (`response.body()` loses it).
+ * A cancel from the page is passed on to the response and recorded as aborted,
+ * so the app's own cancellation behaves as it would without the recorder.
+ */
+function installProtocolRecorder(bindingName: string) {
+  const original = window.fetch;
+  if (!original || (original as { __aguiRecorder?: boolean }).__aguiRecorder) return;
+  const send = (message: unknown) => {
+    const binding = (window as unknown as Record<string, (m: unknown) => Promise<void>>)[
+      bindingName
+    ];
+    void binding?.(message);
+  };
+  const outcomeOf = (error: unknown) =>
+    (error as { name?: string })?.name === "AbortError" ? "aborted" : "failed";
+  const documentId = Math.random().toString(36).slice(2);
+  let counter = 0;
+  const wrapped = async function (
+    this: unknown,
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : "GET")
+    ).toUpperCase();
+    let path = "";
+    try {
+      path = new URL(url, location.href).pathname;
+    } catch {
+      // Not a URL the recorder can judge; pass it through.
+    }
+    if (method !== "POST" || !/^\/api\/copilotkit(?:next)?\/[^/]+/.test(path)) {
+      return original.call(this, input, init);
+    }
+    const id = `${documentId}-${counter++}`;
+    let requestBody: string | null = null;
+    if (typeof init?.body === "string") requestBody = init.body;
+    else if (input instanceof Request && !init?.body) {
+      requestBody = await input.clone().text().catch(() => null);
+    }
+    send({ kind: "request", id, url: new URL(url, location.href).href, requestBody });
+    let response: Response;
+    try {
+      response = await original.call(this, input, init);
+    } catch (error) {
+      // No response at all: cancelled or failed before the stream began.
+      send({ kind: "end", id, outcome: outcomeOf(error), error: String(error) });
+      throw error;
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("text/event-stream") || !response.body) {
+      send({ kind: "not-a-stream", id });
+      return response;
+    }
+    send({ kind: "stream", id });
+    const upstream = response.body.getReader();
+    const decoder = new TextDecoder();
+    let ended = false;
+    const end = (outcome: string, error?: unknown) => {
+      if (ended) return;
+      ended = true;
+      send({ kind: "end", id, outcome, error: error === undefined ? undefined : String(error) });
+    };
+    let downstream!: ReadableStreamDefaultController<Uint8Array>;
+    let downstreamOpen = true;
+    const returned = new ReadableStream<Uint8Array>({
+      start(controller) {
+        downstream = controller;
+      },
+      cancel(reason) {
+        downstreamOpen = false;
+        end("aborted", reason ?? "cancelled by the page");
+        return upstream.cancel(reason);
+      },
+    });
+    void (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await upstream.read();
+          if (done) break;
+          send({ kind: "chunk", id, text: decoder.decode(value, { stream: true }) });
+          if (downstreamOpen) downstream.enqueue(value);
+        }
+        end("complete");
+        if (downstreamOpen) downstream.close();
+      } catch (error) {
+        end(outcomeOf(error), error);
+        if (downstreamOpen) downstream.error(error);
+      }
+    })();
+    return new Response(returned, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  };
+  (wrapped as { __aguiRecorder?: boolean }).__aguiRecorder = true;
+  window.fetch = wrapped as typeof window.fetch;
+}
+
+const PROTOCOL_ALLOWANCE_ANNOTATION = "ag-ui-protocol-check-allows";
+
+/**
+ * Declares that this test does not produce the run evidence the AG-UI check
+ * normally requires, and why. Call it inside the test body:
+ *
+ * - `no-run`: the test only renders or inspects the page and starts no run.
+ * - `error`: the test provokes an error, so a stream may end in RUN_ERROR
+ *   before any RUN_STARTED.
+ * - `cancel`: the test cancels a run, so that response may be unreadable.
+ *
+ * A run that does start must still declare its protocol version.
+ */
+export function allowProtocolEvidenceGap(
+  kind: ProtocolEvidenceAllowance,
+  reason: string,
+) {
+  base.info().annotations.push({
+    type: PROTOCOL_ALLOWANCE_ANNOTATION,
+    description: `${kind}: ${reason}`,
+  });
+}
+
+/** The enabled-lane integration id of a Dojo page URL (`/<id>/feature/...`). */
+function protocolLaneOfPage(url: string): string | undefined {
+  try {
+    const lane = decodeURIComponent(new URL(url).pathname.split("/")[1] ?? "");
+    return PROTOCOL_VERSION_LANES.has(lane) ? lane : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Dump the current state of assistant messages on the page.
@@ -189,29 +344,57 @@ export const test = base.extend({
       }
     });
 
-    // Opt-in AG-UI 1.0 version check (PNI-537): capture SSE runs for lanes
+    // Opt-in AG-UI 1.0 version check (PNI-537): record SSE runs for lanes
     // listed in lib/event-trace-protocol-version.ts and assert after the test.
-    const protocolStreams: Array<Promise<CapturedProtocolStream | undefined>> =
-      [];
-    page.on("response", (response) => {
-      const lane = protocolVersionLaneOf({
-        method: response.request().method(),
-        url: response.url(),
-        contentType: response.headers()["content-type"],
-      });
-      if (!lane || !PROTOCOL_VERSION_LANES.has(lane)) return;
-      protocolStreams.push(
-        response.body().then(
-          (body) => ({
-            lane,
-            url: response.url(),
-            body: body.toString("utf8"),
-          }),
-          // A stream torn down by navigation has no body to judge.
-          () => undefined,
-        ),
-      );
+    // Streams are kept in the order their requests were sent.
+    const protocolStreams = new Map<
+      string,
+      ProtocolStream & { ended: boolean; responded: boolean }
+    >();
+    const protocolLanes = new Set<string>();
+    page.on("framenavigated", (frame) => {
+      if (frame !== page.mainFrame()) return;
+      const lane = protocolLaneOfPage(frame.url());
+      if (lane) protocolLanes.add(lane);
     });
+    await page.exposeBinding(
+      PROTOCOL_RECORDER_BINDING,
+      (_source, message: ProtocolRecorderMessage) => {
+        if (message.kind === "request") {
+          const lane = protocolVersionLaneOf({
+            method: "POST",
+            url: message.url,
+            contentType: "text/event-stream",
+          });
+          if (!lane || !PROTOCOL_VERSION_LANES.has(lane)) return;
+          // Inserted when the request is sent, so streams keep request order.
+          protocolStreams.set(message.id, {
+            lane,
+            url: message.url,
+            promptKey: promptKeyOfRequest(message.requestBody),
+            body: "",
+            outcome: "complete",
+            ended: false,
+            responded: false,
+          });
+          return;
+        }
+        const stream = protocolStreams.get(message.id);
+        if (!stream) return;
+        if (message.kind === "not-a-stream") {
+          protocolStreams.delete(message.id);
+        } else if (message.kind === "stream") {
+          stream.responded = true;
+        } else if (message.kind === "chunk") {
+          stream.body += message.text;
+        } else {
+          stream.outcome = message.outcome;
+          stream.error = message.error;
+          stream.ended = true;
+        }
+      },
+    );
+    await page.addInitScript(installProtocolRecorder, PROTOCOL_RECORDER_BINDING);
 
     // Log ALL responses from agent backends (including SSE stream starts)
     page.on("response", (response) => {
@@ -232,22 +415,68 @@ export const test = base.extend({
 
     await provide(page);
 
-    if (testInfo.status === testInfo.expectedStatus && protocolStreams.length) {
-      let timeout: number | NodeJS.Timeout | undefined;
-      const settled = await Promise.race([
-        Promise.all(protocolStreams),
-        new Promise<undefined>((resolve) => {
-          timeout = setTimeout(resolve, PROTOCOL_STREAM_SETTLE_MS);
-        }),
-      ]).finally(() => clearTimeout(timeout));
-      if (!settled) {
-        throw new Error(
-          `AG-UI protocol version check: response streams did not settle within ${PROTOCOL_STREAM_SETTLE_MS}ms`,
-        );
+    if (
+      testInfo.status === testInfo.expectedStatus &&
+      (protocolStreams.size > 0 || protocolLanes.size > 0)
+    ) {
+      // Give streams still in flight time to finish; one that doesn't is
+      // reported as failed, with what it received so far still judged.
+      const deadline = Date.now() + PROTOCOL_STREAM_SETTLE_MS;
+      while (
+        [...protocolStreams.values()].some((stream) => !stream.ended) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      assertStreamsDeclareProtocolVersion(
-        settled.filter((stream) => stream !== undefined),
+      const settled: ProtocolStream[] = [...protocolStreams.values()]
+        // A request that got no stream and carried no prompt is not a run
+        // request (a CopilotKit call still in flight at the end, say).
+        .filter((stream) => stream.responded || stream.promptKey !== undefined)
+        .map(({ ended, responded: _responded, ...stream }) =>
+          ended
+            ? stream
+            : {
+                ...stream,
+                outcome: "failed" as const,
+                error: `did not finish within ${PROTOCOL_STREAM_SETTLE_MS}ms of the test ending`,
+              },
+        );
+      // User turns, not user messages: consecutive user messages with no
+      // assistant reply between them were sent as one turn (a multimodal page
+      // can add the attachment and the text as two messages, and a snapshot
+      // can re-send the user's message), and one turn starts one run.
+      const prompts = await page
+        .evaluate(() => {
+          let turns = 0;
+          let previousWasUser = false;
+          document
+            .querySelectorAll(
+              '[data-testid="copilot-user-message"], .copilotKitUserMessage, [data-testid="copilot-assistant-message"], .copilotKitAssistantMessage',
+            )
+            .forEach((element) => {
+              const isUser =
+                element.matches('[data-testid="copilot-user-message"]') ||
+                element.classList.contains("copilotKitUserMessage");
+              if (isUser && !previousWasUser) turns += 1;
+              previousWasUser = isUser;
+            });
+          return turns;
+        })
+        .catch(() => 0);
+      const allowances = new Set(
+        testInfo.annotations
+          .filter((annotation) => annotation.type === PROTOCOL_ALLOWANCE_ANNOTATION)
+          .map(
+            (annotation) =>
+              annotation.description?.split(":")[0] as ProtocolEvidenceAllowance,
+          ),
       );
+      assertProtocolEvidence({
+        lanes: [...protocolLanes],
+        streams: settled,
+        prompts,
+        allowances,
+      });
     }
 
     // On failure: dump what the LLM actually did so CI logs are actionable

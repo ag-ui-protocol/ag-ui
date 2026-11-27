@@ -81,6 +81,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_dynamic_schema",
       "a2ui_advanced",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -110,6 +112,8 @@ export const menuIntegrations = [
     features: [
       "agentic_chat",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -130,6 +134,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "observational_memory",
       "tool_approval",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -149,6 +155,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "observational_memory",
       "tool_approval",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -176,6 +184,8 @@ export const menuIntegrations = [
       // "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -241,6 +251,8 @@ export const menuIntegrations = [
       "shared_state",
       "tool_based_generative_ui",
       "subgraphs",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -259,6 +271,8 @@ export const menuIntegrations = [
       "a2ui_dynamic_schema",
       "a2ui_advanced",
       "a2ui_recovery",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -292,6 +306,8 @@ export const menuIntegrations = [
       "agentic_generative_ui",
       "shared_state",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -308,6 +324,8 @@ export const menuIntegrations = [
       "predictive_state_updates",
       "shared_state",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -404,6 +422,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_advanced",
       "a2ui_recovery",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -427,6 +447,8 @@ export const menuIntegrations = [
       "a2ui_fixed_schema",
       "a2ui_advanced",
       "a2ui_recovery",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -438,6 +460,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -449,6 +473,8 @@ export const menuIntegrations = [
       "shared_state",
       "human_in_the_loop",
       "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
     ],
   },
   {
@@ -494,7 +520,20 @@ export const menuIntegrations = [
   {
     id: "cloudflare-agents",
     name: "Cloudflare Agents",
-    features: ["agentic_chat", "backend_tool_rendering"],
+    features: [
+      "agentic_chat",
+      "agentic_chat_multimodal",
+      "agentic_chat_reasoning",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "human_in_the_loop_approval",
+      "agentic_generative_ui",
+      "tool_based_generative_ui",
+      "shared_state",
+      "predictive_state_updates",
+      "generative_ui_markdown",
+      "generative_ui_tool",
+    ],
     // The example is a Worker run locally with `wrangler dev`; nothing is
     // deployed for the hosted Dojo yet.
     localOnly: true,
@@ -514,5 +553,23 @@ export const menuIntegrations = [
       "human_in_the_loop",
       "tool_based_generative_ui",
     ],
+  },
+  {
+    id: "openai-agents-python",
+    name: "OpenAI Agents SDK (Python)",
+    features: [
+      "ag_ui_docs_copilot",
+      "agentic_chat",
+      "backend_tool_rendering",
+      "human_in_the_loop",
+      "human_in_the_loop_approval",
+      "tool_based_generative_ui",
+      "subagents",
+      "custom_lifecycle_events",
+      "dynamic_system_prompt",
+    ],
+    // The example server runs locally (port 8031); nothing is deployed for
+    // the hosted Dojo yet.
+    localOnly: true,
   },
 ] as const satisfies MenuIntegrationConfig[];

@@ -2,6 +2,7 @@
 Run: python test_child_recovery.py ts|py allow|deny [--stall]
 TS requires tsx installed in the integration. Python requires the integration on PYTHONPATH.
 """
+import shutil
 import json, os, sys, tempfile, threading, subprocess, uuid, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,6 +51,7 @@ try:
   (root/(phase+'.log')).write_text(completed.stdout+'\n'+completed.stderr)
   lines=[line[7:] for line in completed.stdout.splitlines() if line.startswith('EVENTS ')];assert lines,completed.stderr+completed.stdout
   events=json.loads(lines[-1]);outputs[phase]=events
+  shutil.copytree(root/'config/projects', root/'snapshots'/phase/'projects', dirs_exist_ok=True)
   if stall and phase=='answer':assert any(e['type']=='RUN_ERROR' for e in events);continue
   assert completed.returncode==0,completed.stderr+completed.stdout
   if phase in ['start','refresh1','refresh2']:

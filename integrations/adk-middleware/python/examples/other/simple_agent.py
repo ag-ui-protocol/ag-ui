@@ -110,15 +110,15 @@ async def advanced_example():
     registry = AgentRegistry.get_instance()
     registry.register_agent("researcher", advanced_agent)
 
-    # Create middleware with custom user extraction
-    def extract_user_from_context(input: RunAgentInput) -> str:
-        for ctx in input.context:
-            if ctx.description == "user_email":
-                return ctx.value.split("@")[0]  # Use email prefix as user ID
-        return "anonymous"
+    # Create middleware with custom user extraction.
+    # Do not trust client-supplied context or state for identity: the client controls them.
+    # Behind HTTP, write state["user_id"] from the authenticated request with a custom
+    # extract_state_from_request (see CONFIGURATION.md, "Using Request Headers for Identity").
+    def extract_user_from_state(input: RunAgentInput) -> str:
+        return input.state["user_id"]
 
     agent = ADKAgent(
-        user_id_extractor=extract_user_from_context,
+        user_id_extractor=extract_user_from_state,
         # app_name will default to the agent name ("research_assistant")
     )
 
@@ -134,10 +134,11 @@ async def advanced_example():
         run_id="run_002",
         messages=messages,
         context=[
-            Context(description="user_email", value="researcher@example.com"),
             Context(description="agent_id", value="researcher")
         ],
-        state={"topics_of_interest": ["quantum computing"]},
+        # This script builds the input on the server side. Over HTTP, the
+        # extract_state_from_request hook sets user_id from the authenticated request.
+        state={"topics_of_interest": ["quantum computing"], "user_id": "researcher"},
         tools=[],
         forwarded_props={}
     )

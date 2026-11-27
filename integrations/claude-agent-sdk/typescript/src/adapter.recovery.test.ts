@@ -229,6 +229,63 @@ for (const eviction of ["clear", "ttl", "capacity"] as const)
     }
   });
 
+it("resumes the session of the adapter it was cloned from", async () => {
+  const resumes: (string | undefined)[] = [];
+  sdk.query.mockImplementation(({ options }) =>
+    (async function* () {
+      resumes.push(options.resume);
+      const sessionId = options.resume ?? "session-1";
+      yield { type: "system", subtype: "init", session_id: sessionId };
+      yield {
+        type: "result",
+        subtype: "success",
+        session_id: sessionId,
+        is_error: false,
+      };
+    })(),
+  );
+  const adapter = new ClaudeAgentAdapter();
+  const initial = { ...request(), state: null };
+
+  await collect(adapter.clone(), initial);
+  const events = await collect(adapter.clone(), initial);
+
+  expect(events[events.length - 1]).toMatchObject({ type: "RUN_FINISHED" });
+  expect(resumes).toEqual([undefined, "session-1"]);
+});
+
+it("refuses a run on a clone while the same thread runs on another clone", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  sdk.query.mockImplementation(() =>
+    (async function* () {
+      yield { type: "system", subtype: "init", session_id: "session-1" };
+      await held;
+      yield {
+        type: "result",
+        subtype: "success",
+        session_id: "session-1",
+        is_error: false,
+      };
+    })(),
+  );
+  const adapter = new ClaudeAgentAdapter();
+  const initial = { ...request(), state: null };
+
+  const first = collect(adapter.clone(), initial);
+  await vi.waitFor(() => expect(sdk.query).toHaveBeenCalled());
+  const second = await collect(adapter.clone(), initial);
+  release();
+  await first;
+
+  expect(second).toEqual([
+    expect.objectContaining({
+      type: "RUN_ERROR",
+      message: "A run is already active for this thread.",
+    }),
+  ]);
+});
+
 for (const isError of [false, true])
   for (const fullHistory of [false, true])
     it(`reconciles frontend snapshot echo: error=${isError}, history=${fullHistory}`, async () => {
@@ -956,5 +1013,41 @@ it.each([false, true])(
       expect(restarted.at(-1)?.type).toBe("RUN_ERROR");
       expect(sdk.query).toHaveBeenCalledTimes(1);
     }
+  },
+);
+
+it.each([[], ["FINAL"], ["OTHER"], ["FINAL", "FINAL"]])(
+  "reuses only the latest matching unstreamed assistant for result fallback: %j",
+  async (...texts: string[]) => {
+    sdk.query.mockImplementation(() =>
+      (async function* () {
+        for (const [i, text] of texts.entries())
+          yield {
+            type: "assistant",
+            uuid: `row-${i}`,
+            message: {
+              id: `canonical-${i}`,
+              role: "assistant",
+              content: [{ type: "text", text }],
+            },
+          };
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "FINAL",
+          session_id: "original-session",
+        };
+      })(),
+    );
+    const events: any[] = await collect(new ClaudeAgentAdapter(), request());
+    const assistants = events
+      .find((e) => e.type === "MESSAGES_SNAPSHOT")
+      .messages.filter((m: { role: string }) => m.role === "assistant");
+    const matches = texts.length && texts.at(-1) === "FINAL";
+    expect(assistants).toHaveLength(texts.length + (matches ? 0 : 1));
+    const start = events.find((e) => e.type === "TEXT_MESSAGE_START");
+    expect(start.messageId).toBe(assistants.at(-1).id);
+    if (matches) expect(start.messageId).toBe(`canonical-${texts.length - 1}`);
   },
 );
