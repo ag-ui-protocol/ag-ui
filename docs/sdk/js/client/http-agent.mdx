@@ -21,6 +21,7 @@ When creating an HTTP agent, you need to provide an `HttpAgentConfig` object:
 interface HttpAgentConfig extends AgentConfig {
   url: string // Endpoint URL for the agent service
   headers?: Record<string, string> // Optional HTTP headers
+  maxBufferSize?: number // Largest single event the response parser accepts; 10 MB unless set
 }
 ```
 
