@@ -116,6 +116,12 @@ const ALL_TARGETS = {
     name: "AWS Strands",
     cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
   },
+  // The same examples project as "aws-strands"; a second server in it.
+  "aws-strands-harness": {
+    command: "poetry install",
+    name: "AWS Strands Harness",
+    cwd: path.join(integrationsRoot, "aws-strands/python/examples"),
+  },
   "aws-strands-typescript": {
     command: "pnpm install",
     name: "AWS Strands (TypeScript)",

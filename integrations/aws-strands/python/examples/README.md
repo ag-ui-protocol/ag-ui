@@ -84,6 +84,40 @@ The root route lists the available demos:
 Point the AG-UI Dojo (or any AG-UI client) at these SSE endpoints to see the
 Strands wrapper translate provider events into protocol-native messages.
 
+### The Strands harness
+
+Two servers here run a
+[Strands harness](https://strandsagents.com/docs/user-guide/harness/) through
+`StrandsHarnessAgent`.
+
+**The dojo's harness lane.** `server/harness.py` serves the demos above on a
+harness instead of a plain agent: each is the plain demo's own model, prompt,
+tools and AG-UI config handed to a harness, with the harness's shell, file
+tools, skills and memory off. It leaves out the demos about a model feature
+(reasoning, citations, multimodal input) and the multi-agent one, and adds
+`/tool-approval`, where the harness's own gate (`interventions="ask"`) asks
+before a tool runs. This is what the dojo's "AWS Strands Harness" entry talks
+to:
+
+```bash
+poetry run dev-harness       # PORT, default 8000; the dojo expects 8032
+```
+
+**A harness with its tools on.** `harness_server.py`, beside this README, is one
+harness as it comes, shell and file tools included, so it runs commands on the
+machine it is started on:
+
+```bash
+poetry run python harness_server.py     # http://localhost:8001/
+```
+
+It uses the harness's default model, Claude on Amazon Bedrock with this
+process's AWS credentials, unless `HARNESS_MODEL` names another
+(`anthropic/claude-sonnet-5-5`, `openai/gpt-5.5`, ...). Every shell command and
+file write pauses the run for an approval, which the client receives as a
+`tool_call` interrupt; `HARNESS_INTERVENTIONS=off` runs them unasked. The file's
+docstring lists the rest of its environment.
+
 ### Demos that pin their own model
 
 `MODEL_PROVIDER` still selects the provider for every demo. Two of them ask

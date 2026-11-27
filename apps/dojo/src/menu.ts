@@ -427,6 +427,23 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "aws-strands-harness",
+    name: "AWS Strands Harness (Python)",
+    features: [
+      "agentic_chat",
+      "backend_tool_rendering",
+      "agentic_generative_ui",
+      "shared_state",
+      "human_in_the_loop",
+      "interrupt",
+      "tool_approval",
+      "predictive_state_updates",
+      "tool_based_generative_ui",
+      "generative_ui_markdown",
+      "generative_ui_tool",
+    ],
+  },
+  {
     id: "aws-strands-typescript",
     name: "AWS Strands (TypeScript)",
     features: [

@@ -19,6 +19,9 @@ strands-agents = {extras = ["openai", "anthropic", "gemini"], version = "^1.55.0
 # Hold openai below 3 until strands supports it.
 openai = "<3.0.0"
 ag_ui_strands = {path = "..", develop = true}
+# Only `dev-harness` (server/harness.py) needs this. It is here, not in the
+# adapter, because it requires a newer strands-agents than the adapter's floor.
+strands-harness = ">=0.5.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -26,3 +29,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 dev = "server:main"
+dev-harness = "server.harness:main"
