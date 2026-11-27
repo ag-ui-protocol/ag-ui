@@ -242,8 +242,10 @@ describe("Mastra run guidance", () => {
         ...(configured ? {} : { runGuidance: { trusted: true } }),
       });
       const run = (input: ReturnType<typeof makeInput>) =>
-        withMastraRunGuidanceAuthority(true, () =>
-          collectEvents(wrapped, input),
+        withMastraRunGuidanceAuthority(
+          true,
+          () => collectEvents(wrapped, input),
+          { "ag-ui": { context: input.context } },
         );
       const first = await run(
         makeInput({ messages: [user], context: context("role-A", "tools-A") }),
@@ -292,6 +294,41 @@ describe("Mastra run guidance", () => {
       );
     },
   );
+
+  it("clears native guidance when resume omits the request context", async () => {
+    const { agent, prompts } = receiver({ configured: true, suspend: true });
+    const memory = { thread: "thread", resource: "resource" };
+    const requestContext = new RequestContext();
+    requestContext.set("ag-ui", { context: context("role-A", "tools-A") });
+    const snapshotRunId = await withMastraRunGuidanceAuthority(
+      true,
+      async () => {
+        const stream = await agent.stream("Proceed?", {
+          memory,
+          requestContext,
+        });
+        for await (const _chunk of stream.fullStream) {
+          // Drain the stream so Mastra persists the suspended run.
+        }
+        return stream.runId;
+      },
+      requestContext.toJSON(),
+    );
+    await withMastraRunGuidanceAuthority(true, async () => {
+      const stream = await agent.resumeStream(true, {
+        memory,
+        runId: snapshotRunId,
+        toolCallId: "tc-1",
+        requestContext: new RequestContext(),
+      });
+      for await (const _chunk of stream.fullStream) {
+        // Drain the continuation.
+      }
+    });
+    expect(prompts).toHaveLength(2);
+    expect(occurrences(prompts[0], "system", "role-A")).toBe(1);
+    expect(JSON.stringify(prompts[1])).not.toMatch(/role-A|tools-A/);
+  });
 
   it("discovers native capabilities using the configured client transport and the agent's native ID", async () => {
     const dial = vi.fn<typeof fetch>(async (url) =>

@@ -47,10 +47,7 @@ function readEntry(
   return result;
 }
 
-export function readMastraRunGuidanceContext(
-  requestContext: Pick<RequestContext, "get"> | undefined,
-): unknown[] {
-  const value = requestContext?.get("ag-ui");
+export function readMastraRunGuidanceContext(value: unknown): unknown[] {
   return typeof value === "object" &&
     value !== null &&
     "context" in value &&

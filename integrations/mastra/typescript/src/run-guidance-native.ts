@@ -10,17 +10,24 @@ import {
   supportsMastraRunGuidance,
 } from "./run-guidance";
 
-const authority = new AsyncLocalStorage<boolean>();
+const authority = new AsyncLocalStorage<{
+  trusted: boolean;
+  context: readonly unknown[];
+}>();
 
 /**
  * Runs native Mastra handlers with the authority established by server
- * authentication or an explicitly trusted ingress.
+ * authentication or an explicitly trusted ingress. Supply the current
+ * native request body's serialized `requestContext`. An omitted context clears
+ * guidance even when Mastra restores an earlier request in its resume snapshot.
  */
 export function withMastraRunGuidanceAuthority<T>(
   trusted: boolean,
   run: () => T,
+  requestContext?: Record<string, unknown>,
 ): T {
-  return authority.run(trusted, run);
+  const context = readMastraRunGuidanceContext(requestContext?.["ag-ui"]);
+  return authority.run({ trusted: trusted === true, context }, run);
 }
 
 /**
@@ -29,10 +36,11 @@ export function withMastraRunGuidanceAuthority<T>(
  * middleware with `withMastraRunGuidanceAuthority`.
  */
 export const mastraRunGuidanceProcessor = createMastraRunGuidanceProcessor(
-  (requestContext) => ({
-    context: readMastraRunGuidanceContext(requestContext),
-    trusted: authority.getStore() === true,
-  }),
+  (requestContext) =>
+    authority.getStore() ?? {
+      context: readMastraRunGuidanceContext(requestContext?.get("ag-ui")),
+      trusted: false,
+    },
 );
 
 /**

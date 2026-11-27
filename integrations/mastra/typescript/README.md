@@ -295,8 +295,9 @@ authorize guidance for agents that the route builds.
 
 For a native Mastra server, add `mastraRunGuidanceProcessor` to the agent's
 `inputProcessors` before any provider response-cache processor. On the server,
-call `withMastraRunGuidanceAuthority(trusted, next)` after authenticating the
-request. Mount `registerMastraRunGuidanceCapabilities(agentId)` with the same
+call `withMastraRunGuidanceAuthority(trusted, next, body?.requestContext)`
+after authenticating the request. Pass the current request body's context so
+a native resume clears guidance when the request omits it. Mount `registerMastraRunGuidanceCapabilities(agentId)` with the same
 authentication and authorization as the native run routes. Import all three
 from `@ag-ui/mastra/run-guidance`. The remote bridge looks up the declaration
 at `GET /<encoded agentId>/capabilities` relative to the configured Mastra

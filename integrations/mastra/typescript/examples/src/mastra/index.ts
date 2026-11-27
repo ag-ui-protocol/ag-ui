@@ -56,7 +56,17 @@ export const mastra = new Mastra({
         );
         if (authority === "reject")
           return context.json({ error: "Unauthorized" }, 401);
-        return withMastraRunGuidanceAuthority(authority === "trusted", next);
+        const body =
+          context.req.method === "POST"
+            ? await context.req
+                .json<{ requestContext?: Record<string, unknown> }>()
+                .catch(() => undefined)
+            : undefined;
+        return withMastraRunGuidanceAuthority(
+          authority === "trusted",
+          next,
+          body?.requestContext,
+        );
       },
     ],
     apiRoutes: [chatCapabilities],
