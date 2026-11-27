@@ -281,7 +281,7 @@ The processor adds both to the provider's system instructions for an authorized
 caller. For an ordinary caller, it adds only the role as user task context.
 Guidance applies to each model call and stays out of conversation history.
 Send the current entries again on hand-back or resume. Omit an entry to clear
-it.
+it. Repeated reserved descriptions are ignored and logged once per run by name.
 
 In-process agents enable the receiver by default on supported Mastra cores.
 The default applies the role as ordinary task context. To authorize system

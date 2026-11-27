@@ -13,6 +13,10 @@ export interface MastraRunGuidanceOptions {
 
 const processorId = "ag-ui-run-guidance";
 
+// Mastra shares processor state across model calls in a run. Track diagnostics
+// by that state object's identity so they stay out of serialized state.
+const reportedDuplicates = new WeakMap<object, Set<string>>();
+
 /** @internal */
 export const bridgeRunGuidanceContext = Symbol.for(
   "@ag-ui/mastra/bridge-run-guidance",
@@ -31,7 +35,8 @@ export function isMastraRunGuidanceEntry(entry: unknown): boolean {
 
 function readEntry(
   entries: readonly unknown[],
-  description: string,
+  description: typeof roleDescription | typeof toolDescription,
+  state: Record<string, unknown>,
 ): string | undefined {
   let result: string | undefined;
   let found = false;
@@ -44,7 +49,17 @@ function readEntry(
     )
       continue;
 
-    if (found) return undefined;
+    if (found) {
+      const reported = reportedDuplicates.get(state) ?? new Set<string>();
+      if (!reported.has(description)) {
+        reported.add(description);
+        reportedDuplicates.set(state, reported);
+        console.warn(
+          `[MastraAgent] Ignoring duplicate run guidance entry: ${description}`,
+        );
+      }
+      return undefined;
+    }
     found = true;
     if ("value" in entry && typeof entry.value === "string") {
       result = entry.value.trim() || undefined;
@@ -73,14 +88,16 @@ export function createMastraRunGuidanceProcessor(
     processLLMRequest<Message extends { role: string }>({
       prompt,
       requestContext,
+      state = {},
     }: {
       prompt: Message[];
       requestContext?: Pick<RequestContext, "get">;
+      state?: Record<string, unknown>;
     }) {
       const { context, trusted } = guidanceFor(requestContext);
-      const role = readEntry(context, roleDescription);
+      const role = readEntry(context, roleDescription, state);
+      const tools = readEntry(context, toolDescription, state);
       if (trusted) {
-        const tools = readEntry(context, toolDescription);
         const guidance = [role, tools].filter(Boolean).join("\n\n");
         if (!guidance) return;
 

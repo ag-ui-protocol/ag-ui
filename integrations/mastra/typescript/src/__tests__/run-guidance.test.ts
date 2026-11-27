@@ -200,6 +200,117 @@ describe("Mastra run guidance", () => {
     }
   });
 
+  it.each(["bridge", "native"] as const)(
+    "warns once per %s run for a duplicate description without logging values",
+    async (transport) => {
+      const { agent, prompts } = receiver({
+        configured: transport === "native",
+        followUp: true,
+      });
+      const wrapped = new bridge.MastraAgent({
+        agent,
+        agentId: "test",
+        runGuidance: { trusted: true },
+      });
+      const entries = [
+        ...context("private-duplicate-role-one", "current-tools"),
+        ...context("private-duplicate-role-two"),
+        ...context("private-duplicate-role-three"),
+      ];
+      const run = async (id: string) => {
+        if (transport === "bridge") {
+          await collectEvents(
+            wrapped,
+            makeInput({
+              messages: [user],
+              context: entries,
+              runId: id,
+              threadId: id,
+            }),
+          );
+          return;
+        }
+
+        await withMastraRunGuidanceAuthority(
+          true,
+          async () => {
+            const stream = await agent.stream(user.content, {
+              memory: { thread: id, resource: id },
+              runId: id,
+            });
+            for await (const _chunk of stream.fullStream) {
+              // Drain the model and any tool calls.
+            }
+          },
+          { "ag-ui": { context: entries } },
+        );
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const diagnostics = () =>
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes("duplicate run guidance"),
+        );
+      const warning = [
+        "[MastraAgent] Ignoring duplicate run guidance entry: OpenBot standing role",
+      ];
+
+      try {
+        await run("one");
+        expect(prompts).toHaveLength(2);
+        expect(diagnostics()).toEqual([warning]);
+        expect(JSON.stringify(prompts)).not.toContain("private-duplicate-role");
+        expect(
+          prompts.map((prompt) =>
+            occurrences(prompt, "system", "current-tools"),
+          ),
+        ).toEqual([1, 1]);
+
+        await run("two");
+        expect(diagnostics()).toEqual([warning, warning]);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  it("diagnoses duplicate tool guidance from an ordinary caller without applying it", async () => {
+    const { agent, prompts } = receiver();
+    const wrapped = new bridge.MastraAgent({ agent, agentId: "test" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await collectEvents(
+        wrapped,
+        makeInput({
+          messages: [user],
+          context: [
+            ...context("current-role", "private-duplicate-tools-one"),
+            {
+              description: "OpenBot granted tools guidance",
+              value: "private-duplicate-tools-two",
+            },
+          ],
+        }),
+      );
+
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes("duplicate run guidance"),
+        ),
+      ).toEqual([
+        [
+          "[MastraAgent] Ignoring duplicate run guidance entry: OpenBot granted tools guidance",
+        ],
+      ]);
+      expect(occurrences(prompts[0], "user", "current-role")).toBe(1);
+      expect(JSON.stringify(prompts[0])).not.toContain(
+        "private-duplicate-tools",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("deduplicates the packaged processor when the underlying agent already uses it", async () => {
     const { agent, prompts } = receiver({ configured: true });
     const wrapped = new bridge.MastraAgent({
