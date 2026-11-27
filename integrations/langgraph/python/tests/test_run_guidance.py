@@ -34,8 +34,8 @@ class TestRunGuidance(unittest.TestCase):
         self.model = RecordingModel()
         self.checkpointer = MemorySaver()
 
-    def client(self, **endpoint_options):
-        self.agent = ag_ui_langgraph.create_langgraph_agent(
+    def client(self, *, agent=None, **endpoint_options):
+        self.agent = agent or ag_ui_langgraph.create_langgraph_agent(
             name="test",
             model=self.model,
             system_prompt="Base instruction",
@@ -56,8 +56,8 @@ class TestRunGuidance(unittest.TestCase):
                 "runId": run_id,
                 "state": {},
                 "messages": [
-                    {"id": run_id, "role": "user", "content": "Proceed?"},
                     *messages,
+                    {"id": run_id, "role": "user", "content": "Proceed?"},
                 ],
                 "tools": [],
                 "context": context,
@@ -197,6 +197,81 @@ class TestRunGuidance(unittest.TestCase):
                 if isinstance(m, HumanMessage)
             ]
             self.assertEqual(human, ["Proceed?", "Proceed?"])
+
+    def test_leading_legacy_row_preserves_the_following_system_instruction(self):
+        for context in ([], [entry("OpenBot standing role", "MODERN_ROLE")]):
+            with (
+                self.subTest(context=context),
+                self.client(trusted_ingress=True) as client,
+            ):
+                prompt = self.run_agent(
+                    client,
+                    "start",
+                    context=context,
+                    messages=[
+                        {
+                            "id": "standing-role:old",
+                            "role": "system",
+                            "content": "LEGACY_ROLE",
+                        },
+                        {
+                            "id": "granted-tools:old",
+                            "role": "system",
+                            "content": "LEGACY_TOOLS",
+                        },
+                        {
+                            "id": "ordinary",
+                            "role": "system",
+                            "content": "ORDINARY_INSTRUCTION",
+                        },
+                    ],
+                )
+                self.assertEqual(
+                    [message.content for message in prompt if message.id == "ordinary"],
+                    ["ORDINARY_INSTRUCTION"],
+                )
+                state = self.agent.graph.get_state(
+                    {"configurable": {"thread_id": "thread"}}
+                )
+                self.assertEqual(
+                    [message.id for message in state.values["messages"][:2]],
+                    ["ordinary", "start"],
+                )
+                self.assertIn(
+                    "MODERN_ROLE" if context else "LEGACY_ROLE", prompt[0].content
+                )
+
+    def test_checkpoint_context_preserves_non_string_descriptions(self):
+        with self.client(trusted_ingress=True) as client:
+            self.run_agent(client, "start")
+            self.agent.graph.update_state(
+                {"configurable": {"thread_id": "thread"}},
+                {
+                    "messages": [
+                        SystemMessage(
+                            id="mixed-context",
+                            content='App Context:\n[{"description":["ordinary"],"value":"KEEP"},'
+                            '{"description":"OpenBot granted tools guidance","value":"STALE"}]',
+                        ),
+                    ]
+                },
+            )
+            prompt = self.run_agent(client, "next")
+            context = next(
+                message.content for message in prompt if message.id == "mixed-context"
+            )
+            self.assertIn("KEEP", context)
+            self.assertNotIn("STALE", context)
+
+    def test_chat_factory_uses_a_checkpointer_by_default(self):
+        agent = ag_ui_langgraph.create_langgraph_agent(name="test", model=self.model)
+        with self.client(agent=agent) as client:
+            self.run_agent(client, "start")
+            prompt = self.run_agent(client, "next")
+            self.assertEqual(
+                [message.id for message in prompt if isinstance(message, HumanMessage)],
+                ["start", "next"],
+            )
 
     def test_precompiled_graph_retains_existing_capability_behavior(self):
         with self.client():

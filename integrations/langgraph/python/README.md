@@ -44,21 +44,22 @@ pip install ag-ui-langgraph
 
 ## Serve a LangChain chat agent with FastAPI
 
-Install `ag-ui-langgraph[fastapi]` plus the LangChain integration for your
-model provider. The chat factory installs run guidance middleware and returns
-an AG-UI agent ready to serve.
+Install a release or preview of `ag-ui-langgraph[fastapi]` that includes
+`create_langgraph_agent`, plus the LangChain integration for your model provider.
+The chat factory installs run guidance middleware and creates an in-memory
+checkpointer by default. Set `checkpointer` to a persistent LangGraph
+checkpointer to keep state across process restarts or deployments with
+multiple workers.
 
 ```python
 from ag_ui_langgraph import add_langgraph_fastapi_endpoint, create_langgraph_agent
 from fastapi import FastAPI
-from langgraph.checkpoint.memory import MemorySaver
 
 app = FastAPI()
 agent = create_langgraph_agent(
     name="chat",
     model="openai:gpt-4.1-mini",
     system_prompt="You are a helpful assistant.",
-    checkpointer=MemorySaver(),
 )
 add_langgraph_fastapi_endpoint(app, agent, "/agent")
 ```
@@ -72,8 +73,11 @@ guidance. For anonymous callers, the role is ordinary user guidance and the
 tool guidance is omitted. Use `authorize_guidance` with your existing
 authorization policy. A callback can return `True` for authorized callers,
 return `False` for anonymous handling, or raise an HTTP error. It runs for both
-the capability lookup and the streamed runs. Use `trusted_ingress=True` only
-when deployment access controls restrict both routes to authorized callers.
+the capability lookup and the streamed runs. Protect both routes using
+app-level or router-level authorization, or use `authorize_guidance` to
+authorize both explicitly. The helper's `dependencies` keyword applies to the
+POST route. Set `trusted_ingress=True` only when deployment access controls
+restrict both routes to authorized callers.
 
 To serve a graph you already compiled, use
 `LangGraphAgent(name="my-agent", graph=graph)` with the same FastAPI helper.

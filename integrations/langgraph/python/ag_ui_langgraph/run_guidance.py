@@ -14,6 +14,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRequest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 
 from .agent import LangGraphAgent, ProcessedEvents
 
@@ -88,7 +89,8 @@ def _without_stale_guidance(
                     entry
                     for entry in previous
                     if not isinstance(entry, dict)
-                    or entry.get("description") not in _LEGACY_PREFIXES
+                    or not isinstance(entry.get("description"), str)
+                    or entry["description"] not in _LEGACY_PREFIXES
                 ]
                 if ordinary != previous:
                     if ordinary:
@@ -115,6 +117,15 @@ class RunGuidanceAgentMixin:
             },
         }
 
+    def _filter_reserved_input_messages(
+        self, messages: list[BaseMessage]
+    ) -> list[BaseMessage]:
+        return [
+            message
+            for message in super()._filter_reserved_input_messages(messages)
+            if not _legacy_description(message)
+        ]
+
     async def run(
         self, input: RunAgentInput, *, trusted_guidance: bool = False
     ) -> AsyncGenerator[ProcessedEvents, None]:
@@ -125,10 +136,13 @@ class RunGuidanceAgentMixin:
         legacy = []
         for message in input.messages:
             description = _legacy_description(message)
-            if description:
-                legacy.append(Context(description=description, value=message.content))
-            else:
+            if not description:
                 messages.append(message)
+            elif getattr(message, "subagent_run_id", None) is None:
+                legacy.append(Context(description=description, value=message.content))
+                # Keep the row's position for the leading system message
+                # policy. The adapter removes the empty row before merging.
+                messages.append(AGUISystemMessage(id=message.id, content=""))
 
         selected = guidance or legacy
         snapshot = _RunGuidance(
@@ -216,8 +230,12 @@ def create_langgraph_agent(
     """Create a LangChain chat agent with AG-UI's run guidance enabled.
 
     ``middleware`` and ``graph_options`` go to LangChain's ``create_agent``.
-    ``agent_options`` goes to the ``LangGraphAgent`` adapter.
+    ``agent_options`` goes to the ``LangGraphAgent`` adapter. Supply a persistent
+    ``checkpointer`` for production deployments that need to retain state across
+    processes or restarts.
     """
+    if graph_options.get("checkpointer") is None:
+        graph_options["checkpointer"] = MemorySaver()
     model_middleware = list(middleware)
     if not any(isinstance(item, RunGuidanceMiddleware) for item in model_middleware):
         model_middleware.append(RunGuidanceMiddleware())

@@ -11,30 +11,17 @@ cd integrations/langgraph/python/examples
 pnpx @langchain/langgraph-cli@1.1.13 dev
 ```
 
-To run the python examples using FastAPI, run:
+Run the FastAPI examples with uv from the repository checkout.
 
-```
+```sh
 cd integrations/langgraph/python/examples
-poetry install
-poetry run dev
+uv sync --frozen
+uv run --frozen dev
 ```
 
-Note that when running them both concurrently, poetry and the langgraph-cli will step on eachothers toes and install/uninstall eachothers dependencies.
-You can fix this by running the poetry commands with virtualenvs.in-project set to false. You can set this permanently for the project using:
-`poetry config virtualenvs.create false --local`, globally using `poetry config virtualenvs.create false`, or temporarily using an environment variable:
-
-```
-export POETRY_VIRTUALENVS_IN_PROJECT=false
-poetry install
-poetry run dev
-```
-
-or
-
-```
-POETRY_VIRTUALENVS_IN_PROJECT=false poetry install
-POETRY_VIRTUALENVS_IN_PROJECT=false poetry run dev
-```
+The example's uv configuration uses the AG-UI packages from this checkout.
+If you host the example against published packages, use an `ag-ui-langgraph`
+release or preview that exports the run guidance middleware and agent mixin.
 
 ## Per-run guidance on the FastAPI chat example
 
