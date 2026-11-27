@@ -56,10 +56,12 @@ export const mastra = new Mastra({
         );
         if (authority === "reject")
           return context.json({ error: "Unauthorized" }, 401);
-        const body =
+        // Mastra's validator also reads the raw body.
+        const body: { requestContext?: Record<string, unknown> } | undefined =
           context.req.method === "POST"
-            ? await context.req
-                .json<{ requestContext?: Record<string, unknown> }>()
+            ? await context.req.raw
+                .clone()
+                .json()
                 .catch(() => undefined)
             : undefined;
         return withMastraRunGuidanceAuthority(
