@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { RunAgentInput } from "@ag-ui/client";
 import { ManagedAgentsAgent } from "../agent";
 import { InMemorySessionStore } from "../sessions";
+import { stateCommit, stateText } from "../state";
 import { createFakeClient } from "./fake-client";
 
 const custom = (id: string) => ({
@@ -53,6 +54,203 @@ const agent = (
     sessionStore: store,
     resolveSession: () => ({ sessionId: "original", lastUserMessageId: "old" }),
   });
+
+const followUp = (id: string) =>
+  input({ messages: [{ role: "user", id, content: id }] });
+
+describe("ordinary follow-ups", () => {
+  it.each([100, 1000])(
+    "reads only the tail before posting to a session with %i historical events",
+    async (size) => {
+      const previousEnd = { ...idle, id: "previous_end" };
+      const nextEnd = { ...idle, id: "next_end" };
+      const history = Array.from({ length: size - 1 }, (_, i) => ({
+        type: "span.model_request_start",
+        id: `span_${i}`,
+      }));
+      const fake = createFakeClient({
+        streams: [
+          [previousEnd],
+          [
+            previousEnd,
+            {
+              type: "agent.message",
+              id: "reply",
+              content: [{ type: "text", text: "new reply" }],
+            },
+            nextEnd,
+          ],
+        ],
+      });
+      const subject = agent(fake);
+      let rows = 0;
+      fake.spies.list.mockImplementation((_id, params) => ({
+        async *[Symbol.asyncIterator]() {
+          const events = [...history, previousEnd];
+          if ((params as { order?: string }).order === "desc") events.reverse();
+          for (const event of events) {
+            rows++;
+            yield event;
+          }
+        },
+      }));
+      // Cold adoption has its own history, before the first live end_turn.
+      fake.spies.list.mockImplementationOnce(() => ({
+        async *[Symbol.asyncIterator]() {
+          yield* history;
+        },
+      }));
+      expect((await collect(subject, followUp("first"))).at(-1)?.type).toBe(
+        "RUN_FINISHED",
+      );
+      fake.spies.list.mockClear();
+      const events = await collect(subject, followUp("second"));
+      expect(fake.spies.list.mock.calls.map(([, params]) => params)).toEqual([
+        { order: "desc", limit: 1 },
+      ]);
+      expect(rows).toBe(1);
+      expect(fake.spies.stream.mock.invocationCallOrder[1]).toBeLessThan(
+        fake.spies.list.mock.invocationCallOrder[0],
+      );
+      expect(fake.spies.list.mock.invocationCallOrder[0]).toBeLessThan(
+        fake.spies.send.mock.invocationCallOrder[1],
+      );
+      expect(events.at(-1)?.type).toBe("RUN_FINISHED");
+      expect(fake.sent.flatMap(({ events }) => events)).toEqual([
+        { type: "user.message", content: [{ type: "text", text: "first" }] },
+        { type: "user.message", content: [{ type: "text", text: "second" }] },
+      ]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "TEXT_MESSAGE_CONTENT",
+          delta: "new reply",
+        }),
+      );
+    },
+  );
+
+  it("recovers an earlier answer if the live stream repeats requires_action after the new send", async () => {
+    const call = custom("answered");
+    const original = [
+      call,
+      {
+        type: "user.custom_tool_result",
+        id: "result",
+        custom_tool_use_id: call.id,
+        content: [],
+      },
+    ];
+    const fake = createFakeClient({
+      histories: [original, [...original, idle]],
+      streams: [[idle], [parked([call.id]), { ...idle, id: "next" }]],
+    });
+    const subject = agent(fake);
+    await collect(subject, followUp("first"));
+    const events = await collect(subject, followUp("second"));
+    expect(fake.sent).toHaveLength(2);
+    expect(events.at(-1)).toMatchObject({ type: "RUN_FINISHED" });
+    expect(fake.spies.list.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      fake.spies.send.mock.invocationCallOrder[1],
+    );
+  });
+
+  it("fully recovers after a failed send even if the remote session still has the same tail", async () => {
+    const fake = createFakeClient({
+      histories: [[], [idle]],
+      streams: [[idle], [], [{ ...idle, id: "next" }]],
+      sendResults: [undefined, new Error("send failed")],
+    });
+    const subject = agent(fake);
+    await collect(subject, followUp("first"));
+    expect((await collect(subject, followUp("second"))).at(-1)?.type).toBe(
+      "RUN_ERROR",
+    );
+    fake.spies.list.mockClear();
+    expect((await collect(subject, followUp("second"))).at(-1)?.type).toBe(
+      "RUN_FINISHED",
+    );
+    expect(fake.spies.list.mock.calls.map(([, params]) => params)).toEqual([
+      {},
+    ]);
+  });
+
+  it("restores a native state snapshot observed during the previous live turn", async () => {
+    const snapshot = {
+      type: "system.message",
+      id: "external-state",
+      content: [
+        {
+          type: "text",
+          text: stateText(
+            stateCommit(
+              {
+                sessionId: "original",
+                toolNames: [],
+                pendingClientToolUseIds: [],
+              },
+              { count: 7 },
+            ),
+          ),
+        },
+      ],
+    };
+    const fake = createFakeClient({
+      histories: [[], [snapshot, idle]],
+      streams: [[snapshot, idle], [{ ...idle, id: "next" }]],
+    });
+    const subject = agent(fake);
+    await collect(subject, followUp("first"));
+    fake.spies.list.mockClear();
+    const events = await collect(subject, followUp("second"));
+    expect(fake.spies.list.mock.calls.map(([, params]) => params)).toEqual([
+      {},
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "STATE_SNAPSHOT",
+        snapshot: { count: 7 },
+      }),
+    );
+    expect(events.at(-1)?.type).toBe("RUN_FINISHED");
+  });
+
+  it("does not treat an imported cursor as a clean checkpoint", async () => {
+    const fake = createFakeClient({
+      histories: [[idle]],
+      streams: [[{ ...idle, id: "next" }]],
+    });
+    const store = new InMemorySessionStore();
+    store.set("5:agent|0:|3:env|0:|imported", {
+      sessionId: "original",
+      toolNames: [],
+      pendingClientToolUseIds: [],
+      lastUserMessageId: "old",
+      lastEventId: idle.id,
+    });
+    expect(
+      (await collect(agent(fake, store), followUp("next"))).at(-1)?.type,
+    ).toBe("RUN_FINISHED");
+    expect(fake.spies.list.mock.calls.map(([, params]) => params)).toEqual([
+      {},
+    ]);
+  });
+
+  it("recovers an external approval before posting a follow-up", async () => {
+    const external = [idle, approval("external"), parked(["external"])];
+    const fake = createFakeClient({
+      histories: [[], external],
+      streams: [[idle], []],
+    });
+    const subject = agent(fake);
+    await collect(subject, followUp("first"));
+    const events = await collect(subject, followUp("second"));
+    expect(fake.sent).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      type: "RUN_FINISHED",
+      outcome: { interrupts: [{ id: "external" }] },
+    });
+  });
+});
 
 describe("native session recovery", () => {
   it.each(["custom", "approval"])(
