@@ -327,6 +327,489 @@ public sealed class AGUIChatClientTest
         Assert.Equal("caller-interrupt", entry.InterruptId);
     }
 
+    // A fresh approval response in the last message must not orphan an already
+    // completed approval-wrapped call: the completed call stays in the outgoing
+    // history immediately ahead of its tool result, the pending call travels
+    // only via the resume payload, and the completed tool is not executed
+    // locally by FunctionInvokingChatClient.
+    [Fact]
+    public async Task GetStreamingResponse_FreshApprovalResponse_PreservesCompletedApprovalWrappedCall()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var completedCall = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var completedApproval = new ToolApprovalRequestContent("approval-1", completedCall);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-2", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Confirm"),
+            new(ChatRole.Assistant, [completedApproval]),
+            new(ChatRole.User, [completedApproval.CreateResponse(true)]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User, [pendingApproval.CreateResponse(true)]),
+        };
+
+        // The completed tool is registered as a client tool: if
+        // FunctionInvokingChatClient re-executed the completed call, this counts it.
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var assistantIndex = messages!.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+        Assert.True(assistantIndex >= 0, "Completed approval-wrapped call was dropped from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+        Assert.DoesNotContain(messages, m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "pending-1") == true);
+
+        // The pending approval travels only via the resume payload.
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-2", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
+    // CodeRabbit follow-up on the test above (issue #3364): when the user
+    // message carrying a completed approval response also contains text,
+    // that residual text must move after the tool result — not stay between
+    // the restored assistant tool call and its result, and not be dropped.
+    // Text on the still-pending approval has no result yet, so it is kept
+    // as a trailing user message instead.
+    [Fact]
+    public async Task GetStreamingResponse_FreshApprovalResponseWithText_MovesResidualTextAfterToolResult()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var completedCall = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var completedApproval = new ToolApprovalRequestContent("approval-1", completedCall);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-2", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Confirm"),
+            new(ChatRole.Assistant, [completedApproval]),
+            new(ChatRole.User,
+            [
+                completedApproval.CreateResponse(true),
+                new TextContent("Looks good, proceed."),
+            ]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User,
+            [
+                pendingApproval.CreateResponse(true),
+                new TextContent("Go ahead."),
+            ]),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var assistantIndex = messages!.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+        Assert.True(assistantIndex >= 0, "Completed approval-wrapped call was dropped from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+
+        // The completed response's text moved after its tool result, and the
+        // pending response's text survives as a trailing user message.
+        var userTexts = messages.OfType<AGUIUserMessage>()
+            .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+            .ToList();
+        Assert.Equal(["Confirm", "Looks good, proceed.", "Go ahead."], userTexts);
+        var movedTextIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Looks good, proceed."));
+        Assert.Equal(toolIndex + 1, movedTextIndex);
+
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-2", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
+    // CodeRabbit follow-up (review 2026-11-19T13:14:36Z, Major): on an
+    // ordinary turn — the last message is a plain user message, no fresh
+    // approval response — a completed approval-wrapped call must still be
+    // unwrapped. The call stays immediately ahead of its tool result and
+    // the residual text of the answered message moves after the result,
+    // instead of the wrapper being stripped downstream and orphaning the
+    // result. No resume payload travels on an ordinary turn.
+    [Fact]
+    public async Task GetStreamingResponse_OrdinaryTurnAfterApproval_UnwrapsCompletedApprovalWrappedCall()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var completedCall = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var completedApproval = new ToolApprovalRequestContent("approval-1", completedCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Confirm"),
+            new(ChatRole.Assistant, [completedApproval]),
+            new(ChatRole.User,
+            [
+                completedApproval.CreateResponse(true),
+                new TextContent("Looks good, proceed."),
+            ]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.User, "What is the status?"),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var assistantIndex = messages!.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "confirm-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-1");
+        Assert.True(assistantIndex >= 0, "Completed approval-wrapped call was dropped from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+
+        var userTexts = messages.OfType<AGUIUserMessage>()
+            .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+            .ToList();
+        Assert.Equal(["Confirm", "Looks good, proceed.", "What is the status?"], userTexts);
+        var movedTextIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Looks good, proceed."));
+        Assert.Equal(toolIndex + 1, movedTextIndex);
+
+        // No fresh approval response on this turn: nothing travels via resume.
+        Assert.Null(transport.LastInput!.Resume);
+
+        Assert.Equal(0, executions);
+    }
+
+    // Maintainer review on #3418 (2026-11-23): when an app uses
+    // FunctionInvokingChatClient, the history it returns after an approval
+    // already contains a rebuilt plain FunctionCallContent for the same call
+    // id, so the outgoing AG-UI payload must carry the call exactly once,
+    // directly before its result — the wrapper must not be unwrapped a
+    // second time. The history is produced by a real
+    // FunctionInvokingChatClient + ApprovalRequiredAIFunction, not hand-built.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetStreamingResponse_FunctionInvokingHistoryAfterApproval_SendsEachCallOnceDirectlyBeforeItsResult(bool approved)
+    {
+        var history = await BuildFunctionInvokingApprovalHistoryAsync(approved);
+
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        Assert.Equal(
+            ["call-1"],
+            messages!.OfType<AGUIAssistantMessage>()
+                .SelectMany(m => m.ToolCalls ?? [])
+                .Select(c => c.Id)
+                .ToList());
+        var assistantIndex = messages.FindIndex(m =>
+            m is AGUIAssistantMessage assistant
+            && assistant.ToolCalls?.Any(c => c.Id == "call-1") == true);
+        var toolIndex = messages.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "call-1");
+        Assert.True(assistantIndex >= 0, "Plain call rebuilt by FunctionInvokingChatClient is missing from the outgoing history.");
+        Assert.Equal(assistantIndex + 1, toolIndex);
+
+        // The completed call must not be re-executed locally.
+        Assert.Equal(0, executions);
+    }
+
+    // Maintainer review on #3418 (2026-11-23): when the user ignores an
+    // approval prompt and types something else instead, the outgoing AG-UI
+    // payload must contain no tool call without a matching result. History
+    // produced by a real FunctionInvokingChatClient + ApprovalRequiredAIFunction.
+    [Fact]
+    public async Task GetStreamingResponse_UnansweredApprovalFollowedByNewMessage_SendsNoOrphanedToolCall()
+    {
+        var history = await BuildFunctionInvokingUnansweredApprovalHistoryAsync();
+
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, new ChatOptions()));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var callIds = messages!.OfType<AGUIAssistantMessage>()
+            .SelectMany(m => m.ToolCalls ?? [])
+            .Select(c => c.Id)
+            .ToList();
+        Assert.Empty(callIds);
+        Assert.Empty(messages.OfType<AGUIToolMessage>());
+        Assert.Equal(
+            ["Confirm the operation", "Actually, do something else instead."],
+            messages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+    }
+
+    // Drives a real FunctionInvokingChatClient around a scripted inner client:
+    // turn 1 asks for approval of confirm_operation, turn 2 answers it. Returns
+    // the caller-maintained history as the next turn would see it: user prompt,
+    // assistant with the approval request, user with the approval response,
+    // assistant with the rebuilt plain call, tool with the result, assistant
+    // follow-up, and a new user turn.
+    private static async Task<List<ChatMessage>> BuildFunctionInvokingApprovalHistoryAsync(bool approved)
+    {
+        var planner = new ScriptedClient((round, _) => round == 1
+            ? [new(ChatRole.Assistant, [new FunctionCallContent("call-1", "confirm_operation", new Dictionary<string, object?>())])]
+            : [new(ChatRole.Assistant, "Acknowledged.")]);
+        using var client = new FunctionInvokingChatClient(planner);
+        var options = new ChatOptions
+        {
+            Tools = [(AITool)new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "Completed.", "confirm_operation"))],
+        };
+
+        List<ChatMessage> history = [new(ChatRole.User, "Confirm the operation")];
+        var initial = await client.GetResponseAsync(history, options).ConfigureAwait(false);
+        history.AddRange(initial.Messages);
+        var requests = initial.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+        Assert.Single(requests);
+        history.Add(new(ChatRole.User, requests.Select(r => (AIContent)r.CreateResponse(approved)).ToList()));
+        var resumed = await client.GetResponseAsync(history, options).ConfigureAwait(false);
+        history.AddRange(resumed.Messages);
+        history.Add(new(ChatRole.User, "Next turn"));
+        return history;
+    }
+
+    // Same setup as above, but the user answers the approval prompt with a new
+    // message instead of an approval response.
+    private static async Task<List<ChatMessage>> BuildFunctionInvokingUnansweredApprovalHistoryAsync()
+    {
+        var planner = new ScriptedClient((round, _) => round == 1
+            ? [new(ChatRole.Assistant, [new FunctionCallContent("call-1", "confirm_operation", new Dictionary<string, object?>())])]
+            : [new(ChatRole.Assistant, "Acknowledged.")]);
+        using var client = new FunctionInvokingChatClient(planner);
+        var options = new ChatOptions
+        {
+            Tools = [(AITool)new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "Completed.", "confirm_operation"))],
+        };
+
+        List<ChatMessage> history = [new(ChatRole.User, "Confirm the operation")];
+        var initial = await client.GetResponseAsync(history, options).ConfigureAwait(false);
+        history.AddRange(initial.Messages);
+        Assert.Single(initial.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        history.Add(new(ChatRole.User, "Actually, do something else instead."));
+        return history;
+    }
+
+    // Minimal scripted IChatClient: returns the scripted response updates per call.
+    private sealed class ScriptedClient(Func<int, IReadOnlyList<ChatMessage>, IEnumerable<ChatResponseUpdate>> script) : IChatClient
+    {
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask.ConfigureAwait(false);
+            foreach (var update in script(++Calls, messages.ToList()))
+            {
+                yield return update;
+            }
+        }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => serviceType.IsInstanceOfType(this) ? this : null;
+        public void Dispose()
+        {
+        }
+
+        public int Calls { get; private set; }
+    }
+
+    // CodeRabbit follow-up on issue #3364: with parallel calls A and B
+    // answered by separate tool messages, the deferred text for A must not
+    // land between result A and result B — it is released only after every
+    // result in the owning assistant turn has been emitted.
+    [Fact]
+    public async Task GetStreamingResponse_DeferredTextWaitsForAllResultsInAssistantTurn()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var callA = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var callB = new FunctionCallContent("confirm-2", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approvalA = new ToolApprovalRequestContent("approval-1", callA);
+        var approvalB = new ToolApprovalRequestContent("approval-2", callB);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-3", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Start"),
+            new(ChatRole.Assistant, [approvalA, approvalB]),
+            new(ChatRole.User,
+            [
+                approvalA.CreateResponse(true),
+                new TextContent("Proceed with both."),
+            ]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-1", "Completed.")]),
+            new(ChatRole.Tool, [new FunctionResultContent("confirm-2", "Completed.")]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User, [pendingApproval.CreateResponse(true)]),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var toolIndexB = messages!.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-2");
+        var textIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Proceed with both."));
+        Assert.True(toolIndexB >= 0, "Tool message for the second call is missing.");
+        Assert.Equal(toolIndexB + 1, textIndex);
+        Assert.Equal(["Start", "Proceed with both."],
+            messages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-3", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
+    // CodeRabbit follow-up on issue #3364: when one batched tool-result
+    // message makes two deferred user messages eligible in the same pass,
+    // they must be emitted in their original order — "Use metric" before
+    // "Actually, use imperial" — not reversed.
+    [Fact]
+    public async Task GetStreamingResponse_TwoDeferredMessagesWithOneBatchedResult_PreservesOriginalOrder()
+    {
+        var transport = new CapturingTransport();
+        using var client = new AGUIChatClient(new() { Transport = transport });
+
+        var callA = new FunctionCallContent("confirm-1", "confirm_operation",
+            new Dictionary<string, object?>());
+        var callB = new FunctionCallContent("confirm-2", "confirm_operation",
+            new Dictionary<string, object?>());
+        var approvalA = new ToolApprovalRequestContent("approval-1", callA);
+        var approvalB = new ToolApprovalRequestContent("approval-2", callB);
+        var pendingCall = new FunctionCallContent("pending-1", "delete_file",
+            new Dictionary<string, object?>());
+        var pendingApproval = new ToolApprovalRequestContent("approval-3", pendingCall);
+
+        var history = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Start"),
+            new(ChatRole.Assistant, [approvalA, approvalB]),
+            new(ChatRole.User,
+            [
+                approvalA.CreateResponse(true),
+                new TextContent("Use metric."),
+            ]),
+            new(ChatRole.User,
+            [
+                approvalB.CreateResponse(true),
+                new TextContent("Actually, use imperial."),
+            ]),
+            new(ChatRole.Tool,
+            [
+                new FunctionResultContent("confirm-1", "Completed."),
+                new FunctionResultContent("confirm-2", "Completed."),
+            ]),
+            new(ChatRole.Assistant, [pendingApproval]),
+            new(ChatRole.User, [pendingApproval.CreateResponse(true)]),
+        };
+
+        var executions = 0;
+        var options = new ChatOptions
+        {
+            Tools = [AIFunctionFactory.Create(() => ++executions, "confirm_operation")],
+        };
+
+        await DrainAsync(client.GetStreamingResponseAsync(history, options));
+
+        var messages = transport.LastInput!.Messages?.ToList();
+        Assert.NotNull(messages);
+        var toolIndexB = messages!.FindIndex(m =>
+            m is AGUIToolMessage tool && tool.ToolCallId == "confirm-2");
+        var firstTextIndex = messages.FindIndex(m =>
+            m is AGUIUserMessage user
+            && user.Content.OfType<AGUITextInputContent>().Any(c => c.Text == "Use metric."));
+        Assert.True(toolIndexB >= 0, "Tool message for the second call is missing.");
+        Assert.Equal(toolIndexB + 1, firstTextIndex);
+        Assert.Equal(["Start", "Use metric.", "Actually, use imperial."],
+            messages.OfType<AGUIUserMessage>()
+                .Select(m => ((AGUITextInputContent)m.Content[0]).Text)
+                .ToList());
+
+        var resume = transport.LastInput!.Resume;
+        Assert.NotNull(resume);
+        var entry = Assert.Single(resume!);
+        Assert.Equal("approval-3", entry.InterruptId);
+
+        Assert.Equal(0, executions);
+    }
+
     // A caller-supplied Resume takes precedence over the interrupt-response translation
     // too, matching the approval path. Previously the interrupt block appended
     // unconditionally, so a caller Resume dropped approvals but kept interrupts (#2177).
