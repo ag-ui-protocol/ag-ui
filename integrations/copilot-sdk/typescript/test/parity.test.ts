@@ -70,4 +70,13 @@ describe("TypeScript/Python adapter parity", () => {
     const final = { id: "3", type: "tool.execution_start", data: { toolCallId: "c", toolName: "", arguments: {} } };
     expect(mapper.mapEvent(final as SessionEvent)).toMatchObject([{ type: "TOOL_CALL_END" }]);
   });
+
+  it("a replayed final message after close emits nothing", () => {
+    const mapper = new CopilotEventMapper();
+    const message = (id: string) =>
+      ({ id, type: "assistant.message", data: { messageId: "m", content: "Hello" } }) as SessionEvent;
+    mapper.mapEvent({ id: "1", type: "assistant.message_delta", data: { messageId: "m", deltaContent: "Hello" } } as SessionEvent);
+    expect(mapper.mapEvent(message("2")).map((e) => e.type)).toEqual(["TEXT_MESSAGE_END"]);
+    expect(mapper.mapEvent(message("3"))).toEqual([]);
+  });
 });

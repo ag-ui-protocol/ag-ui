@@ -81,6 +81,7 @@ export class CopilotEventMapper {
   private close(block: TextBlock, out: BaseEvent[]): void {
     if (block.closed) return;
     block.closed = true;
+    block.text = ""; // Closed blocks never append again; keep only id and flags.
     out.push(
       this.tag(
         { type: block.reasoning ? E.REASONING_MESSAGE_END : E.TEXT_MESSAGE_END, messageId: block.id },
@@ -138,6 +139,7 @@ export class CopilotEventMapper {
       if (tool.args) out.push(this.tag({ type: E.TOOL_CALL_ARGS, toolCallId: tool.id, delta: tool.args }, tool.subagentRunId));
     }
     tool.ended = true;
+    tool.args = "";
     out.push(this.tag({ type: E.TOOL_CALL_END, toolCallId: tool.id }, tool.subagentRunId));
   }
 
@@ -270,6 +272,7 @@ export class CopilotEventMapper {
     for (const tool of this.tools.values()) {
       if (tool.started && !tool.ended) {
         tool.ended = true;
+        tool.args = "";
         out.push(this.tag({ type: E.TOOL_CALL_END, toolCallId: tool.id }, tool.subagentRunId));
       }
     }

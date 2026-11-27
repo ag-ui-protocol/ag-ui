@@ -92,6 +92,7 @@ class EventMapper:
         if block["closed"]:
             return
         block["closed"] = True
+        block["text"] = ""  # Closed blocks never append again; keep only id and flags.
         agent = block["agent"]
         if block["reasoning"]:
             out.append(ReasoningMessageEndEvent(message_id=block["id"], subagent_run_id=agent))
@@ -170,6 +171,7 @@ class EventMapper:
                     )
                 )
         tool["ended"] = True
+        tool["args"] = ""
         out.append(ToolCallEndEvent(tool_call_id=call_id, subagent_run_id=tool["agent"]))
 
     def map_event(self, event: Mapping[str, Any]) -> list[BaseEvent]:
@@ -282,5 +284,6 @@ class EventMapper:
         for call_id, tool in self.tools.items():
             if tool["started"] and not tool["ended"]:
                 tool["ended"] = True
+                tool["args"] = ""
                 out.append(ToolCallEndEvent(tool_call_id=call_id, subagent_run_id=tool["agent"]))
         return out

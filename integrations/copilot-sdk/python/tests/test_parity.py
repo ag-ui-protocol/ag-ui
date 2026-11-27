@@ -146,3 +146,9 @@ def test_reasoning_deltas_and_final_suffix_have_reasoning_lifecycle():
     )
     assert all(e.message_id == "r" and e.subagent_run_id == "child" for e in events)
     assert mapper.finish() == []
+    # Closed blocks drop their text; a replayed final must still emit nothing.
+    replay = {
+        "type": "assistant.reasoning",
+        "data": {"reasoningId": "r", "content": "Think carefully. Done."},
+    }
+    assert mapper.map_event(replay) == []
