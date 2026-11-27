@@ -4,6 +4,17 @@
 
 - `getCapabilities()` now declares the adapter package version as `identity.metadata.adapterVersion`, so a host can tell which bridge release an app runs.
 
+## 2.1.0 — 2026-11-27
+
+- Added `registerCopilotKit` entry at `@ag-ui/mastra/copilotkit-2` for CopilotKit 2.x, importing the runtime from `@copilotkit/runtime` instead of the removed `@copilotkit/runtime/v2`.
+- Both CopilotKit entries share one route implementation, so routes behave identically.
+- Optional peer dependency now accepts `^1.76.0` or 2.x.
+- Adapter version is now declared in capabilities identity.
+
+### Breaking changes
+
+None.
+
 ## 2.0.2 — 2026-10-27
 
 - RUN_FINISHED now carries Mastra's finish reason unchanged on `metadata.mastra.finishReason` when reported; cancelled runs carry none.
