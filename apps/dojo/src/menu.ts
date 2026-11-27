@@ -564,5 +564,12 @@ export const menuIntegrations = [
     // the hosted Dojo yet.
     localOnly: true,
   },
-  { id: "opencode", name: "OpenCode", features: ["agentic_chat", "interrupt"] },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    features: ["agentic_chat", "interrupt"],
+    // The example server runs locally (port 8032); nothing is deployed for
+    // the hosted Dojo yet.
+    localOnly: true,
+  },
 ] as const satisfies MenuIntegrationConfig[];

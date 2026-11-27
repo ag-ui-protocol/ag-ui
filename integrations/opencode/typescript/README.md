@@ -49,7 +49,7 @@ The example fails clearly when `AG_UI_TOKEN` or `OPENCODE_URL` is missing. OpenC
 
 | Environment variable       | Purpose / default                                                       |
 | -------------------------- | ----------------------------------------------------------------------- |
-| `HOST` / `PORT`            | HTTP bind address / port; `0.0.0.0` / `8031`                            |
+| `HOST` / `PORT`            | HTTP bind address / port; `0.0.0.0` / `8032`                            |
 | `AG_UI_TOKEN`              | Required bearer token for the single-user example                       |
 | `OPENCODE_URL`             | Existing OpenCode server URL                                            |
 | `OPENCODE_DIRECTORY`       | Trusted project directory; defaults to the example working directory    |
@@ -57,7 +57,7 @@ The example fails clearly when `AG_UI_TOKEN` or `OPENCODE_URL` is missing. OpenC
 | `OPENCODE_MODEL`           | Optional `providerID/modelID`; otherwise server default                 |
 | `OPENCODE_SESSION_STORE`   | Durable store path; `.opencode-ag-ui-sessions` in the working directory |
 | `OPENCODE_FIXTURE`         | `1` explicitly selects the local credential-free HTTP fixture           |
-| `OPENCODE_URL_FOR_DOJO`    | Bridge URL used by Dojo; `http://localhost:8031`                        |
+| `OPENCODE_URL_FOR_DOJO`    | Bridge URL used by Dojo; `http://localhost:8032`                        |
 | `OPENCODE_AG_UI_TOKEN`     | Bearer token used by Dojo to reach the real bridge                      |
 
 `GET /health` checks the bridge process. `POST /agentic_chat` accepts `RunAgentInput` and returns encoded SSE. Health does not attest to model availability. Request bodies are limited to 1 MiB; excessively buffered SSE clients are cancelled.
@@ -70,7 +70,7 @@ This client talks to the AG-UI bridge. Reuse its `threadId` for follow-up turns;
 import { OpenCodeAgent } from "@ag-ui/opencode";
 
 const agent = new OpenCodeAgent({
-  url: "http://localhost:8031/agentic_chat",
+  url: "http://localhost:8032/agentic_chat",
   headers: { Authorization: "Bearer local-bridge-token" },
   threadId: "conversation-1",
 });
@@ -143,7 +143,7 @@ createServer((req, res) => {
     if (!res.headersSent) res.writeHead(500);
     res.end();
   });
-}).listen(8031, "127.0.0.1");
+}).listen(8032, "127.0.0.1");
 ```
 
 ## Ownership, persistence, and failure semantics

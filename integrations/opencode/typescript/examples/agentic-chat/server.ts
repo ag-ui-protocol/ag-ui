@@ -67,11 +67,11 @@ async function main() {
     });
   });
   server.listen(
-    Number(process.env.PORT ?? 8031),
+    Number(process.env.PORT ?? 8032),
     fixture ? "127.0.0.1" : (process.env.HOST ?? "0.0.0.0"),
     () =>
       console.log(
-        `OpenCode AG-UI example listening on port ${process.env.PORT ?? 8031}${fixture ? " (deterministic fixture)" : ""}`,
+        `OpenCode AG-UI example listening on port ${process.env.PORT ?? 8032}${fixture ? " (deterministic fixture)" : ""}`,
       ),
   );
 }
