@@ -38,7 +38,7 @@ Each AG-UI thread is one instance of the agent (one Durable Object), at `/agents
 - **Context.** `run.instructions(base)` (included by `run.streamTextOptions()`) adds the application's context (`useAgentContext`), the conversation's system messages and the shared state to your instructions. AI SDK v7 does not accept system messages inside `messages`, so they belong here.
 - **Shared state, kept in the Durable Object.** The agent's `state` is the thread's AG-UI state. The client's edits are saved into it, every `this.setState()` during a run reaches the client as a STATE_SNAPSHOT, and a client that comes back to the thread gets it. What the server changes between runs (a schedule, another client) is kept: the client's copy only wins when the client changed it.
 - **Reasoning that survives the round trip.** Reasoning streams as `REASONING_*` events and stays in the history. Provider data that has to come back on the next request (Anthropic's thinking signatures, Gemini's thought signatures on tool calls, OpenAI's reasoning and message items) travels in AG-UI's `encryptedValue` and is restored as `providerOptions`, so extended thinking with tools works across client tool round trips.
-- **Tool approvals as AG-UI interrupts.** A tool that needs approval (AI SDK v7 `toolApproval`, v6 `needsApproval`) ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
+- **Tool approvals as AG-UI interrupts.** A tool that needs approval (AI SDK v7 `toolApproval`, v6 `needsApproval`) ends the run with an interrupt; the client's answer resumes it, and the AI SDK runs (or skips) the tool. The answer can carry a value, such as the time slot the user picked, which the tool reads with `run.resumePayload()`. The paused run is not kept anywhere: the conversation and the answer are all a resume needs. A Durable Object agent records which calls it paused, so a client cannot get a call approved that the model never made.
 - **Everything else in the stream.** Multi-step runs (`stopWhen`) with messages in order, streaming tool arguments, tool results and errors, token usage on `RUN_FINISHED`, cancellation (`RUN_FINISHED` with a `cancelled` outcome), sources and files as `CUSTOM` events named `ai-sdk:source`, `ai-sdk:file` and `ai-sdk:reasoning-file`.
 
 Supports AI SDK v6 and v7, and AG-UI 1.0. Every input is checked the way AG-UI 1.0 asks: members the protocol does not define are removed (with a warning), and a malformed one is refused before the run starts (a `400` over HTTP, a `RUN_ERROR` with code `INVALID_INPUT` on the WebSocket).
@@ -104,6 +104,7 @@ const agent = new CloudflareAgentsClient({
 | `run.context` | `RunAgentInput.context`. |
 | `run.state` / `run.setState(state)` | The shared state. In a `withAGUI` agent these are `this.state` and `this.setState()`. |
 | `run.emit(event)` | Streams an extra AG-UI event, such as a `CUSTOM` event. |
+| `run.resumePayload(toolCallId)` | What the user answered a paused tool call's approval with (see [Answering with a value](#answering-with-a-value)). |
 | `run.abortSignal` | Fires when the client cancels or disconnects. Pass it to `streamText`. |
 | `run.input` | The `RunAgentInput` as sent. |
 | `run.request` | The HTTP request the run came in on, for its headers (undefined over a WebSocket). |
@@ -170,6 +171,23 @@ The run ends with `RUN_FINISHED { outcome: { type: "interrupt" } }`, one interru
 ```
 
 The next run's `resume` answers it: `{ "interruptId": "<id>", "status": "resolved", "payload": { "approved": true } }`. An approved call runs its tool; a rejected or cancelled one tells the model it did not run (`payload.reason` becomes the reason). In CopilotKit, `useInterrupt` renders the decision and sends the resume.
+
+#### Answering with a value
+
+Only a no denies the call: a cancelled entry, `false`, or `{ "approved": false }`. Any other answer approves it, so the page can resolve the interrupt with what the user chose (a time slot, an edited draft), and the tool reads it with `run.resumePayload(toolCallId)`:
+
+```ts
+schedule_meeting: tool({
+  inputSchema: z.object({ topic: z.string() }),
+  execute: async ({ topic }, { toolCallId }) => {
+    const slot = run.resumePayload<{ chosen_label?: string; cancelled?: boolean }>(toolCallId);
+    if (slot?.cancelled) return `Not booked: ${topic}`;
+    return `Booked ${topic} for ${slot?.chosen_label}`;
+  },
+}),
+```
+
+With CopilotKit, `useInterrupt`'s `resolve({ chosen_label: "Mon 10:00" })` sends that payload. The interrupt's `responseSchema` still describes the yes/no answer; an `approved` that is not a boolean is refused.
 
 The reason is `tool_approval` rather than AG-UI's `tool_call` because clients treat `tool_call` answers as the tool's result; here the server runs the tool.
 

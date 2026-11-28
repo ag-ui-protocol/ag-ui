@@ -388,12 +388,40 @@ describe("convertMessages: open tool calls", () => {
     ]);
   });
 
-  it("rejects a payload that is not a decision", () => {
+  it("approves a call answered with a value, and keeps the value for the tool", () => {
+    const slot = { chosen_time: "2026-12-01T10:00:00Z", chosen_label: "Mon 10:00" };
     const result = convertMessages(paused, {
-      resume: [{ interruptId: "tc1", status: "resolved", payload: { yes: 1 } }],
+      resume: [{ interruptId: "tc1", status: "resolved", payload: slot }],
+    });
+    expect(result.resumeErrors).toEqual([]);
+    expect(result.resumed).toEqual(["tc1"]);
+    expect(result.messages.at(-1)).toEqual({
+      role: "tool",
+      content: [{ type: "tool-approval-response", approvalId: "ap-tc1", approved: true }],
+    });
+    expect(result.answers).toEqual(new Map([["tc1", slot]]));
+  });
+
+  it("keeps a value sent beside an approval", () => {
+    const payload = { approved: true, chosen_label: "Mon 10:00" };
+    const result = convertMessages(paused, { resume: [{ interruptId: "tc1", status: "resolved", payload }] });
+    expect(result.answers).toEqual(new Map([["tc1", payload]]));
+  });
+
+  it("keeps no value for a denied call", () => {
+    const result = convertMessages(paused, {
+      resume: [{ interruptId: "tc1", status: "resolved", payload: { approved: false, note: "no" } }],
+    });
+    expect(result.resumed).toEqual(["tc1"]);
+    expect(result.answers).toEqual(new Map());
+  });
+
+  it("refuses an answer whose approved is not a boolean", () => {
+    const result = convertMessages(paused, {
+      resume: [{ interruptId: "tc1", status: "resolved", payload: { approved: "false" } }],
     });
     expect(result.resumeErrors).toEqual([
-      'Resume for interrupt "tc1" needs a payload of { approved: boolean }.',
+      'Resume for interrupt "tc1" has an "approved" that is not a boolean.',
     ]);
   });
 });

@@ -84,6 +84,12 @@ export interface ConvertedMessages {
    * history carries it from then on.
    */
   denials: Map<string, string>;
+  /**
+   * What the client answered each approved call with (its resume entry's
+   * `payload`), by tool call id: the time slot a picker resolved with, say.
+   * The tool reads it through `run.resumePayload(toolCallId)`.
+   */
+  answers: Map<string, unknown>;
 }
 
 type AssistantModelMessage = Extract<ModelMessage, { role: "assistant" }>;
@@ -273,6 +279,7 @@ export function convertMessages(
     resumed: settled.resumed,
     abandoned: settled.abandoned,
     denials: settled.denials,
+    answers: settled.answers,
   };
 }
 
@@ -282,6 +289,7 @@ interface Settlement {
   resumed: string[];
   abandoned: string[];
   denials: Map<string, string>;
+  answers: Map<string, unknown>;
 }
 
 /** Closes or resumes the calls without a result, and says why the request cannot run, if it cannot. */
@@ -295,6 +303,7 @@ function settleOpenCalls(
   const warnings: string[] = [];
   const resumed: string[] = [];
   const denials = new Map<string, string>();
+  const answers = new Map<string, unknown>();
   const clientTools = new Set(options.clientToolNames ?? []);
   const recorded = options.pendingApprovals
     ? new Map(options.pendingApprovals.map((approval) => [approval.toolCallId, approval]))
@@ -383,6 +392,7 @@ function settleOpenCalls(
       ...(approval.signature && { signature: approval.signature }),
     } as ModelPart);
     if (!decision.approved && decision.reason) denials.set(call.id, decision.reason);
+    if (decision.approved) answers.set(call.id, entry.payload);
     resumed.push(call.id);
     approvals.push({
       type: "tool-approval-response",
@@ -434,7 +444,7 @@ function settleOpenCalls(
     else result.splice(index + 1, 0, { role: "tool", content: parts });
   }
   if (approvals.length > 0) appendToolParts(result, approvals);
-  return { errors, warnings, resumed, abandoned, denials };
+  return { errors, warnings, resumed, abandoned, denials, answers };
 }
 
 function quoted(ids: string[]): string {
@@ -443,18 +453,26 @@ function quoted(ids: string[]): string {
 
 type Decision = { approved: boolean; reason?: string } | { error: string };
 
+/**
+ * Reads an approval's answer. Only a no denies the call: a cancelled entry,
+ * `false`, or `{ approved: false }`. Any other answer approves it, so a page
+ * can resolve the interrupt with a value (a picked time slot) and the tool
+ * reads that value.
+ */
 function readDecision(entry: ResumeEntry): Decision {
   if (entry.status === "cancelled") return { approved: false, reason: CANCELLED };
   const payload: unknown = entry.payload;
-  if (typeof payload === "boolean") {
-    return payload ? { approved: true } : { approved: false, reason: REJECTED };
+  if (payload === false) return { approved: false, reason: REJECTED };
+  if (isRecord(payload) && "approved" in payload) {
+    if (typeof payload.approved !== "boolean") {
+      return { error: `Resume for interrupt "${entry.interruptId}" has an "approved" that is not a boolean.` };
+    }
+    if (!payload.approved) {
+      const reason = typeof payload.reason === "string" && payload.reason ? payload.reason : REJECTED;
+      return { approved: false, reason };
+    }
   }
-  if (isRecord(payload) && typeof payload.approved === "boolean") {
-    if (payload.approved) return { approved: true };
-    const reason = typeof payload.reason === "string" && payload.reason ? payload.reason : REJECTED;
-    return { approved: false, reason };
-  }
-  return { error: `Resume for interrupt "${entry.interruptId}" needs a payload of { approved: boolean }.` };
+  return { approved: true };
 }
 
 function appendToolParts(result: ModelMessage[], parts: ToolPart[]) {
