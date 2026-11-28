@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { Observable, Subject, Subscription } from "rxjs";
+import { Observable, Subject, Subscription, of } from "rxjs";
 import {
   AbstractAgent,
   Middleware,
@@ -785,5 +785,218 @@ describe("metadata across coalesced chunks", () => {
     expect(collectTextDeltas(events)).toBe("ab");
     const chunks = events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK);
     expect(chunks.every((e) => (e as any).metadata === undefined)).toBe(true);
+  });
+});
+
+describe("coalescing fidelity", () => {
+  class ScriptedAgent extends AbstractAgent {
+    constructor(private readonly script: BaseEvent[]) {
+      super({});
+    }
+    run(_input: RunAgentInput): Observable<BaseEvent> {
+      return of(...this.script);
+    }
+  }
+
+  async function runThroughAgent(script: BaseEvent[], withThrottle: boolean) {
+    const agent = new ScriptedAgent(script);
+    if (withThrottle) {
+      agent.use(new EventThrottleMiddleware({ intervalMs: 5000 }));
+    }
+    const emitted: BaseEvent[] = [];
+    await agent.runAgent(
+      { runId: "r1" },
+      {
+        onEvent: ({ event }) => {
+          emitted.push(event);
+        },
+      },
+    );
+    return emitted;
+  }
+
+  it("keeps delta undefined when coalescing delta-less chunks across text, tool, and reasoning", async () => {
+    const script: BaseEvent[] = [
+      ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+      ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: "assistant" }),
+      ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1" }),
+      ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "search" }),
+      ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1" }),
+      ev({ type: EventType.REASONING_MESSAGE_CHUNK, messageId: "r1" }),
+      ev({ type: EventType.REASONING_MESSAGE_CHUNK, messageId: "r1" }),
+      ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+    ];
+
+    const mw = new EventThrottleMiddleware({ intervalMs: 5000 });
+    const { agent, events: throttledRaw, done } = setup(mw);
+    for (const event of script) {
+      agent.subject.next(event);
+    }
+    agent.subject.complete();
+    await done;
+
+    for (const event of throttledRaw) {
+      if (
+        event.type === EventType.TEXT_MESSAGE_CHUNK ||
+        event.type === EventType.TOOL_CALL_CHUNK ||
+        event.type === EventType.REASONING_MESSAGE_CHUNK
+      ) {
+        expect((event as { delta?: unknown }).delta).toBeUndefined();
+      }
+    }
+
+    const unthrottled = await runThroughAgent(script, false);
+    const throttled = await runThroughAgent(script, true);
+    expect(unthrottled.map((e) => e.type)).toEqual([
+      EventType.RUN_STARTED,
+      EventType.TEXT_MESSAGE_START,
+      EventType.TEXT_MESSAGE_END,
+      EventType.TOOL_CALL_START,
+      EventType.TOOL_CALL_END,
+      EventType.REASONING_MESSAGE_START,
+      EventType.REASONING_MESSAGE_END,
+      EventType.RUN_FINISHED,
+    ]);
+    expect(throttled.map((e) => e.type)).toEqual(unthrottled.map((e) => e.type));
+  });
+
+  it("still coalesces when repeated opener fields match", async () => {
+    const mw = new EventThrottleMiddleware({ intervalMs: 5000 });
+    const { agent, events, done } = setup(mw);
+
+    agent.subject.next(runStarted());
+    agent.subject.next(ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: "assistant", name: "a", delta: "hi" }));
+    agent.subject.next(ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: "assistant", name: "a", delta: "!" }));
+    agent.subject.next(ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "fn", parentMessageId: "p1", delta: "{" }));
+    agent.subject.next(ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "fn", parentMessageId: "p1", delta: "}" }));
+    agent.subject.next(runFinished());
+    agent.subject.complete();
+
+    await done;
+
+    expect(events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK)).toHaveLength(1);
+    expect(events.filter((e) => e.type === EventType.TOOL_CALL_CHUNK)).toHaveLength(1);
+    expect(collectTextDeltas(events)).toBe("hi!");
+    expect(collectToolCallDeltas(events)).toBe("{}");
+  });
+
+  it.each([
+    [
+      "contradicting role",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: "assistant", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", role: "user", delta: "!" }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "contradicting name",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", name: "alice", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", name: "bob", delta: "!" }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "late name introduced after omitted opener",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", name: "bob", delta: "!" }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "contradicting toolCallName",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "a", delta: "{" }),
+        ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "b", delta: "}" }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "contradicting parentMessageId",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "a", parentMessageId: "p1", delta: "{" }),
+        ev({ type: EventType.TOOL_CALL_CHUNK, toolCallId: "tc1", toolCallName: "a", parentMessageId: "p2", delta: "}" }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+  ])("preserves opener mismatch (%s) so throttled agent rejects identically", async (_label, script) => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(runThroughAgent(script, false)).rejects.toThrow();
+      await expect(runThroughAgent(script, true)).rejects.toThrow();
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    [
+      "delta null",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: null }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "numeric delta",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: 42 }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "metadata null",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "!", metadata: null }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+    [
+      "non-object metadata",
+      [
+        ev({ type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "hi" }),
+        ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: "!", metadata: "bad" }),
+        ev({ type: EventType.RUN_FINISHED, threadId: "t1", runId: "r1" }),
+      ],
+    ],
+  ])("preserves malformed %s without coercing it during coalescing", async (_label, script) => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(runThroughAgent(script, false)).rejects.toThrow();
+      await expect(runThroughAgent(script, true)).rejects.toThrow();
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("does not let non-string delta corrupt minChunkSize tracking", async () => {
+    const mw = new EventThrottleMiddleware({ intervalMs: 5000, minChunkSize: 4 });
+    const { agent, events, done } = setup(mw);
+
+    agent.subject.next(runStarted());
+    agent.subject.next(ev({ type: EventType.TEXT_MESSAGE_CHUNK, messageId: "m1", delta: 42 }));
+    agent.subject.next(textChunk("m1", "ab"));
+    expect(events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK)).toHaveLength(0);
+
+    agent.subject.next(textChunk("m1", "cd"));
+    expect(events.filter((e) => e.type === EventType.TEXT_MESSAGE_CHUNK)).toHaveLength(2);
+
+    agent.subject.next(runFinished());
+    agent.subject.complete();
+    await done;
   });
 });

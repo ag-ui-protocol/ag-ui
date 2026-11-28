@@ -108,12 +108,59 @@ function chunkKey(
   return null;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rawChunkDelta(event: BaseEvent): unknown {
+  if (isTextChunk(event) || isToolCallChunk(event) || isReasoningChunk(event)) {
+    return (event as { delta?: unknown }).delta;
+  }
+  return undefined;
+}
+
+function openerFieldCompatible(prev: unknown, next: unknown): boolean {
+  return next === undefined || next === prev;
+}
+
+/**
+ * Whether two same-key chunks can merge without altering downstream
+ * validation or expansion semantics relative to an unthrottled stream.
+ */
+function canCoalesceChunks(last: BaseEvent, next: BaseEvent): boolean {
+  const lastDelta = rawChunkDelta(last);
+  if (lastDelta !== undefined && typeof lastDelta !== "string") {
+    return false;
+  }
+  const nextDelta = rawChunkDelta(next);
+  if (nextDelta !== undefined && typeof nextDelta !== "string") {
+    return false;
+  }
+  if (last.metadata !== undefined && !isPlainRecord(last.metadata)) {
+    return false;
+  }
+  if (next.metadata !== undefined && !isPlainRecord(next.metadata)) {
+    return false;
+  }
+  if (isTextChunk(last) && isTextChunk(next)) {
+    return (
+      openerFieldCompatible(last.role, next.role) &&
+      openerFieldCompatible(last.name, next.name)
+    );
+  }
+  if (isToolCallChunk(last) && isToolCallChunk(next)) {
+    return (
+      openerFieldCompatible(last.toolCallName, next.toolCallName) &&
+      openerFieldCompatible(last.parentMessageId, next.parentMessageId)
+    );
+  }
+  return isReasoningChunk(last) && isReasoningChunk(next);
+}
+
 /** Return the delta string for any chunk event, or null. */
 function chunkDelta(event: BaseEvent): string | null {
-  if (isTextChunk(event)) return event.delta ?? null;
-  if (isToolCallChunk(event)) return event.delta ?? null;
-  if (isReasoningChunk(event)) return event.delta ?? null;
-  return null;
+  const delta = rawChunkDelta(event);
+  return typeof delta === "string" ? delta : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,14 +238,18 @@ export class EventThrottleMiddleware extends Middleware {
           if (key !== null) {
             const last = coalesced[coalesced.length - 1];
             const lastKey = last ? chunkKey(last) : null;
-            if (last && lastKey === key) {
-              // Merge delta into the previous chunk
-              const prevDelta = chunkDelta(last) ?? "";
-              const curDelta = chunkDelta(event) ?? "";
-              const merged = prevDelta + curDelta;
-              if (isTextChunk(last)) last.delta = merged;
-              else if (isToolCallChunk(last)) last.delta = merged;
-              else if (isReasoningChunk(last)) last.delta = merged;
+            if (last && lastKey === key && canCoalesceChunks(last, event)) {
+              // Preserve absent deltas rather than materializing "", so
+              // transformChunks only synthesizes content/args events when
+              // at least one coalesced chunk actually carried a delta.
+              const prevDelta = chunkDelta(last);
+              const curDelta = chunkDelta(event);
+              if (prevDelta !== null || curDelta !== null) {
+                const merged = (prevDelta ?? "") + (curDelta ?? "");
+                if (isTextChunk(last)) last.delta = merged;
+                else if (isToolCallChunk(last)) last.delta = merged;
+                else if (isReasoningChunk(last)) last.delta = merged;
+              }
 
               // Keeping only the first chunk's fields is right for role, name
               // and toolCallName — they appear on the first chunk. Metadata is
@@ -269,7 +320,9 @@ export class EventThrottleMiddleware extends Middleware {
               lastTrackedMessageId = messageId;
               charsSinceFlush = 0;
             }
-            charsSinceFlush += (event.delta ?? "").length;
+            if (typeof event.delta === "string") {
+              charsSinceFlush += event.delta.length;
+            }
           }
 
           // Check thresholds
