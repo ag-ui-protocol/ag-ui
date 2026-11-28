@@ -3,8 +3,14 @@
 // Regenerate: pnpm --filter @ag-ui/spec generate
 /* eslint-disable */
 
-import { z } from "zod/v4";
+import * as z from "zod/v4";
+import { en as zodEnglish } from "zod/v4/locales";
 import { EventType } from "./types";
+
+// Some Zod releases mark their modules side-effect free, so bundlers can
+// drop the classic entry's English registration (colinhacks/zod#5953).
+// Register English only when no locale is set, as newer Zod releases do.
+if (!z.config().localeError) z.config(zodEnglish());
 
 /**
  * The discriminator carried by every event.

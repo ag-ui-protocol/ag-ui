@@ -1,6 +1,6 @@
 import { BaseEvent, EventType, RunAgentInput, omitOptionalNulls } from "@ag-ui/core";
 import { EventSchema, RunAgentInputSchema } from "@ag-ui/core/schemas";
-import { z } from "zod/v4";
+import type * as z from "zod/v4";
 import { Observable, of, EMPTY } from "rxjs";
 import { mergeMap } from "rxjs/operators";
 import { type DebugLoggerInput, resolveDebugLogger } from "@/debug-logger";

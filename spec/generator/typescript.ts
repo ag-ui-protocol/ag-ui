@@ -354,8 +354,14 @@ export function emitSchemas(model: ProtocolModel): string {
     (definition) => definition.kind === "enum" && definition.name === TS_ENUM,
   );
   const imports = [
-    `import { z } from "zod/v4";`,
+    `import * as z from "zod/v4";`,
+    `import { en as zodEnglish } from "zod/v4/locales";`,
     ...(usesEnum ? [`import { ${TS_ENUM} } from "./types";`] : []),
+    "",
+    "// Some Zod releases mark their modules side-effect free, so bundlers can",
+    "// drop the classic entry's English registration (colinhacks/zod#5953).",
+    "// Register English only when no locale is set, as newer Zod releases do.",
+    "if (!z.config().localeError) z.config(zodEnglish());",
   ].join("\n");
   // Transitive: an alias of an alias of any accepts undefined just the same.
   const anyAliases = new Set<string>();
