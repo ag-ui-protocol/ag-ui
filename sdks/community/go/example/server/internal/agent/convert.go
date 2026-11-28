@@ -179,9 +179,9 @@ func toEinoToolCalls(tcs []aguitypes.ToolCall) []schema.ToolCall {
 	return out
 }
 
-// toAGUIMessages converts the eino conversation into AG-UI messages for a
-// MESSAGES_SNAPSHOT event, assigning fresh ids and conforming to the SDK's
-// per-role validation rules.
+// toAGUIMessages remains useful for feature routes that do not maintain a model
+// loop. The main agent loop owns a separate wire transcript and does not use this
+// conversion, because reconstructing snapshots would lose message identity.
 func toAGUIMessages(msgs []*schema.Message) []aguitypes.Message {
 	out := make([]aguitypes.Message, 0, len(msgs))
 	for _, m := range msgs {
