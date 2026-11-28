@@ -1136,8 +1136,22 @@ internal static class EventStreamConverter
                     break;
 
                 case ToolCallEndEvent toolEnd:
-                    toolCallBuilder.EndToolCall(toolEnd, jsonSerializerOptions);
+                {
+                    // Updates buffered before this call end precede it in the event
+                    // stream; flush them before surfacing the completed call.
+                    foreach (var buffered in toolCallBuilder.FlushBufferedUpdates())
+                    {
+                        yield return buffered;
+                    }
+
+                    // Yield the completed FunctionCallContent now so a UI can show the
+                    // call as running. Waiting until TOOL_CALL_RESULT (or until every
+                    // sibling result arrived) hid long-running backend tools.
+                    var callUpdate = toolCallBuilder.EndToolCall(toolEnd, jsonSerializerOptions);
+                    toolCallBuilder.MarkCallYielded(toolEnd.ToolCallId);
+                    yield return callUpdate;
                     break;
+                }
 
                 case ToolCallResultEvent toolResult:
                 {
@@ -1155,8 +1169,9 @@ internal static class EventStreamConverter
 
                     if (toolCallBuilder.IsBuffering)
                     {
-                        // Add the result to the buffer and resolve the pending tool call.
-                        // If all pending tool calls now have results, flush the entire buffer.
+                        // Resolve this call only. Sibling calls stay pending so a slow
+                        // tool cannot delay an unrelated result (or its earlier call
+                        // update, which was already yielded at TOOL_CALL_END).
                         foreach (var flushed in toolCallBuilder.AddResult(toolResult.ToolCallId, resultUpdate))
                         {
                             yield return flushed;
