@@ -40,3 +40,9 @@ jobs:
 
       - name: Run tests
         run: dart test --exclude-tags requires-server
+
+      - name: Run browser base URL tests
+        run: |
+          export CHROME_EXECUTABLE="$(command -v google-chrome)"
+          "$CHROME_EXECUTABLE" --version
+          dart test --platform chrome test/client/base_url_web_test.dart test/client/base_url_test.dart

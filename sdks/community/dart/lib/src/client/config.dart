@@ -15,6 +15,12 @@ import '../sse/backoff_strategy.dart';
 /// ```
 class AgUiClientConfig {
   /// Base URL for the AG-UI server.
+  ///
+  /// On the web, path-relative values resolve against document.baseURI,
+  /// including the current document's base href. A leading slash resolves
+  /// from that origin's root. Native platforms require an absolute HTTP(S)
+  /// URL. Relative values must be paths without queries or fragments. Empty values
+  /// and scheme-relative URLs are not supported.
   final String baseUrl;
 
   /// Default headers to include with all requests
