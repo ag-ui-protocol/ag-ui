@@ -19,6 +19,7 @@ public sealed class AGUIStreamOptions
     private List<Func<AIContent, AGUIInterrupt?>>? _interruptMappers;
     private List<Func<AIContent, IEnumerable<BaseEvent>?>>? _contentMappers;
     private Func<ChatResponseUpdate, IEnumerable<AGUIToolCallArgumentFragment>?>? _toolCallArgumentExtractor;
+    private List<Action<Exception>>? _streamErrorCallbacks;
 
     internal string? UsageProvider { get; private set; }
 
@@ -160,6 +161,50 @@ public sealed class AGUIStreamOptions
         ArgumentNullException.ThrowIfNull(extractor);
         _toolCallArgumentExtractor = extractor;
         return this;
+    }
+
+    /// <summary>
+    /// Registers a callback that receives the exception when a run fails with an exception and ends
+    /// with a <see cref="RunErrorEvent"/>. This covers exceptions thrown by the update stream as well
+    /// as by the conversion itself, including registered mappers and extractors.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="RunErrorEvent"/> sent to the client always carries a fixed, sanitized message,
+    /// so this callback is where the host sees the original exception, with its stack trace and
+    /// inner exceptions, for example to log it. It is invoked once per failed run, before the
+    /// <see cref="RunErrorEvent"/> is emitted. It is not invoked when the caller's cancellation
+    /// token cancels the run. Multiple callbacks may be registered and are invoked in registration
+    /// order. An exception thrown by a callback is ignored, so the run still ends with the
+    /// <see cref="RunErrorEvent"/>.
+    /// </remarks>
+    /// <param name="callback">A callback that receives the exception that ended the run.</param>
+    /// <returns>This instance for fluent chaining.</returns>
+    public AGUIStreamOptions OnStreamError(Action<Exception> callback)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        _streamErrorCallbacks ??= [];
+        _streamErrorCallbacks.Add(callback);
+        return this;
+    }
+
+    internal void InvokeStreamErrorCallbacks(Exception exception)
+    {
+        if (_streamErrorCallbacks is null)
+        {
+            return;
+        }
+
+        foreach (var callback in _streamErrorCallbacks)
+        {
+            try
+            {
+                callback(exception);
+            }
+            catch
+            {
+                // A failing callback must not prevent the terminal RUN_ERROR from being emitted.
+            }
+        }
     }
 
     internal bool TryGetToolCallArgumentExtractor(

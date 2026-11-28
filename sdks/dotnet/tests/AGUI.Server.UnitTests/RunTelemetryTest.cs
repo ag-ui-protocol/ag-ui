@@ -220,6 +220,77 @@ public sealed class RunTelemetryTest
     }
 
     [Fact]
+    public async Task FailingRun_InvokesStreamErrorCallbackWithOriginalException()
+    {
+        using var capture = CaptureActivities(AGUIServerInstrumentation.ActivitySourceName);
+        var observed = new List<Exception>();
+        var context = new RunAgentInput { ThreadId = _threadId, RunId = _runId }
+            .ToChatRequestContext(SerializerOptions, new AGUIStreamOptions().OnStreamError(observed.Add));
+
+        var events = new List<BaseEvent>();
+        await foreach (var evt in ThrowingUpdates(yieldThread: true).AsAGUIEventStreamAsync(context).ConfigureAwait(false))
+        {
+            events.Add(evt);
+        }
+
+        var exception = Assert.IsType<InvalidOperationException>(Assert.Single(observed));
+        Assert.Equal("boom", exception.Message);
+        Assert.NotNull(exception.StackTrace);
+        var error = Assert.Single(events.OfType<RunErrorEvent>());
+        Assert.Same(error, events[^1]);
+        Assert.Equal("StreamingError", error.Code);
+        Assert.Equal("An error occurred while streaming the agent response.", error.Message);
+        Assert.Equal(typeof(InvalidOperationException).FullName, SingleRun(capture).GetTagItem("error.type"));
+    }
+
+    [Fact]
+    public async Task FailingRun_ThrowingStreamErrorCallback_StillEndsWithRunErrorAndErrorStatus()
+    {
+        using var capture = CaptureActivities(AGUIServerInstrumentation.ActivitySourceName);
+        var context = new RunAgentInput { ThreadId = _threadId, RunId = _runId }
+            .ToChatRequestContext(SerializerOptions,
+                new AGUIStreamOptions().OnStreamError(_ => throw new InvalidOperationException("callback failed")));
+
+        var events = new List<BaseEvent>();
+        await foreach (var evt in ThrowingUpdates(yieldThread: false).AsAGUIEventStreamAsync(context).ConfigureAwait(false))
+        {
+            events.Add(evt);
+        }
+
+        var error = Assert.Single(events.OfType<RunErrorEvent>());
+        Assert.Same(error, events[^1]);
+        Assert.Equal("StreamingError", error.Code);
+        var run = SingleRun(capture);
+        Assert.Equal("error", run.GetTagItem("agui.run.outcome"));
+        Assert.Equal(ActivityStatusCode.Error, run.Status);
+    }
+
+    [Fact]
+    public async Task CallerCancellation_DoesNotInvokeStreamErrorCallback()
+    {
+        using var capture = CaptureActivities(AGUIServerInstrumentation.ActivitySourceName);
+        using var cts = new CancellationTokenSource();
+        var observed = new List<Exception>();
+        var context = new RunAgentInput { ThreadId = _threadId, RunId = _runId }
+            .ToChatRequestContext(SerializerOptions, new AGUIStreamOptions().OnStreamError(observed.Add));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var evt in CallerCancellationUpdates(yieldThread: true, cts.Token)
+                .AsAGUIEventStreamAsync(context, cts.Token).ConfigureAwait(false))
+            {
+                if (evt is TextMessageContentEvent)
+                {
+                    cts.Cancel();
+                }
+            }
+        });
+
+        Assert.Empty(observed);
+        Assert.Equal("canceled", SingleRun(capture).GetTagItem("agui.run.outcome"));
+    }
+
+    [Fact]
     public async Task NoListener_DoesNotCreateAGUIRunActivity()
     {
         Activity? observed = null;
