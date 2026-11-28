@@ -85,6 +85,9 @@
   "peerDependenciesMeta": {
     "@copilotkit/runtime": {
       "optional": true
+    },
+    "@mastra/client-js": {
+      "optional": true
     }
   },
   "devDependencies": {

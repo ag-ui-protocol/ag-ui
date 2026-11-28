@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import pkg from "../../package.json";
 
 /**
@@ -78,5 +80,31 @@ describe("peer dependency floors (#2418)", () => {
     expect(pkg.peerDependenciesMeta["@copilotkit/runtime"]).toEqual({
       optional: true,
     });
+  });
+
+  it("declares @mastra/client-js as an optional peer for remote agents", () => {
+    expect(pkg.peerDependenciesMeta["@mastra/client-js"]).toEqual({
+      optional: true,
+    });
+  });
+
+  it("imports @mastra/client-js for types only, so local agents load without it", () => {
+    const srcDir = join(__dirname, "..");
+    const sourceFiles = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory())
+          return entry.name === "__tests__" ? [] : sourceFiles(path);
+        return entry.name.endsWith(".ts") ? [path] : [];
+      });
+    // Value imports and re-exports, bare side-effect imports, require() and import().
+    const valueImport =
+      /(?:import|export)\s+(?!type\s)[^;]*?from\s+["']@mastra\/client-js["']|import\s*["']@mastra\/client-js["']|(?:require|import)\(\s*["']@mastra\/client-js["']\s*\)/;
+
+    const offenders = sourceFiles(srcDir).filter((file) =>
+      valueImport.test(readFileSync(file, "utf8")),
+    );
+
+    expect(offenders).toEqual([]);
   });
 });

@@ -41,7 +41,7 @@ import jsonpatch from "fast-json-patch";
 // https://github.com/ag-ui-protocol/ag-ui/issues/2874.
 import { parsePartialJson } from "./utils/ai-sdk-v4";
 import { Observable, type Subscriber } from "rxjs";
-import { MastraClient } from "@mastra/client-js";
+import type { MastraClient } from "@mastra/client-js";
 import {
   convertAGUIMessagesToMastra,
   GetLocalAgentsOptions,
