@@ -251,7 +251,11 @@ private fun withoutStatePatchSource(state: JsonElement, path: List<String>): Jso
 
 // Walks a work list, and only uses == on primitives: JsonObject and JsonArray equality recurses, so
 // it would overflow the stack on deeply nested values.
-private fun jsonPatchValuesEqual(actual: JsonElement, expected: JsonElement): Boolean {
+private fun jsonElementsEqualWith(
+    actual: JsonElement,
+    expected: JsonElement,
+    primitivesEqual: (JsonPrimitive, JsonPrimitive) -> Boolean
+): Boolean {
     val pending = ArrayDeque<Pair<JsonElement, JsonElement>>()
     pending.addLast(actual to expected)
     while (pending.isNotEmpty()) {
@@ -266,13 +270,25 @@ private fun jsonPatchValuesEqual(actual: JsonElement, expected: JsonElement): Bo
                 left.indices.forEach { index -> pending.addLast(left[index] to right[index]) }
             }
             left is JsonPrimitive && right is JsonPrimitive -> {
-                if (!jsonPatchPrimitivesEqual(left, right)) return false
+                if (!primitivesEqual(left, right)) return false
             }
             else -> return false
         }
     }
     return true
 }
+
+private fun jsonPatchValuesEqual(actual: JsonElement, expected: JsonElement): Boolean =
+    jsonElementsEqualWith(actual, expected, ::jsonPatchPrimitivesEqual)
+
+/**
+ * Structural equality without recursing: JsonObject and JsonArray equality would overflow the
+ * stack on deeply nested values, so this walks a work list instead. Unlike the JSON Patch `test`
+ * operation, numbers compare by content (1 != 1.0), matching JsonElement's own equals — so it is
+ * safe to use wherever StateFlow's conflation check would otherwise run.
+ */
+internal fun jsonElementsEqual(actual: JsonElement, expected: JsonElement): Boolean =
+    jsonElementsEqualWith(actual, expected) { left, right -> left == right }
 
 private fun jsonPatchPrimitivesEqual(actual: JsonPrimitive, expected: JsonPrimitive): Boolean {
     if (actual == expected) return true
