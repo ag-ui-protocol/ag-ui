@@ -67,6 +67,101 @@ _MISSING = object()
 _AGENT_BOUND = object()
 
 
+def _bounded_debug_preview(
+    value: Any,
+    *,
+    max_depth: int = 3,
+    max_items: int = 8,
+    max_str: int = 80,
+    _seen: Optional[set[int]] = None,
+) -> str:
+    """Return a bounded, allocation-safe string preview for DEBUG logs.
+
+    Unlike ``reprlib.repr``, this helper never invokes ``builtins.repr()`` on
+    full ``bytes``/``bytearray``/``memoryview`` payloads or arbitrary opaque
+    objects whose ``__repr__`` may walk multi-agent graph results.
+    """
+    value_type = type(value)
+    if value is None or value_type in (bool, float):
+        return repr(value)
+    if value_type is int:
+        if value.bit_length() <= 256:
+            return repr(value)
+        return f"<int bits={value.bit_length()}>"
+    if value_type is str:
+        if len(value) <= max_str:
+            return repr(value)
+        half = max_str // 2
+        return f"{value[:half]!r}...({len(value)} chars)...{value[-half:]!r}"
+    if isinstance(value, (bytes, bytearray)):
+        raw_len = len(value)
+        type_name = value_type.__name__
+        if raw_len <= 16:
+            return f"<{type_name} len={raw_len} {bytes(value)!r}>"
+        return f"<{type_name} len={raw_len} {bytes(value[:12])!r}...>"
+    if isinstance(value, memoryview):
+        return f"<memoryview nbytes={value.nbytes}>"
+
+    if value_type in (dict, list, tuple, set, frozenset):
+        obj_id = id(value)
+        if _seen is None:
+            _seen = set()
+        if obj_id in _seen:
+            return f"<{value_type.__name__} ...>"
+        if max_depth <= 0:
+            return f"<{value_type.__name__} len={len(value)}>"
+        _seen.add(obj_id)
+        try:
+            if value_type is dict:
+                parts: List[str] = []
+                for idx, (k, v) in enumerate(value.items()):
+                    if idx >= max_items:
+                        parts.append(f"... (+{len(value) - max_items} more)")
+                        break
+                    k_repr = _bounded_debug_preview(
+                        k,
+                        max_depth=max_depth - 1,
+                        max_items=max_items,
+                        max_str=max_str,
+                        _seen=_seen,
+                    )
+                    v_repr = _bounded_debug_preview(
+                        v,
+                        max_depth=max_depth - 1,
+                        max_items=max_items,
+                        max_str=max_str,
+                        _seen=_seen,
+                    )
+                    parts.append(f"{k_repr}: {v_repr}")
+                return "{" + ", ".join(parts) + "}"
+            open_b, close_b = (
+                ("[", "]")
+                if value_type is list
+                else ("(", ")")
+                if value_type is tuple
+                else ("{", "}")
+            )
+            parts = []
+            for idx, item in enumerate(value):
+                if idx >= max_items:
+                    parts.append(f"... (+{len(value) - max_items} more)")
+                    break
+                parts.append(
+                    _bounded_debug_preview(
+                        item,
+                        max_depth=max_depth - 1,
+                        max_items=max_items,
+                        max_str=max_str,
+                        _seen=_seen,
+                    )
+                )
+            return open_b + ", ".join(parts) + close_b
+        finally:
+            _seen.discard(obj_id)
+
+    return f"<{value_type.__name__}>"
+
+
 def _copy_template_conversation_manager(manager: Any) -> Any:
     """Copy configuration only from an unused template, never its runtime state."""
     factory_hint = (
@@ -6395,7 +6490,8 @@ class StrandsAgent:
                     if halt_event_stream:
                         break
 
-                    logger.debug(f"Received event: {event}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug("Received event: %s", _bounded_debug_preview(event))
 
                     # Skip lifecycle events. ``start`` is Strands' deprecated
                     # alias of ``start_event_loop`` and is emitted alongside it;
@@ -6430,7 +6526,8 @@ class StrandsAgent:
                     # Legacy terminator from pre-typed-events Strands.
                     if event.get("complete"):
                         logger.debug(
-                            f"Breaking event stream: complete received (thread_id={input_data.thread_id})"
+                            "Breaking event stream: complete received (thread_id=%s)",
+                            input_data.thread_id,
                         )
                         break
 
@@ -6521,7 +6618,10 @@ class StrandsAgent:
                         redacted_content = event["reasoningRedactedContent"]
 
                         if redacted_content is None:
-                            logger.debug(f"Ignoring reasoning event with None redacted content (thread_id={input_data.thread_id})")
+                            logger.debug(
+                                "Ignoring reasoning event with None redacted content (thread_id=%s)",
+                                input_data.thread_id,
+                            )
                             continue
 
                         if not reasoning_started:
@@ -6556,7 +6656,8 @@ class StrandsAgent:
                     # Handle reasoning signature (verification token) - typically not exposed to UI
                     elif "reasoning_signature" in event and event.get("reasoning"):
                         sig = event.get("reasoning_signature", "")
-                        logger.debug(f"Received reasoning signature: {str(sig)[:20]}...")
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug("Received reasoning signature: %s...", str(sig)[:20])
 
                     # A citation, held until the message it annotates publishes
                     # it. It is recorded against the text emitted so far, which
@@ -6835,7 +6936,11 @@ class StrandsAgent:
                             )
 
                             logger.debug(
-                                f"Processing tool result: tool_name={tool_name}, result_tool_id={result_tool_id}, pending_tool_result_ids={pending_tool_result_ids}, thread_id={input_data.thread_id}"
+                                "Processing tool result: tool_name=%s, result_tool_id=%s, pending_tool_result_ids=%s, thread_id=%s",
+                                tool_name,
+                                result_tool_id,
+                                pending_tool_result_ids,
+                                input_data.thread_id,
                             )
 
                             # Skip emitting the placeholder result for forwarded/proxy tools
@@ -7018,7 +7123,9 @@ class StrandsAgent:
                                         )
                                 halt_event_stream = True
                                 logger.debug(
-                                    f"Breaking event stream: stop_streaming_after_result behavior triggered (thread_id={input_data.thread_id}, tool_name={tool_name})"
+                                    "Breaking event stream: stop_streaming_after_result behavior triggered (thread_id=%s, tool_name=%s)",
+                                    input_data.thread_id,
+                                    tool_name,
                                 )
                                 # Break inner loop — no further results should be emitted
                                 break
@@ -7165,7 +7272,13 @@ class StrandsAgent:
                             tool_use_id = strands_tool_id or str(uuid.uuid4())
 
                         logger.debug(
-                            f"Tool call event received: tool_name={tool_name}, tool_use_id={tool_use_id}, strands_id={strands_tool_id}, is_frontend={is_frontend_tool}, already_seen={tool_use_id in tool_calls_seen}, thread_id={input_data.thread_id}"
+                            "Tool call event received: tool_name=%s, tool_use_id=%s, strands_id=%s, is_frontend=%s, already_seen=%s, thread_id=%s",
+                            tool_name,
+                            tool_use_id,
+                            strands_tool_id,
+                            is_frontend_tool,
+                            tool_use_id in tool_calls_seen,
+                            input_data.thread_id,
                         )
 
                         # Update tool input as it streams in
@@ -7408,7 +7521,13 @@ class StrandsAgent:
                                 use_streaming = entry.get("use_streaming", False)
 
                                 logger.debug(
-                                    f"contentBlockStop close: tool_name={tool_name}, tool_use_id={tool_use_id}, is_frontend_tool={is_frontend_tool}, is_pending={is_pending}, use_streaming={use_streaming}, thread_id={input_data.thread_id}"
+                                    "contentBlockStop close: tool_name=%s, tool_use_id=%s, is_frontend_tool=%s, is_pending=%s, use_streaming=%s, thread_id=%s",
+                                    tool_name,
+                                    tool_use_id,
+                                    is_frontend_tool,
+                                    is_pending,
+                                    use_streaming,
+                                    input_data.thread_id,
                                 )
                                 call_context = ToolCallContext(
                                     input_data=input_data,
@@ -7514,7 +7633,10 @@ class StrandsAgent:
 
                                     if is_frontend_tool and behavior is None:
                                         logger.debug(
-                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
+                                            "Deferring halt after frontend tool call: tool_name=%s, tool_call_id=%s, thread_id=%s",
+                                            tool_name,
+                                            tool_use_id,
+                                            input_data.thread_id,
                                         )
                                         pending_halt = True
 
@@ -7680,7 +7802,10 @@ class StrandsAgent:
 
                                     if is_frontend_tool and behavior is None:
                                         logger.debug(
-                                            f"Deferring halt after frontend tool call: tool_name={tool_name}, tool_call_id={tool_use_id}, thread_id={input_data.thread_id}"
+                                            "Deferring halt after frontend tool call: tool_name=%s, tool_call_id=%s, thread_id=%s",
+                                            tool_name,
+                                            tool_use_id,
+                                            input_data.thread_id,
                                         )
                                         pending_halt = True
 
@@ -7723,9 +7848,12 @@ class StrandsAgent:
                     # this stays silent instead of handing the withheld payload
                     # to the RAW fallback below.
                     elif any(key in event for key in _RAW_SUPPRESSED_KEYS):
-                        logger.debug(
-                            f"Suppressing mapped-but-declined Strands event (thread_id={input_data.thread_id}, keys={sorted(event)})"
-                        )
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(
+                                "Suppressing mapped-but-declined Strands event (thread_id=%s, keys=%s)",
+                                input_data.thread_id,
+                                sorted(event),
+                            )
                         continue
 
                     # Anything the chain above does not map gets forwarded as a
@@ -7745,9 +7873,12 @@ class StrandsAgent:
                         raw_payload = _sanitize_raw_event(event, run_invocation_state)
                         if raw_payload is None:
                             continue
-                        logger.debug(
-                            f"Unmapped Strands event forwarded as RAW (thread_id={input_data.thread_id}): {raw_payload}"
-                        )
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(
+                                "Unmapped Strands event forwarded as RAW (thread_id=%s): %s",
+                                input_data.thread_id,
+                                _bounded_debug_preview(raw_payload),
+                            )
                         yield RawEvent(
                             type=EventType.RAW,
                             event=raw_payload,
@@ -7912,11 +8043,12 @@ class StrandsAgent:
                 pending_interrupt_outcome = self._record_pending_interrupts(
                     strands_agent, thread_id, visible_native_interrupts
                 )
-                logger.debug(
-                    f"Strands interrupt detected: thread_id={input_data.thread_id}, "
-                    "interrupt_ids="
-                    f"{[i.id for i in pending_interrupt_outcome.interrupts]}"
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Strands interrupt detected: thread_id=%s, interrupt_ids=%s",
+                        input_data.thread_id,
+                        [i.id for i in pending_interrupt_outcome.interrupts],
+                    )
 
             # Every started subagent is closed before RUN_FINISHED. One still
             # open here was never answered by its spawning call: the run paused
