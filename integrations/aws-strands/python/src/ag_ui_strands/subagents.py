@@ -185,7 +185,8 @@ class SubagentRuns:
     One instance per ``StrandsAgent.run``. ``forward`` translates one inner
     stream payload; ``finish`` closes a run when its spawning call's result
     arrives; ``close_all`` closes whatever is still open before
-    ``RUN_FINISHED``.
+    ``RUN_FINISHED``; ``close_inline_tool_calls`` ends the inline calls
+    ``close_all`` cannot see, because inline creates no run to settle.
     """
 
     def __init__(
@@ -466,6 +467,34 @@ class SubagentRuns:
                     outcome=outcome,
                 )
             )
+        return events
+
+    def close_inline_tool_calls(
+        self, inner_tool_calls_seen: Dict[str, Dict[str, Any]]
+    ) -> List[Any]:
+        """End still-open inline inner tool calls before ``RUN_FINISHED``.
+
+        Inline visibility creates no :class:`_Run`, so :meth:`close_all`
+        has nothing to settle; a wrapper that fails mid-arguments would
+        otherwise leave its inner call open and the client verifier rejects
+        ``RUN_FINISHED`` (issue #3311). Calls already ended — by their own
+        ``contentBlockStop``, or by an attributed run sharing this dict —
+        are left alone, so each call still gets exactly one END. A no-op
+        outside inline visibility: attributed calls are closed by
+        :meth:`close_all`, and hidden ones are never opened.
+        """
+        if self.visibility != "inline":
+            return []
+        events: List[Any] = []
+        for call_id, entry in reversed(list(inner_tool_calls_seen.items())):
+            if not entry["ended"]:
+                entry["ended"] = True
+                events.append(
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=call_id,
+                    )
+                )
         return events
 
     def take_snapshot_messages(self, tool_call_id: str) -> List[Any]:
