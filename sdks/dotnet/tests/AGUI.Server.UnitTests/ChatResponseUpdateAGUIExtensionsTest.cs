@@ -554,6 +554,76 @@ public sealed class ChatResponseUpdateAGUIExtensionsTest
     }
 
     [Fact]
+    public async Task FunctionCallContent_NullArguments_EmitsEmptyObjectArgsDelta()
+    {
+        // M.E.AI uses Arguments == null for a zero-argument tool call. Serializing
+        // that as-is yields the JSON literal "null", which clients that parse args
+        // as an object reject (CopilotKit fails the tool call). Emit "{}".
+        var fcc = new FunctionCallContent("call_1", "get_time", arguments: null);
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [fcc]
+        };
+
+        var events = await CollectEvents(ToAsyncEnumerable(update));
+
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e =>
+            {
+                var start = Assert.IsType<ToolCallStartEvent>(e);
+                Assert.Equal("call_1", start.ToolCallId);
+                Assert.Equal("get_time", start.ToolCallName);
+            },
+            e =>
+            {
+                var args = Assert.IsType<ToolCallArgsEvent>(e);
+                Assert.Equal("call_1", args.ToolCallId);
+                Assert.Equal("{}", args.Delta);
+            },
+            e => Assert.Equal("call_1", Assert.IsType<ToolCallEndEvent>(e).ToolCallId),
+            e => Assert.IsType<RunFinishedSuccessOutcome>(Assert.IsType<RunFinishedEvent>(e).Outcome));
+    }
+
+    [Fact]
+    public async Task ToolApprovalRequestContent_NullArguments_EmitsEmptyObjectArgsDelta()
+    {
+        var toolCall = new FunctionCallContent("call_1", "get_time", arguments: null);
+        var approval = new ToolApprovalRequestContent("req-1", toolCall);
+        var update = new ChatResponseUpdate
+        {
+            Role = ChatRole.Assistant,
+            Contents = [approval]
+        };
+
+        var events = await CollectEvents(ToAsyncEnumerable(update));
+
+        Assert.Collection(events,
+            e => Assert.IsType<RunStartedEvent>(e),
+            e =>
+            {
+                var start = Assert.IsType<ToolCallStartEvent>(e);
+                Assert.Equal("call_1", start.ToolCallId);
+                Assert.Equal("get_time", start.ToolCallName);
+            },
+            e =>
+            {
+                var args = Assert.IsType<ToolCallArgsEvent>(e);
+                Assert.Equal("call_1", args.ToolCallId);
+                Assert.Equal("{}", args.Delta);
+            },
+            e => Assert.Equal("call_1", Assert.IsType<ToolCallEndEvent>(e).ToolCallId),
+            e =>
+            {
+                var outcome = Assert.IsType<RunFinishedInterruptOutcome>(Assert.IsType<RunFinishedEvent>(e).Outcome);
+                var interrupt = Assert.Single(outcome.Interrupts);
+                Assert.Equal("req-1", interrupt.Id);
+                Assert.Equal("call_1", interrupt.ToolCallId);
+            });
+    }
+
+    [Fact]
     public async Task FunctionCallContent_SetsParentMessageId()
     {
         var fcc = new FunctionCallContent("call-1", "my_tool");
