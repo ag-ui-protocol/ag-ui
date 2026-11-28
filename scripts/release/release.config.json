@@ -281,6 +281,13 @@
         { "name": "@ag-ui/openai-agents", "path": "integrations/openai-agents/typescript", "ecosystem": "typescript" }
       ]
     },
+    "integration-openai-agents-js": {
+      "description": "OpenAI Agents SDK integration (JavaScript/TypeScript)",
+      "sharedVersion": false,
+      "packages": [
+        { "name": "@ag-ui/openai-agents-js", "path": "integrations/openai-agents-js", "ecosystem": "typescript" }
+      ]
+    },
     "integration-pydantic-ai": {
       "description": "Pydantic AI integration (TypeScript)",
       "sharedVersion": false,

@@ -151,6 +151,11 @@ const ALL_TARGETS = {
     name: "OpenAI Agents SDK (Python)",
     cwd: path.join(integrationsRoot, "openai-agents/python/examples"),
   },
+  "openai-agents-js": {
+    command: "pnpm exec nx run @ag-ui/openai-agents-js:build",
+    name: "OpenAI Agents SDK (JavaScript)",
+    cwd: gitRoot,
+  },
   "claude-agent-sdk-python": {
     command: "uv sync",
     name: "Claude Agent SDK (Python)",

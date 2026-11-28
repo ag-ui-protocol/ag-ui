@@ -1,0 +1,61 @@
+{
+  "name": "@ag-ui/openai-agents-js",
+  "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ag-ui-protocol/ag-ui.git",
+    "directory": "integrations/openai-agents-js"
+  },
+  "description": "AG-UI integration for the OpenAI Agents SDK (JavaScript/TypeScript)",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/**",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "dev:examples": "tsx --env-file=.env --watch examples/server.ts",
+    "clean": "rm -rf dist .turbo node_modules",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "link:global": "pnpm link --global",
+    "unlink:global": "pnpm unlink --global"
+  },
+  "dependencies": {
+    "rxjs": "7.8.1"
+  },
+  "peerDependencies": {
+    "@ag-ui/client": ">=1.0.0",
+    "@ag-ui/core": ">=1.0.0",
+    "@openai/agents": ">=0.12.0",
+    "openai": ">=4.0.0",
+    "zod": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@ag-ui/client": "workspace:*",
+    "@ag-ui/core": "workspace:*",
+    "@ag-ui/encoder": "workspace:*",
+    "@openai/agents": "^0.12.0",
+    "@types/node": "^20.11.19",
+    "openai": "^4.0.0",
+    "tsup": "^8.0.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "zod": "^4.0.0"
+  }
+}
