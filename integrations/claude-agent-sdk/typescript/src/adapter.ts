@@ -49,6 +49,7 @@ import {
   processMessages,
   recoveryUserMessages,
   buildStateContextAddendum,
+  withStateContextHooks,
   extractToolNames,
   stripMcpPrefix,
   convertAguiToolToClaudeSdk,
@@ -709,13 +710,16 @@ export class ClaudeAgentAdapter extends AbstractAgent {
 
     Object.assign(merged, profileOptions);
 
-    // Append state and context to the system prompt
+    // Deliver state and context through hooks, not the system prompt: a
+    // resumed session keeps the system prompt it started with.
     const addendum = buildStateContextAddendum(input);
     if (addendum) {
-      const base = (merged.systemPrompt as string) ?? "";
-      merged.systemPrompt = base ? `${base}\n\n${addendum}` : addendum;
+      merged.hooks = withStateContextHooks(
+        merged.hooks as Options["hooks"],
+        addendum,
+      );
       console.debug(
-        `[ClaudeAdapter] Appended state/context (${addendum.length} chars) to systemPrompt`,
+        `[ClaudeAdapter] Passing state/context (${addendum.length} chars) through hooks`,
       );
     }
 

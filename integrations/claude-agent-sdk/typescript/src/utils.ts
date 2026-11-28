@@ -17,6 +17,8 @@ import type {
   ContentPart,
 } from "@ag-ui/core";
 import type {
+  HookCallback,
+  Options,
   SDKAssistantMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -464,13 +466,12 @@ export function processMessages(input: RunAgentInput): ProcessMessagesResult {
 }
 
 /**
- * Build state and context addendum for injection into the system prompt.
+ * Build the state and context addendum for a run.
  *
  * Returns the formatted text block describing current state and application
- * context, or an empty string if neither is present.
- *
- * This keeps state/context in the system prompt (where it belongs) rather
- * than polluting the user message.
+ * context, or an empty string if neither is present. The adapter delivers it
+ * through hooks (see `withStateContextHooks`), so it stays out of both the
+ * system prompt and the user's message.
  */
 export function buildStateContextAddendum(input: RunAgentInput): string {
   const parts: string[] = [];
@@ -502,6 +503,51 @@ export function buildStateContextAddendum(input: RunAgentInput): string {
   }
 
   return parts.join("\n");
+}
+
+/**
+ * Adds hooks that hand `addendum` to the model as `additionalContext`, once
+ * per run, keeping any hooks the caller configured.
+ *
+ * A resumed SDK session keeps the system prompt it started with, so an addendum
+ * appended there stayed at the first run's value for the rest of the thread.
+ * Hooks run on fresh and resumed sessions alike, and leaving the system prompt
+ * alone keeps it stable for prompt caching. `UserPromptSubmit` covers every run
+ * that submits a user prompt; a run that only carries a frontend tool result
+ * submits none, so the first `PostToolUse` (the resumed call) carries it there,
+ * or `PostToolUseFailure` when that result is an error.
+ */
+export function withStateContextHooks(
+  hooks: Options["hooks"],
+  addendum: string,
+): NonNullable<Options["hooks"]> {
+  let delivered = false;
+  const deliver =
+    (
+      hookEventName: "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure",
+    ): HookCallback =>
+    async () => {
+      if (delivered) return {};
+      delivered = true;
+      return {
+        hookSpecificOutput: { hookEventName, additionalContext: addendum },
+      };
+    };
+  return {
+    ...hooks,
+    UserPromptSubmit: [
+      ...(hooks?.UserPromptSubmit ?? []),
+      { hooks: [deliver("UserPromptSubmit")] },
+    ],
+    PostToolUse: [
+      ...(hooks?.PostToolUse ?? []),
+      { hooks: [deliver("PostToolUse")] },
+    ],
+    PostToolUseFailure: [
+      ...(hooks?.PostToolUseFailure ?? []),
+      { hooks: [deliver("PostToolUseFailure")] },
+    ],
+  };
 }
 
 type JsonSchema = Record<string, unknown>;

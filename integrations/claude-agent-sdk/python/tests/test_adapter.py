@@ -563,12 +563,15 @@ class TestBuildOptions:
         assert STATE_MANAGEMENT_TOOL_FULL_NAME in (opts.allowed_tools or [])
         assert AG_UI_MCP_SERVER_NAME in (opts.mcp_servers or {})
 
-    def test_state_addendum_appended_to_system_prompt(self, make_input):
+    @pytest.mark.asyncio
+    async def test_state_addendum_delivered_by_hook_not_system_prompt(self, make_input):
         adapter = ClaudeAgentAdapter(name="t", options={"system_prompt": "BASE"})
         inp = make_input(state={"count": 1})
         opts = adapter.build_options(inp)
-        assert opts.system_prompt.startswith("BASE")
-        assert "Current Shared State" in opts.system_prompt
+        assert opts.system_prompt == "BASE"
+        output = await opts.hooks["UserPromptSubmit"][-1].hooks[0](
+            {"hook_event_name": "UserPromptSubmit", "prompt": "q"}, None, {})
+        assert "Current Shared State" in output["hookSpecificOutput"]["additionalContext"]
 
     # ── Item 6: forwarded prop that isn't a valid ClaudeAgentOptions kwarg ──
     def test_forwarded_prop_invalid_kwarg_does_not_crash(self, make_input):
@@ -1765,6 +1768,9 @@ class TestTaskActivityTeardown:
                     await asyncio.sleep(3600)
 
                 return _gen()
+
+            async def interrupt(self):
+                pass
 
             async def stop(self):
                 pass

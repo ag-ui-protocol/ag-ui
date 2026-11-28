@@ -134,9 +134,10 @@ async def test_completed_tool_stays_completed_when_model_later_fails():
     run.observe('native', 'profile', event(error=True))
     assert run.binding.pending is None
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("as_options", [False, True])
 @pytest.mark.parametrize("allowed", [[], ["Read"]])
-def test_profile_preserves_run_context_and_generated_permissions(make_input, as_options, allowed):
+async def test_profile_preserves_run_context_and_generated_permissions(make_input, as_options, allowed):
     from claude_agent_sdk import ClaudeAgentOptions
     from ag_ui_claude_sdk import ClaudeAgentAdapter
     profile = {"system_prompt": "Trusted profile instructions", "allowed_tools": allowed}
@@ -144,9 +145,11 @@ def test_profile_preserves_run_context_and_generated_permissions(make_input, as_
         profile = ClaudeAgentOptions(**profile)
     inp = make_input(state={"count": 42}, context=[{"description": "Current context", "value": "context-value"}], tools=[{"name": "confirm", "description": "Confirm", "parameters": {"type": "object"}}])
     options = ClaudeAgentAdapter("test").build_options(inp, profile_options=profile)
-    assert "Trusted profile instructions" in options.system_prompt
-    assert "42" in options.system_prompt
-    assert "context-value" in options.system_prompt
+    assert options.system_prompt == "Trusted profile instructions"
+    output = await options.hooks["UserPromptSubmit"][-1].hooks[0](
+        {"hook_event_name": "UserPromptSubmit", "prompt": "q"}, None, {})
+    assert "42" in output["hookSpecificOutput"]["additionalContext"]
+    assert "context-value" in output["hookSpecificOutput"]["additionalContext"]
     assert set(options.allowed_tools) == {*allowed, "mcp__ag_ui__confirm", "mcp__ag_ui__ag_ui_update_state"}
 
 @pytest.mark.asyncio
