@@ -22,7 +22,11 @@ class FakeAgent<State> {
   readonly ctx = {
     storage: {
       get: async (key: string) => structuredClone(this.stored.get(key)),
-      put: async (key: string, value: unknown) => void this.stored.set(key, structuredClone(value)),
+      put: async (key: string, value: unknown) => {
+        // Durable Object storage refuses undefined, as the real one does.
+        if (value === undefined) throw new TypeError("put() called with undefined value");
+        this.stored.set(key, structuredClone(value));
+      },
     },
   };
 
@@ -169,6 +173,32 @@ describe("withAGUI over HTTP", () => {
     client.subscribe({ onRunErrorEvent: ({ event }) => void errors.push(event) });
     await client.runAgent();
     expect(errors).toEqual([expect.objectContaining({ code: "AGENT_ERROR" })]);
+  });
+
+  it("runs an agent that declares no initial state", async () => {
+    // Without `initialState`, the Agents SDK's `this.state` is undefined.
+    type ChatState = Record<string, unknown> | undefined;
+    class ChatAgent extends withAGUI(FakeAgent<ChatState>) {
+      model = sdk.model([turn(chunks.text("t1", "Hello!")), turn(chunks.text("t2", "Hi again."))]);
+      onAGUIRun(run: AGUIRun<ChatState>) {
+        return ai.streamText({ model: this.model as any, ...run.streamTextOptions({ instructions: "Be brief." }) });
+      }
+    }
+    const agent = new ChatAgent(undefined);
+    const client = new CloudflareAgentsHttpAgent({
+      url: "https://worker.example/agents/chat-agent",
+      fetch: async (url, init) => agent.onRequest(new Request(url, init)),
+    });
+    const errors: BaseEvent[] = [];
+    client.subscribe({ onRunErrorEvent: ({ event }) => void errors.push(event) });
+
+    client.messages = [user("Hi")];
+    await client.runAgent();
+    client.messages.push(user("Hi again"));
+    await client.runAgent();
+
+    expect(errors).toEqual([]);
+    expect(client.messages.at(-1)).toMatchObject({ role: "assistant", content: "Hi again." });
   });
 
   it("keeps what the server changed between runs over the client's stale copy", async () => {

@@ -348,7 +348,10 @@ export async function* runAGUI<State = AGUIState>(
     // client still holds their interrupts and answers them again.
     if (translation.approvals) await options.approvals?.save(translation.approvals);
     else if (translation.returned) await reopen(translation.returned);
-    await options.state?.markSynced?.(store.get());
+    // An agent without `initialState` has no state; the client then holds
+    // `{}`, as at the start of the run. Durable Object storage refuses
+    // undefined.
+    await options.state?.markSynced?.((store.get() ?? {}) as State);
     yield translation.terminal;
   } catch (error) {
     // Nothing above may leave the client without a terminal event.
