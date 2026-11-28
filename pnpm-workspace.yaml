@@ -36,6 +36,10 @@ overrides:
   zod: 3.25.76
   "@google/adk>zod": ^4.2.1
   "@strands-agents/sdk>zod": ^4.4.3
+  "@ag-ui/core>zod": ^4.6.7
+  "@ag-ui/client>zod": ^4.6.7
+  "@ag-ui/encoder>zod": ^4.6.7
+  "@ag-ui/proto>zod": ^4.6.7
   "@ag-ui/aws-strands>zod": ^4.4.3
   "@ag-ui/aws-strands-examples>zod": ^4.4.3
   "@omnara/sdk>zod": ^4.4.3
