@@ -1,0 +1,67 @@
+{
+  "name": "run-after-requested-run-succeeds",
+  "area": "lifecycle",
+  "description": "the requested run pauses on an interrupt, and the producer goes on with a run that succeeds on the same stream: the agent is no longer waiting, so nothing is left pending and the request went as that run did. Local to this repository: 1.0 makes the requested run the last of its exchange and says nothing of a consumer that meets one after it; `input.runId` names the run asked for, and `end`, `runs` and `pendingInterrupts` are read on the thread lane only",
+  "specPage": "/spec/1.0/basic/patterns/interrupt-resume",
+  "kill": "let only the requested run decide what the thread owes, so the thread stays paused on an interrupt the agent has moved past",
+  "input": { "runId": "run-after-requested-succeeds-r-1" },
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-run-after-requested-succeeds",
+      "runId": "run-after-requested-succeeds-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-run-after-requested-succeeds",
+      "runId": "run-after-requested-succeeds-r-1",
+      "outcome": {
+        "type": "interrupt",
+        "interrupts": [{ "id": "run-after-requested-succeeds-i-1", "reason": "approval" }]
+      }
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-run-after-requested-succeeds",
+      "runId": "run-after-requested-succeeds-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "run-after-requested-succeeds-m-1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "run-after-requested-succeeds-m-1",
+      "delta": "carried on"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "run-after-requested-succeeds-m-1" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-run-after-requested-succeeds",
+      "runId": "run-after-requested-succeeds-r-2",
+      "outcome": { "type": "success" }
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 1,
+    "messages": [{ "id": "run-after-requested-succeeds-m-1", "content": "carried on" }],
+    "end": { "Success": { "result": null } },
+    "runs": [
+      {
+        "runId": "run-after-requested-succeeds-r-1",
+        "requested": true,
+        "end": "Interrupted",
+        "detail": {
+          "Interrupted": { "interrupts": [{ "id": "run-after-requested-succeeds-i-1" }] }
+        }
+      },
+      { "runId": "run-after-requested-succeeds-r-2", "requested": false, "end": "Success" }
+    ],
+    "pendingInterrupts": []
+  }
+}

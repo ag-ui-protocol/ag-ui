@@ -1,0 +1,284 @@
+[
+  {
+    "type": "TEXT_MESSAGE_START",
+    "messageId": "msg-1",
+    "role": "developer",
+    "name": "Ada",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_CONTENT",
+    "messageId": "msg-1",
+    "delta": "Hello",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_END",
+    "messageId": "msg-1",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TEXT_MESSAGE_CHUNK",
+    "messageId": "msg-1",
+    "role": "user",
+    "delta": "Hi",
+    "name": "Ada",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TOOL_CALL_START",
+    "toolCallId": "call-1",
+    "toolCallName": "get_weather",
+    "parentMessageId": "msg-1",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TOOL_CALL_ARGS",
+    "toolCallId": "call-1",
+    "delta": "{\"city\":",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TOOL_CALL_END",
+    "toolCallId": "call-1",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TOOL_CALL_CHUNK",
+    "toolCallId": "call-1",
+    "toolCallName": "get_weather",
+    "parentMessageId": "msg-1",
+    "delta": "{}",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "TOOL_CALL_RESULT",
+    "messageId": "msg-2",
+    "toolCallId": "call-1",
+    "content": "18C",
+    "role": "tool",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "THINKING_START",
+    "title": "Planning"
+  },
+  {
+    "type": "THINKING_END"
+  },
+  {
+    "type": "THINKING_TEXT_MESSAGE_START"
+  },
+  {
+    "type": "THINKING_TEXT_MESSAGE_CONTENT",
+    "delta": "checking"
+  },
+  {
+    "type": "THINKING_TEXT_MESSAGE_END"
+  },
+  {
+    "type": "STATE_SNAPSHOT",
+    "snapshot": {
+      "counter": 1,
+      "items": [
+        "a"
+      ]
+    },
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "STATE_DELTA",
+    "delta": [
+      {
+        "op": "replace",
+        "path": "/counter",
+        "value": 2
+      },
+      {
+        "op": "remove",
+        "path": "/stale"
+      },
+      {
+        "op": "move",
+        "from": "/a",
+        "path": "/b"
+      }
+    ],
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "MESSAGES_SNAPSHOT",
+    "messages": [
+      {
+        "role": "user",
+        "id": "msg-0",
+        "content": "hi"
+      },
+      {
+        "role": "assistant",
+        "id": "msg-1",
+        "content": "hello"
+      }
+    ]
+  },
+  {
+    "type": "ACTIVITY_SNAPSHOT",
+    "messageId": "msg-3",
+    "activityType": "web_search",
+    "content": {
+      "query": "rust",
+      "results": 3
+    },
+    "replace": false,
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "ACTIVITY_DELTA",
+    "messageId": "msg-3",
+    "activityType": "web_search",
+    "patch": [
+      {
+        "op": "add",
+        "path": "/results",
+        "value": 4
+      }
+    ],
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "RAW",
+    "event": {
+      "chunk": 1,
+      "provider": "openai"
+    },
+    "source": "openai",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "CUSTOM",
+    "name": "confetti",
+    "value": {
+      "count": 100
+    },
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "RUN_STARTED",
+    "threadId": "thread-1",
+    "runId": "run-1",
+    "parentRunId": "run-0"
+  },
+  {
+    "type": "RUN_FINISHED",
+    "threadId": "thread-1",
+    "runId": "run-1",
+    "result": {
+      "ok": true
+    },
+    "outcome": {
+      "type": "success"
+    },
+    "usage": [
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+        "inputTokens": 1200,
+        "outputTokens": 340,
+        "totalTokens": 1540,
+        "reasoningTokens": 90,
+        "cachedInputTokens": 800,
+        "cacheWriteInputTokens": 100
+      }
+    ]
+  },
+  {
+    "type": "RUN_ERROR",
+    "message": "upstream refused",
+    "code": "UPSTREAM_DOWN",
+    "usage": [
+      {
+        "provider": "openai",
+        "inputTokens": 10,
+        "cacheWriteInputTokens": 5
+      }
+    ]
+  },
+  {
+    "type": "STEP_STARTED",
+    "stepName": "plan",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "STEP_FINISHED",
+    "stepName": "plan",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_START",
+    "messageId": "msg-4",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_MESSAGE_START",
+    "messageId": "msg-4",
+    "role": "reasoning",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_MESSAGE_CONTENT",
+    "messageId": "msg-4",
+    "delta": "weighing",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_MESSAGE_END",
+    "messageId": "msg-4",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_MESSAGE_CHUNK",
+    "messageId": "msg-4",
+    "delta": "weighing",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_END",
+    "messageId": "msg-4",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "REASONING_ENCRYPTED_VALUE",
+    "subtype": "tool-call",
+    "entityId": "call-1",
+    "encryptedValue": "b64",
+    "subagentRunId": "sub-1"
+  },
+  {
+    "type": "SUBAGENT_STARTED",
+    "subagentRunId": "sub-1",
+    "name": "researcher",
+    "description": "Finds sources",
+    "parentSubagentRunId": "sub-0",
+    "parentToolCallId": "call-1",
+    "parentMessageId": "msg-1"
+  },
+  {
+    "type": "SUBAGENT_FINISHED",
+    "subagentRunId": "sub-1",
+    "result": {
+      "sources": 3
+    },
+    "outcome": {
+      "type": "suspended",
+      "interruptIds": [
+        "int-1"
+      ]
+    }
+  },
+  {
+    "type": "SUBAGENT_ERROR",
+    "subagentRunId": "sub-1",
+    "message": "rate limited",
+    "code": "429"
+  }
+]

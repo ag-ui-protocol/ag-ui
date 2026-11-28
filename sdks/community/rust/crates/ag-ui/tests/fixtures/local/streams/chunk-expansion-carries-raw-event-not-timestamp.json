@@ -1,0 +1,86 @@
+{
+  "name": "chunk-expansion-carries-raw-event-not-timestamp",
+  "area": "processing",
+  "description": "expansion carries a chunk's metadata and rawEvent through intact, and not its timestamp, because the synthesized events are not the chunk. The metadata goes on the synthesized start and the content event; the one provider payload rides the content event, and a chunk that carries one without a delta still stands for a content event, with an empty delta, so the payload is not lost. Which event carries the payload is the reference client's choice, not a sentence of the specification. Local to this repository: the specification states the rule and the upstream corpus has no stream for it",
+  "specPage": "/spec/1.0/basic/processing",
+  "kill": "copy a chunk's whole base onto the events it stands for, timestamp included, or expand a chunk with a rawEvent and no delta into nothing",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-chunk-carries",
+      "runId": "chunk-carries-r1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "messageId": "chunk-carries-m1",
+      "delta": "Hel",
+      "timestamp": 1700000000000,
+      "rawEvent": { "provider": "acme", "seq": 1 },
+      "metadata": { "provider": "acme" }
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "delta": "lo",
+      "timestamp": 1700000000001,
+      "rawEvent": { "provider": "acme", "seq": 2 }
+    },
+    {
+      "type": "TEXT_MESSAGE_CHUNK",
+      "timestamp": 1700000000002,
+      "rawEvent": { "provider": "acme", "seq": 3 }
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-chunk-carries",
+      "runId": "chunk-carries-r1"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "noWarnings": true,
+    "messageCount": 1,
+    "messages": [
+      {
+        "id": "chunk-carries-m1",
+        "role": "assistant",
+        "content": "Hello",
+        "metadata": { "provider": "acme" }
+      }
+    ]
+  },
+  "expectOverrides": {
+    "typescript": {
+      "intentional": "What a synthesized event carries is observable only where chunks are expanded. So the list lives here rather than in `expect`, which stays lane-neutral.",
+      "eventTypes": [
+        "RUN_STARTED",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "RUN_FINISHED"
+      ],
+      "eventPaths": {
+        "1.metadata": { "provider": "acme" },
+        "2.delta": "Hel",
+        "2.rawEvent": { "provider": "acme", "seq": 1 },
+        "2.metadata": { "provider": "acme" },
+        "3.delta": "lo",
+        "3.rawEvent": { "provider": "acme", "seq": 2 },
+        "4.delta": "",
+        "4.rawEvent": { "provider": "acme", "seq": 3 }
+      },
+      "eventAbsentPaths": [
+        "1.timestamp",
+        "1.rawEvent",
+        "2.timestamp",
+        "3.timestamp",
+        "3.metadata",
+        "4.timestamp",
+        "4.metadata",
+        "5.timestamp"
+      ]
+    }
+  }
+}

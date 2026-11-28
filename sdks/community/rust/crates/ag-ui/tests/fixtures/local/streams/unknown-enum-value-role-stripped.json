@@ -1,0 +1,57 @@
+{
+  "name": "unknown-enum-value-role-stripped",
+  "area": "processing",
+  "description": "an unrecognised member of a closed string set in an optional position, a message role, is stripped with a warning naming its path, and the run completes: the role then reads as absent, which means assistant. Local to this repository. Upstream pins the opposite as unknown-enum-value-role-fatal, an admitted gap in its reference client, which is why that stream is not vendored",
+  "specPage": "/spec/1.0/basic/processing",
+  "kill": "make an unrecognised enum member fatal in ag_ui::protocol, as the reference client does, or deliver the unrecognised role to the application",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-unknown-role",
+      "runId": "r-unknown-role"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "m-unknown-role",
+      "role": "narrator"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "m-unknown-role",
+      "delta": "the role above is the only defect in this stream"
+    },
+    {
+      "type": "TEXT_MESSAGE_END",
+      "messageId": "m-unknown-role"
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-unknown-role",
+      "runId": "r-unknown-role"
+    }
+  ],
+  "expect": {
+    "outcome": "completed",
+    "warnings": [
+      "/role"
+    ],
+    "eventTypes": [
+      "RUN_STARTED",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "RUN_FINISHED"
+    ],
+    "eventPaths": {
+      "1.role": "assistant"
+    },
+    "messageCount": 1,
+    "messages": [
+      {
+        "id": "m-unknown-role",
+        "role": "assistant",
+        "content": "the role above is the only defect in this stream"
+      }
+    ]
+  }
+}

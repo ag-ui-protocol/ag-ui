@@ -1,0 +1,56 @@
+{
+  "name": "nested-run-started-after-closed-run-fatal",
+  "area": "lifecycle",
+  "description": "admitting the next run does not admit a nested one: after a run that closed, a second run opens, and a RUN_STARTED while that one is still active is fatal. What the closed run delivered stays. Local to this repository: the upstream nested-run-started-fatal nests inside the first run of its stream",
+  "specPage": "/spec/1.0/events/lifecycle",
+  "kill": "once one run has closed, accept every later RUN_STARTED, whether or not the run before it ended",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-nested-after-closed-run",
+      "runId": "nested-after-closed-run-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "nested-after-closed-run-m-1",
+      "role": "assistant"
+    },
+    {
+      "type": "TEXT_MESSAGE_CONTENT",
+      "messageId": "nested-after-closed-run-m-1",
+      "delta": "first run"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "nested-after-closed-run-m-1" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-nested-after-closed-run",
+      "runId": "nested-after-closed-run-r-1"
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-nested-after-closed-run",
+      "runId": "nested-after-closed-run-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-nested-after-closed-run",
+      "runId": "nested-after-closed-run-r-3",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "Cannot send 'RUN_STARTED' while a run is still active",
+    "messageCount": 1,
+    "messages": [
+      { "id": "nested-after-closed-run-m-1", "role": "assistant", "content": "first run" }
+    ],
+    "runs": [
+      { "runId": "nested-after-closed-run-r-1", "requested": false, "end": "Success" },
+      { "runId": "nested-after-closed-run-r-2", "requested": false, "end": "Failed" }
+    ],
+    "pendingInterrupts": []
+  }
+}

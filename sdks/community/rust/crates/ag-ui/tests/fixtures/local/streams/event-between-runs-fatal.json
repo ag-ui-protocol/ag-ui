@@ -1,0 +1,53 @@
+{
+  "name": "event-between-runs-fatal",
+  "area": "lifecycle",
+  "description": "an ordinary event between two runs belongs to neither and is fatal: after RUN_FINISHED only RUN_STARTED and RUN_ERROR may arrive, and that a run follows on the same stream does not change it. What the closed run delivered stays, and the run after the event is not read. Local to this repository: the upstream event-after-run-finished-fatal ends at the offending event",
+  "specPage": "/spec/1.0/events/lifecycle",
+  "kill": "treat a closed run as open again for whatever arrives before the next RUN_STARTED, so the state snapshot between the two runs is applied",
+  "stream": [
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-event-between-runs",
+      "runId": "event-between-runs-r-1",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": { "owner": "event-between-runs-r-1" }
+    },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-event-between-runs",
+      "runId": "event-between-runs-r-1"
+    },
+    {
+      "type": "STATE_SNAPSHOT",
+      "snapshot": { "owner": "nobody" }
+    },
+    {
+      "type": "RUN_STARTED",
+      "threadId": "t-event-between-runs",
+      "runId": "event-between-runs-r-2",
+      "protocolVersion": "1.0"
+    },
+    {
+      "type": "TEXT_MESSAGE_START",
+      "messageId": "event-between-runs-m-1",
+      "role": "assistant"
+    },
+    { "type": "TEXT_MESSAGE_END", "messageId": "event-between-runs-m-1" },
+    {
+      "type": "RUN_FINISHED",
+      "threadId": "t-event-between-runs",
+      "runId": "event-between-runs-r-2"
+    }
+  ],
+  "expect": {
+    "outcome": "failed",
+    "errorContains": "The run has already finished with 'RUN_FINISHED'",
+    "messageCount": 0,
+    "state": { "owner": "event-between-runs-r-1" },
+    "runs": [{ "runId": "event-between-runs-r-1", "requested": false, "end": "Failed" }],
+    "pendingInterrupts": []
+  }
+}
