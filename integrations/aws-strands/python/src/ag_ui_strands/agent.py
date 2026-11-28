@@ -3814,7 +3814,11 @@ class StrandsAgent:
         # Orchestrators are invoked directly, so there is no template to clone.
         if self._orchestrator is None:
             self._model = agent.model
-            self._system_prompt = agent.system_prompt
+            # Snapshot canonical blocks: the compatibility string drops cache
+            # points, and the structured getter only copies the outer list.
+            self._system_prompt = deepcopy(
+                getattr(agent, "system_prompt_content", agent.system_prompt)
+            )
             # A plugin's tool can retain a callback bound to the template's
             # manager even when that manager is excluded from the kwargs.
             self._tools = [
@@ -4788,7 +4792,7 @@ class StrandsAgent:
                         core_kwargs.pop(owned, None)
                     self._agents_by_thread[thread_id] = StrandsAgentCore(
                         model=self._model,
-                        system_prompt=self._system_prompt,
+                        system_prompt=deepcopy(self._system_prompt),
                         tools=self._tools,
                         session_manager=session_manager,
                         **core_kwargs,
