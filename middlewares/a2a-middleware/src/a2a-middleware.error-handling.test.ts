@@ -298,3 +298,71 @@ describe("A2AMiddlewareAgent.clone", () => {
     expect((runError as any)?.message).toMatch(/missing-agent/);
   });
 });
+
+describe("agent card fetch failure", () => {
+  // The A2A client fetches its agent card as soon as it is constructed. When an
+  // agent is down, that fetch rejects, and nothing handled the rejection: the
+  // constructor's `Promise.all` became an unhandled rejection, and `run()`
+  // awaited it inside a detached async function, so the run never errored and
+  // never completed.
+  it("errors the run instead of hanging when an agent card cannot be fetched", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:9"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const agent = new A2AMiddlewareAgent({
+        agentUrls: ["http://127.0.0.1:9"],
+        orchestrationAgent: new StubOrchestrationAgent(orchestrationEvents()),
+      });
+
+      const result = await collect(agent);
+
+      expect(result.completed).toBe(false);
+      expect((result.error as Error)?.message).toMatch(/ECONNREFUSED/);
+      const runError = result.events.find((e) => e.type === EventType.RUN_ERROR);
+      expect(runError, "expected a RUN_ERROR event on the stream").toBeDefined();
+      expect((runError as any).message).toMatch(/ECONNREFUSED/);
+    } finally {
+      fetchSpy.mockRestore();
+      consoleSpy.mockRestore();
+    }
+  });
+
+  // A server builds the agent at startup, often well before the first run. A
+  // card fetch that fails in between must not surface as an unhandled
+  // rejection, which terminates a Node process by default.
+  it("does not leave an unhandled rejection when no run is waiting yet", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("connect ECONNREFUSED 127.0.0.1:9"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    // The package compiles without Node's types, so `process` is reached
+    // through globalThis rather than declared.
+    const nodeProcess = (
+      globalThis as unknown as {
+        process: {
+          on(event: string, listener: (reason: unknown) => void): void;
+          off(event: string, listener: (reason: unknown) => void): void;
+        };
+      }
+    ).process;
+    nodeProcess.on("unhandledRejection", onUnhandled);
+    try {
+      new A2AMiddlewareAgent({
+        agentUrls: ["http://127.0.0.1:9"],
+        orchestrationAgent: new StubOrchestrationAgent(orchestrationEvents()),
+      });
+      // Let the rejected fetch settle and Node's rejection tracking run.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      nodeProcess.off("unhandledRejection", onUnhandled);
+      fetchSpy.mockRestore();
+      consoleSpy.mockRestore();
+    }
+  });
+});

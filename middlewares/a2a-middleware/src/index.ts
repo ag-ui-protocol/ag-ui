@@ -44,6 +44,10 @@ export class A2AMiddlewareAgent extends AbstractAgent {
     this.agentCards = Promise.all(
       this.agentClients.map((client) => client.getAgentCard()),
     );
+    // An unreachable agent rejects this before any run awaits it. Marking it
+    // handled keeps that from being an unhandled rejection; each run still
+    // awaits the same rejected promise and reports the failure itself.
+    this.agentCards.catch(() => {});
     this.orchestrationAgent = config.orchestrationAgent;
   }
 
@@ -366,7 +370,16 @@ export class A2AMiddlewareAgent extends AbstractAgent {
           pendingTextMessages,
         );
       };
-      run();
+      // `run` is async, so a rejection (an agent card that could not be
+      // fetched, say) has to be turned into a failed run here; otherwise the
+      // stream never emits a terminal event and hangs.
+      run().catch((error: unknown) => {
+        observer.next({
+          type: EventType.RUN_ERROR,
+          message: error instanceof Error ? error.message : String(error),
+        } as RunErrorEvent);
+        observer.error(error);
+      });
     });
   }
 
