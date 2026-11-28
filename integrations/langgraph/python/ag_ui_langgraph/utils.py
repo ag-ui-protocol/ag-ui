@@ -771,6 +771,20 @@ def _agui_reasoning_message_to_block(message: AGUIReasoningMessage) -> Dict[str,
     return block
 
 
+def tool_message_metadata(message: Any) -> Optional[Dict[str, Any]]:
+    """AG-UI metadata for a LangChain tool message: ``{"langgraph": {"artifact": ...}}``.
+
+    Only ``artifact`` is exposed; ``additional_kwargs`` and ``response_metadata``
+    can carry provider internals and are never forwarded. Used by both the
+    TOOL_CALL_RESULT event and the snapshot conversion so a later snapshot does
+    not drop metadata that arrived while streaming.
+    """
+    artifact = getattr(message, "artifact", None)
+    if artifact is None:
+        return None
+    return {"langgraph": {"artifact": make_json_safe(artifact)}}
+
+
 def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]:
     agui_messages: List[AGUIMessage] = []
     for message in messages:
@@ -849,6 +863,7 @@ def langchain_messages_to_agui(messages: List[BaseMessage]) -> List[AGUIMessage]
                 # round trip; the value is a fixed sentinel (#2305) because the
                 # original text is not recoverable from the flag alone.
                 error="error" if message.status == "error" else None,
+                metadata=tool_message_metadata(message),
             ))
         else:
             raise TypeError(f"Unsupported message type: {type(message)}")

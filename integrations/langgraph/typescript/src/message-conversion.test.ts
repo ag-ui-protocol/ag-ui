@@ -199,6 +199,33 @@ describe("Message Conversion - All Types", () => {
       expect(result[0].error).toBe("error");
     });
 
+    it("should map a tool message artifact onto metadata.langgraph.artifact", () => {
+      const msg = {
+        id: "t1",
+        type: "tool",
+        content: "2 rows",
+        tool_call_id: "tc1",
+        artifact: { rows: [1, 2] },
+        additional_kwargs: { secret: "x" },
+      } as any as LangGraphMessage;
+      const result: any[] = langchainMessagesToAgui([msg]);
+      expect(result[0].metadata).toEqual({
+        langgraph: { artifact: { rows: [1, 2] } },
+      });
+    });
+
+    it("should not set metadata for a tool message with a null artifact", () => {
+      const msg = {
+        id: "t1",
+        type: "tool",
+        content: "result",
+        tool_call_id: "tc1",
+        artifact: null,
+      } as any as LangGraphMessage;
+      const result: any[] = langchainMessagesToAgui([msg]);
+      expect("metadata" in result[0]).toBe(false);
+    });
+
     it("should handle generic (ChatMessage) type as assistant", () => {
       const msg = {
         id: "g1",

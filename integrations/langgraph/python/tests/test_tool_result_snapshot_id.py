@@ -101,6 +101,21 @@ def get_weather_command_dict(city: str, tool_call_id: Annotated[str, InjectedToo
         {"type": "tool", "content": f"Sunny in {city}", "tool_call_id": tool_call_id}]})
 
 
+@tool("get_weather", response_format="content_and_artifact")
+def get_weather_artifact(city: str):
+    """Get weather, returning structured data as the ToolMessage artifact."""
+    return f"Sunny in {city}", {"temp_c": 21}
+
+
+@tool("get_weather")
+def get_weather_command_dict_artifact(city: str,
+                                      tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
+    """Get weather, returning a Command whose dict message carries an artifact."""
+    return Command(update={"messages": [
+        {"type": "tool", "content": f"Sunny in {city}", "tool_call_id": tool_call_id,
+         "artifact": {"temp_c": 21}}]})
+
+
 @tool("get_weather")
 def get_weather_command_multi(city: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command:
     """Get weather, returning a Command that carries several tool messages without ids.
@@ -253,6 +268,32 @@ class TestToolCallResultMatchesSnapshot(unittest.IsolatedAsyncioTestCase):
     async def test_tool_returning_command_with_several_messages(self):
         _, results, _ = await self._assert_result_id_matches_snapshot(get_weather_command_multi)
         self.assertEqual(len(results), 2)
+
+
+class TestToolArtifactMetadata(unittest.IsolatedAsyncioTestCase):
+    """ToolMessage.artifact reaches TOOL_CALL_RESULT and the snapshot as the
+    same metadata, so the snapshot does not drop what was streamed."""
+
+    async def _result_and_snapshot_metadata(self, weather_tool):
+        events = await _run(weather_tool)
+        result = [e for e in events if e.type == EventType.TOOL_CALL_RESULT][-1]
+        snapshot = [e for e in events if e.type == EventType.MESSAGES_SNAPSHOT][-1]
+        snapshot_tool = next(m for m in snapshot.messages if m.role == "tool")
+        return result.metadata, snapshot_tool.metadata
+
+    async def test_plain_tool_artifact(self):
+        expected = {"langgraph": {"artifact": {"temp_c": 21}}}
+        self.assertEqual(await self._result_and_snapshot_metadata(get_weather_artifact),
+                         (expected, expected))
+
+    async def test_command_dict_artifact(self):
+        expected = {"langgraph": {"artifact": {"temp_c": 21}}}
+        self.assertEqual(
+            await self._result_and_snapshot_metadata(get_weather_command_dict_artifact),
+            (expected, expected))
+
+    async def test_tool_without_artifact_has_no_metadata(self):
+        self.assertEqual(await self._result_and_snapshot_metadata(get_weather), (None, None))
 
 
 class TestToolCallResultMatchesSnapshotWithSlowConsumer(unittest.IsolatedAsyncioTestCase):

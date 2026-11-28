@@ -284,6 +284,22 @@ class TestLangchainMessagesToAgui(unittest.TestCase):
         assert result[0].role == "tool"
         assert result[0].error == "error"
 
+    def test_tool_message_artifact_maps_to_metadata(self):
+        msg = ToolMessage(
+            id="t1",
+            content="2 rows",
+            tool_call_id="tc1",
+            artifact={"rows": [1, 2]},
+            additional_kwargs={"secret": "x"},
+        )
+        result = langchain_messages_to_agui([msg])
+        assert result[0].metadata == {"langgraph": {"artifact": {"rows": [1, 2]}}}
+
+    def test_tool_message_without_artifact_has_no_metadata(self):
+        msg = ToolMessage(id="t1", content="result", tool_call_id="tc1")
+        result = langchain_messages_to_agui([msg])
+        assert "metadata" not in result[0].model_dump(by_alias=True, exclude_none=True)
+
     def test_multimodal_human_message(self):
         msg = HumanMessage(
             id="m1",
