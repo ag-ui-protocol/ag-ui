@@ -466,7 +466,13 @@ export const agentsIntegrations = {
 
   agno: async () =>
     mapAgents(
-      (path) => new AgnoAgent({ url: `${envVars.agnoUrl}/${path}/agui` }),
+      (path) =>
+        new AgnoAgent({
+          url: `${envVars.agnoUrl}/${path}/agui`,
+          ...(envVars.agnoAuthToken && {
+            headers: { Authorization: `Bearer ${envVars.agnoAuthToken}` },
+          }),
+        }),
       {
         agentic_chat: "agentic_chat",
         // The adapter puts the client's context into the prompt, so the
