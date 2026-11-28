@@ -108,8 +108,8 @@ final class DocumentInputContentTests: XCTestCase {
         let contentArray = json?["content"] as? [[String: Any]]
 
         XCTAssertEqual(contentArray?[0]["type"] as? String, "document")
-        XCTAssertEqual(contentArray?[0]["mimeType"] as? String, "application/pdf")
-        XCTAssertEqual(contentArray?[0]["title"] as? String, "Report")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["mimeType"] as? String, "application/pdf")
+        XCTAssertEqual((contentArray?[0]["metadata"] as? [String: Any])?["title"] as? String, "Report")
     }
 
     // MARK: - Equatable / Hashable / Sendable

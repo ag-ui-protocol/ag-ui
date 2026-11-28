@@ -24,7 +24,7 @@ struct ActivityMessageDTO {
         let activityType = try MessageDecodingHelpers.extractRequiredString(from: jsonObject, key: "activityType")
 
         // Extract content as JSON object (wire format key is "content")
-        guard let activityContentValue = jsonObject["content"] else {
+        guard let activityContent = try EventJSONField.data("content", from: data) else {
             throw DecodingError.keyNotFound(
                 CodingKeys.content,
                 DecodingError.Context(
@@ -33,10 +33,6 @@ struct ActivityMessageDTO {
                 )
             )
         }
-
-        // Convert activityContent to Data
-        let activityContent: Data
-        activityContent = try anyToJSONData(activityContentValue)
 
         return ActivityMessageDTO(id: id, activityType: activityType, activityContent: activityContent)
     }

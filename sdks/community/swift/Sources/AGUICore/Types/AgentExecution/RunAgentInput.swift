@@ -74,10 +74,14 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
     /// The unique identifier for this run.
     public let runId: String
 
+    /// Declared AG-UI protocol version. Pass `nil` only for a legacy peer whose
+    /// request schema rejects this optional field.
+    public let protocolVersion: String?
+
     /// Optional parent run identifier for nested agent calls.
     public let parentRunId: String?
 
-    /// Current state data as JSON.
+    /// Current state data as a non-null JSON value (object, array, or scalar).
     ///
     /// Defaults to an empty JSON object.
     public let state: Data
@@ -116,6 +120,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
     /// - Parameters:
     ///   - threadId: Conversation thread identifier
     ///   - runId: Unique run identifier
+    ///   - protocolVersion: Declared protocol version (defaults to `"1.0"`)
     ///   - parentRunId: Optional parent run identifier
     ///   - state: State data as JSON (defaults to empty object)
     ///   - messages: Message history (defaults to empty)
@@ -126,6 +131,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
     public init(
         threadId: String,
         runId: String,
+        protocolVersion: String? = "1.0",
         parentRunId: String? = nil,
         state: Data = Data("{}".utf8),
         messages: [any Message] = [],
@@ -136,6 +142,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
     ) {
         self.threadId = threadId
         self.runId = runId
+        self.protocolVersion = protocolVersion
         self.parentRunId = parentRunId
         self.state = state
         self.messages = messages
@@ -157,6 +164,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         case context
         case forwardedProps
         case resume
+        case protocolVersion
     }
 
     public init(from decoder: Decoder) throws {
@@ -165,15 +173,17 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         // Decode simple string fields
         threadId = try container.decode(String.self, forKey: .threadId)
         runId = try container.decode(String.self, forKey: .runId)
+        // Inputs decoded from a fixture or older caller still declare the
+        // current protocol when sent again. Explicit legacy opt-out is an
+        // initializer choice for the request being made.
+        protocolVersion = try container.decodeIfPresent(String.self, forKey: .protocolVersion) ?? "1.0"
         parentRunId = try container.decodeIfPresent(String.self, forKey: .parentRunId)
 
-        // Decode state as arbitrary JSON object and convert to Data.
-        // The encoder writes `null` when state is an empty `{}` object, so treat
-        // an explicit null here as equivalent to "no state" (empty object).
+        // Preserve the state shape, including arrays and scalars. Continue to
+        // accept the legacy null sentinel as "no state" (empty object).
         if container.contains(.state), !(try container.decodeNil(forKey: .state)) {
-            let stateContainer = try container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: .state)
-            let stateObject = try stateContainer.decodeJSONObject()
-            state = try JSONSerialization.data(withJSONObject: stateObject)
+            let stateValue = try container.decode(AnyCodable.self, forKey: .state)
+            state = try JSONSerialization.data(withJSONObject: stateValue.value, options: [.fragmentsAllowed])
         } else {
             state = Data("{}".utf8)
         }
@@ -215,19 +225,19 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         // Encode simple string fields
         try container.encode(threadId, forKey: .threadId)
         try container.encode(runId, forKey: .runId)
+        try container.encodeIfPresent(protocolVersion, forKey: .protocolVersion)
         try container.encodeIfPresent(parentRunId, forKey: .parentRunId)
 
-        // Encode state: send null when empty so backends treat it as "no state".
-        // An empty {} object causes some adapters (e.g. claude-agent-sdk) to
-        // spin up unnecessary state-management infrastructure. null is the
-        // correct sentinel for "caller has no state to manage."
-        let stateObject = try JSONSerialization.jsonObject(with: state)
-        if let stateDict = stateObject as? [String: Any], stateDict.isEmpty {
-            try container.encodeNil(forKey: .state)
-        } else {
-            var stateContainer = container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: .state)
-            try stateContainer.encodeJSONObject(stateObject)
+        // State may be an object, array, or scalar. Do not force it through a
+        // keyed container, which silently replaces arrays with empty objects.
+        let stateValue = try JSONSerialization.jsonObject(with: state, options: [.fragmentsAllowed])
+        guard !(stateValue is NSNull) else {
+            throw EncodingError.invalidValue(state, .init(
+                codingPath: container.codingPath + [CodingKeys.state],
+                debugDescription: "RunAgentInput.state must be a non-null JSON value"
+            ))
         }
+        try container.encode(AnyCodable(stateValue), forKey: .state)
 
         // Encode messages as polymorphic array using MessageEncoder
         let messageEncoder = MessageEncoder()
@@ -258,6 +268,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(threadId)
         hasher.combine(runId)
+        hasher.combine(protocolVersion)
         hasher.combine(parentRunId)
         hasher.combine(state)
         hasher.combine(tools)
@@ -277,6 +288,7 @@ public struct RunAgentInput: Sendable, Codable, Hashable {
         // Fast path: check simple properties first
         guard lhs.threadId == rhs.threadId &&
               lhs.runId == rhs.runId &&
+              lhs.protocolVersion == rhs.protocolVersion &&
               lhs.parentRunId == rhs.parentRunId &&
               lhs.state == rhs.state &&
               lhs.tools == rhs.tools &&

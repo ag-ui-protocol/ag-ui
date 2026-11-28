@@ -105,7 +105,7 @@ final class StateDeltaEventTests: XCTestCase,
         let stateDelta = try XCTUnwrap(event as? StateDeltaEvent)
         let parsed = try stateDelta.parsedDelta()
         XCTAssertEqual(parsed.count, 6)
-        
+
         // Verify operation types
         let operations = parsed.compactMap { $0 as? [String: Any] }
         let ops = operations.compactMap { $0["op"] as? String }
@@ -164,7 +164,7 @@ final class StateDeltaEventTests: XCTestCase,
         let stateDelta = try XCTUnwrap(event as? StateDeltaEvent)
         let parsed = try stateDelta.parsedDelta()
         XCTAssertEqual(parsed.count, 2)
-        
+
         if let firstOp = parsed[0] as? [String: Any] {
             XCTAssertEqual(firstOp["op"] as? String, "add")
             XCTAssertEqual(firstOp["path"] as? String, "/users/0")

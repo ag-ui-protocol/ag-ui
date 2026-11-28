@@ -16,7 +16,7 @@ struct RawEventDTO {
         }
 
         // Protocol wire field is "event" (not "data") per AG-UI spec
-        guard let eventValue = jsonObject["event"] else {
+        guard let eventData = try EventJSONField.data("event", from: data) else {
             throw DecodingError.keyNotFound(
                 CodingKeys.event,
                 DecodingError.Context(codingPath: [], debugDescription: "Missing event field")
@@ -28,11 +28,6 @@ struct RawEventDTO {
 
         // Extract timestamp using shared helper
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
-
-        // Convert event value to JSON data
-        // Use JSONEncoder for primitives, JSONSerialization for collections
-        let eventData: Data
-        eventData = try anyToJSONData(eventValue)
 
         return RawEventDTO(data: eventData, source: source, timestamp: timestamp)
     }

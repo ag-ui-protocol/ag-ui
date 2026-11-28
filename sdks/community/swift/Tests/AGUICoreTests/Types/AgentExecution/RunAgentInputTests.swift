@@ -15,10 +15,18 @@ final class RunAgentInputTests: XCTestCase {
 
         XCTAssertEqual(input.threadId, "thread-123")
         XCTAssertEqual(input.runId, "run-456")
+        XCTAssertEqual(input.protocolVersion, "1.0")
         XCTAssertNil(input.parentRunId)
         XCTAssertTrue(input.messages.isEmpty)
         XCTAssertTrue(input.tools.isEmpty)
         XCTAssertTrue(input.context.isEmpty)
+    }
+
+    func testLegacyPeerOmitsProtocolVersion() throws {
+        let input = RunAgentInput(threadId: "thread", runId: "run", protocolVersion: nil)
+        let encoded = try JSONEncoder().encode(input)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(object["protocolVersion"])
     }
 
     func testInitWithParentRunId() {

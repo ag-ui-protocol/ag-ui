@@ -26,12 +26,16 @@ import Foundation
 /// ```
 public actor URLSessionHTTPClient: HTTPClient {
     private let session: URLSession
+    private let shouldInvalidateSession: Bool
 
     /// Creates a new URLSession HTTP client with the specified session.
     ///
     /// This is the primary initializer that accepts a URLSession instance,
     /// enabling full control over session configuration and injection of
     /// mock sessions for testing.
+    ///
+    /// The session remains owned by the caller. Releasing this client does not
+    /// invalidate it; the caller is responsible for its lifecycle.
     ///
     /// - Parameter session: The URLSession to use for requests
     ///
@@ -44,19 +48,28 @@ public actor URLSessionHTTPClient: HTTPClient {
     /// let client = URLSessionHTTPClient(session: session)
     /// ```
     public init(session: URLSession) {
+        self.init(session: session, shouldInvalidateSession: false)
+    }
+
+    /// Specifies whether this client is responsible for invalidating the session.
+    init(session: URLSession, shouldInvalidateSession: Bool) {
         self.session = session
+        self.shouldInvalidateSession = shouldInvalidateSession
     }
 
     deinit {
-        // Release OS-level socket pool and free the session delegate.
-        // invalidateAndCancel() is synchronous and safe to call from deinit.
-        session.invalidateAndCancel()
+        if shouldInvalidateSession {
+            // Release owned resources without affecting caller-owned sessions.
+            // invalidateAndCancel() is synchronous and safe to call from deinit.
+            session.invalidateAndCancel()
+        }
     }
 
     /// Creates a new URLSession HTTP client with the specified configuration.
     ///
     /// This factory method provides a convenient way to create a client
-    /// with custom URLSession configuration.
+    /// with custom URLSession configuration. The client owns the new session
+    /// and invalidates it when released, after any active byte producer ends.
     ///
     /// - Parameter configuration: URLSession configuration (default: .default)
     /// - Returns: A new URLSession HTTP client
@@ -72,7 +85,7 @@ public actor URLSessionHTTPClient: HTTPClient {
         configuration: URLSessionConfiguration = .default
     ) -> URLSessionHTTPClient {
         let session = URLSession(configuration: configuration)
-        return URLSessionHTTPClient(session: session)
+        return URLSessionHTTPClient(session: session, shouldInvalidateSession: true)
     }
 
     /// Executes an HTTP request using URLSession.
@@ -105,7 +118,11 @@ public actor URLSessionHTTPClient: HTTPClient {
         // Bridge URLSession.AsyncBytes → AsyncThrowingStream<UInt8, Error> so that
         // HTTPResponse is decoupled from URLSession and can be mocked in tests.
         let stream = AsyncThrowingStream<UInt8, Error> { continuation in
-            let task = Task {
+            // Keep the client (and its session) alive until the byte producer
+            // completes or is cancelled. An HttpAgent may be released as soon
+            // as it returns its EventStream to the caller.
+            let task = Task { [owner = self] in
+                defer { withExtendedLifetime(owner) {} }
                 do {
                     for try await byte in bytes {
                         continuation.yield(byte)

@@ -5,12 +5,19 @@ on:
     branches: [main]
     paths:
       - "sdks/community/swift/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
       - ".github/workflows/unit-swift-sdk.yml"
   pull_request:
     branches: [main]
     paths:
       - "sdks/community/swift/**"
+      - "sdks/fixtures/**"
+      - "spec/1.0/**"
       - ".github/workflows/unit-swift-sdk.yml"
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

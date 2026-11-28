@@ -12,14 +12,20 @@ public struct HttpAgentTransport: AgentTransport {
     public init(configuration: HttpAgentConfiguration, endpoint: String = "/run") {
         self.configuration = configuration
         self.transport = HttpTransport(configuration: configuration)
-        self.decoder = AGUIEventDecoder()
+        var decoderConfiguration = AGUIEventDecoder.Configuration()
+        decoderConfiguration.unknownEventStrategy = .returnUnknown
+        decoderConfiguration.enforceForwardCompatibility = true
+        self.decoder = AGUIEventDecoder(config: decoderConfiguration)
         self.endpoint = endpoint
     }
 
     public init(configuration: HttpAgentConfiguration, httpClient: any HTTPClient, endpoint: String = "/run") {
         self.configuration = configuration
         self.transport = HttpTransport(configuration: configuration, httpClient: httpClient)
-        self.decoder = AGUIEventDecoder()
+        var decoderConfiguration = AGUIEventDecoder.Configuration()
+        decoderConfiguration.unknownEventStrategy = .returnUnknown
+        decoderConfiguration.enforceForwardCompatibility = true
+        self.decoder = AGUIEventDecoder(config: decoderConfiguration)
         self.endpoint = endpoint
     }
 
@@ -67,7 +73,7 @@ public struct HttpAgentTransport: AgentTransport {
                         let eventStream = EventStream(bytes: bytes, decoder: decoder)
                         currentStream = eventStream
                         for try await event in eventStream {
-                            continuation.yield(event)
+                            if !(event is UnknownEvent) { continuation.yield(event) }
                         }
                         continuation.finish()
                         return

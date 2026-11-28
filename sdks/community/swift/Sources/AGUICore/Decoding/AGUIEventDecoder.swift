@@ -122,12 +122,10 @@ public struct AGUIEventDecoder: Sendable {
     public struct Configuration: Sendable {
         /// Strategy for handling unknown or unsupported event types.
         ///
-        /// Defaults to `.returnUnknown` (tolerant mode) so that events from newer
-        /// protocol versions — such as AG-UI 1.0 subagent events — surface as
-        /// ``UnknownEvent`` rather than terminating the stream. Use `.throwError`
-        /// in tests or strict-validation contexts where all event types must be
-        /// registered.
+        /// Defaults to `.returnUnknown` for forward-compatible streams.
         public var unknownEventStrategy: UnknownEventStrategy = .returnUnknown
+        /// Enables stripping of optional future fields at the client boundary.
+        public var enforceForwardCompatibility: Bool = false
 
         /// Creates a new configuration with default settings.
         public init() {}
@@ -235,6 +233,9 @@ public struct AGUIEventDecoder: Sendable {
     /// }
     /// ```
     public func decode(_ data: Data) throws -> any AGUIEvent {
+        // Bound nesting before handing any part of the event to Foundation.
+        do { _ = try AGUIJSON.parse(data) }
+        catch { throw EventDecodingError.invalidJSON }
         let decoder = makeDecoder()
 
         let disc = try decodeTypeDiscriminator(from: data, decoder: decoder)
@@ -256,7 +257,31 @@ public struct AGUIEventDecoder: Sendable {
             return try handleMissingHandler(for: type, typeRaw: disc.typeRaw, rawEvent: data)
         }
 
+        if config.enforceForwardCompatibility {
+            let sanitized: Data
+            do {
+                sanitized = try sanitize(data, type: type)
+            } catch {
+                // Keep the registry's more precise field diagnostic when it also rejects
+                // the event. A permissive handler cannot override schema validation.
+                do { _ = try executeHandler(handler, data: data, decoder: decoder) }
+                catch { throw error }
+                throw error
+            }
+            return try executeHandler(handler, data: sanitized, decoder: decoder)
+        }
         return try executeHandler(handler, data: data, decoder: decoder)
+    }
+
+    /// Remove unknown material from closed schema objects before registry decoding.
+    private func sanitize(_ data: Data, type: EventType) throws -> Data {
+        do {
+            return try AGUISchemaDocument(sanitizing: data, eventType: type).encoded()
+        } catch {
+            let issue = AGUISchemaDocument.eventValidationIssue(data, eventType: type)
+                ?? "Invalid known field in \(type.rawValue): \(error)"
+            throw EventDecodingError.decodingFailed(issue)
+        }
     }
 
     /// Rewrites a legacy `THINKING_*` wire event to its `REASONING_*` equivalent.
@@ -298,7 +323,7 @@ public struct AGUIEventDecoder: Sendable {
             let id = UUID().uuidString
             remapState.currentMessageId = id
             targetType = .reasoningMessageStart
-            extraFields = ["messageId": id, "role": "assistant"]
+            extraFields = ["messageId": id, "role": "reasoning"]
 
         case "THINKING_TEXT_MESSAGE_CONTENT":
             let id = remapState.currentMessageId ?? UUID().uuidString

@@ -27,7 +27,7 @@ final class ActivitySnapshotEventTests: XCTestCase,
         // Given
         let content = ["key": "value"]
         let contentData = try JSONSerialization.data(withJSONObject: content, options: [])
-        
+
         let data = jsonData("""
         {
           "type": "ACTIVITY_SNAPSHOT",

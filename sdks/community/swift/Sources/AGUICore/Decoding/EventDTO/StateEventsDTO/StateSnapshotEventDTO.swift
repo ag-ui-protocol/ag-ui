@@ -14,7 +14,7 @@ struct StateSnapshotEventDTO {
             )
         }
 
-        guard let snapshotValue = jsonObject["snapshot"] else {
+        guard let snapshotData = try EventJSONField.data("snapshot", from: data) else {
             throw DecodingError.keyNotFound(
                 CodingKeys.snapshot,
                 DecodingError.Context(codingPath: [], debugDescription: "Missing snapshot field")
@@ -23,11 +23,6 @@ struct StateSnapshotEventDTO {
 
         // Extract timestamp using shared helper
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
-
-        // Convert snapshot value to JSON data
-        // Use JSONEncoder for primitives, JSONSerialization for collections
-        let snapshotData: Data
-        snapshotData = try anyToJSONData(snapshotValue)
 
         return StateSnapshotEventDTO(snapshot: snapshotData, timestamp: timestamp)
     }

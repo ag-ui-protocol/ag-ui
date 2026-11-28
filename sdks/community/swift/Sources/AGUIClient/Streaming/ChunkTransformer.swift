@@ -14,6 +14,15 @@ public enum ChunkTransformError: Error, Sendable {
     case missingToolCallInfo
 }
 
+extension ChunkTransformError: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .missingMessageId: "First TEXT_MESSAGE_CHUNK must have a messageId"
+        case .missingToolCallInfo: "First TOOL_CALL_CHUNK must have a toolCallName"
+        }
+    }
+}
+
 // MARK: - ChunkTransformer
 
 /// Transforms chunk events into structured start/content/end sequences.
@@ -93,6 +102,8 @@ private actor EventTransformer {
             try handleTextChunk(chunk)
         case let chunk as ToolCallChunkEvent:
             try handleToolChunk(chunk)
+        case is RawEvent:
+            continuation.yield(event)
         case is TextMessageStartEvent, is TextMessageContentEvent, is TextMessageEndEvent:
             handleTextEvent(event)
         case is ToolCallStartEvent, is ToolCallArgsEvent, is ToolCallEndEvent:
@@ -121,7 +132,9 @@ private actor EventTransformer {
             ))
 
             mode = .text
-            textState = TextState(messageId: id, fromChunk: true)
+            textState = TextState(messageId: id, role: chunk.role ?? "assistant", fromChunk: true)
+        } else if let role = chunk.role, role != textState?.role {
+            throw AGUIProtocolError(message: "TEXT_MESSAGE_CHUNK role does not match the open stream's role")
         }
 
         // Emit content if delta is present and non-empty
@@ -156,7 +169,9 @@ private actor EventTransformer {
             ))
 
             mode = .tool
-            toolState = ToolState(toolCallId: id, fromChunk: true)
+            toolState = ToolState(toolCallId: id, toolCallName: name, fromChunk: true)
+        } else if let name = toolName, name != toolState?.toolCallName {
+            throw AGUIProtocolError(message: "TOOL_CALL_CHUNK toolCallName does not match the open stream's toolCallName")
         }
 
         // Emit args if delta is present and non-empty
@@ -175,12 +190,16 @@ private actor EventTransformer {
         case let start as TextMessageStartEvent:
             closePending(event)
             mode = .text
-            textState = TextState(messageId: start.messageId, fromChunk: false)
+            textState = TextState(messageId: start.messageId, role: start.role, fromChunk: false)
             continuation.yield(event)
 
         case let content as TextMessageContentEvent:
             mode = .text
-            textState = TextState(messageId: content.messageId, fromChunk: false)
+            if textState?.messageId == content.messageId {
+                textState?.fromChunk = false
+            } else {
+                textState = TextState(messageId: content.messageId, role: "assistant", fromChunk: false)
+            }
             continuation.yield(event)
 
         case is TextMessageEndEvent:
@@ -200,7 +219,7 @@ private actor EventTransformer {
         case let start as ToolCallStartEvent:
             closePending(event)
             mode = .tool
-            toolState = ToolState(toolCallId: start.toolCallId, fromChunk: false)
+            toolState = ToolState(toolCallId: start.toolCallId, toolCallName: start.toolCallName, fromChunk: false)
             continuation.yield(event)
 
         case let args as ToolCallArgsEvent:
@@ -208,7 +227,7 @@ private actor EventTransformer {
             if toolState?.toolCallId == args.toolCallId {
                 toolState?.fromChunk = false
             } else {
-                toolState = ToolState(toolCallId: args.toolCallId, fromChunk: false)
+                toolState = ToolState(toolCallId: args.toolCallId, toolCallName: "", fromChunk: false)
             }
             continuation.yield(event)
 
@@ -284,11 +303,13 @@ private enum ChunkMode {
 
 private struct TextState {
     let messageId: String
+    let role: String
     var fromChunk: Bool
 }
 
 private struct ToolState {
     let toolCallId: String
+    let toolCallName: String
     var fromChunk: Bool
 }
 

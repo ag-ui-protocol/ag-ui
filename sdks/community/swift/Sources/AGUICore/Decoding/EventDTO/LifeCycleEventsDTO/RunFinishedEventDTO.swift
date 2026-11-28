@@ -5,12 +5,12 @@ import Foundation
 struct RunFinishedEventDTO {
     let threadId: String
     let runId: String
-    let outcome: RunFinishedOutcome
+    let outcome: RunFinishedOutcome?
     let result: Data?
     let timestamp: Int64?
 
     static func decode(from data: Data, decoder: JSONDecoder = JSONDecoder()) throws -> RunFinishedEventDTO {
-        guard let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let jsonObject = try? EventJSONField.envelope(["threadId", "runId", "outcome", "timestamp"], from: data) else {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(codingPath: [], debugDescription: "Expected JSON object at root")
             )
@@ -48,40 +48,58 @@ struct RunFinishedEventDTO {
             )
         }
 
-        // Decode the AG-UI 1.0 outcome discriminated union: { "type": "success" | "cancelled" |
-        // "interrupt", "interrupts"?: [...] }. Missing or unrecognised values fall back to
-        // .success for forward compatibility with legacy producers and future protocol versions.
-        let outcome: RunFinishedOutcome
-        if let outcomeObject = jsonObject["outcome"] as? [String: Any],
-           let typeRaw = outcomeObject["type"] as? String {
-            switch typeRaw {
-            case "success":
-                outcome = .success
-            case "cancelled":
-                outcome = .cancelled
-            case "interrupt":
-                let interruptDicts = (outcomeObject["interrupts"] as? [[String: Any]]) ?? []
-                let interrupts = interruptDicts.compactMap { try? Interrupt.decode(from: $0) }
-                outcome = .interrupt(interrupts)
-            default:
-                outcome = .success
-            }
-        } else {
-            outcome = .success
-        }
+        // The AG-UI wire protocol sends `outcome` as a discriminated union object:
+        //   { "type": "success" }
+        //   { "type": "interrupt", "interrupts": [ { "id": "...", "reason": "..." }, ... ] }
+        //
+        // A null or missing field means no outcome was provided (legacy producer).
+        // An unrecognised "type" value is treated as nil for forward compatibility.
+        let outcome: RunFinishedOutcome? = try decodeOutcome(from: jsonObject)
 
         let timestamp = try EventDecodingHelpers.extractTimestamp(from: jsonObject)
 
-        var resultData: Data?
-        if let resultValue = jsonObject["result"], !(resultValue is NSNull) {
-            resultData = try? anyToJSONData(resultValue)
-        }
+        let resultData = try EventJSONField.data("result", from: data)
 
         return RunFinishedEventDTO(threadId: threadId, runId: runId, outcome: outcome, result: resultData, timestamp: timestamp)
     }
 
     func toDomain(rawEvent: Data? = nil) -> RunFinishedEvent {
         RunFinishedEvent(threadId: threadId, runId: runId, outcome: outcome, result: result, timestamp: timestamp, rawEvent: rawEvent)
+    }
+
+    // MARK: - Private
+
+    private static func decodeOutcome(from jsonObject: [String: Any]) throws -> RunFinishedOutcome? {
+        if jsonObject["outcome"] is [Any] {
+            throw EventDecodingError.decodingFailed("expected object, received array")
+        }
+        guard let outcomeValue = jsonObject["outcome"],
+              !(outcomeValue is NSNull),
+              let outcomeObj = outcomeValue as? [String: Any],
+              let type = outcomeObj["type"] as? String
+        else {
+            return nil
+        }
+
+        switch type {
+        case "success":
+            return .success
+
+        case "interrupt":
+            let rawInterrupts = outcomeObj["interrupts"] as? [[String: Any]] ?? []
+            let interrupts = try rawInterrupts.map { try Interrupt.decode(from: $0) }
+            // The TypeScript schema requires at least one interrupt for this outcome type.
+            // An empty array is treated as nil (malformed payload) for safety.
+            guard !interrupts.isEmpty else { return nil }
+            return .interrupt(interrupts)
+
+        case "cancelled":
+            return .cancelled
+
+        default:
+            // Forward-compatible: unknown future outcome types are treated as nil.
+            return nil
+        }
     }
 
     private enum CodingKeys: String, CodingKey {

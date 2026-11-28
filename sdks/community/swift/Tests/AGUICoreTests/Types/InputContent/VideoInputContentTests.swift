@@ -96,7 +96,7 @@ final class VideoInputContentTests: XCTestCase {
         let contentArray = json?["content"] as? [[String: Any]]
 
         XCTAssertEqual(contentArray?[0]["type"] as? String, "video")
-        XCTAssertEqual(contentArray?[0]["url"] as? String, "https://example.com/clip.mp4")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["value"] as? String, "https://example.com/clip.mp4")
     }
 
     // MARK: - Equatable / Hashable / Sendable
@@ -134,8 +134,8 @@ final class VideoInputContentTests: XCTestCase {
         XCTAssertNil(VideoInputContent(url: "https://example.com/video.mp4").mimeType)
     }
 
-    func test_mimeType_isNilByDefault_data() {
-        XCTAssertNil(VideoInputContent(data: "base64video").mimeType)
+    func test_mimeType_defaultsToOctetStream_data() {
+        XCTAssertEqual(VideoInputContent(data: "base64video").mimeType, "application/octet-stream")
     }
 
     func test_mimeType_roundTripsViaURLInit() {
@@ -173,6 +173,6 @@ final class VideoInputContentTests: XCTestCase {
         let data = try encoder.encode(userMsg)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let contentArray = json?["content"] as? [[String: Any]]
-        XCTAssertEqual(contentArray?[0]["mimeType"] as? String, "video/mp4")
+        XCTAssertEqual((contentArray?[0]["source"] as? [String: Any])?["mimeType"] as? String, "video/mp4")
     }
 }

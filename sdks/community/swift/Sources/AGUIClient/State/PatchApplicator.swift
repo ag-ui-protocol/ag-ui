@@ -3,506 +3,208 @@
 import AGUICore
 import Foundation
 
-/// Applies RFC 6902 JSON Patch operations to JSON documents.
-///
-/// PatchApplicator implements the JSON Patch specification (RFC 6902) for
-/// applying incremental changes to JSON documents. It supports all standard
-/// operations: add, remove, replace, move, copy, and test.
-///
-/// ## Usage
-///
-/// ```swift
-/// let applicator = PatchApplicator()
-///
-/// let state = Data("{\"count\":5}".utf8)
-/// let patch = Data("""
-/// [{"op":"replace","path":"/count","value":10}]
-/// """.utf8)
-///
-/// let newState = try applicator.apply(patch: patch, to: state)
-/// ```
-///
-/// ## Supported Operations
-///
-/// - `add`: Adds a value to an object or inserts into an array
-/// - `remove`: Removes a value from an object or array
-/// - `replace`: Replaces a value
-/// - `move`: Moves a value from one location to another
-/// - `copy`: Copies a value from one location to another
-/// - `test`: Tests that a value equals the specified value
-///
-/// ## Path Format (RFC 6901)
-///
-/// Paths use JSON Pointer format:
-/// - `/foo` - Root-level field "foo"
-/// - `/foo/bar` - Nested field "bar" in object "foo"
-/// - `/items/0` - First element of array "items"
-/// - `/items/-` - Append to array "items"
-/// - `/a~0b` - Field "a~b" (~ encoded as ~0)
-/// - `/a~1b` - Field "a/b" (/ encoded as ~1)
-///
-/// - SeeAlso: [RFC 6902 - JSON Patch](https://tools.ietf.org/html/rfc6902)
-/// - SeeAlso: [RFC 6901 - JSON Pointer](https://tools.ietf.org/html/rfc6901)
+/// RFC 6902 edits over lossless JSON, preserving large integer lexemes.
 public struct PatchApplicator: Sendable {
-    /// Errors that can occur during patch application.
     public enum PatchError: Error, LocalizedError {
-        case invalidJSON(String)
-        case invalidPatch(String)
-        case invalidOperation(String)
-        case pathNotFound(String)
-        case testFailed(String)
-
+        case invalidJSON(String), invalidPatch(String), invalidOperation(String), pathNotFound(String), testFailed(String)
         public var errorDescription: String? {
             switch self {
-            case .invalidJSON(let message):
-                return "Invalid JSON: \(message)"
-            case .invalidPatch(let message):
-                return "Invalid patch: \(message)"
-            case .invalidOperation(let message):
-                return "Invalid operation: \(message)"
-            case .pathNotFound(let path):
-                return "Path not found: \(path)"
-            case .testFailed(let message):
-                return "Test operation failed: \(message)"
+            case .invalidJSON(let s): return "Invalid JSON: \(s)"
+            case .invalidPatch(let s): return "Invalid patch: \(s)"
+            case .invalidOperation(let s): return "Invalid operation: \(s)"
+            case .pathNotFound(let s): return "Path not found: \(s)"
+            case .testFailed(let s): return "Test failed: \(s)"
             }
         }
     }
-
-    /// Patch operation decoded from JSON.
-    private struct PatchOperation: Decodable {
-        let op: String
-        let path: String
-        let value: AnyCodable?
-        let from: String?
-
-        enum CodingKeys: String, CodingKey {
-            case op, path, value, from
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            op = try container.decode(String.self, forKey: .op)
-            path = try container.decode(String.self, forKey: .path)
-
-            // Use contains check to distinguish between missing field (nil) and explicit null (NSNull)
-            if container.contains(.value) {
-                value = try container.decode(AnyCodable.self, forKey: .value)
-            } else {
-                value = nil
-            }
-
-            from = try container.decodeIfPresent(String.self, forKey: .from)
-        }
-    }
-
     public init() {}
 
-    /// Applies JSON Patch operations to a JSON document.
-    ///
-    /// - Parameters:
-    ///   - patch: JSON Patch document (array of operations)
-    ///   - state: Current JSON document
-    /// - Returns: Updated JSON document
-    /// - Throws: `PatchError` if patch is invalid or cannot be applied
     public func apply(patch: Data, to state: Data) throws -> Data {
-        // Parse state JSON
-        guard let stateObject = try? JSONSerialization.jsonObject(with: state) else {
-            throw PatchError.invalidJSON("Unable to parse state JSON")
-        }
-
-        // Parse patch operations
-        let operations: [PatchOperation]
+        let parsed: AGUIJSON
+        do { parsed = try AGUIJSON.parse(state) }
+        catch { throw PatchError.invalidJSON("Unable to parse state") }
+        let operations: [AGUIJSON]
         do {
-            operations = try JSONDecoder().decode([PatchOperation].self, from: patch)
-        } catch {
-            throw PatchError.invalidPatch("Unable to parse patch JSON: \(error.localizedDescription)")
+            guard let array = try AGUIJSON.parse(patch).array else { throw PatchError.invalidPatch("Expected array") }
+            operations = array
+        } catch { throw PatchError.invalidPatch("Unable to parse patch: \(error)") }
+        var document = parsed
+        for entry in operations {
+            guard let fields = entry.object, let op = fields["op"]?.string, let path = fields["path"]?.string
+            else { throw PatchError.invalidPatch("Malformed operation") }
+            guard ["add", "remove", "replace", "move", "copy", "test"].contains(op) else {
+                throw PatchError.invalidOperation("Unknown operation: \(op)")
+            }
+            let tokens = try pointer(path)
+            switch op {
+            case "add", "replace":
+                guard let value = fields["value"] else { throw PatchError.invalidOperation("\(op) missing value") }
+                document = try edit(document, tokens, value, op == "add" ? .add : .replace)
+            case "remove": document = try edit(document, tokens, nil, .remove)
+            case "move", "copy":
+                guard let from = fields["from"]?.string else { throw PatchError.invalidOperation("\(op) missing from") }
+                let source = try pointer(from)
+                let value = try get(document, source)
+                if op == "move" { document = try edit(document, source, nil, .remove) }
+                document = try edit(document, tokens, value, .add)
+            case "test":
+                guard let value = fields["value"] else { throw PatchError.invalidOperation("test missing value") }
+                guard try equal(get(document, tokens), value) else { throw PatchError.testFailed(path) }
+            default: break
+            }
         }
-
-        // Apply operations sequentially
-        var mutableState = stateObject
-
-        for operation in operations {
-            mutableState = try applyOperation(operation, to: mutableState)
-        }
-
-        // Serialize back to JSON
-        do {
-            return try JSONSerialization.data(withJSONObject: mutableState)
-        } catch {
-            throw PatchError.invalidJSON("Unable to serialize result: \(error.localizedDescription)")
+        return try document.encoded()
+    }
+    private enum Edit { case add, remove, replace }
+    private func pointer(_ path: String) throws -> [String] {
+        if path.isEmpty { return [] }
+        guard path.hasPrefix("/") else { throw PatchError.invalidOperation("Invalid pointer: \(path)") }
+        return try path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map { part in
+            let token = String(part)
+            let unescaped = token.replacingOccurrences(of: "~0", with: "").replacingOccurrences(of: "~1", with: "")
+            guard !unescaped.contains("~") else { throw PatchError.invalidOperation("Invalid pointer escape: \(path)") }
+            return token.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~")
         }
     }
-
-    // MARK: - Operation Application
-
-    private func applyOperation(_ operation: PatchOperation, to state: Any) throws -> Any {
-        switch operation.op {
-        case "add":
-            guard let wrapper = operation.value else {
-                throw PatchError.invalidOperation("add operation missing value")
-            }
-            return try applyAdd(path: operation.path, value: wrapper.value, to: state)
-
-        case "remove":
-            return try applyRemove(path: operation.path, from: state)
-
-        case "replace":
-            guard let wrapper = operation.value else {
-                throw PatchError.invalidOperation("replace operation missing value")
-            }
-            return try applyReplace(path: operation.path, value: wrapper.value, to: state)
-
-        case "move":
-            guard let from = operation.from else {
-                throw PatchError.invalidOperation("move operation missing from")
-            }
-            return try applyMove(from: from, to: operation.path, in: state)
-
-        case "copy":
-            guard let from = operation.from else {
-                throw PatchError.invalidOperation("copy operation missing from")
-            }
-            return try applyCopy(from: from, to: operation.path, in: state)
-
-        case "test":
-            guard let wrapper = operation.value else {
-                throw PatchError.invalidOperation("test operation missing value")
-            }
-            return try applyTest(path: operation.path, value: wrapper.value, to: state)
-
-        default:
-            throw PatchError.invalidOperation("Unknown operation: \(operation.op)")
+    private func get(_ document: AGUIJSON, _ tokens: [String]) throws -> AGUIJSON {
+        guard let head = tokens.first else { return document }
+        let child: AGUIJSON?
+        switch document {
+        case .object(let fields): child = fields[head]
+        case .array(let values):
+            if let index = arrayIndex(head), values.indices.contains(index) { child = values[index] } else { child = nil }
+        default: child = nil
         }
+        guard let child else { throw PatchError.pathNotFound("/" + tokens.joined(separator: "/")) }
+        return try get(child, Array(tokens.dropFirst()))
     }
-
-    // MARK: - Individual Operations
-
-    private func applyAdd(path: String, value: Any, to state: Any) throws -> Any {
-        let tokens = try parsePath(path)
-
-        // Special case: root path replacement
-        if tokens.isEmpty {
-            return value
+    private func edit(_ document: AGUIJSON, _ tokens: [String], _ value: AGUIJSON?, _ kind: Edit) throws -> AGUIJSON {
+        guard let head = tokens.first else {
+            if kind == .remove { throw PatchError.invalidOperation("Cannot remove root") }
+            return value!
         }
-
-        var current = state
-        let lastToken = tokens.last!
-        let parentTokens = tokens.dropLast()
-
-        // Navigate to parent
-        if !parentTokens.isEmpty {
-            current = try navigate(to: Array(parentTokens), in: current)
-        }
-
-        // Add to parent
-        if var dict = current as? [String: Any] {
-            dict[lastToken] = value
-            return try updateParent(state, at: Array(parentTokens), with: dict)
-        } else if var array = current as? [Any] {
-            if lastToken == "-" {
-                array.append(value)
-            } else if let index = Int(lastToken) {
-                guard index >= 0 && index <= array.count else {
-                    throw PatchError.pathNotFound("Array index out of bounds: \(index)")
-                }
-                array.insert(value, at: index)
+        let tail = Array(tokens.dropFirst())
+        switch document {
+        case .object(var fields):
+            if tail.isEmpty {
+                if kind != .add && fields[head] == nil { throw PatchError.pathNotFound(head) }
+                if kind == .remove { fields.removeValue(forKey: head) } else { fields[head] = value }
             } else {
-                throw PatchError.invalidOperation("Invalid array index: \(lastToken)")
+                guard let child = fields[head] else { throw PatchError.pathNotFound(head) }
+                fields[head] = try edit(child, tail, value, kind)
             }
-            return try updateParent(state, at: Array(parentTokens), with: array)
-        } else {
-            throw PatchError.invalidOperation("Cannot add to non-object/non-array")
-        }
-    }
-
-    private func applyRemove(path: String, from state: Any) throws -> Any {
-        let tokens = try parsePath(path)
-        guard !tokens.isEmpty else {
-            throw PatchError.invalidOperation("Cannot remove root")
-        }
-
-        var current = state
-        let lastToken = tokens.last!
-        let parentTokens = tokens.dropLast()
-
-        // Navigate to parent
-        if !parentTokens.isEmpty {
-            current = try navigate(to: Array(parentTokens), in: current)
-        }
-
-        // Remove from parent
-        if var dict = current as? [String: Any] {
-            guard dict[lastToken] != nil else {
-                throw PatchError.pathNotFound(path)
-            }
-            dict.removeValue(forKey: lastToken)
-            return try updateParent(state, at: Array(parentTokens), with: dict)
-        } else if var array = current as? [Any] {
-            guard let index = Int(lastToken), index >= 0 && index < array.count else {
-                throw PatchError.pathNotFound(path)
-            }
-            array.remove(at: index)
-            return try updateParent(state, at: Array(parentTokens), with: array)
-        } else {
-            throw PatchError.invalidOperation("Cannot remove from non-object/non-array")
-        }
-    }
-
-    private func applyReplace(path: String, value: Any, to state: Any) throws -> Any {
-        let tokens = try parsePath(path)
-        guard !tokens.isEmpty else {
-            return value  // Replace root
-        }
-
-        var current = state
-        let lastToken = tokens.last!
-        let parentTokens = tokens.dropLast()
-
-        // Navigate to parent
-        if !parentTokens.isEmpty {
-            current = try navigate(to: Array(parentTokens), in: current)
-        }
-
-        // Replace in parent
-        if var dict = current as? [String: Any] {
-            guard dict[lastToken] != nil else {
-                throw PatchError.pathNotFound(path)
-            }
-            dict[lastToken] = value
-            return try updateParent(state, at: Array(parentTokens), with: dict)
-        } else if var array = current as? [Any] {
-            guard let index = Int(lastToken), index >= 0 && index < array.count else {
-                throw PatchError.pathNotFound(path)
-            }
-            array[index] = value
-            return try updateParent(state, at: Array(parentTokens), with: array)
-        } else {
-            throw PatchError.invalidOperation("Cannot replace in non-object/non-array")
-        }
-    }
-
-    private func applyMove(from: String, to: String, in state: Any) throws -> Any {
-        // Get value at 'from' path
-        let value = try getValue(at: from, in: state)
-
-        // Remove from 'from' path
-        var intermediate = try applyRemove(path: from, from: state)
-
-        // Add to 'to' path
-        return try applyAdd(path: to, value: value, to: intermediate)
-    }
-
-    private func applyCopy(from: String, to: String, in state: Any) throws -> Any {
-        // Get value at 'from' path
-        let value = try getValue(at: from, in: state)
-
-        // Add to 'to' path
-        return try applyAdd(path: to, value: value, to: state)
-    }
-
-    private func applyTest(path: String, value: Any, to state: Any) throws -> Any {
-        let actualValue = try getValue(at: path, in: state)
-
-        // Compare values
-        guard areEqual(actualValue, value) else {
-            throw PatchError.testFailed("Value at \(path) does not match expected value")
-        }
-
-        return state  // Test doesn't modify state
-    }
-
-    // MARK: - Helper Methods
-
-    private func parsePath(_ path: String) throws -> [String] {
-        guard path.hasPrefix("/") else {
-            throw PatchError.invalidOperation("Path must start with /: \(path)")
-        }
-
-        // Per RFC 6901: "/" means the empty-string key "". Root is represented by "".
-        if path == "/" {
-            return [""]
-        }
-
-        return path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).map { token in
-            let decoded = String(token)
-                .replacingOccurrences(of: "~1", with: "/")
-                .replacingOccurrences(of: "~0", with: "~")
-            return decoded
-        }
-    }
-
-    private func navigate(to tokens: [String], in state: Any) throws -> Any {
-        var current = state
-
-        for token in tokens {
-            if let dict = current as? [String: Any] {
-                guard let next = dict[token] else {
-                    throw PatchError.pathNotFound("/\(tokens.joined(separator: "/"))")
+            return .object(fields)
+        case .array(var values):
+            let index = head == "-" && kind == .add && tail.isEmpty ? values.count : arrayIndex(head)
+            guard let index, index >= 0 else { throw PatchError.pathNotFound(head) }
+            if tail.isEmpty {
+                if kind == .add {
+                    guard index <= values.count else { throw PatchError.pathNotFound(head) }
+                    values.insert(value!, at: index)
+                } else {
+                    guard values.indices.contains(index) else { throw PatchError.pathNotFound(head) }
+                    if kind == .remove { values.remove(at: index) } else { values[index] = value! }
                 }
-                current = next
-            } else if let array = current as? [Any] {
-                guard let index = Int(token), index >= 0 && index < array.count else {
-                    throw PatchError.pathNotFound("/\(tokens.joined(separator: "/"))")
-                }
-                current = array[index]
             } else {
-                throw PatchError.pathNotFound("/\(tokens.joined(separator: "/"))")
+                guard values.indices.contains(index) else { throw PatchError.pathNotFound(head) }
+                values[index] = try edit(values[index], tail, value, kind)
             }
+            return .array(values)
+        default: throw PatchError.pathNotFound(head)
         }
-
-        return current
+    }
+    private func arrayIndex(_ token: String) -> Int? {
+        guard token == "0" || (!token.isEmpty && token.first != "0" &&
+            token.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 })) else { return nil }
+        return Int(token)
     }
 
-    private func getValue(at path: String, in state: Any) throws -> Any {
-        let tokens = try parsePath(path)
-
-        if tokens.isEmpty {
-            return state
+    private func equal(_ lhs: AGUIJSON, _ rhs: AGUIJSON) -> Bool {
+        switch (lhs, rhs) {
+        case (.number(let a), .number(let b)):
+            return normalizedNumber(a) == normalizedNumber(b)
+        case (.array(let a), .array(let b)):
+            return a.count == b.count && zip(a, b).allSatisfy { equal($0, $1) }
+        case (.object(let a), .object(let b)):
+            return a.count == b.count && a.allSatisfy { key, value in
+                b[key].map { equal(value, $0) } ?? false
+            }
+        default: return lhs == rhs
         }
-
-        return try navigate(to: tokens, in: state)
     }
 
-    private func updateParent(_ state: Any, at tokens: [String], with value: Any) throws -> Any {
-        if tokens.isEmpty {
-            return value
-        }
-
-        var current = state
-        var components: [(Any, String)] = []
-
-        // Navigate and collect components
-        for token in tokens {
-            components.append((current, token))
-
-            if let dict = current as? [String: Any] {
-                guard let next = dict[token] else {
-                    throw PatchError.pathNotFound("/\(tokens.joined(separator: "/"))")
-                }
-                current = next
-            } else if let array = current as? [Any] {
-                guard let index = Int(token), index >= 0 && index < array.count else {
-                    throw PatchError.pathNotFound("/\(tokens.joined(separator: "/"))")
-                }
-                current = array[index]
-            }
-        }
-
-        // Rebuild from bottom up
-        var updated = value
-
-        for (parent, token) in components.reversed() {
-            if var dict = parent as? [String: Any] {
-                dict[token] = updated
-                updated = dict
-            } else if var array = parent as? [Any] {
-                guard let index = Int(token), index >= 0 && index < array.count else {
-                    throw PatchError.pathNotFound("/\(tokens.joined(separator: "/"))")
-                }
-                array[index] = updated
-                updated = array
-            }
-        }
-
-        return updated
+    private func normalizedNumber(_ value: String) -> String {
+        let parts = value.lowercased().split(separator: "e", omittingEmptySubsequences: false)
+        let mantissa = String(parts[0])
+        let negative = mantissa.hasPrefix("-")
+        let unsigned = negative ? String(mantissa.dropFirst()) : mantissa
+        let decimal = unsigned.split(separator: ".", omittingEmptySubsequences: false)
+        var digits = decimal.joined()
+        guard digits.contains(where: { $0 != "0" }) else { return "0" }
+        let fractionCount = decimal.count == 2 ? decimal[1].count : 0
+        let trailingCount = digits.reversed().prefix(while: { $0 == "0" }).count
+        digits = String(digits.drop(while: { $0 == "0" }).dropLast(trailingCount))
+        let exponent = parts.count == 2 ? String(parts[1]) : "0"
+        return (negative ? "-" : "") + digits + "e" +
+            adjustedExponent(exponent, by: trailingCount - fractionCount)
     }
 
-    private func areEqual(_ lhs: Any, _ rhs: Any) -> Bool {
-        // Handle NSNull
-        if lhs is NSNull && rhs is NSNull {
-            return true
-        }
-
-        // Compare dictionaries
-        if let lhsDict = lhs as? [String: Any], let rhsDict = rhs as? [String: Any] {
-            guard lhsDict.count == rhsDict.count else { return false }
-            for (key, value) in lhsDict {
-                guard let rhsValue = rhsDict[key], areEqual(value, rhsValue) else {
-                    return false
-                }
-            }
-            return true
-        }
-
-        // Compare arrays
-        if let lhsArray = lhs as? [Any], let rhsArray = rhs as? [Any] {
-            guard lhsArray.count == rhsArray.count else { return false }
-            for (lhsElement, rhsElement) in zip(lhsArray, rhsArray) {
-                guard areEqual(lhsElement, rhsElement) else {
-                    return false
-                }
-            }
-            return true
-        }
-
-        // Compare primitives using NSObject comparison
-        if let lhsObj = lhs as? NSObject, let rhsObj = rhs as? NSObject {
-            return lhsObj == rhsObj
-        }
-
-        return false
-    }
-}
-
-// MARK: - AnyCodable
-
-/// Type-erased Codable wrapper for decoding arbitrary JSON values.
-private struct AnyCodable: Codable {
-    let value: Any
-
-    init(_ value: Any) {
-        self.value = value
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-
-        if container.decodeNil() {
-            value = NSNull()
-        } else if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let string = try? container.decode(String.self) {
-            value = string
-        } else if let array = try? container.decode([AnyCodable].self) {
-            value = array.map { $0.value }
-        } else if let dict = try? container.decode([String: AnyCodable].self) {
-            value = dict.mapValues { $0.value }
+    /// Adds a bounded mantissa shift to an exponent of arbitrary decimal length.
+    private func adjustedExponent(_ exponent: String, by shift: Int) -> String {
+        let exponentNegative = exponent.hasPrefix("-")
+        let exponentDigits = exponent.trimmingCharacters(in: CharacterSet(charactersIn: "+-"))
+        let a = Array(exponentDigits.utf8.reversed()).map { Int($0 - 48) }
+        let b = Array(String(shift.magnitude).utf8.reversed()).map { Int($0 - 48) }
+        let shiftNegative = shift < 0
+        let negative: Bool
+        let magnitude: [Int]
+        if exponentNegative == shiftNegative {
+            magnitude = addDigits(a, b)
+            negative = exponentNegative
+        } else if compareDigits(a, b) >= 0 {
+            magnitude = subtractDigits(a, b)
+            negative = exponentNegative
         } else {
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Unable to decode value"
-            )
+            magnitude = subtractDigits(b, a)
+            negative = shiftNegative
         }
+        let trimmed = magnitude.reversed().drop(while: { $0 == 0 })
+        let canonical = trimmed.isEmpty ? "0" : trimmed.map(String.init).joined()
+        return (negative && canonical != "0" ? "-" : "") + canonical
     }
 
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
+    private func compareDigits(_ a: [Int], _ b: [Int]) -> Int {
+        let lhs = Array(a.reversed().drop(while: { $0 == 0 }))
+        let rhs = Array(b.reversed().drop(while: { $0 == 0 }))
+        if lhs.count != rhs.count { return lhs.count < rhs.count ? -1 : 1 }
+        for (x, y) in zip(lhs, rhs) where x != y { return x < y ? -1 : 1 }
+        return 0
+    }
 
-        if value is NSNull {
-            try container.encodeNil()
-        } else if isJSONBoolean(value), let bool = value as? Bool {
-            // isJSONBoolean guards against __NSCFNumber(0/1) bridging as Bool
-            // via NSNumber's -boolValue, which would corrupt integer patch values.
-            try container.encode(bool)
-        } else if let int = value as? Int {
-            try container.encode(int)
-        } else if let double = value as? Double {
-            try container.encode(double)
-        } else if let string = value as? String {
-            try container.encode(string)
-        } else if let array = value as? [Any] {
-            try container.encode(array.map { AnyCodable($0) })
-        } else if let dict = value as? [String: Any] {
-            try container.encode(dict.mapValues { AnyCodable($0) })
-        } else {
-            throw EncodingError.invalidValue(
-                value,
-                EncodingError.Context(codingPath: container.codingPath, debugDescription: "Unable to encode value")
-            )
+    private func addDigits(_ a: [Int], _ b: [Int]) -> [Int] {
+        var result: [Int] = []
+        var carry = 0
+        for index in 0..<max(a.count, b.count) {
+            let sum = (index < a.count ? a[index] : 0) +
+                (index < b.count ? b[index] : 0) + carry
+            result.append(sum % 10)
+            carry = sum / 10
         }
+        if carry != 0 { result.append(carry) }
+        return result
+    }
+
+    /// Subtracts b from a when a >= b, with least significant digits first.
+    private func subtractDigits(_ a: [Int], _ b: [Int]) -> [Int] {
+        var result: [Int] = []
+        var borrow = 0
+        for index in a.indices {
+            var digit = a[index] - (index < b.count ? b[index] : 0) - borrow
+            borrow = digit < 0 ? 1 : 0
+            if borrow != 0 { digit += 10 }
+            result.append(digit)
+        }
+        while result.count > 1 && result.last == 0 { result.removeLast() }
+        return result
     }
 }
