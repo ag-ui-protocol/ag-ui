@@ -15,6 +15,7 @@ AGUI.Server.AGUIToolCallArgumentFragment.ArgumentsDelta.get -> string!
 AGUI.Server.AGUIToolCallArgumentFragment.ArgumentsDelta.init -> void
 AGUI.Server.AGUIStreamOptions
 AGUI.Server.AGUIStreamOptions.AGUIStreamOptions() -> void
+AGUI.Server.AGUIStreamOptions.OnStreamingError(System.Action<System.Exception!, AGUI.Server.ChatRequestContext!>! observer) -> AGUI.Server.AGUIStreamOptions!
 AGUI.Server.AGUIStreamOptions.MapStreamingToolCallArguments(System.Func<Microsoft.Extensions.AI.ChatResponseUpdate!, System.Collections.Generic.IEnumerable<AGUI.Server.AGUIToolCallArgumentFragment!>?>! extractor) -> AGUI.Server.AGUIStreamOptions!
 AGUI.Server.AGUIStreamOptions.MapInterrupt(System.Func<Microsoft.Extensions.AI.AIContent!, AGUI.Abstractions.AGUIInterrupt?>! mapper) -> AGUI.Server.AGUIStreamOptions!
 AGUI.Server.AGUIStreamOptions.MapContent(System.Func<Microsoft.Extensions.AI.AIContent!, System.Collections.Generic.IEnumerable<AGUI.Abstractions.BaseEvent!>?>! mapper) -> AGUI.Server.AGUIStreamOptions!
