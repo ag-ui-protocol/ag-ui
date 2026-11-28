@@ -96,9 +96,20 @@ async function handleCopilotKitNextJs() {
     shell: true,
   });
 
+  // The handler runs after `program.action` has already resolved, so a failed
+  // scaffold can only reach the shell through the exit status. `process.exit`
+  // would truncate the child's output when stdout is a pipe; `process.exitCode`
+  // lets the process drain and still exits non-zero.
+  copilotkit.on("error", (error) => {
+    console.error(`\n❌ Failed to launch project generator: ${error.message}`);
+    process.exitCode = 1;
+  });
+
   copilotkit.on("close", (code) => {
     if (code !== 0) {
       console.log("\n❌ Project creation failed.");
+      // A signal-terminated child reports `code === null`; that is a failure too.
+      process.exitCode = code ?? 1;
     }
   });
 }
