@@ -25,7 +25,7 @@ older producers). The fixture pins the behaviour so a fourth one is not needed.
   "stream": [
     {
       "name": "run_finished_without_result_or_outcome",
-      "producedBy": ["typescript", "python", "dotnet"],
+      "producedBy": ["typescript", "python", "dotnet", "rust"],
       "note": "why this case is here",
       "input": {
         "type": "RUN_FINISHED",
@@ -53,7 +53,7 @@ carry (an individual metadata value, a value inside a state snapshot or a JSON P
 still be there. Cases are meant to be read as one plausible stream of events, top to bottom.
 
 `producedBy` exists only for event types an SDK genuinely does not implement. It is not an escape
-hatch for a case an SDK fails. Every case here currently lists all three SDKs — the chunk events
+hatch for a case an SDK fails. Every case here currently lists all four SDKs — the chunk events
 were the last exemption, and .NET has implemented them since; if you find yourself reaching for a
 shorter list, say in `note` exactly what the missing SDK lacks, so the entry can be deleted when it
 gains it.
@@ -65,11 +65,12 @@ gains it.
 | TypeScript | `sdks/typescript/packages/encoder/src/__tests__/null-omission.test.ts`     |
 | Python     | `sdks/python/tests/test_null_omission.py`                                  |
 | .NET       | `sdks/dotnet/tests/AGUI.Abstractions.UnitTests/NullOmissionFixtureTest.cs` |
+| Rust       | `sdks/community/rust/crates/ag-ui-core/tests/shared_fixtures.rs`          |
 
-Those fixture tests check that the SDKs agree with each other. Each SDK additionally has a
-reflection-driven test that walks _every_ wire type it defines — not just the ones named here — and
-fails on any `null` the contract does not permit. Adding a case here does not remove the need for
-that broader sweep; the two catch different things.
+Those fixture tests check that the SDKs agree with each other. The TypeScript, Python, and .NET
+SDKs additionally have a reflection-driven test that walks _every_ wire type they define — not
+just the ones named here — and fails on any `null` the contract does not permit. Adding a case
+here does not remove the need for that broader sweep; the two catch different things.
 
 ### Wiring a new consumer: make the build see this directory
 
@@ -90,8 +91,8 @@ in `.github/workflows/unit-*.yml`, so until `sdks/fixtures/**` was added to each
 editing only a fixture here ran no SDK **test** job. Not no job at all: `typecheck-typescript.yml`
 matched it through its blanket `sdks/**` entry and compiled the workspace, which cannot fail on a
 fixture's contents. Nothing that executes these documents ran. All three unit workflows now list
-`sdks/fixtures/**`, in both their `push` and `pull_request` filters; a new consumer in a fourth
-workflow needs the same line.
+`sdks/fixtures/**`, in both their `push` and `pull_request` filters. The Rust workflow also lists
+this directory and `spec/1.0/**`, which its fixture tests read.
 
 The obvious alternative — adding `{workspaceRoot}/sdks/fixtures/**/*` to the `test` target's
 `inputs` in `nx.json` — **does not work**, and was tried. On Nx 22.5.0 in this workspace a
@@ -122,7 +123,7 @@ distinction applies to nulls under metadata keys and inside state objects or arr
 `identity.metadata` and `custom` as dictionaries where the others carried open JSON, and all three
 spelled the subagent list `subAgents` while the rest of the protocol spells the word as one
 (`subagentRunId`). The fixture pins the generated model's wire
-shape so the three cannot drift apart again.
+shape so the SDKs cannot drift apart again.
 
 ### Shape
 
@@ -173,3 +174,4 @@ JSON — so formatting and key order may differ between the copies, but no value
 | TypeScript | `sdks/typescript/packages/core/src/__tests__/agent-capabilities-fixture.test.ts` |
 | Python     | `sdks/python/tests/test_capabilities.py`                                         |
 | .NET       | `sdks/dotnet/tests/AGUI.Abstractions.UnitTests/AgentCapabilitiesFixtureTest.cs`  |
+| Rust       | `sdks/community/rust/crates/ag-ui-core/tests/shared_fixtures.rs`                |

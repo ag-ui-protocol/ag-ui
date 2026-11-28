@@ -2,12 +2,13 @@
 
 A fixture is one event stream, replayed into a client exactly as a producer
 would have sent it, together with the outcome the specification requires of any
-client that consumes it. The same files run in two lanes:
+client that consumes it. The same files run in three lanes:
 
 | Lane | Where | How the stream arrives |
 | --- | --- | --- |
 | TypeScript | `sdks/typescript/packages/client/src/conformance/__tests__/streams.test.ts` | aimock serves it over real HTTP as SSE frames into an `HttpAgent` |
 | .NET | `sdks/dotnet/tests/AGUI.Client.UnitTests` | the same bytes are served through the real SSE formatter and event converter |
+| Rust | `sdks/community/rust/crates/ag-ui-client/tests/conformance_streams.rs` | a local HTTP server sends the raw JSON as SSE frames into `HttpAgent::run_agent`; its explicit skip map documents unsupported older era shims |
 
 They exist because the rules in the specification were, until now, only ever
 tested against the implementation that happened to hold them — which is how the
@@ -104,6 +105,7 @@ lane:
 ```bash
 pnpm -C sdks/typescript/packages/client exec vitest run src/conformance
 cd sdks/dotnet && dotnet test -p:SignAssembly=false --nologo
+cd sdks/community/rust && cargo test -p ag-ui-client --test conformance_streams -- --nocapture
 ```
 
 ### `stream`
