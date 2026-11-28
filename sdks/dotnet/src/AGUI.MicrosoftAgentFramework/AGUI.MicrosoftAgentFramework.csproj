@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <RootNamespace>AGUI.MicrosoftAgentFramework</RootNamespace>
+    <Description>Durable approval coordination for stock Microsoft Agent Framework agents.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AGUI.Server/AGUI.Server.csproj" />
+    <Compile Include="../Shared/ArgumentNullThrowHelper.cs" Link="Shared/ArgumentNullThrowHelper.cs" />
+    <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <InternalsVisibleTo Include="AGUI.MicrosoftAgentFramework.UnitTests" Condition="'$(SignAssembly)' != 'true'" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="$(MSBuildProjectDirectory)/../../PACKAGE.md" />
+    <None Remove="README.md" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

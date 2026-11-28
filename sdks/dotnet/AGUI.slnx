@@ -6,6 +6,7 @@
     <Project Path="src/AGUI.Client/AGUI.Client.csproj" />
     <Project Path="src/AGUI.Formatting/AGUI.Formatting.csproj" />
     <Project Path="src/AGUI.Server/AGUI.Server.csproj" />
+    <Project Path="src/AGUI.MicrosoftAgentFramework/AGUI.MicrosoftAgentFramework.csproj" />
     <Project Path="src/AGUI.Protobuf/AGUI.Protobuf.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -14,6 +15,7 @@
     <Project Path="tests/AGUI.Client.UnitTests/AGUI.Client.UnitTests.csproj" />
     <Project Path="tests/AGUI.Formatting.UnitTests/AGUI.Formatting.UnitTests.csproj" />
     <Project Path="tests/AGUI.Server.UnitTests/AGUI.Server.UnitTests.csproj" />
+    <Project Path="tests/AGUI.MicrosoftAgentFramework.UnitTests/AGUI.MicrosoftAgentFramework.UnitTests.csproj" />
     <Project Path="tests/AGUI.Protobuf.UnitTests/AGUI.Protobuf.UnitTests.csproj" />
     <Project Path="tests/AGUI.Protobuf.AotSmoke/AGUI.Protobuf.AotSmoke.csproj" />
     <Project Path="tests/AGUI.Hosting.AspNetCore.IntegrationTests/AGUI.Hosting.AspNetCore.IntegrationTests.csproj" />
