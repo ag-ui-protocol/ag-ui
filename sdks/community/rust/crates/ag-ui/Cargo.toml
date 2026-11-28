@@ -1,0 +1,98 @@
+[package]
+name = "ag-ui"
+description = "A Rust SDK for the AG-UI protocol: protocol types and wire encoding, a server runtime for hosting an agent, and a client runtime for consuming one. Proposed unified community Rust SDK."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+# Every runtime past the protocol types is a feature, so docs.rs must build them
+# all or the rendered API is a fraction of the real one.
+[package.metadata.docs.rs]
+all-features = true
+# Sets the `docsrs` cfg the crate reads to label feature-gated items.
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+# The protocol types and SSE framing, plus the server's ordering verifier for
+# anyone who turns `server` on. `verify` is listed here rather than implied by
+# `server` so that `default-features = false` can drop it — a feature cannot be
+# subtracted from the set another feature pulls in.
+default = ["sse", "verify"]
+
+# ---- core: types and wire encoding, always compiled ----
+# Server-Sent Events framing. No extra dependencies.
+sse = []
+# Binary transport: its media type and coverage diagnostics only. There is no
+# encoder — events.proto covers 21 of the protocol's 36 event types, so encoding
+# would drop events silently. See `encode::protobuf`. Deliberately pulls in no
+# dependency: it would be a `prost` build for a module that never calls it.
+protobuf = []
+# Opt-in schema derives (see ag-ui-protocol/ag-ui#1407).
+schemars = ["dep:schemars"]
+utoipa = ["dep:utoipa"]
+
+# ---- serve: host an agent ----
+server = [
+    "dep:futures-core",
+    "dep:futures-channel",
+    "dep:futures-util",
+    "dep:json-patch",
+]
+# Protocol ordering verification for `server`. On by default; cheap in release,
+# and the whole verifier compiles away without it.
+verify = []
+
+# ---- client: consume an agent ----
+# Transport-agnostic. Bring your own `Transport`, or turn on `http`.
+client = ["dep:futures-core", "dep:futures-util", "dep:json-patch", "dep:getrandom", "dep:chrono", "dep:js-sys"]
+# reqwest-backed HTTP transport. What most consumers want; leave it off for
+# wasm or a custom transport. Implies `sse`, because the transport negotiates
+# the SSE media type on every request.
+http = ["client", "sse", "dep:reqwest"]
+
+# ---- axum: mount a hosted agent on a router ----
+axum = ["server", "sse", "dep:axum", "dep:futures-util"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+schemars = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+
+futures-core = { workspace = true, optional = true }
+futures-channel = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+json-patch = { workspace = true, optional = true }
+chrono = { version = "0.4.45", default-features = false, features = ["std"], optional = true }
+reqwest = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta.workspace = true
+futures-util = { workspace = true, features = ["std"] }
+# `net`/`io-util` for the raw HTTP/1.1 client in tests/axum_http.rs, `time` for
+# its timeouts, the rest for the server and client test suites.
+tokio = { workspace = true, features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "time",
+] }
+# `oneshot` in the axum doctest, so the example needs no port.
+tower = { workspace = true, features = ["util"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+getrandom = { version = "0.2.16", optional = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.2.16", features = ["js"], optional = true }
+js-sys = { version = "0.3", optional = true }
