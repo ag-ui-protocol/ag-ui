@@ -158,6 +158,20 @@ maps `FunctionCallContent` and `FunctionResultContent` to tool events, maps
 `TextReasoningContent` to reasoning events, and passes through any `BaseEvent`
 stored in `ChatResponseUpdate.RawRepresentation`.
 
+### AsAGUIRunDelegate
+
+`AsAGUIRunDelegate` combines `ToChatRequestContext`, the chat client call and
+`AsAGUIEventStreamAsync` into one `AGUIRunDelegate`, a function that runs one
+AG-UI run and returns its events.
+
+```csharp
+var run = chatClient.AsAGUIRunDelegate(jsonSerializerOptions, streamOptions);
+var events = run(input, cancellationToken);
+```
+
+The delegate is also the terminal stage of an `AGUIMiddlewarePipeline`. See
+[Middleware](/sdk/dotnet/hosting/middleware).
+
 ### WrapAsSseItems
 
 ASP.NET Core's `TypedResults.ServerSentEvents` writes `SseItem<T>` values. The
