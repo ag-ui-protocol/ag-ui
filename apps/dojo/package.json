@@ -16,7 +16,8 @@
     "test:published-mode": "node --test scripts/published-mode.test.js",
     "check:protocol-locks": "node --test scripts/check-protocol-locks.test.js && node scripts/check-protocol-locks.js",
     "published-mode": "node scripts/published-mode.js",
-    "test:managed-agents-fake": "tsx --tsconfig e2e/tsconfig.event-trace.json --test e2e/managed-agents-fake.test.ts"
+    "test:managed-agents-fake": "tsx --tsconfig e2e/tsconfig.event-trace.json --test e2e/managed-agents-fake.test.ts",
+    "test:mobile-chat-drag": "tsx --test src/utils/mobile-chat-drag.test.ts"
   },
   "dependencies": {
     "@a2a-js/sdk": "0.2.5",
