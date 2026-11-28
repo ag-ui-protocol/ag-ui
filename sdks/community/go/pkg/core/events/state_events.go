@@ -69,6 +69,21 @@ type JSONPatchOperation struct {
 	From  string `json:"from,omitempty"`  // Source path for move, copy operations
 }
 
+// MarshalJSON always writes value for add, replace and test. RFC 6902 makes
+// value required on those operations and null is a legitimate value to add;
+// with omitempty alone a nil Value dropped the key and produced a patch that
+// peers reject as malformed.
+func (op JSONPatchOperation) MarshalJSON() ([]byte, error) {
+	type operation JSONPatchOperation
+	if op.Op != "add" && op.Op != "replace" && op.Op != "test" {
+		return json.Marshal(operation(op))
+	}
+	return json.Marshal(struct {
+		operation
+		Value any `json:"value"`
+	}{operation(op), op.Value})
+}
+
 // StateDeltaEvent contains incremental state changes using JSON Patch
 type StateDeltaEvent struct {
 	*BaseEvent
@@ -116,11 +131,6 @@ func validateJSONPatchOperation(op JSONPatchOperation) error {
 	// Validate path
 	if op.Path == "" {
 		return fmt.Errorf("path field is required")
-	}
-
-	// Validate value for operations that require it
-	if (op.Op == "add" || op.Op == "replace" || op.Op == "test") && op.Value == nil {
-		return fmt.Errorf("value field is required for %s operation", op.Op)
 	}
 
 	// Validate from for operations that require it
