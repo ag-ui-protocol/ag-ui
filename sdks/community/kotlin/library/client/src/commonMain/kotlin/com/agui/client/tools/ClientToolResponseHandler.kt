@@ -5,7 +5,7 @@ import com.agui.client.agent.RunAgentParameters
 import com.agui.core.types.*
 import com.agui.tools.ToolResponseHandler
 import kotlinx.coroutines.flow.collect
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import co.touchlab.kermit.Logger
 
 private val logger = Logger.withTag("ClientToolResponseHandler")

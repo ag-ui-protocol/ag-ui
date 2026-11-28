@@ -23,6 +23,7 @@ kotlin {
                     freeCompilerArgs.add("-opt-in=kotlin.RequiresOptIn")
                     freeCompilerArgs.add("-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi")
                     freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
+                    freeCompilerArgs.add("-opt-in=kotlin.time.ExperimentalTime")
                     languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
                     apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
                 }
@@ -67,9 +68,8 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             dependencies {
-                // Kotlinx libraries - core only needs serialization and datetime
+                // Kotlinx libraries - core only needs serialization
                 implementation(libs.kotlinx.serialization.json)
-                implementation(libs.kotlinx.datetime)
                 
                 // Coroutines for suspend functions
                 implementation(libs.kotlinx.coroutines.core)

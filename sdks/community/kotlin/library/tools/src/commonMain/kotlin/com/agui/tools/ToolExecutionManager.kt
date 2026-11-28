@@ -3,7 +3,7 @@ package com.agui.tools
 import com.agui.core.types.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import co.touchlab.kermit.Logger
 
 private val logger = Logger.withTag("ToolExecutionManager")
@@ -119,7 +119,7 @@ class ToolExecutionManager(
                 threadId = threadId,
                 runId = runId,
                 metadata = mapOf(
-                    "startTime" to kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+                    "startTime" to kotlin.time.Clock.System.now().toEpochMilliseconds()
                 )
             )
             

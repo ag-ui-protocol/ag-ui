@@ -5,7 +5,6 @@ kotlin = "2.1.21"
 ktor = "3.2.4"
 kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
-kotlinx-datetime = "0.6.2"
 android-gradle = "8.12.0"
 kermit = "2.0.6"
 jreleaser = "1.20.0"
@@ -33,7 +32,6 @@ ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
-kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 
 # Logging
 kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
@@ -63,6 +61,5 @@ ktor-common = [
 
 kotlinx-common = [
     "kotlinx-coroutines-core",
-    "kotlinx-serialization-json",
-    "kotlinx-datetime"
+    "kotlinx-serialization-json"
 ]

@@ -1,8 +1,8 @@
 package com.agui.tools
 
 import com.agui.core.types.ToolCall
-import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
+import kotlin.time.Clock
+import kotlin.time.Instant
 import co.touchlab.kermit.Logger
 
 private val logger = Logger.withTag("ToolErrorHandling")
@@ -132,7 +132,7 @@ class ToolErrorHandler(
         val attempts = executionHistory[toolName] ?: emptyList()
         val circuitBreaker = circuitBreakers[toolName]
         val oneHourAgoMs = Clock.System.now().toEpochMilliseconds() - (60 * 60 * 1000) // 1 hour in ms
-        val oneHourAgo = kotlinx.datetime.Instant.fromEpochMilliseconds(oneHourAgoMs)
+        val oneHourAgo = kotlin.time.Instant.fromEpochMilliseconds(oneHourAgoMs)
         
         return ToolErrorStats(
             toolName = toolName,

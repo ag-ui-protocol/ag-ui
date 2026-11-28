@@ -6,7 +6,7 @@ import com.agui.client.state.defaultApplyEvents
 import com.agui.client.verify.verifyEvents
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import co.touchlab.kermit.Logger

@@ -187,7 +187,7 @@ class DefaultToolRegistry : ToolRegistry {
         
         logger.i { "Executing tool: $toolName (call ID: ${context.toolCall.id})" }
         
-        val startTime = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+        val startTime = kotlin.time.Clock.System.now().toEpochMilliseconds()
         var result: ToolExecutionResult
         
         try {
@@ -198,7 +198,7 @@ class DefaultToolRegistry : ToolRegistry {
                 }
             } ?: executor.execute(context)
             
-            val endTime = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+            val endTime = kotlin.time.Clock.System.now().toEpochMilliseconds()
             val executionTime = endTime - startTime
             
             // Update statistics
@@ -221,7 +221,7 @@ class DefaultToolRegistry : ToolRegistry {
             }
             
         } catch (e: Exception) {
-            val endTime = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+            val endTime = kotlin.time.Clock.System.now().toEpochMilliseconds()
             val executionTime = endTime - startTime
             
             // Update failure statistics
