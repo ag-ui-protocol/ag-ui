@@ -21,7 +21,12 @@ from .types import (
     PredictStateTool,
     LangGraphReasoning,
 )
-from .utils import json_safe_stringify, make_json_safe
+from .utils import (
+    json_safe_stringify,
+    make_json_safe,
+    strip_empty_content_blocks,
+    sanitize_messages_for_responses_api,
+)
 from .endpoint import add_langgraph_fastapi_endpoint
 from .run_guidance import (
     RunGuidanceAgentMixin,
@@ -69,5 +74,7 @@ __all__ = [
     "StateStreamingMiddleware",
     "StateItem",
     "json_safe_stringify",
-    "make_json_safe"
+    "make_json_safe",
+    "strip_empty_content_blocks",
+    "sanitize_messages_for_responses_api",
 ]
