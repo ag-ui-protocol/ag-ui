@@ -1,4 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import type { BetaManagedAgentsSessionEvent } from "@anthropic-ai/sdk/resources/beta/sessions/events";
+import type { StateCommit } from "./state";
 import type { AgentConfig } from "@ag-ui/client";
 
 /**
@@ -37,6 +39,21 @@ export type ManagedAgentsErrorHandler = (
   context: ManagedAgentsErrorContext,
 ) => void | Promise<void>;
 
+/** Recovery state derived from a completed traversal of one native root timeline. */
+export interface RecoveryCheckpoint {
+  version: 1;
+  sessionId: string;
+  processedAt: string;
+  /** IDs at the inclusive lower bound, in their native order. The last is the anchor. */
+  boundaryIds: string[];
+  pending: BetaManagedAgentsSessionEvent[];
+  answeredIds: string[];
+  stateToolIds: string[];
+  sharedState?: StateCommit;
+  runtimeContext?: string;
+  running?: boolean;
+}
+
 /** Persistent mapping between an AG-UI thread and a managed session. */
 export interface SessionRecord {
   sessionId: string;
@@ -44,9 +61,11 @@ export interface SessionRecord {
   runtimeContext?: string;
   /** Last native-committed shared state. */
   primaryThreadId?: string;
-  sharedState?: import("./state").StateCommit;
+  sharedState?: StateCommit;
   sessionThreadId?: string;
   lastEventId?: string;
+  /** Native history folded through this position; the UI delivery cursor can be newer. */
+  recoveryCheckpoint?: RecoveryCheckpoint;
   /** Adopted sessions retain the tools configured by their owner. */
   preserveTools?: boolean;
   ended?: boolean;
@@ -68,7 +87,7 @@ export interface SessionRecord {
 }
 
 /**
- * Where thread↔session mappings live. The default is in-memory (lost on
+ * Where thread-to-session mappings live. The default is in-memory (lost on
  * restart, in which case a fresh session is created). Provide your own to
  * survive restarts or run multiple replicas.
  *
@@ -106,7 +125,7 @@ export interface ManagedAgentsAgentConfig extends AgentConfig {
   /** Anthropic client. Defaults to `new Anthropic()`, which reads `ANTHROPIC_API_KEY`. */
   client?: Anthropic;
   /**
-   * Thread↔session store. Defaults to an in-memory store. Records are keyed by
+   * Thread-to-session store. Defaults to an in-memory store. Records are keyed by
    * `managedAgentId:threadId`; see {@link SessionStore}.
    */
   sessionStore?: SessionStore;
