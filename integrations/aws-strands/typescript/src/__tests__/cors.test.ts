@@ -151,7 +151,10 @@ describe("corsOrigin postures on /ping and /capabilities", () => {
       const { port, close } = await startApp(posture.options);
       try {
         const res = await getPath(port, "/ping", ALLOWED_ORIGIN);
-        expect(JSON.parse(res.body)).toEqual({ status: "healthy" });
+        expect(JSON.parse(res.body)).toEqual({
+          status: "Healthy",
+          time_of_last_update: expect.any(Number),
+        });
         expectHeaders(res, posture.simple);
       } finally {
         await close();
