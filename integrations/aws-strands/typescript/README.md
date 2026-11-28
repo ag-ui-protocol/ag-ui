@@ -261,8 +261,8 @@ normally take an `Agent`. The adapter detects the orchestrator structurally (it
 has no `model`) and drives its `.stream()` directly instead of cloning a
 per-thread agent, so per-thread caching, session managers and proxy-tool sync do
 not apply: the orchestrator owns its own nodes. Both bridges do this; see
-Strands' [Graph](https://strandsagents.com/docs/user-guide/concepts/multi-agent/graph/)
-and [Swarm](https://strandsagents.com/docs/user-guide/concepts/multi-agent/swarm/)
+Strands' [Graph](https://strandsagents.com/docs/user-guide/sdk/multi-agent/graph/)
+and [Swarm](https://strandsagents.com/docs/user-guide/sdk/multi-agent/swarm/)
 guides for what each pattern is for.
 
 Each node opens a `STEP_STARTED` named `{nodeType}:{nodeId}` and closes it with
@@ -475,7 +475,7 @@ once the client itself is out of `tools`.
 `exports` map with no `./mcp` entry, so a subpath import of it does not
 resolve. Any `Transport` from `@modelcontextprotocol/sdk` works in its place;
 the streamable-HTTP one above is just the common case. See Strands' own
-[MCP tools guide](https://strandsagents.com/docs/user-guide/concepts/tools/mcp-tools/)
+[MCP tools guide](https://strandsagents.com/docs/user-guide/sdk/tools/mcp-tools/)
 for the transports and the elicitation callback.
 
 ## Per-request tool filtering
