@@ -480,3 +480,89 @@ TEST(SseParserTest, EventAccumulatorSizeExceeded) {
         }
     }, SseBufferExceededError);
 }
+
+// JSON nesting depth limit tests
+
+// `depth` levels of nested arrays, one container per level.
+static std::string nestedArrays(int depth) {
+    return std::string(static_cast<size_t>(depth), '[') + std::string(static_cast<size_t>(depth), ']');
+}
+
+TEST(SseParserTest, JsonDepthLimitAdmitsTheLimit) {
+    // The deepest payload that gets through has exactly kMaxJsonDepth containers.
+    const std::string atLimit = nestedArrays(SseParser::kMaxJsonDepth);
+
+    nlohmann::json parsed;
+    EXPECT_NO_THROW(parsed = parseJsonWithDepthLimit(atLimit));
+    EXPECT_EQ(parsed, nlohmann::json::parse(atLimit));
+}
+
+TEST(SseParserTest, JsonDepthLimitRefusesOneLevelPast) {
+    const std::string pastLimit = nestedArrays(SseParser::kMaxJsonDepth + 1);
+
+    EXPECT_THROW(parseJsonWithDepthLimit(pastLimit), JsonDepthExceededError);
+}
+
+TEST(SseParserTest, JsonDepthLimitCountsObjectsLikeArrays) {
+    // `depth` levels of nested objects, one container per level.
+    auto nestedObjects = [](int depth) {
+        std::string open;
+        std::string close;
+        for (int level = 0; level < depth; ++level) {
+            open += "{\"k\":";
+            close += "}";
+        }
+        return open + "1" + close;
+    };
+
+    EXPECT_NO_THROW(parseJsonWithDepthLimit(nestedObjects(SseParser::kMaxJsonDepth)));
+    EXPECT_THROW(parseJsonWithDepthLimit(nestedObjects(SseParser::kMaxJsonDepth + 1)),
+                 JsonDepthExceededError);
+}
+
+TEST(SseParserTest, JsonDepthLimitRefusesPayloadFarPastLimitWithParseError) {
+    // Far past the limit, but well under kMaxBufferSize: the byte cap alone
+    // does not stop this.
+    const std::string deeplyNested = nestedArrays(100000);
+    ASSERT_LT(deeplyNested.size(), SseParser::kMaxBufferSize);
+
+    try {
+        parseJsonWithDepthLimit(deeplyNested);
+        FAIL() << "Expected JsonDepthExceededError";
+    } catch (const JsonDepthExceededError& e) {
+        EXPECT_EQ(e.type(), ErrorType::Parse);
+        EXPECT_EQ(e.code(), ErrorCode::ParseJsonError);
+        EXPECT_NE(e.message().find(std::to_string(SseParser::kMaxJsonDepth)), std::string::npos);
+    }
+}
+
+TEST(SseParserTest, JsonDepthLimitAcceptsLegitimatelyDeepPayloads) {
+    // An absolute depth, deliberately not derived from kMaxJsonDepth, so the
+    // limit cannot drift below what real state or activity content reaches.
+    const std::string nested = nestedArrays(64);
+    const std::string payload = "{\"type\":\"CUSTOM\",\"name\":\"deep\",\"value\":" + nested + "}";
+
+    EXPECT_NO_THROW(parseJsonWithDepthLimit(payload));
+}
+
+TEST(SseParserTest, JsonDepthLimitDoesNotCountBracketsInsideStrings) {
+    const std::string brackets(static_cast<size_t>(SseParser::kMaxJsonDepth) * 2, '[');
+    const std::string payload = "{\"type\":\"TEXT_MESSAGE_CONTENT\",\"messageId\":\"m1\",\"delta\":\"" +
+                                brackets + "\"}";
+
+    nlohmann::json parsed;
+    EXPECT_NO_THROW(parsed = parseJsonWithDepthLimit(payload));
+    EXPECT_EQ(parsed["delta"], brackets);
+}
+
+TEST(SseParserTest, JsonDepthLimitParsesNormalInputUnchanged) {
+    const std::string payload =
+        "{\"type\":\"STATE_SNAPSHOT\",\"snapshot\":{\"items\":[1,2.5,\"three\",null,true,"
+        "{\"nested\":{\"list\":[[],{}]}}],\"empty\":{},\"text\":\"a\\\"b\"},\"timestamp\":123}";
+
+    EXPECT_EQ(parseJsonWithDepthLimit(payload), nlohmann::json::parse(payload));
+}
+
+TEST(SseParserTest, JsonDepthLimitStillReportsMalformedJsonAsParseError) {
+    EXPECT_THROW(parseJsonWithDepthLimit("{not valid json}"), nlohmann::json::parse_error);
+}
