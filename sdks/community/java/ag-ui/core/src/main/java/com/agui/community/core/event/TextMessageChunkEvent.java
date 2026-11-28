@@ -16,10 +16,18 @@ import com.agui.community.core.message.Role;
  *                  {@code null} (optional)
  * @param rawEvent  the original event this was transformed from, or
  *                  {@code null} (optional)
+ * @param subagentRunId the producing subagent invocation, or {@code null} for
+ *                       output from the parent agent (optional)
  * @see <a href="https://docs.ag-ui.com/concepts/events">AG-UI Events</a>
  */
 public record TextMessageChunkEvent(String messageId, Role role, String delta, Long timestamp,
-                                    Object rawEvent) implements Event {
+                                    Object rawEvent,
+                                    String subagentRunId) implements Event {
+
+    /** Creates an event without subagent attribution using the original signature. */
+    public TextMessageChunkEvent(String messageId, Role role, String delta, Long timestamp, Object rawEvent) {
+        this(messageId, role, delta, timestamp, rawEvent, null);
+    }
 
     /**
      * Creates a text-message-chunk event with a message id, role and delta.
