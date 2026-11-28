@@ -33,13 +33,18 @@ So a fixture failing does not always mean a client is non-conforming — it
 means a client changed. That is the point of a regression suite, and it is why
 `kill` names a change rather than a rule.
 
-- **What these clients do that the specification says they should NOT.** One
-  fixture deliberately pins an admitted gap: `unknown-enum-value-role-fatal`,
+- **What these clients do that the specification says they should NOT.** Two
+  fixtures deliberately pin an admitted gap. `unknown-enum-value-role-fatal`,
   where a closed string set is checked as a leaf, so an unrecognised member is
-  fatal on the TypeScript lane where the spec wants it stripped. Its
-  description says so and names the spec Note that must change with it. It
-  asserts the opposite of the rule, on purpose, so that closing the gap is a
-  deliberate act rather than a silent one.
+  fatal on the TypeScript lane where the spec wants it stripped; its
+  description says so and names the spec Note that must change with it. And
+  `truncated-run-reported-as-completed`, where neither client inspects stream
+  completion, so a well-formed stream that simply stops is consumed without
+  complaint where the Truncation rule says a truncated run has no outcome and
+  MUST NOT be reported as having succeeded; that section carries no Note, so
+  its description carries the whole admission. Both assert the opposite of the
+  rule, on purpose, so that closing either gap is a deliberate act rather than
+  a silent one.
 
   It used to be two: `reasoning-discipline-not-verified` was an admitted gap
   alongside it, and now asserts the RULE on the TypeScript lane under the name
@@ -59,17 +64,18 @@ means a client changed. That is the point of a regression suite, and it is why
 
   The corpus gate's `required` list names those four fixtures, so flipping one
   back is a rename someone has to make on purpose. Two things it does not do:
-  it does not name `unknown-enum-value-role-fatal` — the gap that
-  is still open is held by its description alone, not by a `required` entry — and the fifth
+  it does not name either admitted-gap fixture — the gaps that
+  are still open are held by their descriptions alone, not by a `required` entry — and the fifth
   fixture it names in that neighbourhood, `unknown-outcome-array-fatal`, was
   never an admitted gap at all. That one pins the rule from the start: a
   malformed value in the outcome slot is fatal rather than stripped.
 
 **If you ever point this corpus at a third-party client**, three groups need
 relaxing: the SHOULD-level `warnings` and `noWarnings`; the `era-*` fixtures'
-translation results, which the spec only permits; and the one admitted-gap
-fixture above, which asserts behaviour the spec contradicts and whose `outcome`
-and `errorContains` would wrongly fail a client that gets the rule right. Every
+translation results, which the spec only permits; and the two admitted-gap
+fixtures above, which assert behaviour the spec contradicts and whose `outcome`
+— plus `errorContains` on the first of them — would wrongly fail a client that
+gets the rule right. Every
 `expectOverrides.dotnet` block needs dropping too — those describe our .NET
 client, not the protocol. What remains after that is conformance. Nothing in
 the harness does this for you today, and nothing needs it until someone
