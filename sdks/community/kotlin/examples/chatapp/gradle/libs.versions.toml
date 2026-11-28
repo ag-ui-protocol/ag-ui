@@ -13,7 +13,6 @@ kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
 kotlinx-datetime = "0.7.1-0.6.x-compat"
 android-gradle = "8.12.0"
-kotlin-logging = "3.0.5"
 logback-android = "3.0.0"
 multiplatform-settings-coroutines = "1.2.0"
 okio = "3.13.0"
@@ -53,7 +52,6 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 
 # Logging
-kotlin-logging = { module = "io.github.microutils:kotlin-logging", version.ref = "kotlin-logging" }
 logback-android = { module = "com.github.tony19:logback-android", version.ref = "logback-android" }
 multiplatform-settings = { module = "com.russhwolf:multiplatform-settings", version.ref = "multiplatform-settings-coroutines" }
 multiplatform-settings-coroutines = { module = "com.russhwolf:multiplatform-settings-coroutines", version.ref = "multiplatform-settings-coroutines" }
