@@ -231,7 +231,10 @@ def _catalog_for_express(source: Any, *, default_catalog_id: str) -> dict[str, A
         if source is not None:
             raise ValueError("Express requires a usable inline A2UI catalog")
         normalized = BasicCatalog("v0.9").to_json()
-        normalized["catalogId"] = default_catalog_id
+        # A configured id must match the host renderer, so it wins, as in Direct
+        # JSON. Without one, keep the id the basic catalog declares for itself.
+        if default_catalog_id:
+            normalized["catalogId"] = default_catalog_id
     normalized = copy.deepcopy(normalized)
 
     # The web SDK exports function definitions as a list. The Express schema
@@ -323,7 +326,7 @@ def compile_a2ui_express(
     *,
     catalog: Any = None,
     surface_id: str = "default",
-    default_catalog_id: str = "https://a2ui.org/specification/v0_9/basic_catalog.json",
+    default_catalog_id: str = "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json",
 ) -> list[dict[str, Any]]:
     """Compile a fixed Express template into validated standard A2UI messages.
 
