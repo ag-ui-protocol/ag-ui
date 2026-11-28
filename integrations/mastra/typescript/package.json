@@ -1,6 +1,6 @@
 {
   "name": "@ag-ui/mastra",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/ag-ui-protocol/ag-ui.git"
@@ -35,12 +35,19 @@
       "require": "./dist/copilotkit-2.js",
       "import": "./dist/copilotkit-2.mjs"
     },
+    "./run-guidance": {
+      "require": "./dist/run-guidance.js",
+      "import": "./dist/run-guidance.mjs"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
       "a2ui": [
         "dist/a2ui.d.ts"
+      ],
+      "run-guidance": [
+        "dist/run-guidance.d.ts"
       ],
       "copilotkit": [
         "dist/copilotkit.d.ts"

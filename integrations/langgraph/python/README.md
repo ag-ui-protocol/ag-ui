@@ -42,19 +42,89 @@ validation failures retain their existing error behavior.
 pip install ag-ui-langgraph
 ```
 
-## Usage
+## Serve a LangChain chat agent with FastAPI
+
+Install a release or preview of `ag-ui-langgraph[fastapi]` that includes
+`create_langgraph_agent`, plus the LangChain integration for your model provider.
+The chat factory installs run guidance middleware and creates an in-memory
+checkpointer by default. Set `checkpointer` to a persistent LangGraph
+checkpointer to keep state across process restarts or deployments with
+multiple workers.
 
 ```python
-from langgraph.graph import StateGraph, MessagesState
-from langchain_openai import ChatOpenAI
-from ag_ui_langgraph import LangGraphAgent, add_langgraph_fastapi_endpoint
+from ag_ui_langgraph import add_langgraph_fastapi_endpoint, create_langgraph_agent
 from fastapi import FastAPI
-from my_langgraph_workflow import graph
 
-# Add to FastAPI
 app = FastAPI()
-add_langgraph_fastapi_endpoint(app, graph, "/agent")
+agent = create_langgraph_agent(
+    name="chat",
+    model="openai:gpt-4.1-mini",
+    system_prompt="You are a helpful assistant.",
+)
+add_langgraph_fastapi_endpoint(app, agent, "/agent")
 ```
+
+The route advertises `custom["openbot.runGuidance"] == {"version": 1}` at
+`GET /agent/capabilities`. A caller can send context entries with the
+descriptions `OpenBot standing role` and `OpenBot granted tools guidance`.
+Send the current entries with each run, including a tool-result continuation or
+checkpoint resume. Registered hosts can authorize both entries as system
+guidance. For anonymous callers, the role is ordinary user guidance and the
+tool guidance is omitted. Use `authorize_guidance` with your existing
+authorization policy. A callback can return `True` for authorized callers,
+return `False` for anonymous handling, or raise an HTTP error. It runs for both
+the capability lookup and the streamed runs. Protect both routes using
+app-level or router-level authorization, or use `authorize_guidance` to
+authorize both explicitly. The helper's `dependencies` keyword applies to the
+POST route. Set `trusted_ingress=True` only when deployment access controls
+restrict both routes to authorized callers. To serve public and keyless
+backend traffic side by side, run separate instances and route each to its own
+listener. See the [two-listener example](examples/README.md#public-and-restricted-keyless-listeners).
+
+Set `enable_run_guidance=False` on the chat factory to use the adapter's
+existing prompt handling. The FastAPI helper skips the guidance capability
+route in this configuration and still calls an explicitly supplied
+`authorize_guidance` callback for POST requests.
+
+### Run guidance for existing graphs
+
+An upgrade alone leaves existing `LangGraphAgent(graph=...)` endpoints on
+their current prompt handling. For a graph built with LangChain's
+`create_agent`, rebuild it with `RunGuidanceMiddleware()` in its middleware
+list, then mix `RunGuidanceAgentMixin` into the adapter you serve. Keep your
+existing model, tools, checkpointer, state schema, and other middleware.
+
+```python
+from ag_ui_langgraph import (
+    LangGraphAgent,
+    RunGuidanceAgentMixin,
+    RunGuidanceMiddleware,
+    add_langgraph_fastapi_endpoint,
+)
+from fastapi import FastAPI
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import MemorySaver
+
+
+class GuidanceAgent(RunGuidanceAgentMixin, LangGraphAgent):
+    pass
+
+
+graph = create_agent(
+    model="openai:gpt-4.1-mini",
+    system_prompt="You are a helpful assistant.",
+    middleware=[RunGuidanceMiddleware()],
+    checkpointer=MemorySaver(),
+)
+app = FastAPI()
+add_langgraph_fastapi_endpoint(app, GuidanceAgent(name="chat", graph=graph), "/agent")
+```
+
+If you already subclass `LangGraphAgent`, put `RunGuidanceAgentMixin` first
+and your subclass second. The mixin handles AG-UI input and snapshots, and
+the middleware places the guidance into model calls. For a custom
+`StateGraph` that calls a model directly from a node, wrapping its compiled
+graph alone leaves those model calls on their existing prompt handling.
 
 ## Features
 

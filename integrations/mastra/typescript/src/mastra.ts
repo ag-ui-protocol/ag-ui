@@ -91,6 +91,18 @@ export type {
   MastraSubagentToolResults,
   MastraSubagentVisibility,
 } from "./subagents";
+import {
+  bridgeRunGuidanceContext,
+  createMastraRunGuidanceProcessor,
+  isMastraRunGuidanceProcessor,
+  isMastraRunGuidanceEntry,
+  mastraConfiguredInputProcessors,
+  mastraRunGuidanceCapabilitiesPath,
+  mastraRunGuidanceDeclaration,
+  readsMastraRunGuidanceDeclaration,
+  supportsMastraRunGuidance,
+  type MastraRunGuidanceOptions,
+} from "./run-guidance";
 import { version as ADAPTER_VERSION } from "../package.json";
 
 const { compare } = jsonpatch;
@@ -656,6 +668,11 @@ export interface MastraAgentConfig extends AgentConfig {
   resourceId?: string;
   requestContext?: RequestContext;
   /**
+   * Run guidance is enabled by default. Pass false to disable the local
+   * receiver or remote capability discovery.
+   */
+  runGuidance?: false | MastraRunGuidanceOptions;
+  /**
    * Forward Mastra tracing options into the run's `agent.stream(...)` (and the
    * resume path). Chiefly lets a caller inject a self-chosen `traceId` so the
    * Mastra execution trace is anchored to an id the client already knows,
@@ -966,6 +983,7 @@ export class MastraAgent extends AbstractAgent {
    * Unset (or empty) means remote paths fall back to the public `agentId`.
    */
   private readonly nativeAgentId?: string;
+  private readonly runGuidance?: false | MastraRunGuidanceOptions;
   agent: LocalMastraAgent | RemoteMastraAgent;
   resourceId?: string;
   requestContext?: RequestContext;
@@ -1051,6 +1069,7 @@ export class MastraAgent extends AbstractAgent {
       agent,
       resourceId,
       requestContext,
+      runGuidance,
       untilIdle,
       tracingOptions,
       streamServerToolCalls,
@@ -1070,6 +1089,7 @@ export class MastraAgent extends AbstractAgent {
     this.agent = agent;
     this.resourceId = resourceId;
     this.requestContext = requestContext ?? new RequestContext();
+    this.runGuidance = runGuidance;
     this.untilIdle = untilIdle;
     this.a2ui = a2ui;
     this.remoteClient = remoteClient;
@@ -1096,16 +1116,33 @@ export class MastraAgent extends AbstractAgent {
     return cloned;
   }
 
-  /**
-   * Forwards `input.context` onto the Mastra RequestContext under "ag-ui", so a
-   * tool reads it via `requestContext.get("ag-ui").context`. Called on every
-   * entry path (initial stream + both resume paths) so a resumed run forwards
-   * its own context instead of reusing the prior turn's.
-   */
-  private applyInputContext(context: RunAgentInput["context"]): RequestContext {
-    this.requestContext ??= new RequestContext();
-    this.requestContext.set("ag-ui", { context });
-    return this.requestContext;
+  private async runGuidanceInputProcessors(
+    agent: LocalMastraAgent,
+    requestContext: RequestContext,
+    inputContext: RunAgentInput["context"],
+  ): Promise<
+    Awaited<ReturnType<typeof mastraConfiguredInputProcessors>> | undefined
+  > {
+    if (
+      this.runGuidance === false ||
+      !inputContext.some(isMastraRunGuidanceEntry) ||
+      !supportsMastraRunGuidance(agent)
+    )
+      return;
+    const processors = await mastraConfiguredInputProcessors(
+      agent,
+      requestContext,
+    );
+    const trusted = this.runGuidance?.trusted === true;
+    return [
+      createMastraRunGuidanceProcessor(() => ({
+        context: inputContext,
+        trusted,
+      })),
+      ...processors.filter(
+        (processor) => !isMastraRunGuidanceProcessor(processor),
+      ),
+    ];
   }
 
   run(input: RunAgentInput): Observable<BaseEvent> {
@@ -1123,6 +1160,32 @@ export class MastraAgent extends AbstractAgent {
     const pendingInterrupts: Interrupt[] = [];
 
     return new Observable<BaseEvent>((subscriber) => {
+      const inputContext = input.context ?? [];
+      const localAgent = this.isLocalMastraAgent(this.agent)
+        ? this.agent
+        : undefined;
+      const usesPackagedGuidance =
+        this.runGuidance !== false &&
+        localAgent !== undefined &&
+        inputContext.some(isMastraRunGuidanceEntry) &&
+        supportsMastraRunGuidance(localAgent);
+      // A run and its continuation carry their own snapshot. Preserve
+      // server-provided context keys in a copy for each subscription.
+      const requestContext = new RequestContext(this.requestContext?.entries());
+      const aguiContext = {
+        context: usesPackagedGuidance
+          ? inputContext.filter((entry) => !isMastraRunGuidanceEntry(entry))
+          : inputContext,
+      };
+      if (localAgent) {
+        // An installed native processor must not inherit an enclosing native
+        // request's authority or snapshot on an in-process bridge run.
+        Object.defineProperty(aguiContext, bridgeRunGuidanceContext, {
+          value: true,
+        });
+      }
+      requestContext.set("ag-ui", aguiContext);
+
       // Cancellation channel for THIS subscription. The teardown below fires it
       // so unsubscribing (or abortRun()) propagates into the Mastra stream.
       const abortController = new AbortController();
@@ -1309,11 +1372,15 @@ export class MastraAgent extends AbstractAgent {
           usage = await this.withDelegatedUsage(
             usage,
             delegatedUsages,
-            this.applyInputContext(input.context),
+            requestContext,
           );
         }
         if (subscriber.closed || lifecycle.ended) return;
-        await this.emitWorkingMemorySnapshot(lifecycle, input.threadId);
+        await this.emitWorkingMemorySnapshot(
+          lifecycle,
+          input.threadId,
+          requestContext,
+        );
         if (subscriber.closed || lifecycle.ended) return;
         lifecycle.closeOpen(drainedEnding);
         endDrainedRun();
@@ -1347,9 +1414,7 @@ export class MastraAgent extends AbstractAgent {
         // supervisor's own agents (best-effort).
         if (subagents && this.isLocalMastraAgent(this.agent)) {
           subagents.setDirectory(
-            await this.readSubagentDirectory(
-              this.applyInputContext(input.context),
-            ),
+            await this.readSubagentDirectory(requestContext),
           );
         }
 
@@ -1371,9 +1436,6 @@ export class MastraAgent extends AbstractAgent {
             failRun(error, error.code);
             return;
           }
-
-          // Re-set this run's context so resume forwards it, not the prior turn's.
-          const resumeRequestContext = this.applyInputContext(input.context);
 
           // Resume options are shared verbatim by the local and remote paths.
           // Mastra keys the suspended snapshot by the runId surfaced on the
@@ -1397,7 +1459,7 @@ export class MastraAgent extends AbstractAgent {
           const a2uiToolsets = await this.planA2UIToolsets(
             input,
             clientTools,
-            resumeRequestContext,
+            requestContext,
           );
           setOfferedClientTools(clientTools);
 
@@ -1408,7 +1470,7 @@ export class MastraAgent extends AbstractAgent {
               thread: input.threadId,
               resource: this.resourceId ?? input.threadId,
             },
-            requestContext: resumeRequestContext,
+            requestContext,
             clientTools,
             ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
           };
@@ -1475,6 +1537,13 @@ export class MastraAgent extends AbstractAgent {
 
           try {
             if (this.isLocalMastraAgent(this.agent)) {
+              const inputProcessors = await this.runGuidanceInputProcessors(
+                this.agent,
+                requestContext,
+                inputContext,
+              );
+              if (inputProcessors)
+                resumeOptions.inputProcessors = inputProcessors;
               type ApprovalOptions = Parameters<
                 LocalMastraAgent["approveToolCall"]
               >[0];
@@ -1624,7 +1693,7 @@ export class MastraAgent extends AbstractAgent {
         // reads on the next run. Works for both local and remote agents (see
         // syncInputStateToWorkingMemory).
         try {
-          await this.syncInputStateToWorkingMemory(input);
+          await this.syncInputStateToWorkingMemory(input, requestContext);
         } catch (error) {
           failRun(error);
           return;
@@ -1645,6 +1714,7 @@ export class MastraAgent extends AbstractAgent {
 
           await this.streamMastraAgent(
             input,
+            requestContext,
             {
               ...streamCallbacks,
               onAbort: () => {
@@ -1665,7 +1735,7 @@ export class MastraAgent extends AbstractAgent {
         }
       };
 
-      run().catch((err) => failRun(err));
+      run().catch((error) => failRun(error));
 
       // Teardown runs on unsubscribe AND on normal completion (RxJS closes the
       // subscription either way), so it is the single place this run's
@@ -1744,6 +1814,7 @@ export class MastraAgent extends AbstractAgent {
         };
       }
     }
+    const custom = await this.runGuidanceCapabilities();
     return {
       identity: {
         type: "mastra",
@@ -1754,6 +1825,7 @@ export class MastraAgent extends AbstractAgent {
       tools: { supported: true, clientProvided: true },
       ...(state ? { state } : {}),
       ...(multiAgent ? { multiAgent } : {}),
+      ...(custom ? { custom } : {}),
       // Reasoning the model produces is streamed as it arrives.
       reasoning: { streaming: true },
       humanInTheLoop: {
@@ -1762,6 +1834,63 @@ export class MastraAgent extends AbstractAgent {
         approvals: canResume,
       },
     };
+  }
+
+  private async runGuidanceCapabilities(): Promise<
+    AgentCapabilities["custom"]
+  > {
+    if (this.runGuidance === false) return undefined;
+    if (this.isLocalMastraAgent(this.agent)) {
+      return supportsMastraRunGuidance(this.agent)
+        ? mastraRunGuidanceDeclaration()
+        : undefined;
+    }
+
+    try {
+      const { options } = this.agent;
+      // Use the handle's own ID, which can differ from the AG-UI public alias.
+      // The native declaration does not describe a separately pinned version.
+      const { agentId, version } = this.agent as unknown as {
+        agentId?: unknown;
+        version?: unknown;
+      };
+      if (!options?.baseUrl || typeof agentId !== "string" || version)
+        return undefined;
+      const path = mastraRunGuidanceCapabilitiesPath(agentId);
+      const endpoint = `${options.baseUrl.replace(/\/$/, "")}${path}`;
+      const dial = options.fetch ?? fetch;
+      const timeout = AbortSignal.timeout(2_000);
+      const client = new MastraClient({
+        ...options,
+        // Mastra reserves its built-in API prefix, so this is a custom route
+        // relative to the same base URL and under the same client's transport.
+        apiPrefix: "",
+        retries: 0,
+        abortSignal: options.abortSignal
+          ? AbortSignal.any([options.abortSignal, timeout])
+          : timeout,
+        fetch: (url, init) => {
+          if (String(url) !== endpoint) {
+            // Older clients may ignore apiPrefix. Decline without dialing a
+            // different route or exposing credentials to a redirect.
+            throw new Error(
+              "Mastra client cannot request the capability route",
+            );
+          }
+          return dial(url, { ...init, redirect: "error" });
+        },
+      });
+      const declaration = await client.request<unknown>(path, {
+        method: "GET",
+      });
+      if (await readsMastraRunGuidanceDeclaration(declaration)) {
+        return mastraRunGuidanceDeclaration();
+      }
+    } catch {
+      // Older servers, malformed declarations and unavailable receivers fall
+      // back to normal Mastra adapter behavior.
+    }
+    return undefined;
   }
 
   /**
@@ -2171,11 +2300,12 @@ export class MastraAgent extends AbstractAgent {
   private async emitWorkingMemorySnapshot(
     subscriber: { next: (event: BaseEvent) => void },
     threadId: string,
+    requestContext: RequestContext,
   ): Promise<boolean> {
     if (!this.isLocalMastraAgent(this.agent)) return true;
     try {
       const memory = await this.agent.getMemory({
-        requestContext: this.requestContext,
+        requestContext,
       });
       if (memory) {
         const workingMemory = await memory.getWorkingMemory({
@@ -3999,11 +4129,12 @@ export class MastraAgent extends AbstractAgent {
     threadId: string,
     resourceId: string,
     messages: Message[],
+    requestContext: RequestContext,
   ): Promise<Message[]> {
     if (!this.isLocalMastraAgent(this.agent)) return messages;
     try {
       const memory = await this.agent.getMemory({
-        requestContext: this.requestContext,
+        requestContext,
       });
       if (!memory) return messages;
       const { messages: stored } = await memory.recall({
@@ -4091,7 +4222,8 @@ export class MastraAgent extends AbstractAgent {
       // first turn, not a failure: nothing is stored, so the full list is the
       // right thing to send. Only warn when the thread exists (or the lookup
       // itself fails).
-      if (await this.threadIsMissing(threadId, resourceId)) return messages;
+      if (await this.threadIsMissing(threadId, resourceId, requestContext))
+        return messages;
       console.warn(
         `[MastraAgent] Failed to compute new-message diff for thread ${threadId}; sending full history:`,
         error,
@@ -4103,11 +4235,12 @@ export class MastraAgent extends AbstractAgent {
   private async threadIsMissing(
     threadId: string,
     resourceId: string,
+    requestContext: RequestContext,
   ): Promise<boolean> {
     if (!this.isLocalMastraAgent(this.agent)) return false;
     try {
       const memory = await this.agent.getMemory({
-        requestContext: this.requestContext,
+        requestContext,
       });
       if (!memory) return false;
       // Concrete Memory implementations check thread ownership and want the
@@ -4187,6 +4320,7 @@ export class MastraAgent extends AbstractAgent {
    */
   private async syncInputStateToWorkingMemory(
     input: RunAgentInput,
+    requestContext: RequestContext,
   ): Promise<void> {
     const rest = this.workingMemoryStateSlice(input.state);
     if (Object.keys(rest).length === 0) return;
@@ -4196,7 +4330,7 @@ export class MastraAgent extends AbstractAgent {
 
     if (this.isLocalMastraAgent(this.agent)) {
       const memory = await this.agent.getMemory({
-        requestContext: this.requestContext,
+        requestContext,
       });
       if (!memory) return;
 
@@ -4402,10 +4536,11 @@ export class MastraAgent extends AbstractAgent {
       runId,
       messages,
       tools,
-      context: inputContext,
+      context: inputContext = [],
       forwardedProps,
       state,
     }: RunAgentInput,
+    requestContext: RequestContext,
     callbacks: MastraAgentStreamOptions,
     abortSignal: AbortSignal,
     onClientTools?: (clientTools: Record<string, unknown>) => void,
@@ -4442,6 +4577,7 @@ export class MastraAgent extends AbstractAgent {
       threadId,
       resourceId,
       ownMessages,
+      requestContext,
     );
     // Convert only the new turn, but resolve tool-message names against the
     // full incoming history (the assistant tool-call may have been filtered
@@ -4450,8 +4586,6 @@ export class MastraAgent extends AbstractAgent {
       messagesToSend,
       ownMessages,
     );
-    const requestContext = this.applyInputContext(inputContext);
-
     if (this.isLocalMastraAgent(this.agent)) {
       try {
         const a2uiToolsets = await this.planA2UIToolsets(
@@ -4468,6 +4602,11 @@ export class MastraAgent extends AbstractAgent {
         );
         onClientTools?.(clientTools);
 
+        const inputProcessors = await this.runGuidanceInputProcessors(
+          this.agent,
+          requestContext,
+          inputContext,
+        );
         const streamOptions: Record<string, unknown> = {
           memory: {
             thread: threadId,
@@ -4477,6 +4616,7 @@ export class MastraAgent extends AbstractAgent {
           clientTools,
           requestContext,
           ...(a2uiToolsets ? { toolsets: a2uiToolsets } : {}),
+          ...(inputProcessors ? { inputProcessors } : {}),
           // Cancellation from the run() Observable teardown (#2288). Honoured
           // by @mastra/core, which stops generation and emits an `abort` chunk.
           abortSignal,

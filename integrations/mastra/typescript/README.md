@@ -283,3 +283,110 @@ cd integrations/mastra/typescript/examples
 pnpm install
 pnpm run dev
 ```
+
+## Per-run guidance
+
+A configured receiver declares `custom["openbot.runGuidance"] = { version: 1 }`
+in its AG-UI capabilities. It reads the current run's `RunAgentInput.context`
+entries named `OpenBot standing role` and `OpenBot granted tools guidance`.
+The processor adds both to the provider's system instructions for an authorized
+caller. For an ordinary caller, it adds only the role as user task context.
+Guidance applies to each model call and stays out of conversation history.
+Send the current entries again on hand-back or resume. Omit an entry to clear
+it. Repeated reserved descriptions are ignored and logged once per run by name.
+
+In-process agents enable the receiver by default on supported Mastra cores.
+The default applies the role as ordinary task context. To authorize system
+guidance, set `runGuidance: { trusted }` in the `MastraAgent` constructor or a
+local agent factory using your server's authentication result or explicitly
+trusted ingress. For `registerCopilotKit`, provide
+`runGuidance: { isTrusted: (context) => … }` to authorize the agents the route
+builds. Set `runGuidance: false` to keep your existing context handling.
+Use `runGuidance: { enabled: false, isTrusted }` to keep a CopilotKit route's
+authorization hook active while disabling guidance.
+If your app serves an agent over AG-UI HTTP, return the bridge's
+`getCapabilities()` JSON at `GET <endpoint>/capabilities` under the same
+authentication as the run endpoint.
+
+For a native Mastra server, add `mastraRunGuidanceProcessor` to the agent's
+`inputProcessors` before any provider response-cache processor. On the server,
+call `withMastraRunGuidanceAuthority(trusted, next, body?.requestContext)`
+after authenticating the request. Pass the current request body's context so
+a native resume clears guidance when the request omits it. Mount
+`registerMastraRunGuidanceCapabilities(agentId)` with the same authentication
+and authorization as the native run routes. Import all three
+from `@ag-ui/mastra/run-guidance`. The remote bridge looks up the declaration
+at `GET /<encoded agentId>/capabilities` relative to the configured Mastra
+client base URL, using its native credentials and fetch implementation.
+`getRemoteAgents({ …, runGuidance: false })` skips discovery for that client.
+Mastra versions without the provider-request hook omit the declaration.
+
+The native example enables the receiver and publishes this capability for
+`agentic_chat` by default.
+
+- Set `AG_UI_GUIDANCE_TOKEN` to require a matching `Authorization: Bearer …`
+  header for native runs and discovery.
+- Set `AG_UI_TRUSTED_INGRESS=true` when deployment access controls restrict
+  both routes to authorized application backends.
+- The example uses ordinary guidance when neither authentication setting is
+  present.
+- Set `AG_UI_RUN_GUIDANCE=false` to disable native guidance while retaining the
+  configured authentication.
+
+### Public and keyless private instances
+
+Run the native example twice when one deployment needs both public ordinary
+guidance and keyless trusted guidance for a backend.
+
+- Configure public proxies to use port `4111` as their sole Mastra upstream.
+  Block `/api/memory` and its subpaths at the proxy unless the server uses
+  `server.auth` with `mapUserToResourceId` to scope memory access to the
+  authenticated caller.
+- Limit inbound access to the private instance on port `4112` to authorized
+  application backends through a firewall, service ACL, or private network
+  policy. Apply the rule to the entire listener, including capability discovery
+  and memory routes. Apply these controls before starting the private process.
+- Allow outbound access from both instances to their configured model provider
+  and any external services their tools use.
+
+Build once from the repository root with the workspace dependencies installed.
+
+```bash
+pnpm exec nx run example:build
+```
+
+Set these paths from the repository root in both launch shells. Supply the
+configured model provider's environment to each process. The commands use
+loopback by default. If the proxy or backend runs on a separate host, set
+`MASTRA_HOST` in the corresponding launch shell to the interface that caller
+can reach. Outside these commands, the example defaults to `0.0.0.0` when
+`MASTRA_HOST` is unset.
+
+```bash
+mastra_entry="$(pwd -P)/integrations/mastra/typescript/examples/.mastra/output/index.mjs"
+mastra_state="$HOME/.local/state/ag-ui-mastra"
+mkdir -p "$mastra_state/public/run" "$mastra_state/private/run"
+```
+
+Start the public instance in one shell.
+
+```bash
+cd "$mastra_state/public/run" &&
+  MASTRA_HOST="${MASTRA_HOST:-127.0.0.1}" PORT=4111 AG_UI_GUIDANCE_TOKEN= \
+    AG_UI_TRUSTED_INGRESS=false AG_UI_RUN_GUIDANCE=true node "$mastra_entry"
+```
+
+Start the private instance in the other shell after applying its ingress rules.
+
+```bash
+cd "$mastra_state/private/run" &&
+  MASTRA_HOST="${MASTRA_HOST:-127.0.0.1}" PORT=4112 AG_UI_GUIDANCE_TOKEN= \
+    AG_UI_TRUSTED_INGRESS=true AG_UI_RUN_GUIDANCE=true node "$mastra_entry"
+```
+
+Point OpenBot's native Mastra connection at the private instance's base URL.
+For the same-host setup above, use `http://127.0.0.1:4112`.
+The public instance applies the standing role as user task context. The private
+instance applies the standing role and granted tool guidance as instructions.
+Each process opens its own `../mastra.db` relative to its working directory.
+Keep conversations and suspended runs on the instance where they started.

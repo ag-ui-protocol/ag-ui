@@ -205,6 +205,64 @@ describe.each([
     expect(mocks.captured.runtimeOptions.agents).toBe(agents);
   });
 
+  it("authorizes guidance in the server route before it builds the local agents", async () => {
+    const authorize = vi.fn(
+      (c: { req: { raw: Request } }) =>
+        c.req.raw.headers.get("authorization") === "Bearer bot-key",
+    );
+    const route = await invoke(register, {
+      path: "/copilotkit",
+      resourceId: "static",
+      runGuidance: { isTrusted: authorize },
+    });
+    const context = makeContext({ authorization: "Bearer bot-key" });
+    await route.handler(context);
+
+    expect(authorize).toHaveBeenCalledWith(context);
+    expect(mocks.captured.getLocalAgentsOptions.runGuidance).toEqual({
+      trusted: true,
+    });
+    expect(mocks.captured.runtimeOptions.runGuidance).toBeUndefined();
+    expect(mocks.captured.request.headers.get("authorization")).toBeNull();
+  });
+
+  it("forwards a guidance opt-out to its default local agent factory", async () => {
+    const route = await invoke(register, {
+      path: "/copilotkit",
+      resourceId: "static",
+      runGuidance: false,
+    });
+    await route.handler(makeContext());
+
+    expect(mocks.captured.getLocalAgentsOptions.runGuidance).toBe(false);
+    expect(mocks.captured.runtimeOptions.runGuidance).toBeUndefined();
+  });
+
+  it("keeps the route's authorization hook active with guidance disabled", async () => {
+    const isTrusted = vi.fn((context: { req: { raw: Request } }) => {
+      if (context.req.raw.headers.get("authorization") !== "Bearer bot-key") {
+        throw new Error("Missing server credential");
+      }
+      return true;
+    });
+    const route = await invoke(register, {
+      path: "/copilotkit",
+      resourceId: "static",
+      runGuidance: { enabled: false, isTrusted },
+    });
+
+    await expect(route.handler(makeContext())).rejects.toThrow(
+      "Missing server credential",
+    );
+    expect(getLocalAgents).not.toHaveBeenCalled();
+
+    const authorized = makeContext({ authorization: "Bearer bot-key" });
+    await route.handler(authorized);
+    expect(isTrusted).toHaveBeenLastCalledWith(authorized);
+    expect(mocks.captured.getLocalAgentsOptions.runGuidance).toBe(false);
+    expect(mocks.captured.request.headers.get("authorization")).toBeNull();
+  });
+
   it("runs setContext with the shared request context before building agents", async () => {
     const seen: string[] = [];
     const route = await invoke(register, {

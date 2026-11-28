@@ -1,6 +1,11 @@
 import { Mastra } from "@mastra/core/mastra";
 import { PinoLogger } from "@mastra/loggers";
 import { LibSQLStore } from "@mastra/libsql";
+import {
+  registerMastraRunGuidanceCapabilities,
+  withMastraRunGuidanceAuthority,
+} from "@ag-ui/mastra/run-guidance";
+import { authorizeGuidance, runGuidanceEnabled } from "./run-guidance";
 
 import { agenticChatAgent } from "./agents/agentic-chat";
 import { agenticChatReasoningAgent } from "./agents/agentic-chat-reasoning";
@@ -16,10 +21,58 @@ import { observationalMemoryAgent } from "./agents/observational-memory";
 import { toolApprovalAgent } from "./agents/tool-approval";
 import { generativeUIAgent } from "./agents/generative-ui";
 
+const chatAgentPath = "/api/agents/agentic_chat";
+const chatCapabilities = registerMastraRunGuidanceCapabilities("agentic_chat");
+const guidanceSettings = {
+  token: process.env.AG_UI_GUIDANCE_TOKEN?.trim(),
+  restrictedIngress: process.env.AG_UI_TRUSTED_INGRESS === "true",
+};
+
 export const mastra = new Mastra({
   server: {
     port: process.env.PORT ? parseInt(process.env.PORT) : 4111,
-    host: "0.0.0.0",
+    host: process.env.MASTRA_HOST || "0.0.0.0",
+    middleware: [
+      async (context, next) => {
+        let path: string;
+        try {
+          path = decodeURIComponent(new URL(context.req.url).pathname).replace(
+            /\/+$/,
+            "",
+          );
+        } catch {
+          return context.json({ error: "Invalid path" }, 400);
+        }
+        if (
+          path !== chatCapabilities.path &&
+          path !== chatAgentPath &&
+          !path.startsWith(`${chatAgentPath}/`)
+        ) {
+          return next();
+        }
+        const authority = authorizeGuidance(
+          context.req.raw.headers.get("authorization"),
+          guidanceSettings,
+        );
+        if (authority === "reject")
+          return context.json({ error: "Unauthorized" }, 401);
+        if (!runGuidanceEnabled) return next();
+        // Mastra's validator also reads the raw body.
+        const body: { requestContext?: Record<string, unknown> } | undefined =
+          context.req.method === "POST"
+            ? await context.req.raw
+                .clone()
+                .json()
+                .catch(() => undefined)
+            : undefined;
+        return withMastraRunGuidanceAuthority(
+          authority === "trusted",
+          next,
+          body?.requestContext,
+        );
+      },
+    ],
+    apiRoutes: runGuidanceEnabled ? [chatCapabilities] : [],
   },
   agents: {
     agentic_chat: agenticChatAgent,
