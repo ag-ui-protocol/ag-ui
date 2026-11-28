@@ -822,6 +822,71 @@ describe("MCPAppsMiddleware", () => {
       expect(mockCallTool).toHaveBeenCalledTimes(10);
     });
 
+    // #3356: the automatic continuation is an internal run, not a reply to an
+    // interrupt. Neither resume channel may be replayed into it, while every
+    // unrelated forwarded property and command field must come through.
+    it.each([
+      { kind: "UI tool", tool: () => createMCPToolWithUI("card", "ui://card") },
+      {
+        kind: "supporting tool (no resource URI)",
+        tool: () => createMCPToolWithoutUI("card"),
+      },
+    ])(
+      "does not replay either resume channel into the automatic continuation ($kind)",
+      async ({ tool }) => {
+        mockListTools.mockResolvedValue({ tools: [tool()] });
+        mockCallTool.mockResolvedValue(
+          createMCPToolCallResult([{ type: "text", text: "rendered card" }]),
+        );
+        // Snapshot each downstream input as the agent saw it. MockAgent keeps
+        // references, and the continuation shares nested objects with the
+        // original input, so a later mutation would rewrite history.
+        const seen: any[] = [];
+        const agent = new SequenceAgent((input, turn) => {
+          seen.push(structuredClone(input));
+          return turn === 0
+            ? toolTurn(input, "card", "ui-call", '{"title":"Hello"}')
+            : [
+                createRunStartedEvent(input.runId, input.threadId),
+                createRunFinishedEvent(input.runId, input.threadId),
+              ];
+        });
+        const input = createRunAgentInput({
+          resume: [
+            { interruptId: "int-1", status: "resolved", payload: "approved" },
+          ],
+          forwardedProps: {
+            command: { resume: "approved", unrelated: "preserve" },
+            other: "keep",
+          },
+        } as any);
+        const original = structuredClone(input);
+
+        await collectEvents(
+          new MCPAppsMiddleware({ mcpServers: [httpServerConfig] }).run(
+            input,
+            agent,
+          ),
+        );
+
+        expect(mockCallTool).toHaveBeenCalledTimes(1);
+        expect(seen).toHaveLength(2);
+        // The first downstream run is the caller's resume and receives both channels.
+        expect(seen[0].resume).toEqual(original.resume);
+        expect(seen[0].forwardedProps).toEqual(original.forwardedProps);
+        // The continuation receives neither channel ...
+        expect(seen[1].resume).toBeUndefined();
+        expect(seen[1].forwardedProps.command).not.toHaveProperty("resume");
+        // ... and keeps everything else the caller forwarded.
+        expect(seen[1].forwardedProps).toEqual({
+          command: { unrelated: "preserve" },
+          other: "keep",
+        });
+        // The caller's own input object is left untouched.
+        expect(input).toEqual(original);
+      },
+    );
+
     it("converts MCP tools to AG-UI Tool format correctly", async () => {
       mockListTools.mockResolvedValue({
         tools: [
