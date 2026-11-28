@@ -1585,6 +1585,9 @@ importers:
         specifier: ^1.15.0
         version: 1.15.0
     devDependencies:
+      '@a2ui/web_core':
+        specifier: ^0.15.0
+        version: 0.15.0
       '@ag-ui/client':
         specifier: workspace:*
         version: link:../../sdks/typescript/packages/client

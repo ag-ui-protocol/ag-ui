@@ -153,6 +153,159 @@ When `_meta.ui.visibility` is omitted, tools remain visible to the model by defa
 An explicit visibility list must include `"model"` for model-facing discovery.
 Tools marked `["app"]` stay hidden from the model and remain callable through the iframe proxy.
 
+## A2UI over MCP
+
+`A2uiMcpMiddleware` implements [A2UI over MCP](https://a2ui.org/guides/a2ui-over-mcp/)
+as defined for [A2UI 1.0](https://a2ui.org/specification/v1.0-a2ui/): when an MCP tool
+declares an A2UI resource, the tool result is rendered as a native A2UI 1.0 surface.
+There is no iframe, no additional LLM call and no LLM-generated UI.
+
+It is a separate middleware in the `@ag-ui/mcp-apps-middleware/a2ui` entry point. It
+needs `@a2ui/web_core` as an optional peer dependency, so `MCPAppsMiddleware` users
+without A2UI install nothing extra.
+
+```bash
+pnpm add @a2ui/web_core
+```
+
+Put it in front of `MCPAppsMiddleware`. That middleware discovers and executes the MCP
+tools; this one turns its output into A2UI:
+
+```typescript
+import { MCPAppsMiddleware } from "@ag-ui/mcp-apps-middleware";
+import { A2uiMcpMiddleware } from "@ag-ui/mcp-apps-middleware/a2ui";
+
+const agent = new YourAgent().use(
+  new A2uiMcpMiddleware(),
+  new MCPAppsMiddleware({
+    mcpServers: [
+      /* ... */
+    ],
+  }),
+);
+```
+
+| Option               | Default | Purpose                                                             |
+| -------------------- | ------- | ------------------------------------------------------------------- |
+| `catalogs`           | none    | Enables validation against these catalogs                           |
+| `templateCacheTtlMs` | 5 min   | Lifetime of cached templates                                        |
+| `maxPayloadBytes`    | 256 KB  | Limit per template and for all embedded A2UI payloads of one result |
+| `actions`            | `agent` | `mcp` sends actions to the server's `a2ui_action` tool, see below   |
+
+The client renders the activity type `a2ui-surface-v1` (`A2UI_ACTIVITY_TYPE`) with an
+A2UI 1.0 renderer, for example `@a2ui/angular` ≥ 0.14.
+
+### Opting in as an MCP server
+
+Declare the resource on the tool:
+
+```typescript
+server.registerTool(
+  "getCustomer",
+  {
+    inputSchema,
+    _meta: {
+      ui: {
+        resourceUri: "a2ui://customer-details",
+        mimeType: "application/a2ui+json",
+      },
+    },
+  },
+  async (input) => ({
+    content: [{ type: "text", text: "Customer loaded." }],
+    structuredContent: { customer: await loadCustomer(input.id) },
+  }),
+);
+```
+
+Serve the template as a JSON array of A2UI 1.0 messages. Only `createSurface` and
+`updateComponents` are allowed; put default data into `createSurface.dataModel`. Set
+`catalogId`: A2UI 1.0 has no implicit default catalog.
+
+The result provides the data in one of two ways:
+
+- `structuredContent` becomes the `dataModel` of every surface in the template.
+  Bindings such as `{ "@path": "/customer/name" }` resolve against it.
+- An `EmbeddedResource` with MIME type `application/a2ui+json` carries
+  `updateDataModel` or `updateComponents` operations, as in the A2UI guide. They are
+  used as they are, and `structuredContent` is ignored.
+
+A `_meta.ui.resourceUri` on the result overrides the one on the tool.
+
+### What the middleware does
+
+1. It picks up the `mcp-apps` activity snapshots of `MCPAppsMiddleware`. `ui://`
+   resources (HTML MCP Apps) pass through unchanged.
+2. It reads the resource through the proxied `resources/read` of `MCPAppsMiddleware`,
+   so server config, headers and transport checks are shared. Templates are cached per
+   server and URI for the TTL. Concurrent calls share one read, and failed reads are
+   not cached. Resources with another MIME type pass through.
+3. It folds `updateComponents` into `createSurface` unless the update replaces existing
+   component IDs, and it renames each surface to `<templateSurfaceId>-<toolCallId>`.
+   The cached template stays unchanged.
+4. If `catalogs` is set, it validates the result with the `MessageProcessor` of
+   `@a2ui/web_core` in strict mode. Without it, only the message structure and the size
+   limit are checked.
+5. It replaces the snapshot with
+   `{ activityType: "a2ui-surface-v1", messageId: "a2ui-surface-<toolCallId>", content: { a2ui_operations } }`.
+   On errors, including tool results with `isError`, the content is
+   `{ a2ui_operations: [], error }`. Other fields of the source event, such as
+   `timestamp`, are kept.
+6. It adds `mcp: { serverHash, serverId, resourceUri, presentationId }` to the content.
+   The client sends it back unchanged with each action.
+
+The tool result for the model (`TOOL_CALL_RESULT`) is not changed.
+
+### Actions
+
+The client sends a run with `forwardedProps.a2uiAction = { userAction, mcp }`
+(type `A2uiAction`). `userAction` is the A2UI 1.0 action payload.
+
+- `actions: "agent"`: the run passes through unchanged, for example to
+  `A2UIMiddleware`, which turns `userAction` into a `log_a2ui_event` tool call for the
+  model.
+- `actions: "mcp"`: the middleware calls the server's `a2ui_action` tool through the
+  proxied `tools/call` of `MCPAppsMiddleware`, with the template surface ID. The agent
+  is not invoked. The operations of the result go through the same size limit,
+  renaming and validation as tool results and are appended to the activity with one
+  `ACTIVITY_DELTA` (`/a2ui_operations/-`). If the server has no `a2ui_action`, the call
+  fails or the result has `isError`, the run passes on to the agent as with `"agent"`.
+  Once `a2ui_action` has succeeded, the action is never passed on, so its effect cannot
+  run twice: if its operations exceed the size limit or are invalid, the middleware
+  sets `error` on the activity instead (`/error`).
+  With `catalogs`, action results are validated without requiring that referenced
+  components exist, because they can come from earlier actions.
+
+On the server, hide `a2ui_action` from the model with `_meta: { ui: { visibility: ["app"] } }`
+and return `isError: true` for actions it does not handle.
+
+### Design: a decorator for `MCPAppsMiddleware`
+
+`A2uiMcpMiddleware` does not talk to MCP servers itself. It has the same interface as
+`MCPAppsMiddleware`, wraps it and works only on its output (Decorator pattern). As a
+result:
+
+- MCP connections, tool discovery and execution, auth headers and transport checks
+  exist only once, in `MCPAppsMiddleware`.
+- The middleware needs no MCP configuration of its own.
+- Tools without A2UI resources and HTML MCP Apps pass through untouched.
+- Apps that do not use A2UI do not add it and are not affected.
+
+`mcp-apps` snapshots carry no `toolCallId`, so the middleware takes it from the
+`TOOL_CALL_RESULT` that `MCPAppsMiddleware` emits right before each snapshot.
+
+### Limitations
+
+- The tool definition must declare `_meta.ui.resourceUri`. Without it,
+  `MCPAppsMiddleware` treats the tool as a supporting tool and emits no snapshot.
+- `callRendererFunction` and `callAgentFunction` are not supported.
+- Actions need the activity message on the client: `ACTIVITY_DELTA` patches it by
+  `messageId`. The operation list grows with every handled action. Cancelling a run
+  before `a2ui_action` is called skips the call.
+- The template cache is invalidated by TTL only; expired entries are removed on the
+  next load. It belongs to one middleware instance, so use one instance per
+  `MCPAppsMiddleware`.
+
 ## License
 
 MIT
