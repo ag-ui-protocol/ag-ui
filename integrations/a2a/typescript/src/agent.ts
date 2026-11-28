@@ -33,6 +33,17 @@ export interface A2AAgentConfig extends AgentConfig {
 const EXTENSION_URI = "https://a2ui.org/a2a-extension/a2ui/v0.8";
 const A2A_UI_MIME_TYPE = "application/json+a2ui";
 
+/**
+ * The A2A SDK calls the global fetch, so the extension header is added by
+ * swapping that for the duration of each call. Overlapping calls (concurrent
+ * runs, from one agent or several) share a single swap: the first saves the
+ * real fetch and the last puts it back. Each call saving and restoring
+ * "whatever fetch is now" made overlapping calls restore each other's
+ * wrapper, leaving it installed for every later fetch in the process.
+ */
+let fetchPatchDepth = 0;
+let fetchBeforePatch: typeof fetch | undefined;
+
 export class A2AAgent extends AbstractAgent {
   private readonly a2aClient: A2AClient;
   private readonly messageIdMap = new Map<string, string>();
@@ -292,25 +303,38 @@ export class A2AAgent extends AbstractAgent {
     };
 
     const patchFetch = () => {
-      const originalFetch = globalThis.fetch;
-      if (!originalFetch) {
-        return () => {};
-      }
+      if (fetchPatchDepth === 0) {
+        const originalFetch = globalThis.fetch;
+        if (!originalFetch) {
+          return () => {};
+        }
 
-      const extensionFetch: typeof fetch = async (input, init) => {
-        const headers = new Headers(init?.headers);
-        addExtensionHeader(headers);
-        const nextInit: RequestInit = {
-          ...init,
-          headers,
+        const extensionFetch: typeof fetch = async (input, init) => {
+          const headers = new Headers(init?.headers);
+          addExtensionHeader(headers);
+          const nextInit: RequestInit = {
+            ...init,
+            headers,
+          };
+          return originalFetch(input, nextInit);
         };
-        return originalFetch(input, nextInit);
-      };
 
-      globalThis.fetch = extensionFetch;
+        fetchBeforePatch = originalFetch;
+        globalThis.fetch = extensionFetch;
+      }
+      fetchPatchDepth += 1;
 
+      let restored = false;
       return () => {
-        globalThis.fetch = originalFetch;
+        if (restored) {
+          return;
+        }
+        restored = true;
+        fetchPatchDepth -= 1;
+        if (fetchPatchDepth === 0 && fetchBeforePatch) {
+          globalThis.fetch = fetchBeforePatch;
+          fetchBeforePatch = undefined;
+        }
       };
     };
 
