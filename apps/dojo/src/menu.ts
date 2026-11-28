@@ -452,6 +452,13 @@ export const menuIntegrations = [
     ],
   },
   {
+    id: "cli-agent-orchestrator",
+    name: "CLI Agent Orchestrator (awslabs)",
+    features: ["tool_approval"],
+    // Needs a local cao-server and a logged-in coding CLI; nothing is hosted.
+    localOnly: true,
+  },
+  {
     id: "claude-agent-sdk-python",
     name: "Claude Agent SDK (Python)",
     features: [
