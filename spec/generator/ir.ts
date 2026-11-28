@@ -190,6 +190,201 @@ function requireString(value: unknown, path: string, what: string): string {
   return value;
 }
 
+// Schema text reaches generated source verbatim, so it is checked once here
+// rather than escaped by each emitter:
+// - names, and enum values written as `Enum.Value` (TypeScript, Python) or as
+//   protobuf enum values, become identifiers;
+// - descriptions sit inside TypeScript `/** */` JSDoc, Python `"""` docstrings
+//   (not raw strings) and protobuf `//` line comments;
+// - other enum values and consts become string literals;
+// - a string `pattern` becomes a Python raw string and an MDX code span;
+// - defaults and `contentEncoding` become JSDoc tags and MDX code spans.
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const LINE_BREAK = /[\r\n\p{Zl}\p{Zp}]/u;
+// Every target writes string literals in double quotes; MDX code spans use
+// backticks. `tool-call` and the like stay valid.
+const UNSAFE_IN_LITERAL = /["`\\\p{Cc}\p{Zl}\p{Zp}]/u;
+// An odd run of backslashes before a quote or the end: python.ts turns `"`
+// into `\"` inside r"...", and a raw string cannot end in a lone backslash.
+const UNTERMINATED_RAW_STRING = /(^|[^\\])(\\\\)*\\("|$)/;
+
+function assertIdentifier(name: string, path: string, what: string): void {
+  if (!IDENTIFIER.test(name)) {
+    throw new SchemaReadError(path, `${what} "${name}" is not an identifier`);
+  }
+}
+
+function assertDocText(text: string, path: string, what: string): void {
+  if (text.includes("*/")) {
+    throw new SchemaReadError(
+      path,
+      `${what} contains */, which ends a TypeScript JSDoc block`,
+    );
+  }
+  if (text.includes('"""')) {
+    throw new SchemaReadError(
+      path,
+      `${what} contains """, which ends a Python docstring`,
+    );
+  }
+  if (text.endsWith('"')) {
+    // `"""text""""` closes after three quotes and leaves a stray one.
+    throw new SchemaReadError(
+      path,
+      `${what} ends with ", which runs into a docstring's closing """`,
+    );
+  }
+  if (text.includes("\\")) {
+    throw new SchemaReadError(
+      path,
+      `${what} contains a backslash, which Python reads as an escape`,
+    );
+  }
+  if (LINE_BREAK.test(text)) {
+    throw new SchemaReadError(
+      path,
+      `${what} contains a line break, which ends a protobuf // comment`,
+    );
+  }
+}
+
+/** Text that only reaches a JSDoc tag and an MDX code span. */
+function assertTagText(text: string, path: string, what: string): void {
+  if (text.includes("*/") || LINE_BREAK.test(text) || text.includes("`")) {
+    throw new SchemaReadError(
+      path,
+      `${what} cannot sit in a JSDoc tag or an MDX code span`,
+    );
+  }
+}
+
+function assertLiteral(value: string, path: string, what: string): void {
+  if (UNSAFE_IN_LITERAL.test(value)) {
+    throw new SchemaReadError(
+      path,
+      `${what} ${JSON.stringify(value)} needs escaping in a string literal`,
+    );
+  }
+}
+
+function assertEmittableType(type: TypeExpr, path: string): void {
+  switch (type.kind) {
+    case "literal":
+      // A const narrowing an enum is written as `Enum.Value`.
+      if (type.enumRef !== undefined)
+        assertIdentifier(type.value, path, "enum const");
+      else assertLiteral(type.value, path, "const");
+      return;
+    case "stringEnum":
+      for (const value of type.values) assertLiteral(value, path, "enum value");
+      return;
+    case "string":
+      if (
+        type.pattern !== undefined &&
+        (LINE_BREAK.test(type.pattern) ||
+          type.pattern.includes("`") ||
+          UNTERMINATED_RAW_STRING.test(type.pattern))
+      ) {
+        throw new SchemaReadError(
+          path,
+          "pattern cannot be written as a Python raw string or an MDX code span",
+        );
+      }
+      return;
+    case "array":
+      if (type.itemsDescription !== undefined) {
+        assertDocText(type.itemsDescription, path, "items description");
+      }
+      assertEmittableType(type.items, path);
+      return;
+    case "union":
+      for (const member of type.members) assertEmittableType(member, path);
+      return;
+    default:
+      return;
+  }
+}
+
+/** Enums whose values some definition narrows to, as `Enum.Value`. */
+function narrowedEnums(definitions: readonly Definition[]): Set<string> {
+  const names = new Set<string>();
+  const visit = (type: TypeExpr): void => {
+    if (type.kind === "literal" && type.enumRef !== undefined)
+      names.add(type.enumRef);
+    if (type.kind === "array") visit(type.items);
+    if (type.kind === "union") type.members.forEach(visit);
+  };
+  for (const definition of definitions) {
+    if (definition.kind === "object")
+      definition.fields.forEach((field) => visit(field.type));
+    if (definition.kind === "alias") visit(definition.type);
+  }
+  return names;
+}
+
+/**
+ * Checks every definition, mixins first so a field a mixin contributes is
+ * reported against the mixin rather than its first composer.
+ */
+function assertEmittable(definitions: readonly Definition[]): void {
+  const asIdentifiers = narrowedEnums(definitions);
+  const byName = new Map(
+    definitions.map((definition) => [definition.name, definition]),
+  );
+  for (const definition of definitions) {
+    const path = `#/$defs/${definition.name}`;
+    assertIdentifier(definition.name, path, "definition name");
+    assertDocText(definition.description, path, "description");
+    switch (definition.kind) {
+      case "object":
+        for (const field of definition.fields) {
+          const at = `${path}/properties/${field.name}`;
+          assertIdentifier(field.name, at, "field name");
+          assertDocText(field.description, at, "description");
+          if (field.contentEncoding !== undefined) {
+            assertTagText(field.contentEncoding, at, "contentEncoding");
+          }
+          if (field.defaultValue !== undefined) {
+            assertTagText(JSON.stringify(field.defaultValue), at, "default");
+          }
+          assertEmittableType(field.type, at);
+        }
+        break;
+      case "enum":
+        for (const value of definition.values) {
+          if (asIdentifiers.has(definition.name))
+            assertIdentifier(value, path, "enum value");
+          else assertLiteral(value, path, "enum value");
+        }
+        break;
+      case "alias":
+        assertEmittableType(definition.type, path);
+        break;
+      case "union": {
+        // protobuf turns each member's discriminator into an enum value.
+        if (definition.discriminator === undefined) break;
+        for (const memberName of definition.members) {
+          const member = byName.get(memberName);
+          const tag =
+            member?.kind === "object"
+              ? member.fields.find(
+                  (field) => field.name === definition.discriminator,
+                )
+              : undefined;
+          if (tag?.type.kind === "literal") {
+            assertIdentifier(
+              tag.type.value,
+              `#/$defs/${memberName}`,
+              "discriminator value",
+            );
+          }
+        }
+        break;
+      }
+    }
+  }
+}
+
 /**
  * A field's documentation: its own description, or the description of the
  * definition it references. A narrowing declaration (the `type` const on each
@@ -635,7 +830,14 @@ function assertVocabulary(root: Json): void {
 export function buildModel(schema: Json): ProtocolModel {
   assertVocabulary(schema);
   const schemaId = requireString(schema.$id, "#", "$id");
-  const versionMatch = /\/spec\/([^/]+)\/schema\.json$/.exec(schemaId);
+  // The $id is written into the banner of every generated file.
+  if (/[\s"`\\]|\*\//.test(schemaId)) {
+    throw new SchemaReadError(
+      "#/$id",
+      `"${schemaId}" cannot be written into a file banner`,
+    );
+  }
+  const versionMatch = /\/spec\/([A-Za-z0-9.-]+)\/schema\.json$/.exec(schemaId);
   if (!versionMatch) {
     throw new SchemaReadError(
       "#/$id",
@@ -765,6 +967,8 @@ export function buildModel(schema: Json): ProtocolModel {
   const mixinShapes = [...mixins]
     .sort()
     .map((name) => flattenObject(name, defs[name], defs, mixins));
+
+  assertEmittable([...mixinShapes, ...ordered]);
 
   return {
     version: versionMatch[1],
