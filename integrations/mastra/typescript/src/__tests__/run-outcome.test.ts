@@ -341,6 +341,31 @@ describe("RUN_FINISHED names the frontend tool calls a run stopped on", () => {
       },
     );
 
+    it("puts the render call in a message of its own", async () => {
+      const { events } = await run(
+        remote([
+          ...frontendCall("tc-chart", "show_chart"),
+          ...streamedRender,
+          finish,
+        ]),
+        [RENDER_A2UI, SHOW_CHART],
+      );
+      const parentOf = (toolCallId: string) =>
+        (
+          events.find(
+            (e) =>
+              e.type === EventType.TOOL_CALL_START &&
+              (e as any).toolCallId === toolCallId,
+          ) as any
+        )?.parentMessageId;
+
+      // The A2UIMiddleware reads a render call in the assistant message as a
+      // sibling of generate_a2ui. In a message of its own, the call belongs
+      // to generate_a2ui, so a failed attempt is not a failed render.
+      expect(parentOf(renderId)).toBe(`${renderId}-message`);
+      expect(parentOf("tc-chart")).not.toBe(parentOf(renderId));
+    });
+
     it.each(cases)(
       "leaves only the frontend call pending (%s)",
       async (_label, make, renderOffered) => {
