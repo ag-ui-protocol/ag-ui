@@ -281,6 +281,10 @@ export class ManagedAgentsAgent extends AbstractAgent {
     let recoveredStream: SessionStream | undefined;
     let recoveredAnswerIds: Set<string> | undefined;
     let recovering = false;
+    // Whether this run started the session's current turn. A first run always
+    // does; a later run does when it sends the session new input. Only such a
+    // run interrupts the session when it is aborted or fails.
+    let ownsTurn = false;
     let sessionGateKey: string | undefined;
     emit({
       type: EventType.RUN_STARTED,
@@ -380,6 +384,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
       this.busyThreads.add(nativeKey);
       sessionGateKey = nativeKey;
       recovering ||= Boolean(session.preserveTools);
+      ownsTurn = !recovering;
       if (session.ended)
         throw new RecoveryError(
           "session_ended",
@@ -410,6 +415,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
               "content" in message ? message.content : undefined,
             ]),
           ),
+          { streamDeltas: this.config.streamDeltas ?? true },
         );
         recoveredStream = recovery.stream;
         recoveredAnswerIds = recovery.answeredIds;
@@ -540,6 +546,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
         input.messages,
         input.resume,
       );
+      ownsTurn ||= outbound.events.length > 0;
       const contextDelivery = attachContext(
         outbound.events,
         input.context,
@@ -620,6 +627,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
         acknowledgedToolUseIds: recoveredAnswerIds,
         sessionThreadId: session.sessionThreadId,
         preservePending: recovering,
+        interruptOnAbort: ownsTurn,
         onNativeEvent: async (id) => {
           session.lastEventId = id;
           await this.store.set(key, session);
@@ -712,7 +720,7 @@ export class ManagedAgentsAgent extends AbstractAgent {
     } catch (err) {
       // Interrupt the session while the busy gate is still held, so a user
       // who resends right away is not interrupted by this run's teardown.
-      if (signal.aborted && sessionId && !recovering) {
+      if (signal.aborted && sessionId && ownsTurn) {
         const interrupted = await this.client.beta.sessions.events
           .send(
             sessionId,

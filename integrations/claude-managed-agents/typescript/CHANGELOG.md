@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A follow-up turn on an existing thread streams text previews like a first turn. Recovery now requests `event_deltas` when `streamDeltas` is on, and passes previews through for messages that native history has not already replayed.
+- A run that sends the session new input (a user message or tool results) interrupts the session when it is abandoned or fails, also on an existing thread. Only a reconnect that sends nothing leaves the session running.
+
 ## 0.0.4 — 2026-10-21
 
 - Child result delivery now persists across initial runs and reloads.

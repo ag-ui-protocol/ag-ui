@@ -14,6 +14,7 @@ import type { BaseEvent } from "@ag-ui/client";
 import {
   BEST_EFFORT_SEND_TIMEOUT_MS,
   PARKED_RETRY_DELAYS_MS,
+  STREAM_DELTA_TYPES,
 } from "./constants";
 import { reportSwallowedFailure } from "./report";
 import { textOf } from "./text";
@@ -27,6 +28,12 @@ export interface TurnOptions {
   /** Answers confirmed by native history before consuming the live stream. */
   acknowledgedToolUseIds?: ReadonlySet<string>;
   preservePending?: boolean;
+  /**
+   * Whether this run may stop the session when it fails or is abandoned.
+   * Defaults to `!preservePending`. A run that sends the session new input owns
+   * that turn even on an existing thread; a reconnect that sends nothing does not.
+   */
+  interruptOnAbort?: boolean;
   allowBackendTool?: (
     name: string,
     sessionThreadId?: string | null,
@@ -125,11 +132,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
     opts.stream ??
     (await client.beta.sessions.events.stream(
       sessionId,
-      // "agent.thinking" opts into the live thinking indicator (event_start);
-      // thinking carries no text deltas today.
-      opts.streamDeltas
-        ? { event_deltas: ["agent.message", "agent.thinking"] }
-        : {},
+      opts.streamDeltas ? { event_deltas: STREAM_DELTA_TYPES } : {},
       { signal },
     ));
 
@@ -264,7 +267,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnOutcome> {
    * run gate open indefinitely.
    */
   const interrupt = (): Promise<boolean> =>
-    opts.preservePending
+    !(opts.interruptOnAbort ?? !opts.preservePending)
       ? Promise.resolve(false)
       : client.beta.sessions.events
           .send(
