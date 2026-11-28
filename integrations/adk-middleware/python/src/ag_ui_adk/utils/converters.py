@@ -56,11 +56,13 @@ def _to_binary_part(data: Optional[str], mime_type: Optional[str], url: Optional
         )
         return None
     
+    # Only inline `data` is supported: a `url`/`id` reference cannot be
+    # fetched, but it must not discard valid inline data that is also
+    # present (see #2241). Warn and fall through so the data below wins.
     if url or binary_id:
         logger.warning(
             "BinaryInputContent: only data is supported; ignoring url/id fields."
         )
-        return None
 
     if not mime_type:
         logger.warning("BinaryInputContent: missing mimeType; ignoring.")
