@@ -232,6 +232,43 @@ class TestLangchainMessagesToAgui(unittest.TestCase):
         assert result[0].content == "Hello"
         assert result[0].id == "h1"
 
+    def test_pinned_skill_human_message_is_skipped(self):
+        # #3343: Deep Agents pins skills as a HumanMessage marked
+        # additional_kwargs={"lc_source": "pinned_skill"}. It is internal
+        # context for the model, not conversation, so the snapshot must
+        # not surface it as an ordinary user message.
+        msg = HumanMessage(
+            id="skill-1",
+            content='<skill name="x" path="/s/x">do x</skill>',
+            additional_kwargs={"skill": "x", "lc_source": "pinned_skill"},
+        )
+        result = langchain_messages_to_agui([msg])
+        assert result == []
+
+    def test_pinned_skill_message_skipped_among_real_messages(self):
+        pinned = HumanMessage(
+            id="skill-1",
+            content='<skill name="x" path="/s/x">do x</skill>',
+            additional_kwargs={"lc_source": "pinned_skill"},
+        )
+        real = HumanMessage(id="h1", content="Hello")
+        answer = AIMessage(id="a1", content="Response")
+        result = langchain_messages_to_agui([pinned, real, answer])
+        assert [m.id for m in result] == ["h1", "a1"]
+        assert result[0].role == "user"
+        assert result[1].role == "assistant"
+
+    def test_human_message_with_other_lc_source_is_kept(self):
+        msg = HumanMessage(
+            id="h1",
+            content="Hello",
+            additional_kwargs={"lc_source": "something_else"},
+        )
+        result = langchain_messages_to_agui([msg])
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert result[0].content == "Hello"
+
     def test_ai_message_plain(self):
         msg = AIMessage(id="a1", content="Response")
         result = langchain_messages_to_agui([msg])
