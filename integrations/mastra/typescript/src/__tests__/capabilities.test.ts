@@ -11,6 +11,7 @@ import {
   makeInput,
 } from "./helpers";
 import { MastraAgent } from "../mastra";
+import pkg from "../../package.json";
 
 // The AG-UI capabilities declaration: only what this adapter actually does.
 
@@ -54,6 +55,15 @@ function realAgent(memory?: MockMemory) {
 }
 
 describe("getCapabilities", () => {
+  it("declares the adapter package version in identity metadata", async () => {
+    const capabilities = await wrap(realAgent()).getCapabilities();
+
+    expect(capabilities.identity?.metadata).toEqual({
+      adapterVersion: pkg.version,
+    });
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it("declares what the bridge supports for a local agent with working memory", async () => {
     const capabilities = await wrap(
       realAgent(new MockMemory({ enableWorkingMemory: true })),
@@ -65,9 +75,11 @@ describe("getCapabilities", () => {
         type: "mastra",
         name: "weather",
         description: "Reports the weather",
+        metadata: { adapterVersion: pkg.version },
       },
       tools: { supported: true, clientProvided: true },
       state: { snapshots: true, deltas: true, persistentState: true },
+      custom: { "openbot.runGuidance": { version: 1 } },
       reasoning: { streaming: true },
       humanInTheLoop: { supported: true, interrupts: true, approvals: true },
     });
@@ -158,6 +170,7 @@ describe("getCapabilities", () => {
       expect(capabilities.identity).toEqual({
         type: "mastra",
         name: "weather",
+        metadata: { adapterVersion: pkg.version },
       });
     },
   );

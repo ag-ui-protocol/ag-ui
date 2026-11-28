@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `add_adk_fastapi_endpoint()` and `create_adk_app()` now apply route
+  `dependencies` to the `/capabilities` and `/agents/state` routes as well as
+  the agent route (GHSA-jhvp-j8pf-5vh5). Before, an application that used
+  `dependencies` for authentication left `/agents/state` open, so an
+  unauthenticated caller could read a thread's session state and message
+  history. Other route kwargs, such as `name` and `operation_id`, still apply
+  to the agent route only.
+- The run endpoint now rejects run state that is not a JSON object or null
+  with a 422.
+  `RunAgentInput.state` is typed `Any`, so an array of `[key, value]` pairs
+  passed validation. The endpoint's `app:`/`user:` scope check only read
+  object keys, and `ADKAgent.run()` then turned the pairs back into keys. With
+  `allow_scoped_state_keys=True`, a client could write app-wide and user-wide
+  state this way. `ADKAgent.run()` now also ignores non-mapping state from
+  direct callers. `/capabilities` and `/agents/state` take no client state,
+  so the 422 does not apply to them.
+- `/agents/state` no longer returns backend error text when the session read
+  fails for a thread already in the session lookup cache. It returns the same
+  fixed message as the uncached path.
+- `extract_headers` / `make_extract_headers`: the real request header now
+  decides the `state.headers` key of every configured header. Before, a value
+  the client sent under the same key in the run body (`state.headers`) replaced
+  the request header, so a setup that read the user ID from
+  `state.headers.user_id` (as the documentation showed) let an authenticated
+  client act as any other user ID. A client value under a configured key is now
+  dropped, also when the header is missing. Other `state.headers` keys stay
+  client-supplied. The documentation examples now read identity from
+  `request.headers` in a custom `extract_state_from_request`.
+
+  **Breaking change:** clients can no longer override a configured header
+  through `state.headers` in the run body. Do not read identity or
+  authorization data from client-supplied run state.
+
 ### Changed
 
 - Migrate A2UI catalog prompts to the published SDK 0.9 `Catalog`, request
@@ -286,6 +321,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with their exact bytes, MIME type and `metadata.filename`, in their original
   order. Previously only URL attachments came back, without a filename, and a
   user message that held only attachments was dropped from the history.
+
+## 0.14.0 — 2026-11-21
+
+- `add_adk_fastapi_endpoint()` now forwards `dependencies` to `/agents/state` and `/capabilities`, closing an auth bypass (GHSA-jhvp-j8pf-5vh5).
+- Request headers now take precedence over client `state.headers` in `extract_headers`, preventing identity spoofing.
+- Run state that is not a JSON object or null is rejected with HTTP 422.
+- `ADKAgent.run()` accepts any `collections.abc.Mapping` as run state.
+- `HTTPException` from the state extractor is now re-raised on `/capabilities` and `/agents/state`, preserving status, detail and headers.
+- Removed dead `_NonObjectStateError` 422 handlers on `/capabilities` and `/agents/state`.
+- Docs updated to read identity from the authenticated request and fail closed (HTTP 401) when absent.
+
+### Breaking changes
+
+- `/agents/state` and `/capabilities` now enforce the `dependencies` passed to `add_adk_fastapi_endpoint()`; previously-open routes may now require authentication.
+- Non-object run state (e.g. arrays) is now rejected with HTTP 422.
+- Client-supplied `state.headers` values no longer override request headers; clients relying on that behavior must change.
+- `/agents/state` uses the first registration's dependencies per app; all calls on one app must pass the same dependencies.
+- Re-raised `HTTPException` changes responses on these routes from 500 to the raised status.
 
 ## 0.13.0 — 2026-11-12
 

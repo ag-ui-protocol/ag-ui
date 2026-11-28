@@ -16,6 +16,7 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from .agent import OpenAIAgentsAgent
+from .approvals import ConsumedTokens
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ def add_openai_agents_fastapi_endpoint(
     path: str = "/",
     *,
     include_health: bool = True,
+    consumed_tokens: ConsumedTokens | None = None,
 ) -> None:
     """Add an OpenAI Agents SDK agent endpoint to a FastAPI app.
 
@@ -35,7 +37,17 @@ def add_openai_agents_fastapi_endpoint(
         path: The POST path for the agent. Defaults to "/".
         include_health: Whether to register a GET health check alongside the
             agent endpoint. Defaults to True.
+        consumed_tokens: Where decided tool approvals are recorded, so each
+            runs once. Give every worker the same store (see
+            ``ConsumedTokens``); the default, process memory, does not stop a
+            replay that reaches another worker or comes after a restart.
+            The agent is copied, not changed.
     """
+    if consumed_tokens is not None:
+        agent = agent.with_consumed_tokens(consumed_tokens)
+    # Resolve the signer now, so a per-process approval store is reported at
+    # startup rather than on the first request.
+    agent.approvals
     # Unique per-route names/operation_ids so mounting several agents on one app
     # does not collide (FastAPI derives both from the handler __name__ otherwise,
     # producing duplicate operation ids and an ambiguous OpenAPI schema).

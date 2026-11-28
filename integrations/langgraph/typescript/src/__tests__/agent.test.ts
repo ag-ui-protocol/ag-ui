@@ -150,9 +150,11 @@ async function runPrepareStream(
 
 async function runPrepareRegenerateStream(
   agent: LangGraphAgent,
-  forwardedConfig: Record<string, unknown>,
+  assistantConfig: Record<string, unknown>,
 ) {
   (agent as any).assistant = MOCK_ASSISTANT;
+  // The run config is the operator's; a client forwardedProps.config is ignored.
+  (agent as any).assistantConfig = assistantConfig;
   (agent as any).getCheckpointByMessage = vi.fn().mockResolvedValue({
     values: { messages: [] },
     checkpoint: { checkpoint_id: "checkpoint-1" },
@@ -166,7 +168,7 @@ async function runPrepareRegenerateStream(
     {
       threadId: "thread-1",
       messageCheckpoint: { id: "message-1", type: "human", content: "hi" },
-      forwardedProps: { config: forwardedConfig },
+      forwardedProps: {},
     } as any,
     ["values"],
   );

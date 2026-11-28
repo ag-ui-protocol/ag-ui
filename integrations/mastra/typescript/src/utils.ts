@@ -1,3 +1,4 @@
+import type { MastraRunGuidanceOptions } from "./run-guidance";
 import type { Message, PartSource, TextPart } from "@ag-ui/client";
 import { AbstractAgent, contentToText } from "@ag-ui/client";
 import { MastraClient } from "@mastra/client-js";
@@ -525,6 +526,8 @@ export function convertAGUIMessagesToMastra(
 export interface GetRemoteAgentsOptions {
   mastraClient: MastraClient;
   resourceId: string;
+  /** Pass false to skip native run guidance capability discovery. */
+  runGuidance?: false;
   /**
    * Surface Mastra Observational Memory (OM) background work as AG-UI activity
    * events (activityType `mastra-observational-memory`). `true` enables it for
@@ -545,6 +548,7 @@ export interface GetRemoteAgentsOptions {
 export async function getRemoteAgents({
   mastraClient,
   resourceId,
+  runGuidance,
   observationalMemory,
   tracingOptions,
   subagentVisibility,
@@ -568,6 +572,7 @@ export async function getRemoteAgents({
         // Enables syncing input.state into the remote server's working memory
         // (client -> agent shared state), mirroring the local path.
         remoteClient: mastraClient,
+        runGuidance,
         observationalMemory: wantsObservationalMemory(agentId)
           ? true
           : undefined,
@@ -586,6 +591,8 @@ export interface GetLocalAgentsOptions {
   mastra: Mastra;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Authorize run guidance or disable the default local receiver. */
+  runGuidance?: false | MastraRunGuidanceOptions;
   /**
    * Enable Mastra's `untilIdle` run mode (background-task lifecycle piped into
    * the run's fullStream). `true` enables it for every agent; pass an array of
@@ -611,6 +618,7 @@ export function getLocalAgents({
   mastra,
   resourceId,
   requestContext,
+  runGuidance,
   untilIdle,
   observationalMemory,
   tracingOptions,
@@ -635,6 +643,7 @@ export function getLocalAgents({
         agent,
         resourceId,
         requestContext,
+        runGuidance,
         untilIdle: wantsUntilIdle(agentId) ? true : undefined,
         observationalMemory: wantsObservationalMemory(agentId)
           ? true
@@ -656,6 +665,8 @@ export interface GetLocalAgentOptions {
   agentId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Authorize run guidance or disable the default local receiver. */
+  runGuidance?: false | MastraRunGuidanceOptions;
   /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
   /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
@@ -669,6 +680,7 @@ export function getLocalAgent({
   agentId,
   resourceId,
   requestContext,
+  runGuidance,
   tracingOptions,
   subagentVisibility,
   subagentToolResults,
@@ -682,6 +694,7 @@ export function getLocalAgent({
     agent,
     resourceId,
     requestContext,
+    runGuidance,
     tracingOptions,
     subagentVisibility,
     subagentToolResults,
@@ -693,6 +706,8 @@ export interface GetNetworkOptions {
   networkId: string;
   resourceId: string;
   requestContext?: RequestContext;
+  /** Authorize run guidance or disable the default local receiver. */
+  runGuidance?: false | MastraRunGuidanceOptions;
   /** Mastra tracing options forwarded to the run. See MastraAgentConfig.tracingOptions. */
   tracingOptions?: MastraTracingOptions;
   /** How delegated sub-agents reach the stream. See MastraAgentConfig.subagentVisibility. */
@@ -706,6 +721,7 @@ export function getNetwork({
   networkId,
   resourceId,
   requestContext,
+  runGuidance,
   tracingOptions,
   subagentVisibility,
   subagentToolResults,
@@ -719,6 +735,7 @@ export function getNetwork({
     agent: network as unknown as LocalMastraAgent,
     resourceId,
     requestContext,
+    runGuidance,
     tracingOptions,
     subagentVisibility,
     subagentToolResults,

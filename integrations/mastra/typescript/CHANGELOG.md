@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- `getCapabilities()` now declares the adapter package version as `identity.metadata.adapterVersion`, so a host can tell which bridge release an app runs.
+
+## 2.1.0 — 2026-11-27
+
+- Added `registerCopilotKit` entry at `@ag-ui/mastra/copilotkit-2` for CopilotKit 2.x, importing the runtime from `@copilotkit/runtime` instead of the removed `@copilotkit/runtime/v2`.
+- Both CopilotKit entries share one route implementation, so routes behave identically.
+- Optional peer dependency now accepts `^1.76.0` or 2.x.
+- Adapter version is now declared in capabilities identity.
+- Added per-run guidance and capability discovery. In-process agents on supported Mastra versions enable run guidance by default. [Run guidance setup](https://github.com/ag-ui-protocol/ag-ui/blob/4ac19c6da6b816c9bc424e995ac349b994ece0b8/integrations/mastra/typescript/README.md#per-run-guidance)
+
+### Breaking changes
+
+- If a custom tool or prompt callback on an in-process agent reads `OpenBot standing role` or `OpenBot granted tools guidance` from `requestContext.get("ag-ui").context`, set `runGuidance: false` to keep those entries available to that callback. When guidance is enabled, the adapter handles the two reserved entries at the model boundary. Ordinary context still reaches callbacks.
+- The adapter creates a fresh `RequestContext` per run with either setting and copies host-provided values into it. If your code relied on the adapter writing run context into the original object, read it from the `RequestContext` passed to the callback instead.
+
 ## 2.0.2 — 2026-10-27
 
 - RUN_FINISHED now carries Mastra's finish reason unchanged on `metadata.mastra.finishReason` when reported; cancelled runs carry none.

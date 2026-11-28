@@ -5,7 +5,7 @@ import logging
 
 import asyncio
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 # Set up basic logging format
@@ -108,13 +108,18 @@ async def setup_and_run():
     #     use_in_memory_services=True
     # )
 
-    # Option B: Dynamic extraction from context (recommended)
+    # Option B: Identity from the authenticated request (recommended)
+    # Do not trust client-supplied context or state for identity: the client controls them.
+    async def extract_identity(request: Request, input_data) -> dict:
+        """Take the user ID from a header set by your authenticating gateway."""
+        user_id = request.headers.get("x-user-id")
+        if not user_id:
+            raise HTTPException(status_code=401)
+        return {"user_id": user_id}
+
     def extract_user_id(input_data):
-        """Extract user ID from context."""
-        for ctx in input_data.context:
-            if ctx.description == "user":
-                return ctx.value
-        return "test_user"  # Static user ID for memory testing
+        """Read the user ID that extract_identity wrote into state."""
+        return input_data.state["user_id"]
 
     def extract_app_name(input_data):
         """Extract app name from context."""
@@ -162,11 +167,17 @@ async def setup_and_run():
 
     # Step 6: Add endpoints
     # Each endpoint uses its specific ADKAgent instance
-    add_adk_fastapi_endpoint(app, assistant_adk_agent, path="/chat")
+    add_adk_fastapi_endpoint(
+        app, assistant_adk_agent, path="/chat",
+        extract_state_from_request=extract_identity,
+    )
 
     # Add haiku generator endpoint if available
     if haiku_adk_agent:
-        add_adk_fastapi_endpoint(app, haiku_adk_agent, path="/adk-tool-based-generative-ui")
+        add_adk_fastapi_endpoint(
+            app, haiku_adk_agent, path="/adk-tool-based-generative-ui",
+            extract_state_from_request=extract_identity,
+        )
         print("   ✅ Added endpoint: /adk-tool-based-generative-ui")
     else:
         print("   ❌ Skipped haiku endpoint - agent not available")

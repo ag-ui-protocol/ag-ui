@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from agents import Agent, RunContextWrapper, function_tool
-from test_interrupts import ScriptedModel, call, finished, request, run, text
+from test_interrupts import ScriptedModel, call, finished, held, request, run, text
 
 from ag_ui.core import Context, EventType, ResumeEntry, UserMessage
 from ag_ui_openai_agents import OpenAIAgentsAgent, SharedState, shared_state, use_shared_state
@@ -153,7 +153,7 @@ def test_a_state_change_before_a_resumed_tool_fails_still_reaches_the_client():
         AssistantMessage(
             id="a1",
             role="assistant",
-            tool_calls=[ToolCall(id="c1", type="function", function=FunctionCall(name="approve_then_fail", arguments='{"name": "milk"}'))],
+            tool_calls=[held(ToolCall(id="c1", type="function", function=FunctionCall(name="approve_then_fail", arguments='{"name": "milk"}')), scope="lists")],
         ),
     ]
     agent = OpenAIAgentsAgent(Agent(name="lists", instructions="Keep the list.", tools=[approve_then_fail]))

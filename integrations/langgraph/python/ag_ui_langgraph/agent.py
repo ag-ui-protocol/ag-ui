@@ -22,6 +22,7 @@ from langchain_core.runnables.config import merge_configs
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
+from pydantic_core import to_jsonable_python
 
 from .types import (
     State,
@@ -517,6 +518,43 @@ def _is_deepagents_task_call(tool_call) -> bool:
         tool_call.get("args") if isinstance(tool_call, dict) else getattr(tool_call, "args", None)
     )
     return isinstance(args, dict) and "subagent_type" in args
+
+
+def _same_input_value(stored, sent) -> bool:
+    """Whether the client's ``sent`` value is the stored value echoed back.
+
+    The client holds the state as JSON (the adapter's ``STATE_SNAPSHOT``, which
+    the event encoder serializes with pydantic), so a stored ``datetime``,
+    ``set`` or Pydantic model comes back in its JSON form. Compare both values
+    in that form. A value that cannot be converted or compared (numpy or pandas
+    state, say) counts as changed: the run then starts from START.
+    """
+    try:
+        return bool(to_jsonable_python(stored) == to_jsonable_python(sent))
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
+def _changed_input_keys(update, current, channels=None) -> List[str]:
+    """The keys of ``update`` that would change the thread's state ``current``.
+
+    ``update["messages"]`` holds only the messages the request adds, so any
+    message is a change. A key that is not a channel of the graph (when the
+    channels are known) changes nothing: LangGraph does not store it.
+    """
+    changed = []
+    for key, value in (update or {}).items():
+        if channels is not None and key not in channels:
+            continue
+        if key == "messages":
+            if value:
+                changed.append(key)
+        elif key in current:
+            if not _same_input_value(current[key], value):
+                changed.append(key)
+        elif value not in (None, [], {}):
+            changed.append(key)
+    return changed
 
 
 def _pending_tool_calls_are_all_task(messages) -> bool:
@@ -1792,6 +1830,24 @@ class LangGraphAgent:
             # explicit.
             node_name_for_mode = node_name_input if (node_name_input and node_name_input != "__end__") else None
 
+            # ``node_name`` is the client's claim about where the thread stands.
+            # A continue does not act on that claim: it resumes only the nodes
+            # the thread itself has waiting (see ``prepare_stream``). The
+            # claim only decides between a continue and a new run, so a claim
+            # the thread's history does not back starts a new run.
+            if (
+                node_name_for_mode
+                and not has_resume_input
+                and thread_id
+                and not await self._ran_in_latest_step(config, node_name_for_mode)
+            ):
+                logger.warning(
+                    "ignoring forwardedProps.node_name=%r: the thread's latest step did "
+                    "not run that node; starting a new run instead (thread_id=%r, run_id=%r)",
+                    node_name_for_mode, thread_id, self.active_run.get("id"),
+                )
+                node_name_for_mode = None
+
             if not has_resume_input and thread_id and node_name_for_mode:
                 self.active_run["mode"] = "continue"
                 self.active_run["node_name"] = node_name_for_mode
@@ -2306,6 +2362,7 @@ class LangGraphAgent:
         langchain_messages = agui_messages_to_langchain(messages)
         self._seed_tool_message_ids_from_input(langchain_messages, state_input["messages"])
         state = self.langgraph_default_merge_state(state_input, langchain_messages, input)
+        langchain_messages = self._filter_reserved_input_messages(langchain_messages)
         config["configurable"]["thread_id"] = thread_id
         interrupts = self._collect_interrupts(agent_state.tasks)
         has_active_interrupts = len(interrupts) > 0
@@ -2455,7 +2512,37 @@ class LangGraphAgent:
             }
 
         if self.active_run["mode"] == "continue":
-            await self.graph.aupdate_state(config, state, as_node=self.active_run.get("node_name"))
+            # A continue resumes the thread as it stands: the stream input is
+            # ``None`` and nothing is written first, so LangGraph runs only
+            # the tasks in the latest checkpoint's ``next``. It cannot skip a
+            # node. (An ``update_state(..., as_node=node_name)`` would mark the
+            # named node as finished and run its successors instead; under
+            # ``durability="exit"`` the history check cannot tell whether that
+            # node really finished, so that write let a client run the nodes
+            # after a gate that had refused, or after a node that never ran.)
+            #
+            # The nodes that ran before may have checked the input (a
+            # permission gate, say). Their decision holds only for the input
+            # they saw. If the request changes it (a new message, a changed
+            # channel of the input schema), the run starts from START instead,
+            # so those nodes check the new input.
+            input_keys = (self.active_run.get("schema_keys") or {}).get("input") or []
+            continue_state = filter_object_by_schema_keys(state, [*DEFAULT_SCHEMA_KEYS, *input_keys])
+            changed_keys = _changed_input_keys(
+                continue_state,
+                agent_state.values or {},
+                getattr(self.graph, "channels", None),
+            )
+            if changed_keys:
+                logger.warning(
+                    "ignoring forwardedProps.node_name=%r: the request changes %s, which the "
+                    "nodes before it have not seen; starting a new run instead "
+                    "(thread_id=%r, run_id=%r)",
+                    self.active_run.get("node_name"), ", ".join(changed_keys),
+                    thread_id, self.active_run.get("id"),
+                )
+                self.active_run["mode"] = "start"
+                self.active_run["node_name"] = None
 
         if has_resume_input:
             if agui_resume is not None:
@@ -2562,7 +2649,15 @@ class LangGraphAgent:
         # everything else is preserved.  Fixes #1749.
         merged_config = merge_configs(config, fork)
 
-        stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
+        # The fork point predates the edited message, so a tool call it ends
+        # on may have been answered by a result that arrived with that
+        # message. Only ``message_checkpoint`` reaches the merge here, so the
+        # cancelled-call repair cannot see that result and must stay off.
+        self._skip_cancelled_tool_repair = True
+        try:
+            stream_input = self.langgraph_default_merge_state(time_travel_checkpoint.values, [message_checkpoint], input)
+        finally:
+            self._skip_cancelled_tool_repair = False
         subgraphs_stream_enabled = input.forwarded_props.get('stream_subgraphs', True) if input.forwarded_props else True
 
         kwargs = self.get_stream_kwargs(
@@ -2720,9 +2815,13 @@ class LangGraphAgent:
                 "context": [],
             }
 
+    def _filter_reserved_input_messages(self, messages: List[BaseMessage]) -> List[BaseMessage]:
+        return messages
+
     def langgraph_default_merge_state(self, state: State, messages: List[BaseMessage], input: RunAgentInput) -> State:
         if messages and isinstance(messages[0], SystemMessage):
             messages = messages[1:]
+        messages = self._filter_reserved_input_messages(messages)
 
         # At runtime ``state["messages"]`` holds LangChain BaseMessage subclasses
         # (HumanMessage / AIMessage / ToolMessage / SystemMessage) — not the
@@ -2815,23 +2914,41 @@ class LangGraphAgent:
         # A different result for an answered call is kept, as before.
         stored_tool_messages = self._stored_tool_messages_by_call(existing_messages)
 
+        incoming_messages = [
+            msg for msg in messages
+            if msg.id not in existing_message_ids
+            and not (
+                isinstance(msg, ToolMessage)
+                and hasattr(msg, 'tool_call_id')
+                and (
+                    msg.tool_call_id in replaced_tool_call_ids
+                    or self._is_tool_result_echo(
+                        msg, stored_tool_messages.get(msg.tool_call_id)
+                    )
+                )
+            )
+        ]
+
+        # A run cancelled while a tool was still executing leaves the AIMessage
+        # that carries the tool_calls in the checkpoint with no ToolMessage
+        # answering them. Appending this turn's input after it hands the model
+        # an unanswered tool call, which OpenAI and Azure OpenAI reject with a
+        # 400, and the thread stays wedged until someone clears it (#2871).
+        # Answer each unanswered call with a cancelled ToolMessage instead of
+        # stripping the tool_calls off the AIMessage, so the transcript still
+        # records that the call was made. langgraph-api's
+        # patch_orphan_tool_calls does the same thing, but it only exists on
+        # langgraph-api — a self-hosted OSS graph gets no repair at all.
+        cancelled_tool_messages = self._cancelled_tool_messages_for_dangling_calls(
+            existing_messages,
+            incoming_messages,
+        )
+
         new_messages = [
             *repaired_ai_messages,
             *repaired_tool_messages,
-            *[
-                msg for msg in messages
-                if msg.id not in existing_message_ids
-                and not (
-                    isinstance(msg, ToolMessage)
-                    and hasattr(msg, 'tool_call_id')
-                    and (
-                        msg.tool_call_id in replaced_tool_call_ids
-                        or self._is_tool_result_echo(
-                            msg, stored_tool_messages.get(msg.tool_call_id)
-                        )
-                    )
-                )
-            ],
+            *cancelled_tool_messages,
+            *incoming_messages,
         ]
 
         tools = input.tools or []
@@ -2908,6 +3025,83 @@ class LangGraphAgent:
     _ORPHAN_TOOL_MSG_RE = re.compile(
         r"^Tool call '.+' with id '.+' was interrupted before completion\.$"
     )
+
+    @staticmethod
+    def _cancelled_tool_message_content(tool_name: str, tool_call_id: str) -> str:
+        return (
+            f"Tool call '{tool_name}' with id '{tool_call_id}' "
+            f"was cancelled before completion."
+        )
+
+    def _cancelled_tool_messages_for_dangling_calls(
+            self,
+            existing_messages: List[BaseMessage],
+            incoming_messages: List[BaseMessage],
+    ) -> List[ToolMessage]:
+        """Answer tool calls the checkpoint left dangling after a cancelled run.
+
+        Only the trailing AIMessage is repaired. Its unanswered calls are the
+        ones this turn's input is about to be appended after, so they are the
+        ones that break the provider's "every tool_call_id must be answered"
+        rule. A dangling call further back sits mid-history, where an append
+        cannot place an answer next to it, and is left alone.
+
+        Nothing is synthesized while the dangling calls are still live: if the
+        frontend is sending the result this turn, or if nothing new follows the
+        AIMessage (a resume, where the graph is about to run the tool node),
+        the call is not orphaned and a cancelled answer would be a lie.
+        """
+        if getattr(self, "_skip_cancelled_tool_repair", False):
+            return []
+
+        last_non_tool: Optional[BaseMessage] = None
+        answered_ids = set()
+        for msg in reversed(existing_messages):
+            if isinstance(msg, ToolMessage):
+                if getattr(msg, 'tool_call_id', None):
+                    answered_ids.add(msg.tool_call_id)
+                continue
+            last_non_tool = msg
+            break
+
+        if not isinstance(last_non_tool, AIMessage):
+            return []
+        tool_calls = getattr(last_non_tool, 'tool_calls', None) or []
+        if not tool_calls:
+            return []
+
+        # The frontend may be returning the results this turn.
+        answered_ids.update(
+            msg.tool_call_id
+            for msg in incoming_messages
+            if isinstance(msg, ToolMessage) and getattr(msg, 'tool_call_id', None)
+        )
+        dangling = [
+            tc for tc in tool_calls
+            if tc.get('id') and tc.get('id') not in answered_ids
+        ]
+        if not dangling:
+            return []
+
+        # Nothing new follows the dangling calls, so nothing is broken yet.
+        if not any(not isinstance(msg, ToolMessage) for msg in incoming_messages):
+            return []
+
+        return [
+            ToolMessage(
+                # Deterministic, so merging the same checkpoint twice replaces
+                # the synthesized answer rather than appending a second one.
+                # The AIMessage id is part of it because providers reuse tool
+                # call ids like ``call_0`` across turns.
+                id=f"cancelled-{last_non_tool.id}-{tc['id']}",
+                tool_call_id=tc['id'],
+                name=tc.get('name'),
+                content=self._cancelled_tool_message_content(
+                    tc.get('name') or 'unknown', tc['id']
+                ),
+            )
+            for tc in dangling
+        ]
 
     def _filter_orphan_tool_messages(self, messages: list) -> list:
         """Remove fake ToolMessages injected by patch_orphan_tool_calls,
@@ -4029,6 +4223,37 @@ class LangGraphAgent:
                     delta=reasoning_data["text"]
                 )
             )
+
+    async def _ran_in_latest_step(self, config: RunnableConfig, node_name: str) -> bool:
+        """Whether the thread's history backs a continue after ``node_name``.
+
+        The checkpoint before the latest one lists, in ``next``, the nodes the
+        latest step ran. A thread with no such pair (a new thread), or whose
+        latest checkpoint was written by ``update_state`` rather than by a
+        step, has no node to continue from. A node still in the latest
+        ``next`` has not finished (it failed, or it waits to run again).
+
+        This is a sanity check, not the guard: under ``durability="exit"``
+        the two latest checkpoints can come from different runs, so the
+        "previous" ``next`` does not prove the node ran. A continue only
+        resumes the thread's own pending tasks, so a wrong answer here starts
+        a new run or resumes those tasks; it never skips a node.
+        """
+        snapshots = []
+        try:
+            async for snapshot in self.graph.aget_state_history(config, limit=2):
+                snapshots.append(snapshot)
+        except Exception as exc:
+            logger.warning("could not read the thread's history to check node_name: %s", exc)
+            return False
+        if len(snapshots) < 2:
+            return False
+        latest, previous = snapshots[0], snapshots[1]
+        if (latest.metadata or {}).get("source") != "loop":
+            return False
+        if node_name in (latest.next or ()):
+            return False
+        return node_name in (previous.next or ())
 
     async def get_checkpoint_before_message(self, message_id: str, thread_id: str, config: Optional[RunnableConfig] = None) -> Any:
         if not thread_id:
